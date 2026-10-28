@@ -175,7 +175,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync(CancellationToken cancellationToken) {
     // Arrange
     var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     // The idle threshold is put out of reach so the worker cannot flip back to idle while this test
@@ -211,8 +212,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     // Wait for OnWorkProcessingStarted (fires after batch completes, AFTER completion is reported)
-    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    await startedSignal.Task.WaitAsync(timeoutCts.Token);
+    await startedSignal.Task.WaitAsync(cancellationToken);
 
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -224,7 +224,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_AfterWorkCompletes_TransitionsToIdleAndFiresEventAsync() {
+  [Timeout(30000)]
+  public async Task Worker_AfterWorkCompletes_TransitionsToIdleAndFiresEventAsync(CancellationToken cancellationToken) {
     // Arrange
     var idleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: 2);
@@ -247,7 +248,7 @@ public class PerspectiveWorkerCoverageTests {
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
     // Wait for the idle event itself (work consumed, then 2 empty polls); the timeout only bounds it.
-    await idleFired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await idleFired.Task.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
@@ -255,7 +256,7 @@ public class PerspectiveWorkerCoverageTests {
     // and the assertions below could read state the worker's finally blocks had not settled yet.
     // SuppressThrowing because a body leaving through a cancellation catch settles
     // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -265,7 +266,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync(CancellationToken cancellationToken) {
     // Arrange - one item, then nothing. The idle event fires only once the empty-poll count reaches the threshold,
     // and only on a transition from active, so the item is what makes it a signal; no wall-clock wait stands in for
     // "several empty polls" (under load a fixed sleep saw none).
@@ -280,10 +282,10 @@ public class PerspectiveWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await idleFired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await idleFired.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -300,7 +302,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Acknowledgement Count Extraction - Metadata Paths
 
   [Test]
-  public async Task Worker_MetadataOnPerspectiveFirstRow_ExtractsAcknowledgementCountsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_MetadataOnPerspectiveFirstRow_ExtractsAcknowledgementCountsAsync(CancellationToken cancellationToken) {
     // Arrange
     var (worker, coordinator, _, harness) = _createWorker();
     var streamId = Guid.NewGuid();
@@ -323,10 +326,10 @@ public class PerspectiveWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed work (no crash from metadata extraction)
@@ -338,7 +341,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Registry Not Found / Runner Not Found Tests
 
   [Test]
-  public async Task Worker_RegistryNotRegistered_ParksWithoutTakingWorkAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RegistryNotRegistered_ParksWithoutTakingWorkAsync(CancellationToken cancellationToken) {
     // Arrange - No IPerspectiveRunnerRegistry in DI: the host is not a perspective host, and the worker
     // parks at startup (no drain loop, no polls, no database work) instead of consuming its channels.
     var coordinator = new FakeWorkCoordinator();
@@ -400,7 +404,7 @@ public class PerspectiveWorkerCoverageTests {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await worker.StartAsync(cts.Token);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
     // Assert - the body ended by itself, and the work it would have consumed is still in the channel.
     await Assert.That(cts.IsCancellationRequested).IsFalse()
@@ -413,7 +417,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_RunnerNotFound_SkipsPerspectiveAndContinuesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RunnerNotFound_SkipsPerspectiveAndContinuesAsync(CancellationToken cancellationToken) {
     // Arrange - Registry returns null runner
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -478,10 +483,10 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var release = await released.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - the work reached the apply path, the registry had no runner for it, and it was skipped.
@@ -558,7 +563,8 @@ public class PerspectiveWorkerCoverageTests {
   private const int REGISTRY_NOT_AVAILABLE_EVENT_ID = 36;
 
   [Test]
-  public async Task Worker_StartupWithNoPerspectiveRegistry_LogsDiagnosticsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_StartupWithNoPerspectiveRegistry_LogsDiagnosticsAsync(CancellationToken cancellationToken) {
     // Arrange - No registry registered at startup covers LogPerspectiveRegistryNotAvailableAtStartup
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -608,12 +614,12 @@ public class PerspectiveWorkerCoverageTests {
     // dequeued"; the log line can.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.WaitForEventIdCountAsync(REGISTRY_NOT_AVAILABLE_EVENT_ID, 1, TimeSpan.FromSeconds(10));
+    await logger.WaitForEventIdCountAsync(REGISTRY_NOT_AVAILABLE_EVENT_ID, 1, cancellationToken);
 
     // A host with no registry must park entirely rather than run startup repair against a
     // database it was never a perspective host for — and the read-model barrier must still be
     // released, since there are no read models to protect.
-    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -628,7 +634,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_StartupWithEmptyRegistry_LogsNoPerspectivesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_StartupWithEmptyRegistry_LogsNoPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange - Empty registry covers LogNoPerspectivesRegistered
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -678,11 +685,11 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.WaitForEventIdCountAsync(NO_PERSPECTIVES_REGISTERED_EVENT_ID, 1, TimeSpan.FromSeconds(10));
+    await logger.WaitForEventIdCountAsync(NO_PERSPECTIVES_REGISTERED_EVENT_ID, 1, cancellationToken);
 
     // A registry that exists but is empty is NOT the turnkey park: the startup scan still runs so
     // leftover rows from removed perspectives get serviced.
-    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -696,7 +703,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_StartupWithPopulatedRegistry_LogsRegisteredPerspectivesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_StartupWithPopulatedRegistry_LogsRegisteredPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange - Registry with perspectives covers LogRegisteredPerspectivesHeader + LogRegisteredPerspective
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -746,8 +754,8 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.WaitForEventIdCountAsync(REGISTERED_PERSPECTIVE_EVENT_ID, 1, TimeSpan.FromSeconds(10));
-    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
+    await logger.WaitForEventIdCountAsync(REGISTERED_PERSPECTIVE_EVENT_ID, 1, cancellationToken);
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -775,7 +783,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Sync Signaler and Sync Event Tracker Tests
 
   [Test]
-  public async Task Worker_WithSyncSignaler_SignalsCheckpointUpdatedAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithSyncSignaler_SignalsCheckpointUpdatedAsync(CancellationToken cancellationToken) {
     // Arrange - Perspective runner returns PerspectiveType so signaler is called
     var syncSignaler = new FakePerspectiveSyncSignaler();
     var coordinator = new FakeWorkCoordinator();
@@ -838,7 +847,7 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     // StopAsync cancels the worker AND waits for ExecuteAsync to complete
     // (unlike cts.Cancel() + await workerTask, which is a no-op since StartAsync returns Task.CompletedTask)
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -850,7 +859,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_WithSyncEventTracker_MarksProcessedEventsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithSyncEventTracker_MarksProcessedEventsAsync(CancellationToken cancellationToken) {
     // Arrange - Set up event store, event type provider, and sync event tracker
     var syncEventTracker = new FakeSyncEventTracker();
     var coordinator = new FakeWorkCoordinator();
@@ -921,7 +931,7 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
@@ -934,7 +944,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Message Tag Processor Tests
 
   [Test]
-  public async Task Worker_WithMessageTagProcessor_ProcessesTagsAtPostPerspectiveInlineAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithMessageTagProcessor_ProcessesTagsAtPostPerspectiveInlineAsync(CancellationToken cancellationToken) {
     // Arrange
     var tagProcessor = new FakeMessageTagProcessor();
     var coordinator = new FakeWorkCoordinator();
@@ -1006,7 +1017,7 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
@@ -1019,7 +1030,8 @@ public class PerspectiveWorkerCoverageTests {
   #region PostLifecycle Integration Tests
 
   [Test]
-  public async Task Worker_FiresPostLifecycleDetached_AtBatchEnd_ViaCoordinatorAsync() {
+  [Timeout(30000)]
+  public async Task Worker_FiresPostLifecycleDetached_AtBatchEnd_ViaCoordinatorAsync(CancellationToken cancellationToken) {
     // Arrange — real PerspectiveWorker with stage-tracking invoker
     var trackingInvoker = new StageTrackingReceptorInvoker();
     var coordinator = new FakeWorkCoordinator();
@@ -1091,14 +1103,11 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
 
-    // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
-    try {
-      await trackingInvoker.WaitForPostLifecycleDetachedAsync(TimeSpan.FromSeconds(5));
-    } catch (TimeoutException) {
-      // Expected to timeout if PostLifecycle doesn't fire — that's the bug we're looking for
-    }
+    // Wait for PostLifecycle to fire (it runs after completion reporting). A worker that never fires
+    // it leaves this wait to the test's timeout, which fails the test: that is the bug it looks for.
+    await trackingInvoker.WaitForPostLifecycleDetachedAsync(cancellationToken);
 
     await worker.DrainDetachedAsync();
     // Also drain detached tasks inside LifecycleTrackingState (PostLifecycleDetached fires via Task.Run there)
@@ -1118,7 +1127,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Error During Perspective Run Tests
 
   [Test]
-  public async Task Worker_PerspectiveRunThrows_ReportsFailureViaStrategyAsync() {
+  [Timeout(30000)]
+  public async Task Worker_PerspectiveRunThrows_ReportsFailureViaStrategyAsync(CancellationToken cancellationToken) {
     // Arrange - suppress unobserved task exceptions from intentional test throw
     void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is InvalidOperationException ioe &&
@@ -1189,13 +1199,13 @@ public class PerspectiveWorkerCoverageTests {
       foreach (var w in coordinator.PerspectiveWorkToReturn) {
         await harness.EnqueueWorkAsync(w, cts.Token);
       }
-      await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
+      await coordinator.WaitForFailureReportedAsync(cancellationToken);
       await cts.CancelAsync();
 
       // Await the worker BODY, not StartAsync's task. SuppressThrowing covers every way this
       // body can settle: cancellation, or the runner's InvalidOperationException, which the
       // worker's failure path has already reported by the time we get here.
-      await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      await worker.ExecuteTask!.WaitAsync(cancellationToken)
         .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
       // Assert - Failure should have been reported via the strategy
@@ -1211,7 +1221,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Tracing Enabled Paths
 
   [Test]
-  public async Task Worker_WithTracingEnabled_CreatesBatchAndPerspectiveSpansAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithTracingEnabled_CreatesBatchAndPerspectiveSpansAsync(CancellationToken cancellationToken) {
     // Arrange - Enable tracing to cover batch span and perspective span code paths
     var tracingOptions = new TracingOptions {
       EnableWorkerBatchSpans = true,
@@ -1279,10 +1290,10 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed work with tracing enabled (no crash)
@@ -1299,7 +1310,8 @@ public class PerspectiveWorkerCoverageTests {
   #region Event Loading Paths
 
   [Test]
-  public async Task Worker_WithEventStoreAndEventTypeProvider_LoadsEventsForTraceContextAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithEventStoreAndEventTypeProvider_LoadsEventsForTraceContextAsync(CancellationToken cancellationToken) {
     // Arrange - Exercises the upcomingEvents loading path (lines 383-407)
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -1368,10 +1380,10 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -1381,7 +1393,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_WithEventTypeProviderReturningEmpty_SkipsEventLoadingAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithEventTypeProviderReturningEmpty_SkipsEventLoadingAsync(CancellationToken cancellationToken) {
     // Arrange - Empty event types means no events loaded
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -1447,10 +1460,10 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Event store should NOT be called because event types are empty
@@ -1459,7 +1472,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync(CancellationToken cancellationToken) {
     // Arrange - No event type provider at all
     var (worker, coordinator, _, harness) = _createWorker();
 
@@ -1477,10 +1491,10 @@ public class PerspectiveWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker completed without event loading (no event type provider)
@@ -1569,7 +1583,8 @@ public class PerspectiveWorkerCoverageTests {
   // known point via CountingDisposedScopeFactory rather than racing a timer.
 
   [Test]
-  public async Task Worker_WhenScopeFactoryDisposedDuringRegistryInit_ExitsGracefullyAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WhenScopeFactoryDisposedDuringRegistryInit_ExitsGracefullyAsync(CancellationToken cancellationToken) {
     // Reproduces: Kestrel fails to bind → host disposes DI container → PerspectiveWorker startup crashes
     // The scope factory throws ObjectDisposedException on the second CreateScope call
     // (call 1 = constructor logger, call 2 = _initializePerspectiveRegistryAsync).
@@ -1618,7 +1633,7 @@ public class PerspectiveWorkerCoverageTests {
 
     // Worker should complete (either gracefully or by catching ObjectDisposedException)
     try {
-      await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+      await executeTask.WaitAsync(cancellationToken);
     } catch (ObjectDisposedException) {
       // Expected — scope factory disposed during startup
     }
@@ -1627,7 +1642,8 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   [Test]
-  public async Task Worker_WhenScopeFactoryDisposedDuringScanAndRepairRewinds_ExitsGracefullyAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WhenScopeFactoryDisposedDuringScanAndRepairRewinds_ExitsGracefullyAsync(CancellationToken cancellationToken) {
     // Reproduces: Kestrel bind failure → DI disposed → _scanAndRepairRewindsOnStartupAsync crashes host.
     // Scope factory allows constructor (call 1) + registry init (call 2), then throws on call 3+.
     // Empty registry → _reconcileOrphanedLifecyclesAsync returns early (no scope consumed).
@@ -1679,7 +1695,7 @@ public class PerspectiveWorkerCoverageTests {
     var executeTask = worker.ExecuteTask!;
 
     try {
-      await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+      await executeTask.WaitAsync(cancellationToken);
     } catch (ObjectDisposedException) {
       // Expected — scope factory disposed during startup scan
     }
@@ -1697,7 +1713,8 @@ public class PerspectiveWorkerCoverageTests {
   // startup would see reads that look "ready" but are still mid-repair. The loop must keep
   // re-querying every round while the RewindRequired set stays non-empty, not just once.
   [Test]
-  public async Task Worker_BlockingRewindScan_KeepsRepollingAcrossMultipleNonEmptyRoundsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_BlockingRewindScan_KeepsRepollingAcrossMultipleNonEmptyRoundsAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new RewindLoopCoordinator();
     const string perspectiveName = "Test.Perspectives.RewindPerspective";
@@ -1751,7 +1768,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coordinator.WaitForQueriesAsync(3, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForQueriesAsync(3, cancellationToken);
 
     // Assert
     await Assert.That(coordinator.QueryCount).IsEqualTo(3)
@@ -1778,7 +1795,8 @@ public class PerspectiveWorkerCoverageTests {
   // consumer that never wired IEventTypeProvider should still see its cursor advance so it can
   // add tracing/receptors later without replaying its whole backlog.
   [Test]
-  public async Task Worker_ReceptorAndEventStorePresentButNoEventTypeProvider_LogsSkipAndStillReportsCompletionAsync() {
+  [Timeout(30000)]
+  public async Task Worker_ReceptorAndEventStorePresentButNoEventTypeProvider_LogsSkipAndStillReportsCompletionAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -1838,8 +1856,8 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, cancellationToken);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
@@ -1853,7 +1871,8 @@ public class PerspectiveWorkerCoverageTests {
   // known event types (a fresh host before any event type registers, or a misconfigured
   // AOT event-type source). Must be indistinguishable in effect from a missing provider.
   [Test]
-  public async Task Worker_ReceptorAndEventStorePresentButEventTypeProviderEmpty_LogsSkipAndStillReportsCompletionAsync() {
+  [Timeout(30000)]
+  public async Task Worker_ReceptorAndEventStorePresentButEventTypeProviderEmpty_LogsSkipAndStillReportsCompletionAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -1912,8 +1931,8 @@ public class PerspectiveWorkerCoverageTests {
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, cancellationToken);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
@@ -2435,23 +2454,16 @@ public class PerspectiveWorkerCoverageTests {
       }
     }
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _completionReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Completion was not reported within {timeout}");
-      }
-    }
+    /// <summary>
+    /// Completes when the worker reports a completion. Bounded only by the test's own token: a
+    /// short wall-clock budget here raced the worker on a loaded runner and lost.
+    /// </summary>
+    public Task WaitForCompletionReportedAsync(CancellationToken cancellationToken)
+      => _completionReported.Task.WaitAsync(cancellationToken);
 
-    public async Task WaitForFailureReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _failureReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Failure was not reported within {timeout}");
-      }
-    }
+    /// <summary>Completes when the worker reports a failure; bounded only by the test's token.</summary>
+    public Task WaitForFailureReportedAsync(CancellationToken cancellationToken)
+      => _failureReported.Task.WaitAsync(cancellationToken);
 
     public Task ReportPerspectiveCompletionAsync(
         PerspectiveCursorCompletion completion,
@@ -2819,10 +2831,8 @@ public class PerspectiveWorkerCoverageTests {
       lock (_lock) { return _firedStages.Contains(stage); }
     }
 
-    public async Task WaitForPostLifecycleDetachedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      await _postLifecycleFired.Task.WaitAsync(cts.Token);
-    }
+    public Task WaitForPostLifecycleDetachedAsync(CancellationToken cancellationToken)
+      => _postLifecycleFired.Task.WaitAsync(cancellationToken);
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
@@ -2869,11 +2879,9 @@ public class PerspectiveWorkerCoverageTests {
 
     public void EnqueueResult(IReadOnlyList<RewindCursorInfo> result) => _results.Enqueue(result);
 
-    public async Task WaitForQueriesAsync(int count, TimeSpan timeout) {
+    public async Task WaitForQueriesAsync(int count, CancellationToken cancellationToken) {
       for (var i = 0; i < count; i++) {
-        if (!await _querySignal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {i} of {count} rewind-scan queries within {timeout}");
-        }
+        await _querySignal.WaitAsync(cancellationToken);
       }
     }
 
@@ -2920,16 +2928,14 @@ public class PerspectiveWorkerCoverageTests {
       _signal.Release();
     }
 
-    public async Task WaitForEventIdCountAsync(int eventId, int count, TimeSpan timeout) {
+    public async Task WaitForEventIdCountAsync(int eventId, int count, CancellationToken cancellationToken) {
       while (true) {
         int seen;
         lock (_lock) { seen = _entries.Count(e => e.EventId == eventId); }
         if (seen >= count) {
           return;
         }
-        if (!await _signal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {seen} of {count} logs with EventId {eventId} within {timeout}");
-        }
+        await _signal.WaitAsync(cancellationToken);
       }
     }
   }
