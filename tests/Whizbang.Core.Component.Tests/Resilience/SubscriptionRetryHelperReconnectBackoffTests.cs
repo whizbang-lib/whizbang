@@ -144,14 +144,14 @@ public class SubscriptionRetryHelperReconnectBackoffTests {
     /// </summary>
     public async Task<TimeSpan> DropAndReconnectAsync() {
       Transport.Subscriptions.Last().Disconnect(new InvalidOperationException("receiving failed right after subscribing"));
-      var wait = await Clock.NextTimerAsync().WaitAsync(_guard);
+      var wait = await Clock.NextTimerAsync().WaitAsync(_guard, _cts.Token);
       Clock.Advance(wait);
-      await _changedToHealthyAsync().WaitAsync(_guard);
+      await _changedToHealthyAsync().WaitAsync(_guard, _cts.Token);
       return wait;
     }
 
     private async Task _changedToHealthyAsync() {
-      while (await _statuses.Reader.ReadAsync() != SubscriptionStatus.Healthy) {
+      while (await _statuses.Reader.ReadAsync(_cts.Token) != SubscriptionStatus.Healthy) {
         // Recovering, recorded by the disconnect before the reconnect starts.
       }
     }
