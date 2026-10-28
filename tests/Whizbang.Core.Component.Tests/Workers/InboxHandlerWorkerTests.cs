@@ -471,8 +471,8 @@ public sealed class InboxHandlerWorkerTests {
   // #1788: a row waiting for its commit stops being held once the commit flush ends
   // ==========================================================================
 
-  private static async Task<(InboxChannelWriter Writer, Guid Id)> _heldCommitPendingAsync() {
-    var writer = new InboxChannelWriter();
+  private static async Task<(InboxChannelWriter Writer, Guid Id)> _heldCommitPendingAsync(InboxChannelWriter? existing = null) {
+    var writer = existing ?? new InboxChannelWriter();
     var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await writer.WriteAsync(new InboxWork {
       MessageId = id,
@@ -535,6 +535,23 @@ public sealed class InboxHandlerWorkerTests {
 
     await Assert.That(writer.IsInFlight(id)).IsFalse()
       .Because("a refused commit will never land, so the row must not stay held waiting for it");
+  }
+
+  [Test]
+  public async Task WorkerPipeline_WiresTheInboxChannelWriterIntoTheCommitWorkerAsync() {
+    // Resolved from the real registration: a commit the worker refuses releases the row from the writer DI hands
+    // the dispatch path, which only happens when the optional dependency was actually injected.
+    var services = new ServiceCollection().AddLogging();
+    services.AddWhizbangWorkers();
+    services.Configure<InboxHandlerWorkerOptions>(o => o.Enabled = false);
+    await using var sp = services.BuildServiceProvider();
+    var writer = (InboxChannelWriter)sp.GetRequiredService<IInboxChannelWriter>();
+    var (_, id) = await _heldCommitPendingAsync(writer);
+    var worker = sp.GetRequiredService<InboxHandlerWorker>();
+
+    await worker.EnqueueAsync(_request(id, id));
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse();
   }
 
   [Test]
