@@ -42,6 +42,8 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     public int RepairAttempts;
     public DateTimeOffset LastTouched;
     public DateTimeOffset FirstSeen;
+    /// <summary>When a redelivery showed repair cannot change this bucket; null while it still can.</summary>
+    public DateTimeOffset? UnhealableAt;
   }
 
   private readonly Lock _lock = new();
@@ -76,8 +78,11 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
         entry.LocalHi = localHi;
         entry.RepairAttempts = 0;
         entry.LastRepairAt = null;
+        entry.UnhealableAt = null;
       }
-      if (entry.LastReportedAt is not { } lastReportedAt || signatureChanged || now - lastReportedAt >= cooldown) {
+      // A bucket repair cannot change was reported once, when it was marked; the cooldown does not repeat it.
+      if (entry.LastReportedAt is not { } lastReportedAt || signatureChanged
+          || (entry.UnhealableAt is null && now - lastReportedAt >= cooldown)) {
         entry.LastReportedAt = now;
         return true;
       }
@@ -92,12 +97,17 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
   /// cadence (base × 2^6). A bucket whose budget burned against an unreachable origin has a
   /// static signature — nothing resets it (see <see cref="TryBeginReport"/>) — so a permanent
   /// deny would shadow-ban a repairable deficit forever; the terminal cadence keeps convergence
-  /// eventually-true at bounded cost. Records the attempt when true.
+  /// eventually-true at bounded cost. A bucket a redelivery showed repair cannot change
+  /// (<see cref="MarkUnhealableBatchAsync"/>) is refused outright: that is evidence, where an
+  /// unanswered request is none. Records the attempt when true.
   /// </summary>
   public bool TryBeginRepair(DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts) {
     lock (_lock) {
       var entry = _getOrAdd(key, now);
       entry.LastTouched = now;
+      if (entry.UnhealableAt is not null) {
+        return false;   // a redelivery already showed the events are present; asking again ships them again
+      }
       if (entry.LastRepairAt is { } last) {
         var doublings = entry.RepairAttempts >= maxAttempts
           ? MAX_BACKOFF_DOUBLINGS
@@ -153,6 +163,24 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
       }
     }
     return ValueTask.FromResult<IReadOnlyList<double>>(ages);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Marks only buckets this ledger tracks: a redelivery nobody asked this ledger for leaves nothing
+  /// behind. A changed signature (<see cref="TryBeginReport"/>) or a heal lifts the mark.</remarks>
+  public ValueTask<IReadOnlyList<DivergenceKey>> MarkUnhealableBatchAsync(
+      IReadOnlyList<DivergenceKey> keys, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    var marked = new List<DivergenceKey>();
+    lock (_lock) {
+      foreach (var key in keys) {
+        if (_entries.TryGetValue(key, out var entry) && entry.UnhealableAt is null) {
+          entry.UnhealableAt = now;
+          entry.LastTouched = now;
+          marked.Add(key);
+        }
+      }
+    }
+    return ValueTask.FromResult<IReadOnlyList<DivergenceKey>>(marked);
   }
 
   private Entry _getOrAdd(DivergenceKey key, DateTimeOffset now) {

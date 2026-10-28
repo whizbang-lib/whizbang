@@ -520,6 +520,36 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityProbeRepairBacklogAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityProbeRepairBacklogAsync(Guid.Empty, [], backlogCap: 10);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain admission to fall back to the per-comparison cap alone");
+  }
+
+  [Test]
+  public async Task IntegrityMarkUnhealableBatchAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkUnhealableBatchAsync(Guid.Empty, [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(result).IsNull()
+      .Because("null means the provider cannot mark buckets, so the durable ledger marks none and repair keeps asking as before");
+  }
+
+  [Test]
+  public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, [], []);
+
+    await Assert.That(result).IsNull()
+      .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");
+  }
+
+  [Test]
   public async Task IntegrityClaimRepairDrainAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

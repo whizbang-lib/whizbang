@@ -865,6 +865,27 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>
+  /// Commits an expanded composite's children (and its pre-fanout outbox) in one request, then reconciles a
+  /// redelivery bundle with the events the store already held (#1790): a redelivered event the store already holds
+  /// is skipped as a duplicate, so once the bundle has landed, history stored before origins were recorded adopts
+  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
+  private async Task _commitExpansionAsync(
+      InboxWork work, ICompositeEvent composite, IReadOnlyList<InboxMessage> children,
+      IReadOnlyList<OutboxMessage>? preFanoutOutbox, IServiceProvider scopeProvider, CancellationToken ct) {
+    var commitRequest = _buildCommitRequest(
+      work, status: (int)MessageProcessingStatus.EventStored,
+      newInboxMessages: children, newOutboxMessages: preFanoutOutbox);
+    var committed = await _commitCompositeAsync(commitRequest, children.Count, scopeProvider, ct).ConfigureAwait(false);
+    if (committed && composite is RedeliveryComposite redelivery) {
+      _ = await RedeliveryReconciler.ReconcileAsync(
+        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
   /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
   /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
   /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
@@ -927,10 +948,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }
 
-      var commitRequest = _buildCommitRequest(
-        work, status: (int)MessageProcessingStatus.EventStored,
-        newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
-      await _commitCompositeAsync(commitRequest, result.Children.Count, scopeProvider, ct).ConfigureAwait(false);
+      await _commitExpansionAsync(work, composite, result.Children, preFanoutOutbox, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
 
@@ -980,20 +998,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// in the batched commit channel (#740). A failed commit leaves the row leased and unprocessed for the
   /// claim loop to re-offer (the deterministic child ids make that re-expansion a repeat at the key), counts
   /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
-  /// the dispatch scope the batched channel is used as before, with a warning naming the cost.
+  /// the dispatch scope the batched channel is used as before, with a warning naming the cost. Returns true only
+  /// when the commit landed here, so work that must follow a landed expansion can tell it did.
   /// </summary>
-  private async Task _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
+  private async Task<bool> _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
       LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, childCount);
       await _enqueueCommitAsync(request, ct).ConfigureAwait(false);
-      return;
+      return false;
     }
     try {
       await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
+      return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _compositeMetrics?.CommitFailures.Add(1);
       LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
+      return false;
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
       _releaseTerminal(request.HandlerId);

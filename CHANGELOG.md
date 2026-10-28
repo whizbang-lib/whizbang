@@ -728,6 +728,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
+  repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
+  verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to
+  redeliver them, the store skipped each redelivered event as a duplicate, and the next check asked again, a standing
+  loop bounded only by the repair drain rate. A committed redelivery bundle is now reconciled with the events the store
+  already holds (`RedeliveryReconciler`, migration 249 `wh_adopt_redelivered_origin`): an empty origin takes the
+  bundle's origin and an empty origin commit sequence the event's sequence (a recorded origin is never overwritten or
+  re-attributed, and the local service adopts nothing), the event's digest moves from the local lane to the origin's,
+  and sealed epochs over it are refolded. The origin is the only source of those sequences, so this history is
+  backfilled by the one redelivery verification asks for, then verifies like any other. A bundle whose events were all
+  already stored under their origin marks its buckets in the repair ledger (`wh_integrity_ledger.unhealable_at`,
+  `IIntegrityRepairLedger.MarkUnhealableBatchAsync`): neither the burst grant nor the paced drain asks for them again,
+  the cooldown stops re-reporting them, and each is reported once (a warning naming the bucket); a changed signature
+  or a heal lifts the mark, and a bucket whose origin never answered keeps the terminal cadence. New counters
+  `whizbang.stream_integrity.origins_adopted` and `whizbang.stream_integrity.repairs_unhealable`; `IWorkCoordinator`
+  gains `AdoptRedeliveredOriginAsync` and `IntegrityMarkUnhealableBatchAsync` (Fixes #1790)
+- **Stream integrity no longer treats history stamped after an upgrade as live gaps.** Right after an upgrade the
+  historical events are unstamped, and the commit-order stamper gives them sequences over the next minutes or hours.
+  Three parts of stream integrity counted that history as new live traffic. The first checkpoint baselined at the
+  highest stamped sequence, so the history stamped later fell into the following windows, where no consumer can hold it
+  under those sequences, and every bucket became a gap that was confirmed and repaired. The baseline now also records a
+  history floor (`integrity_checkpoint_history_floor` in `wh_settings`, the last insertion-order value handed out), and
+  windows count only events written after it; a store an earlier version baselined takes the floor on its next advance.
+  The local lane's type-level digest folded unstamped events into its open window; it now waits for the stamp, as the
+  windowed answer and the settled maximum already did (migration 250), while a received event with no origin sequence
+  still folds there. Coverage-gap detection reported unstamped events, which the stamp fence holds back from
+  perspectives, as never folded and asked for rebuilds; it now skips them, and its query walks streams one at a time
+  and stops at the report cap instead of grouping the whole store first. (Fixes #1791)
 - **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
   A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
   with the message id, type and error before it is routed to the failure channel; one flush logs the first five and
@@ -810,6 +838,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already misfiled are moved by the operator repair `IFanoutChildRefiler` (registered by both PostgreSQL drivers),
   which calls the new `wh_refile_events` function (migration 247) to renumber both streams and move each event's
   digest, inbox and applied-ledger rows in one transaction, then names the streams to rebuild.
+- **With the paced repair drain on, `MaxAutoRepairRequestsPerAudit` caps what one comparison adds to the drain, and
+  the drain's backlog has a total bound (Fixes #1792).** The drain (`RepairDrainEnabled`, the default) dispatches from
+  the repair ledger, and a manifest comparison wrote every deficit bucket of every chunk into it: the per-audit cap was
+  applied only on the burst path, so with the drain on it capped nothing, and the ledger grew with the number of
+  divergent streams and accumulated across audits. At `AutoRepairCapped` with the drain on, a comparison now admits at
+  most `MaxAutoRepairRequestsPerAudit` new deficit buckets, and none once the ledger holds the new
+  `Whizbang:StreamIntegrity:MaxRepairDrainBacklog` per-stream rows (default 10,000, at least 1, checked at host start).
+  A bucket the ledger already tracks is refreshed without counting. A deficit over either cap is deferred, not
+  dropped: nothing is written for it, it stays divergent, and a later audit re-detects it once the drain has made room.
+  Each comparison that defers logs one warning with the counts and the backlog, and
+  `whizbang.stream_integrity.repairs_deferred` counts them by origin and reason (`per_audit_cap`, `backlog_cap`).
+  `IWorkCoordinator` gains `IntegrityProbeRepairBacklogAsync`, one bounded read that answers the backlog and which keys
+  are already tracked; without it (or when it fails, logged) the per-comparison cap alone applies. The burst path
+  (`RepairDrainEnabled = false`) and `ReportOnly` are unchanged. No migration.
+- **The paced repair drain claims only deficits; identity mismatches and local surpluses are no longer re-requested
+  (Fixes #1842).** A manifest comparison writes a ledger row for every divergence it reports, and the drain's claim
+  selected rows by origin, stream and backoff alone, so with `RepairDrainEnabled` (the default) it asked the origin to
+  redeliver mismatches and surpluses on every backoff step, a redelivery that cannot change them, and those rows counted
+  toward `MaxRepairDrainBacklog` and could defer real deficits. The comparison now states each divergence's kind when it
+  reports it (`IntegrityReportObservation.IsDeficit`, required), recorded in the new `wh_integrity_ledger.is_deficit`
+  column by the new report batch `wh_integrity_report_divergences` (migration 251); the ledger row cannot derive the kind,
+  because its digest halves are hashes, not counts. The claim (`wh_integrity_claim_repair_drain`) takes deficit rows only,
+  and the backlog probe counts only the rows the claim can take (deficits, not marked unhealable) and treats a bucket as
+  tracked only when the ledger holds it as a deficit; both read a new partial index over exactly those rows. A row of
+  unknown kind is never claimed: rows recorded before this release (no backfill is possible; the next comparison that
+  sees the bucket records its kind), and rows whose signature a report without the kind moved (the per-bucket fallback,
+  or an older version during a rolling upgrade). Mismatches and surpluses stay in the ledger for reporting.
 - **A rebuild folds a row that events were re-keyed onto from its own stream and every re-keyed source (Fixes #1820).**
   A row that received events re-keyed from another stream was rebuilt from an empty model with only the re-keyed
   events, so its own history was lost. The rebuild now collects every re-key in the run and folds each target row

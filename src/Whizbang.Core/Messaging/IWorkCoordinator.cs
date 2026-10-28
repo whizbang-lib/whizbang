@@ -952,14 +952,17 @@ public interface IWorkCoordinator {
   /// advanced window — the payload of one <see cref="IntegrityCheckpoint"/>. Multi-instance safe:
   /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
   /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
-  /// window at the current watermark) so history is never counted retroactively. At-most-once
+  /// window at the current watermark) so history is never counted retroactively. The baseline also
+  /// takes a history floor: events written before it that the stamper sequences only afterwards
+  /// (history left unstamped by an upgrade) land above the baseline but are left out of every
+  /// window, since they were delivered under no sequence; the digests verify them instead. At-most-once
   /// schedule occurrences, checkpoints themselves and the <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/>
   /// audit records are excluded from the counts. Default: null
   /// (engines without commit-sequence stamping cannot checkpoint).
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The advanced window, or null when unsupported / lost the advance race.</returns>
-  /// <docs>resilience/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity#checkpoint-history-floor</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
   Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IntegrityCheckpointWindow?>(null);
@@ -1076,10 +1079,12 @@ public interface IWorkCoordinator {
       await ComputeStreamDigestsAsync(originServiceId, eventTypes, settleWindow, cancellationToken).ConfigureAwait(false));
 
   /// <summary>
-  /// Stream-integrity Phase L: finds LOCAL coverage gaps — streams holding settled, non-ephemeral
-  /// events that a registered perspective (message association) should fold, where that
+  /// Stream-integrity Phase L: finds LOCAL coverage gaps, streams holding settled, non-ephemeral,
+  /// stamped events that a registered perspective (message association) should fold, where that
   /// perspective has NO cursor on the stream and the events have no pending work items (typically:
-  /// the perspective was born after the history). Repair is a LOCAL rebuild. Default: empty.
+  /// the perspective was born after the history). An event without a commit sequence is never a gap:
+  /// the stamp fence holds it back from every perspective until the stamper reaches it. Repair is a
+  /// LOCAL rebuild. Default: empty.
   /// </summary>
   /// <param name="settleWindow">Only events older than this count (in-flight work is not a gap).</param>
   /// <param name="maxGaps">Hard bound on returned gaps — the report cap belongs in the query
@@ -1728,6 +1733,9 @@ public interface IWorkCoordinator {
   /// Batched <see cref="IntegrityTryBeginReportAsync"/> — one round trip for a manifest chunk's
   /// report decisions (element i answers observation i). Null = unsupported; the caller loops the
   /// singles. All observations share one origin (a manifest chunk is per-origin by construction).
+  /// A durable implementation also records each observation's
+  /// <see cref="IntegrityReportObservation.IsDeficit"/>, which decides whether the paced repair drain
+  /// may claim the row.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
   Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
@@ -1757,6 +1765,21 @@ public interface IWorkCoordinator {
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
     long windowFrom, long windowUntil, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
+
+  /// <summary>
+  /// Reads what the paced repair drain's admission check needs in one round trip: the drain's
+  /// backlog (per-stream deficit rows, every origin, counted up to <paramref name="backlogCap"/> so
+  /// the read stays bounded) and, for each of <paramref name="keys"/>, whether the ledger already
+  /// tracks it as a deficit. Rows the drain never claims (identity mismatches, local surpluses, rows
+  /// of unknown kind, buckets marked unhealable) are not counted, and only deficit rows are tracked. Null = unsupported or failed; the caller then
+  /// admits by its per-comparison cap alone.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-caps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairBacklogProbeSqlTests.cs</tests>
+  Task<IntegrityRepairBacklogProbe?> IntegrityProbeRepairBacklogAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, int backlogCap,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityRepairBacklogProbe?>(null);
 
   /// <summary>
   /// Atomically claims up to <paramref name="limit"/> repair-eligible ledger rows for the paced
@@ -1790,6 +1813,42 @@ public interface IWorkCoordinator {
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
+  /// Durable <see cref="IIntegrityRepairLedger.MarkUnhealableBatchAsync"/>: marks the tracked ledger rows of
+  /// <paramref name="keys"/> as buckets repair cannot change, and returns the keys this call marked (a row already
+  /// marked, or a key with no row, is not returned). Null = unsupported.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnhealableSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>(null);
+
+  /// <summary>
+  /// Reconciles the events of one redelivery bundle that this store already holds. An event stored before the
+  /// store recorded origins (or stored without its origin commit sequence) has those columns empty, so
+  /// origin-keyed verification counts it as missing however many times it is redelivered. Each such event adopts
+  /// the origin identity the bundle carries: <paramref name="originServiceId"/> fills an empty origin, the event's
+  /// sequence in <paramref name="commitSequences"/> fills an empty origin commit sequence, its integrity digest
+  /// moves from the local lane to the origin's lane, and the sealed epochs it touched are refolded. An event that
+  /// already carries a different origin is never changed. Events the store does not hold are not reported; the
+  /// bundle stores them as usual.
+  /// </summary>
+  /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="eventIds">The bundle's event ids.</param>
+  /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
+  /// null when the origin had not stamped it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held and how many of
+  /// those adopted the origin identity; null = unsupported.</returns>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs</tests>
+  Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and

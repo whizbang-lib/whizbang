@@ -190,6 +190,87 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
                "count the origin did not declare (#1554).");
   }
 
+  [Test]
+  public async Task Advance_HistoryStampedAfterTheBaseline_IsNotCountedAsALiveWindowAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+
+    // Right after an upgrade the history is still unstamped: the stamper gives it sequences over the next
+    // minutes or hours, all of them above the baseline the first advance takes.
+    var history = TrackedGuid.New().Value;
+    await _seedAsync(conn, history, 1, TENANT_A, "Contracts.OldHistory", stamped: false);
+    await _seedAsync(conn, history, 2, TENANT_A, "Contracts.OldHistory", stamped: false);
+
+    var baseline = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(baseline!.Buckets).IsEmpty();
+
+    // The stamper catches up on the history, and live traffic arrives after it.
+    await Assert.That(await _stampAsync(conn)).IsEqualTo(2);
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, TENANT_A, "Contracts.TypeX");
+
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+
+    await Assert.That(window!.ToCommitSequence - window.FromCommitSequence).IsEqualTo(3L)
+      .Because("the watermark still advances over every sequence the stamper handed out.");
+    await Assert.That(window.Buckets.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("history written before the baseline was delivered long ago under no sequence, so no consumer can " +
+               "hold it under the one the stamper gave it later; counting it would make every bucket a gap (#1791). " +
+               "History is verified by the digests, not by live windows.");
+  }
+
+  [Test]
+  public async Task Advance_AStoreBaselinedBeforeTheHistoryFloorExisted_TakesTheFloorOnceAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+
+    // A store an earlier version baselined: the watermark is there, the history floor is not, and the
+    // history it baselined over is still being stamped.
+    var history = TrackedGuid.New().Value;
+    await _seedAsync(conn, history, 1, TENANT_A, "Contracts.OldHistory", stamped: false);
+    await coordinator.AdvanceIntegrityCheckpointAsync();
+    await _deleteSettingAsync(conn, HISTORY_FLOOR_KEY);
+    await _stampAsync(conn);
+
+    var upgraded = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(upgraded!.Buckets).IsEmpty()
+      .Because("the first advance that finds no floor takes it at the head, so the history still being stamped " +
+               "is left to the digests rather than counted as live.");
+    await Assert.That(await _settingAsync(conn, HISTORY_FLOOR_KEY)).IsNotNull();
+
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, TENANT_A, "Contracts.TypeX");
+    var live = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(live!.Buckets.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("events written after the floor was taken are live and counted as before.");
+  }
+
+  [Test]
+  public async Task Advance_ANewBaseline_MovesTheHistoryFloorWithItAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+
+    await coordinator.AdvanceIntegrityCheckpointAsync();
+    var firstFloor = await _settingAsync(conn, HISTORY_FLOOR_KEY);
+
+    // Everything written since is history to the next baseline (an operator reset the watermark).
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, TENANT_A, "Contracts.Between", stamped: false);
+    await _deleteSettingAsync(conn, WATERMARK_KEY);
+    await coordinator.AdvanceIntegrityCheckpointAsync();
+    await _stampAsync(conn);
+
+    await Assert.That(await _settingAsync(conn, HISTORY_FLOOR_KEY)).IsNotEqualTo(firstFloor)
+      .Because("a baseline restarts counting, so the floor it leaves history under is taken again with it.");
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(window!.Buckets).IsEmpty();
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   /// <summary>Seeds one RECEIVED event: origin identity stamped, as the 1:1 forward persist does.</summary>
@@ -211,27 +292,52 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await store.ExecuteNonQueryAsync();
   }
 
+  private const string WATERMARK_KEY = "integrity_checkpoint_watermark";
+  private const string HISTORY_FLOOR_KEY = "integrity_checkpoint_history_floor";
+
   private static async Task _resetWatermarkAsync(NpgsqlConnection conn) {
+    await _deleteSettingAsync(conn, WATERMARK_KEY);
+    await _deleteSettingAsync(conn, HISTORY_FLOOR_KEY);
+  }
+
+  private static async Task _deleteSettingAsync(NpgsqlConnection conn, string key) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "DELETE FROM wh_settings WHERE setting_key = 'integrity_checkpoint_watermark'";
+    cmd.CommandText = "DELETE FROM wh_settings WHERE setting_key = @key";
+    cmd.Parameters.AddWithValue(nameof(key), key);
     await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<string?> _settingAsync(NpgsqlConnection conn, string key) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT setting_value FROM wh_settings WHERE setting_key = @key";
+    cmd.Parameters.AddWithValue(nameof(key), key);
+    return (string?)await cmd.ExecuteScalarAsync();
+  }
+
+  /// <summary>Runs the production commit-order stamper over every unstamped row.</summary>
+  private static async Task<int> _stampAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT stamp_pending_commit_sequences(1000)";
+    return (int)(await cmd.ExecuteScalarAsync())!;
   }
 
   /// <summary>Seeds one stamped event (store pointer + body).</summary>
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
-      int flags = 0) {
+      int flags = 0, bool stamped = true) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags)
-        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), @flags)";
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version,
+                CASE WHEN @stamped THEN nextval('wh_commit_seq') END, @flags)";
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue(nameof(version), version);
       store.Parameters.AddWithValue(nameof(flags), flags);
+      store.Parameters.AddWithValue(nameof(stamped), stamped);
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {

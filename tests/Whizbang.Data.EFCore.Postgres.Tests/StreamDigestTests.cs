@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// at-most-once rows are excluded; events inside the settle window are ignored on both sides.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PerspectiveCoverageGapSql.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("StreamDigests")]
 [Category("Shard2")]
@@ -30,6 +31,9 @@ public class StreamDigestTests : EFCoreTestBase {
 
   /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
   private const int AT_MOST_ONCE_FLAG = 32;
+
+  /// <summary>The event-store flag an ephemeral event carries (<c>EventFlags.Ephemeral</c>).</summary>
+  private const int EPHEMERAL_FLAG = 8;
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
@@ -164,6 +168,86 @@ public class StreamDigestTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task CoverageGaps_SkipEventsTheStamperHasNotSequencedAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    await _associateAsync(conn, "Contracts.TypeX", COVERAGE_PERSPECTIVE);
+
+    // History an upgrade left unstamped: aged by its creation time, but held back from every perspective by the
+    // stamp fence until the stamper reaches it.
+    var unstamped = TrackedGuid.New().Value;
+    await _seedAsync(conn, unstamped, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true, stamped: false);
+    await _seedAsync(conn, unstamped, 2, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true, stamped: false);
+    var stamped = TrackedGuid.New().Value;
+    await _seedAsync(conn, stamped, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true);
+
+    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.FromMinutes(60), 100);
+
+    await Assert.That(gaps.Select(g => g.StreamId).ToList()).IsEquivalentTo([stamped])
+      .Because("an event without a commit sequence is held back from the perspectives legitimately; reporting it as " +
+               "never folded asks for a rebuild that cannot fold it either (#1791).");
+  }
+
+  [Test]
+  public async Task CoverageGaps_CountEachPerspective_LeavingOutPendingEphemeralAndUnsettledEventsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    const string OTHER_PERSPECTIVE = "CoverageProbeOtherPerspective";
+    await _associateAsync(conn, "Contracts.TypeX", COVERAGE_PERSPECTIVE);
+    await _associateAsync(conn, "Contracts.TypeY", COVERAGE_PERSPECTIVE);
+    await _associateAsync(conn, "Contracts.TypeY", OTHER_PERSPECTIVE);
+
+    var stream = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeY", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeY", TrackedGuid.New().Value, aged: false);
+    await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true, flags: EPHEMERAL_FLAG);
+    var pending = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.TypeX", pending, aged: true);
+    await using (var work = conn.CreateCommand()) {
+      work.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), @stream, @perspective, @event, NULL, NULL, 0, 0, 0, NOW())";
+      work.Parameters.AddWithValue(nameof(stream), stream);
+      work.Parameters.AddWithValue("perspective", COVERAGE_PERSPECTIVE);
+      work.Parameters.AddWithValue("event", pending);
+      await work.ExecuteNonQueryAsync();
+    }
+
+    var gaps = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.FromMinutes(60), 100);
+
+    await Assert.That(gaps.Select(g => $"{g.PerspectiveName}={g.EventCount}").ToList())
+      .IsEquivalentTo([$"{COVERAGE_PERSPECTIVE}=2", $"{OTHER_PERSPECTIVE}=1"])
+      .Because("each perspective counts the settled, durable events of every type it folds, apart from those a work " +
+               "item is still pending for: the unsettled, the ephemeral and the pending event are left out.");
+  }
+
+  [Test]
+  public async Task CoverageGaps_ReadWhatTheReportCapNeeds_NotTheWholeStoreAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _associateAsync(conn, "Contracts.TypeX", COVERAGE_PERSPECTIVE);
+    const int CAP = 3;
+    const int SHALLOW_STREAMS = 10;
+    const int DEEP_STREAMS = 400;
+
+    await _seedUncoveredStreamsAsync(conn, SHALLOW_STREAMS);
+    var (_, shallowReads) = await _coverageGapReadsAsync(conn, CAP);
+    await _seedUncoveredStreamsAsync(conn, DEEP_STREAMS - SHALLOW_STREAMS);
+    var (deepGaps, deepReads) = await _coverageGapReadsAsync(conn, CAP);
+    Console.WriteLine($"coverage gaps capped at {CAP}: read {shallowReads} behind {SHALLOW_STREAMS} streams, {deepReads} behind {DEEP_STREAMS}");
+
+    await Assert.That(deepGaps).IsEqualTo(CAP);
+    await Assert.That(deepReads).IsLessThanOrEqualTo(shallowReads + (shallowReads / 4))
+      .Because($"reporting {CAP} gaps read {shallowReads} event-store rows and index entries behind {SHALLOW_STREAMS} " +
+               $"uncovered streams and {deepReads} behind {DEEP_STREAMS}. The report cap must bound the query, not " +
+               "trim its answer after it has read and grouped the whole store (#1791).");
+  }
+
+  [Test]
   public async Task OwnAuditedEventTypes_AreTheZeroGuidLane_DistinctAsync() {
     // The checkpoint heartbeat fans out to the topics of this origin's own emitted types — the
     // received-from-elsewhere lane must NOT contribute (those are another origin's topics), and
@@ -197,13 +281,76 @@ public class StreamDigestTests : EFCoreTestBase {
 
   // ── seeding ──────────────────────────────────────────────────────────────
 
+  private const string COVERAGE_PERSPECTIVE = "CoverageProbePerspective";
+
+  private static async Task _associateAsync(NpgsqlConnection conn, string eventType, string perspective) {
+    await using var assoc = conn.CreateCommand();
+    assoc.CommandText = @"
+      INSERT INTO wh_message_associations (message_type, normalized_message_type, association_type, target_name, service_name)
+      VALUES (@type, @type, 'perspective', @perspective, 'test-svc')
+      ON CONFLICT DO NOTHING";
+    assoc.Parameters.AddWithValue("type", eventType);
+    assoc.Parameters.AddWithValue(nameof(perspective), perspective);
+    await assoc.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>Seeds streams of two aged, stamped events each that the associated perspective never folded.</summary>
+  private static async Task _seedUncoveredStreamsAsync(NpgsqlConnection conn, int streams) {
+    await using var seed = conn.CreateCommand();
+    seed.CommandText = @"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, created_at)
+      SELECT gen_random_uuid(), s.stream_id, s.stream_id, 'TestAggregate', 'Contracts.TypeX', '{}'::jsonb, v,
+             nextval('wh_commit_seq'), 0, NOW() - INTERVAL '2 hours'
+      FROM (SELECT gen_random_uuid() AS stream_id FROM generate_series(1, @streams)) s
+      CROSS JOIN generate_series(1, 2) AS v;
+      ANALYZE wh_event_store";
+    seed.Parameters.AddWithValue(nameof(streams), streams);
+    await seed.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Runs the production coverage-gap query in a transaction of its own and counts the event-store rows its scans
+  /// returned (sequential-scan rows of the table plus entries of each of its indexes), which do not depend on the
+  /// machine.
+  /// </summary>
+  private static async Task<(int Gaps, long Reads)> _coverageGapReadsAsync(NpgsqlConnection conn, int cap) {
+    const string READS = """
+      SELECT COALESCE(SUM(pg_stat_get_xact_tuples_returned(r.oid)), 0)::bigint
+      FROM pg_class r
+      WHERE r.oid = 'wh_event_store'::regclass
+         OR r.oid IN (SELECT i.indexrelid FROM pg_index i WHERE i.indrelid = 'wh_event_store'::regclass)
+      """;
+    await using var tx = await conn.BeginTransactionAsync();
+    var before = await _scalarAsync(conn, READS);
+    var gaps = 0;
+    await using (var query = conn.CreateCommand()) {
+      query.CommandText = PerspectiveCoverageGapSql.Build("public");
+      query.Parameters.AddWithValue("p_settle", "3600 seconds");
+      query.Parameters.AddWithValue("p_max", cap);
+      await using var reader = await query.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        gaps++;
+      }
+    }
+    var after = await _scalarAsync(conn, READS);
+    await tx.RollbackAsync();
+    return (gaps, after - before);
+  }
+
+  private static async Task<long> _scalarAsync(NpgsqlConnection conn, string sql) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
   private static async Task _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType, Guid eventId,
-      bool aged, int flags = 0) {
+      bool aged, int flags = 0, bool stamped = true) {
     await using (var store = conn.CreateCommand()) {
       store.CommandText = $@"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, created_at)
-        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), @flags,
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version,
+                CASE WHEN @stamped THEN nextval('wh_commit_seq') END, @flags,
                 NOW() - INTERVAL '{(aged ? "2 hours" : "0 seconds")}')";
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
@@ -211,6 +358,7 @@ public class StreamDigestTests : EFCoreTestBase {
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue(nameof(version), version);
       store.Parameters.AddWithValue(nameof(flags), flags);
+      store.Parameters.AddWithValue(nameof(stamped), stamped);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = conn.CreateCommand();

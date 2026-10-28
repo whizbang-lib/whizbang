@@ -53,10 +53,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   // part of the query, not a value.
   private const string P_IDS = "p_ids";
   private const string P_KEY = "p_key";
+  private const string P_FLOOR_KEY = "p_floor_key";
+  private const string P_FLOOR = "p_floor";
   private const string P_LIMIT = "p_limit";
   private const string P_MAX = "p_max";
   private const string P_NOW = "p_now";
   private const string P_ORIGIN = "p_origin";
+  private const string P_ORIGIN_SERVICE_ID = "p_origin_service_id";
   private const string P_SETTLE = "p_settle";
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
@@ -754,7 +757,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private static void _bindDivergenceKeyArrays(
       Npgsql.NpgsqlCommand cmd, Guid originServiceId,
       IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys) {
-    cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.TenantScope).ToArray()
     });
@@ -803,8 +806,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
-    _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_report_batch", cmd => {
-      cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    // #1842: the batch that also records each key's divergence kind (251), which decides whether the
+    // paced repair drain may claim the row. Arguments bind in the order they are added.
+    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences", cmd => {
+      cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
       });
@@ -825,6 +830,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_his", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = observations.Select(o => o.LocalHi).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_is_deficits", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Boolean) {
+        Value = observations.Select(o => o.IsDeficit).ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
@@ -872,6 +880,60 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable CA1848 // Rare error path; the drain derives a coarser window instead.
       _log.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
 #pragma warning restore CA1848
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// The count stops at <paramref name="backlogCap"/> (a LIMITed subquery), so the read costs at most
+  /// the bound however large the ledger is. Rows on the synthetic bulk lane (stream zero) are left out,
+  /// exactly as the drain's claim leaves them out, and so are rows that are not deficits (#1842) and buckets
+  /// marked unhealable (249): the drain never claims a mismatch, a surplus, a row of unknown kind or an
+  /// unhealable bucket, so none of them is a queued repair. The count carries the claim's predicate, so it is
+  /// answered from the claimable-rows index (251). A key is tracked when the ledger holds it as a deficit: a
+  /// deficit found where the ledger holds a mismatch or a surplus is new to the drain, while an unhealable
+  /// deficit stays tracked, so buckets repair cannot change never take the per-comparison allowance on every
+  /// audit. Best-effort: a probe that cannot reach the ledger is logged and answers null, and the comparison
+  /// falls back to its per-comparison cap.
+  /// </remarks>
+  public async Task<IntegrityRepairBacklogProbe?> IntegrityProbeRepairBacklogAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, int backlogCap,
+      CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<IntegrityRepairBacklogProbe?>(async (cmd, schema) => {
+        cmd.CommandText = $"""
+          SELECT
+            (SELECT COUNT(*) FROM (
+               SELECT 1 FROM {schema}.wh_integrity_ledger
+               WHERE is_deficit
+                 AND stream_id <> '00000000-0000-0000-0000-000000000000'::uuid
+                 AND unhealable_at IS NULL
+               LIMIT @p_limit) b),
+            ARRAY(
+              SELECT EXISTS (
+                SELECT 1 FROM {schema}.wh_integrity_ledger l
+                WHERE l.origin_service_id = @p_origin_service_id
+                  AND l.tenant_scope = COALESCE(k.scope, '')
+                  AND l.event_type = k.event_type
+                  AND l.stream_id = k.stream_id
+                  AND l.is_deficit)
+              FROM UNNEST(@p_tenant_scopes, @p_event_types, @p_stream_ids) WITH ORDINALITY AS k(scope, event_type, stream_id, ord)
+              ORDER BY k.ord)
+          """;
+        _bindDivergenceKeyArrays((Npgsql.NpgsqlCommand)cmd, originServiceId, keys);
+        ((Npgsql.NpgsqlCommand)cmd).Parameters.AddWithValue(P_LIMIT, backlogCap);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return new IntegrityRepairBacklogProbe(reader.GetInt64(0), reader.GetFieldValue<bool[]>(1));
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the comparison falls back to its per-comparison cap.
+      _log.LogWarning(ex,
+        "Integrity repair-backlog probe failed; this comparison admits deficits by its per-comparison cap alone.");
+#pragma warning restore CA1848
+      return null;
     }
   }
 
@@ -963,6 +1025,80 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Null on any failure: a mark that cannot reach the ledger leaves repair on its terminal cadence, the
+  /// harmless direction. The returned keys speak the caller's form, an absent tenant as null.</remarks>
+  public async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_unhealable_batch");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue(P_NOW, now);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now)";
+#pragma warning restore S2077
+      var marked = new List<IntegrityRepairLedger.DivergenceKey>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(0);
+        marked.Add(new IntegrityRepairLedger.DivergenceKey(
+          originServiceId, tenant.Length == 0 ? null : tenant, reader.GetString(1), reader.GetGuid(2)));
+      }
+      return marked;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; repair keeps its terminal cadence for these buckets.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_unhealable_batch failed for origin {OriginServiceId}; repair keeps asking on its terminal cadence.",
+        originServiceId);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    ArgumentNullException.ThrowIfNull(commitSequences);
+    if (eventIds.Count != commitSequences.Count) {
+      throw new ArgumentException(
+        $"{eventIds.Count} event ids but {commitSequences.Count} commit sequences; they pair by position.", nameof(commitSequences));
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var qualified = BuildSchemaQualifiedName(schema, "wh_adopt_redelivered_origin");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = eventIds.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = commitSequences.ToArray()
+    });
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences)";
+#pragma warning restore S2077
+    var buckets = new List<RedeliveredBucketPresence>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var tenant = reader.GetString(1);
+      buckets.Add(new RedeliveredBucketPresence(
+        reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4)));
+    }
+    return buckets;
+  }
+
+  /// <inheritdoc />
   /// <remarks>
   /// Degrades to the empty reading rather than throwing: a metrics refresh that cannot reach the
   /// ledger must never take down the caller. It is logged, because a gauge silently pinned at zero
@@ -1017,7 +1153,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
-    cmd.Parameters.AddWithValue("p_origin_service_id", key.OriginServiceId);
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);
     cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);
     cmd.Parameters.AddWithValue("p_event_type", key.EventType);
     cmd.Parameters.AddWithValue(P_STREAM_ID, key.StreamId);
@@ -3195,6 +3331,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var schema = _resolveSchema(typeof(OutboxRecord));
     const string WATERMARK_KEY = "integrity_checkpoint_watermark";
+    const string HISTORY_FLOOR_KEY = "integrity_checkpoint_history_floor";
+    const string HISTORY_FLOOR_DESCRIPTION =
+      "Stream-integrity checkpoint history floor (highest insert_order written before counting began; rows at or below it are verified by digest, not counted in windows)";
     var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -3202,41 +3341,77 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
 
     // Head watermark = the highest STAMPED sequence (the async stamper's barrier guarantees
-    // everything at/below it is committed and stable), plus the previously advanced watermark.
+    // everything at/below it is committed and stable), plus the previously advanced watermark, the
+    // history floor, and the last insertion-order value handed out (the floor a baseline takes).
     long current;
     long? prior;
+    long? floor;
+    long insertOrderHead;
     await using (var read = conn.CreateCommand().WithCoordinatorTimeout()) {
       read.CommandText =
         $"SELECT COALESCE((SELECT MAX(commit_sequence) FROM {schema}.wh_event_store), 0), " +
-        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_key)";
+        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_key), " +
+        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_floor_key), " +
+        $"       (SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM {schema}.wh_event_insert_order_seq)";
       read.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
+      read.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR_KEY, HISTORY_FLOOR_KEY));
       await using var reader = await read.ExecuteReaderAsync(cancellationToken);
       await reader.ReadAsync(cancellationToken);
       current = reader.GetInt64(0);
-      prior = await reader.IsDBNullAsync(1, cancellationToken)
-        ? null
-        : long.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture);
+      prior = await _readSettingInt64Async(reader, 1, cancellationToken);
+      floor = await _readSettingInt64Async(reader, 2, cancellationToken);
+      insertOrderHead = reader.GetInt64(3);
     }
 
     if (prior is null) {
       // First run: BASELINE at the current head without counting history — a fresh consumer set
       // has nothing to compare retroactive counts against, and a startup count storm helps no one.
-      // The command's scope closes before the return: returning from inside an `await using` puts
-      // that scope's end sequence point on cleanup nothing reaches.
-      int inserted;
+      // The baseline also takes the history floor (#1791): rows written before it that are still
+      // unstamped get sequences ABOVE the baseline later, and no consumer can hold them under those
+      // sequences, so the windows leave them to the digests. Both rows are written by one statement,
+      // and only by the instance whose baseline wins. The command's scope closes before the return:
+      // returning from inside an `await using` puts that scope's end sequence point on cleanup
+      // nothing reaches.
+      long inserted;
       await using (var init = conn.CreateCommand().WithCoordinatorTimeout()) {
-        init.CommandText =
-          $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) " +
-          "VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)') " +
-          "ON CONFLICT DO NOTHING";
+        init.CommandText = $"""
+          WITH baseline AS (
+            INSERT INTO {settings} (setting_key, setting_value, value_type, description)
+            VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)')
+            ON CONFLICT DO NOTHING
+            RETURNING 1
+          ), history_floor AS (
+            INSERT INTO {settings} (setting_key, setting_value, value_type, description)
+            SELECT @p_floor_key, @p_floor, 'integer', @p_floor_description FROM baseline
+            ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value
+            RETURNING 1
+          )
+          SELECT COUNT(*) FROM baseline
+          """;
         init.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
         init.Parameters.Add(new Npgsql.NpgsqlParameter("p_value", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        inserted = await init.ExecuteNonQueryAsync(cancellationToken);
+        _addHistoryFloorParams(init, HISTORY_FLOOR_KEY, HISTORY_FLOOR_DESCRIPTION, insertOrderHead);
+        inserted = (long)(await init.ExecuteScalarAsync(cancellationToken))!;
       }
 
       return inserted == 1
         ? new IntegrityCheckpointWindow { FromCommitSequence = current, ToCommitSequence = current }
         : null;   // another instance baselined first — it owns this window
+    }
+
+    if (floor is null) {
+      // A store an earlier version baselined has a watermark and no floor, and may still be stamping the
+      // history it baselined over. The first advance to find it missing takes the floor here; whatever
+      // value is stored first is the one every instance counts against.
+      await using var take = conn.CreateCommand().WithCoordinatorTimeout();
+      take.CommandText = $"""
+        INSERT INTO {settings} AS s (setting_key, setting_value, value_type, description)
+        VALUES (@p_floor_key, @p_floor, 'integer', @p_floor_description)
+        ON CONFLICT (setting_key) DO UPDATE SET setting_value = s.setting_value
+        RETURNING s.setting_value
+        """;
+      _addHistoryFloorParams(take, HISTORY_FLOOR_KEY, HISTORY_FLOOR_DESCRIPTION, insertOrderHead);
+      floor = long.Parse((string)(await take.ExecuteScalarAsync(cancellationToken))!, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     if (current < prior.Value) {
@@ -3267,6 +3442,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
+          AND es.insert_order > @p_floor
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.event_type <> @p_checkpoint_type
           AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
@@ -3275,6 +3451,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
       _addDigestExemptParam(count);
@@ -3294,6 +3471,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ToCommitSequence = current,
       Buckets = buckets
     };
+  }
+
+  /// <summary>Reads a <c>wh_settings</c> value holding an integer, or null when the setting is absent.</summary>
+  private static async Task<long?> _readSettingInt64Async(
+      System.Data.Common.DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken)
+      ? null
+      : long.Parse(reader.GetString(ordinal), System.Globalization.CultureInfo.InvariantCulture);
+
+  /// <summary>The parameters both statements that write the checkpoint history floor take.</summary>
+  private static void _addHistoryFloorParams(
+      System.Data.Common.DbCommand cmd, string key, string description, long insertOrderHead) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR_KEY, key));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, insertOrderHead.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_floor_description", description));
   }
 
   /// <inheritdoc />
@@ -3515,23 +3707,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _withCoordinatorCommandAsync<IReadOnlyList<PerspectiveCoverageGap>>(async (cmd, schema) => {
       // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
       // that (stream, perspective) + no pending work item — the pipeline is not on it, and never was.
-      cmd.CommandText = $"""
-        SELECT es.stream_id, ma.target_name, COUNT(*)::int
-        FROM {schema}.wh_event_store es
-        JOIN {schema}.wh_message_associations ma
-          ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective'
-        WHERE es.created_at < NOW() - @p_settle::interval
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND NOT EXISTS (
-            SELECT 1 FROM {schema}.wh_perspective_cursors c
-            WHERE c.stream_id = es.stream_id AND c.perspective_name = ma.target_name)
-          AND NOT EXISTS (
-            SELECT 1 FROM {schema}.wh_perspective_events pe
-            WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
-        GROUP BY 1, 2
-        ORDER BY 1, 2
-        LIMIT @p_max
-        """;
+      cmd.CommandText = PerspectiveCoverageGapSql.Build(schema);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, maxGaps)));
 

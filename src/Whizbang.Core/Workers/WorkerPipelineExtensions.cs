@@ -661,7 +661,9 @@ public static class WorkerPipelineExtensions {
     // #666: the integrity disable flags are only as real as this binding. The workers and
     // the checkpoint receptor all check the options; without a turnkey bind the class
     // resolved default-constructed (everything enabled) and configuration did nothing.
-    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>();
+    // #1792: MaxRepairDrainBacklog below one would admit nothing to the repair drain; fail at host start.
+    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>, Whizbang.Core.Messaging.StreamIntegrityOptionsValidator>());
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>(options => {

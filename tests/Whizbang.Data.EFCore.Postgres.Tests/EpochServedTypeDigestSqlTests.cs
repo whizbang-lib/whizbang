@@ -26,6 +26,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/250_TypeDigestWaitsForTheStamp.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
 public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
@@ -151,9 +153,8 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task EpochComposition_EqualsTheFullFold_AcrossClosedAndOpenRangesAsync() {
-    // The stitching invariant: closed epochs and the open window partition the lane's sequence
-    // space, so XOR-composing them must be bit-identical to folding everything — including a
-    // settled row the stamper has not yet sequenced, which belongs to the open part by definition.
+    // The stitching invariant: closed epochs and the open window partition the lane's stamped sequence
+    // space, so XOR-composing them must be bit-identical to folding every stamped row.
     await using var conn = await _openAsync();
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
@@ -164,21 +165,83 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     var e1 = Guid.NewGuid();
     var e2 = Guid.NewGuid();
     var e3 = Guid.NewGuid();
-    var unstamped = Guid.NewGuid();
     await _seedAsync(conn, stream, e1, TYPE, 5);
     await _seedAsync(conn, stream, e2, TYPE, 10);
     await _seedAsync(conn, stream, e3, TYPE, 150);
-    await _seedAsync(conn, stream, unstamped, TYPE, null);   // settled but commit_sequence NULL
     _ = await _closeAsync(conn);
 
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2, e3, unstamped);
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2, e3);
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
     await Assert.That(digests[0].DigestLo).IsEqualTo(Lo)
-      .Because("composition over a partition must equal the whole — and the unstamped row must not fall through the crack");
+      .Because("composition over a partition must equal the whole");
     await Assert.That(digests[0].DigestHi).IsEqualTo(Hi);
-    await Assert.That(digests[0].EventCount).IsEqualTo(4);
+    await Assert.That(digests[0].EventCount).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task LocalLane_AnUnstampedRow_IsLeftOutOfTheOpenWindowUntilItIsStampedAsync() {
+    // History an upgrade left unstamped is old by its creation time, so the settle window alone would
+    // count it as live in the open window while the stamper is still giving it sequences (#1791).
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    await _setWidthAsync(conn, 100);
+    var stream = Guid.NewGuid();
+    const string TYPE = "Contracts.EpochUnstampedProbe";
+
+    var stamped = Guid.NewGuid();
+    var unstamped = Guid.NewGuid();
+    await _seedAsync(conn, stream, stamped, TYPE, 5);
+    await _seedAsync(conn, stream, unstamped, TYPE, null);   // settled by age, commit_sequence NULL
+    _ = await _closeAsync(conn);
+
+    var before = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
+    var (StampedLo, _) = await _expectedFoldAsync(conn, stamped);
+    await Assert.That(before.Select(d => (d.DigestLo, d.EventCount)).ToList())
+      .IsEquivalentTo([(StampedLo, 1)])
+      .Because("a row the stamper has not sequenced is not settled in this lane: the windowed answer, the settled " +
+               "maximum and the stamp fence all wait for its sequence, and the type answer must too.");
+
+    await _stampAsync(conn, unstamped, 170);
+    var after = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
+    var (BothLo, _) = await _expectedFoldAsync(conn, stamped, unstamped);
+    await Assert.That(after.Select(d => (d.DigestLo, d.EventCount)).ToList())
+      .IsEquivalentTo([(BothLo, 2)])
+      .Because("once stamped the row is counted where its sequence puts it, so nothing falls through the crack.");
+  }
+
+  [Test]
+  public async Task ReceivedLane_ARowWithNoOriginSequence_StillFoldsInTheOpenWindowAsync() {
+    // A received row can lack the origin's sequence for good (published before its stamp, or received
+    // before 087); the open window is the only place it can ever fold, so the consumer keeps it there.
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    await _setWidthAsync(conn, 100);
+    var origin = Guid.NewGuid();
+    var stream = Guid.NewGuid();
+    const string TYPE = "Contracts.EpochNoOriginSequenceProbe";
+
+    var sequenced = Guid.NewGuid();
+    var unsequenced = Guid.NewGuid();
+    await _seedAsync(conn, stream, sequenced, TYPE, 5, origin);
+    await _seedAsync(conn, stream, unsequenced, TYPE, null, origin);
+
+    var digests = await coordinator.ComputeTypeDigestsAsync(origin, [TYPE], TimeSpan.FromHours(1));
+
+    var (Lo, _) = await _expectedFoldAsync(conn, sequenced, unsequenced);
+    await Assert.That(digests.Select(d => (d.DigestLo, d.EventCount)).ToList())
+      .IsEquivalentTo([(Lo, 2)]);
+  }
+
+  private static async Task _stampAsync(NpgsqlConnection conn, Guid eventId, long commitSequence) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_event_store SET commit_sequence = @seq WHERE event_id = @event";
+    cmd.Parameters.AddWithValue("seq", commitSequence);
+    cmd.Parameters.AddWithValue("event", eventId);
+    await cmd.ExecuteNonQueryAsync();
   }
 
   [Test]
