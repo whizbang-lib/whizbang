@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The batcher arms its window with <c>Task.Delay(window, clock)</c> after it drains the items it was handed. On the
+/// The batcher arms its window as a delay on its injected clock after it drains the items it was handed. On the
 /// real clock a test cannot know when that happens, and a loaded runner can leave the window open far past any short
 /// wait. On a frozen clock the window cannot close by itself, but advancing before the worker has armed its timer
 /// moves time past nothing, and the timer armed afterward then waits for an advance that never comes. Waiting for
