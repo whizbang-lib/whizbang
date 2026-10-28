@@ -648,7 +648,7 @@ public sealed partial class PgSharedNotifyConnection(
         OnAliveLockClaimed?.Invoke();
       } else {
         // Uncommon: a duplicate-startup race left a previous session holding the lock.
-        // Non-fatal — the heartbeat table fallback still functions.
+        // Non-fatal: the heartbeat table fallback still functions.
         LogAliveLockNotAcquired(_logger);
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {

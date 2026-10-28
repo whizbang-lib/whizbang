@@ -704,7 +704,7 @@ public sealed class PostgresSchemaInitializer {
       cmd.CommandTimeout = 30;
 
       // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
-      // batched region is several commands — the marked one repeatedly, until it reports no rows —
+      // batched region is several commands (the marked one repeatedly, until it reports no rows)
       // because one statement over a whole table cannot finish inside a single command once the
       // table is large. A driver that sent the file whole would push the unsubstituted size token
       // at the server; both drivers read the same migration files, so both have to read the marks.
@@ -755,7 +755,7 @@ public sealed class PostgresSchemaInitializer {
       // makes the compiler hoist this handler out of the IL catch region and rewrite
       // `throw;` as a capture-and-throw; the brace's sequence point then lands on
       // state-machine cleanup nothing reaches. Throwing after the block keeps the same
-      // order — roll back, then hand the failure back — with no unreachable line.
+      // order (roll back, then hand the failure back) with no unreachable line.
       failure = ex;
       await transaction.RollbackAsync(cancellationToken);
     }
