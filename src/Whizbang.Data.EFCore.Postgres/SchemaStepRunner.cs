@@ -109,6 +109,9 @@ public sealed class SchemaStepRunner {
   /// </summary>
   public Func<Exception, TimeSpan?>? RetryDelayFor { get; init; }
 
+  /// <summary>How many deadlocks one step is retried in place for before it fails like any other step.</summary>
+  internal int MaxDeadlockRetries { get; init; } = 5;
+
   /// <summary>
   /// Whether another instance brought the schema up to date while this one waited for the lock. Once true, every
   /// step this runner is handed does nothing.
@@ -223,6 +226,13 @@ public sealed class SchemaStepRunner {
 #pragma warning disable CA5394, S2245 // Jitter spreads a fleet's retries; it protects nothing.
     return TimeSpan.FromMilliseconds(delay + random.Next(0, delay / 2));
 #pragma warning restore CA5394, S2245
+  }
+
+  /// <summary>The wait before retrying a step that lost a deadlock, after deadlock <paramref name="attempt"/>.</summary>
+  internal static TimeSpan DeadlockRetryDelay(int attempt, Random random) {
+    _ = attempt;
+    _ = random;
+    return TimeSpan.Zero;
   }
 
   /// <summary>One attempt: null when the lock was another instance's, so nothing ran.</summary>
