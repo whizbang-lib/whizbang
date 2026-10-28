@@ -42,7 +42,7 @@ public readonly record struct IntegrityRepairDrainItem(
 /// drain's ledger: how large the drain's backlog already is, and which of the comparison's keys the
 /// ledger already tracks (re-admitting a tracked key adds nothing to the backlog).
 /// </summary>
-/// <param name="Backlog">Per-stream ledger rows the drain may claim (deficits), across every origin,
+/// <param name="Backlog">Per-stream ledger rows the drain may claim (deficits not marked unhealable), across every origin,
 /// counted up to the cap the caller passed (a count at the cap means "at least the cap").</param>
 /// <param name="Tracked">Element i is true when key i already has a deficit row in the ledger. A row
 /// recorded as a mismatch, a surplus or of unknown kind is not a queued repair, so it does not count.</param>

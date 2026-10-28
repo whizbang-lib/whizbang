@@ -72,6 +72,52 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Probe_CountsAndTracksOnlyDeficits_TheRowsTheDrainCanClaimAsync() {
+    // #1842: a mismatch, a surplus or a row of unknown kind is never claimed, so it is not part of the
+    // backlog, and a deficit found where the ledger holds one of them is new to the drain.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var deficit = _key(origin, Guid.NewGuid());
+    var surplus = _key(origin, Guid.NewGuid());
+    var unknown = _key(origin, Guid.NewGuid());
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, [
+      _obs(deficit),
+      new IntegrityReportObservation(surplus, 11, 21, 31, 41, IsDeficit: false),
+    ], now, TimeSpan.FromMinutes(60));
+    _ = await coordinator.IntegrityTryBeginReportAsync(unknown, 11, 21, 0, 0, now, TimeSpan.FromMinutes(60));
+
+    var probe = await coordinator.IntegrityProbeRepairBacklogAsync(origin, [deficit, surplus, unknown], backlogCap: 100);
+
+    await Assert.That(probe!.Backlog).IsEqualTo(1L)
+      .Because("only the deficit is a queued repair; the others would fill the bound and defer real deficits");
+    await Assert.That(probe.Tracked).IsEquivalentTo([true, false, false], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("re-admitting a non-deficit row as a deficit adds a repair to the backlog, so it has to count");
+  }
+
+  [Test]
+  public async Task Probe_AnUnhealableDeficit_IsTrackedButNotPartOfTheBacklogAsync() {
+    // The drain never claims a bucket marked unhealable (249), so it is not a queued repair. It stays
+    // tracked: re-sighting it unchanged adds nothing, and counting it as new would let buckets repair
+    // cannot change take the per-comparison allowance on every audit.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.NewGuid();
+    var unhealable = _key(origin, Guid.NewGuid());
+    var repairable = _key(origin, Guid.NewGuid());
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, [_obs(unhealable), _obs(repairable)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
+    _ = await coordinator.IntegrityMarkUnhealableBatchAsync(origin, [unhealable], DateTimeOffset.UtcNow);
+
+    var probe = await coordinator.IntegrityProbeRepairBacklogAsync(origin, [unhealable, repairable], backlogCap: 100);
+
+    await Assert.That(probe!.Backlog).IsEqualTo(1L)
+      .Because("a bucket the drain will never claim cannot fill the bound and defer a deficit it would claim");
+    await Assert.That(probe.Tracked).IsEquivalentTo([true, true], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
   public async Task Probe_StopsCountingAtTheBound_SoTheReadStaysBoundedAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);

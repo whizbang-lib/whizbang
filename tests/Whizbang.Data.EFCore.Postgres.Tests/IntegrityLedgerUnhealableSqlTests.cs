@@ -44,8 +44,10 @@ public class IntegrityLedgerUnhealableSqlTests : EFCoreTestBase {
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin, string? tenant = "tenant-a") =>
     new(origin, tenant, "Contracts.OrderPlaced", TrackedGuid.New().Value);
 
+  // Tracked as a deficit, the only kind the paced drain claims (#1842).
   private async Task _trackAsync(IntegrityRepairLedger.DivergenceKey key, long localLo = 0) =>
-    _ = await _coordinator().IntegrityTryBeginReportAsync(key, 10, 20, localLo, 0, _now, _cooldown);
+    _ = await _coordinator().IntegrityTryBeginReportBatchAsync(
+      key.OriginServiceId, [new IntegrityReportObservation(key, 10, 20, localLo, 0, IsDeficit: true)], _now, _cooldown);
 
   [Test]
   public async Task MarkUnhealable_ATrackedBucket_IsReturnedOnce_AndAKeyWithoutARowIsIgnoredAsync() {

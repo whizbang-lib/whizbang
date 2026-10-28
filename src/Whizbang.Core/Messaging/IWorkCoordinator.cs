@@ -1733,6 +1733,9 @@ public interface IWorkCoordinator {
   /// Batched <see cref="IntegrityTryBeginReportAsync"/> — one round trip for a manifest chunk's
   /// report decisions (element i answers observation i). Null = unsupported; the caller loops the
   /// singles. All observations share one origin (a manifest chunk is per-origin by construction).
+  /// A durable implementation also records each observation's
+  /// <see cref="IntegrityReportObservation.IsDeficit"/>, which decides whether the paced repair drain
+  /// may claim the row.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
   Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
@@ -1765,10 +1768,11 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads what the paced repair drain's admission check needs in one round trip: the drain's
-  /// backlog (per-stream ledger rows, every origin, counted up to <paramref name="backlogCap"/> so
+  /// backlog (per-stream deficit rows, every origin, counted up to <paramref name="backlogCap"/> so
   /// the read stays bounded) and, for each of <paramref name="keys"/>, whether the ledger already
-  /// tracks it. Null = unsupported or failed; the caller then admits by its per-comparison cap
-  /// alone.
+  /// tracks it as a deficit. Rows the drain never claims (identity mismatches, local surpluses, rows
+  /// of unknown kind, buckets marked unhealable) are not counted, and only deficit rows are tracked. Null = unsupported or failed; the caller then
+  /// admits by its per-comparison cap alone.
   /// </summary>
   /// <docs>resilience/stream-integrity#repair-caps</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairBacklogProbeSqlTests.cs</tests>

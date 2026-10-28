@@ -806,7 +806,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
-    _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_report_batch", cmd => {
+    // #1842: the batch that also records each key's divergence kind (251), which decides whether the
+    // paced repair drain may claim the row. Arguments bind in the order they are added.
+    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences", cmd => {
       cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
@@ -828,6 +830,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_his", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = observations.Select(o => o.LocalHi).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_is_deficits", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Boolean) {
+        Value = observations.Select(o => o.IsDeficit).ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
@@ -882,8 +887,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <remarks>
   /// The count stops at <paramref name="backlogCap"/> (a LIMITed subquery), so the read costs at most
   /// the bound however large the ledger is. Rows on the synthetic bulk lane (stream zero) are left out,
-  /// exactly as the drain's claim leaves them out. Best-effort: a probe that cannot reach the ledger
-  /// is logged and answers null, and the comparison falls back to its per-comparison cap.
+  /// exactly as the drain's claim leaves them out, and so are rows that are not deficits (#1842) and buckets
+  /// marked unhealable (249): the drain never claims a mismatch, a surplus, a row of unknown kind or an
+  /// unhealable bucket, so none of them is a queued repair. The count carries the claim's predicate, so it is
+  /// answered from the claimable-rows index (251). A key is tracked when the ledger holds it as a deficit: a
+  /// deficit found where the ledger holds a mismatch or a surplus is new to the drain, while an unhealable
+  /// deficit stays tracked, so buckets repair cannot change never take the per-comparison allowance on every
+  /// audit. Best-effort: a probe that cannot reach the ledger is logged and answers null, and the comparison
+  /// falls back to its per-comparison cap.
   /// </remarks>
   public async Task<IntegrityRepairBacklogProbe?> IntegrityProbeRepairBacklogAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, int backlogCap,
@@ -894,7 +905,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SELECT
             (SELECT COUNT(*) FROM (
                SELECT 1 FROM {schema}.wh_integrity_ledger
-               WHERE stream_id <> '00000000-0000-0000-0000-000000000000'::uuid
+               WHERE is_deficit
+                 AND stream_id <> '00000000-0000-0000-0000-000000000000'::uuid
+                 AND unhealable_at IS NULL
                LIMIT @p_limit) b),
             ARRAY(
               SELECT EXISTS (
@@ -902,7 +915,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
                 WHERE l.origin_service_id = @p_origin_service_id
                   AND l.tenant_scope = COALESCE(k.scope, '')
                   AND l.event_type = k.event_type
-                  AND l.stream_id = k.stream_id)
+                  AND l.stream_id = k.stream_id
+                  AND l.is_deficit)
               FROM UNNEST(@p_tenant_scopes, @p_event_types, @p_stream_ids) WITH ORDINALITY AS k(scope, event_type, stream_id, ord)
               ORDER BY k.ord)
           """;
