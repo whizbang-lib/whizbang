@@ -930,6 +930,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   torn down what it uses. The subscription now checks for release before taking each queued change, and leaves the
   changes it did not take in the queue. A call already running when `Dispose` is called may still finish; `Dispose`
   does not wait for it, so it can be called from the handler itself.
+- **Every debugger-aware clock pause subscriber receives every pause change (Fixes #1847).** The subscriptions
+  returned by `IDebuggerAwareClock.OnPauseStateChanged` shared one queue and competed for its changes, so with two or
+  more subscribers each change reached only one of them. Each subscription now has its own buffer of the ten most
+  recent changes and its own delivery, so every live subscriber receives every change made after it subscribed, in
+  order. A slow or blocked handler delays only itself (one more than ten changes behind loses the oldest, so its last
+  change is still the current state), and a handler that throws is logged at Error and stays subscribed. A released
+  subscription still receives nothing more. `DebuggerAwareClock` gains a constructor taking an
+  `ILogger<DebuggerAwareClock>`, which the default registration supplies.
 - **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
   subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
   state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure

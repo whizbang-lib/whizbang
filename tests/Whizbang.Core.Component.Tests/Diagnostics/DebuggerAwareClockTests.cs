@@ -832,6 +832,16 @@ public class DebuggerAwareClockTests {
       clock.SampleCpuTime(null);
     }
 
+    // A subscription that stays live for the whole test: when it has received all four changes,
+    // the last three were all offered after the released handler's first call began.
+    var observedChanges = 0;
+    var allChangesObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var observer = clock.OnPauseStateChanged(_ => {
+      if (Interlocked.Increment(ref observedChanges) == 4) {
+        allChangesObserved.TrySetResult();
+      }
+    });
+
     // The released handler's first call is held in flight, and a second change is queued behind
     // it before the release: the interleaving in which a change the subscription had already been
     // woken for used to reach the handler after Dispose returned.
@@ -855,23 +865,15 @@ public class DebuggerAwareClockTests {
     subscription.Dispose();
     releaseFirstCall.Release();
 
-    // The queued change and two more, observed through a subscription that is still live: when it
-    // has received all three, all three reached the pause channel after the release.
-    var laterChanges = 0;
-    var allLaterChangesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    using var observer = clock.OnPauseStateChanged(_ => {
-      if (Interlocked.Increment(ref laterChanges) == 3) {
-        allLaterChangesSeen.TrySetResult();
-      }
-    });
+    // Two more changes after the release; the observer receiving all four proves they happened.
     changePauseState(paused: true);
     changePauseState(paused: false);
-    await allLaterChangesSeen.Task.WaitAsync(ct);
+    await allChangesObserved.Task.WaitAsync(ct);
 
     // Assert - none reached the released handler
     await Assert.That(Volatile.Read(ref delivered)).IsEqualTo(1)
-      .Because("a disposed subscription must stop consuming the pause channel, including a "
-        + "change that was already queued when it was released");
+      .Because("a disposed subscription receives no further change, including one that was "
+        + "already queued for it when it was released");
   }
 
   [Test]

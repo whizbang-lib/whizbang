@@ -48,6 +48,7 @@ namespace Whizbang.Core.Diagnostics;
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_Mode_ReturnsConfiguredModeAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_OnPauseStateChanged_ReturnsDisposableAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockPauseFanOutTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_ImplementsIDisposableAsync</tests>
 public interface IDebuggerAwareClock : IDisposable {
   /// <summary>
@@ -73,6 +74,14 @@ public interface IDebuggerAwareClock : IDisposable {
   /// <returns>A disposable subscription that can be used to unsubscribe.</returns>
   /// <remarks>
   /// <para>Useful for VS Code extension integration or test synchronization.</para>
+  /// <para>
+  /// Every live subscription receives every change made after it subscribed, in order; there is
+  /// no replay of earlier changes. Subscriptions do not compete for a change and do not hold each
+  /// other up: each has its own buffer of the ten most recent undelivered changes, so a handler
+  /// that is slow or blocked delays only itself, and one that falls more than ten changes behind
+  /// loses the oldest (the last change it receives is still the current state). A handler that
+  /// throws is logged and stays subscribed, and the other subscriptions are unaffected.
+  /// </para>
   /// <para>
   /// Once the subscription's <c>Dispose</c> returns, the handler is not called again, not even for
   /// a change that was already queued. A call that was already running when <c>Dispose</c> was
