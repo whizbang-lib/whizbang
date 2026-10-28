@@ -14,12 +14,14 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs</tests>
 public enum TableRewriteStrategy {
+  // Each value is explicit: the numbers are public API (a compiled caller embeds them, a numeric setting binds by
+  // them), so a new member takes the next free number and is declared last (#1761).
   /// <summary>
   /// The default. Rewrites with <c>VACUUM FULL</c> at boot when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
   /// permits it, and otherwise only detects and reports. It never starts an online rewrite, even where pg_squeeze is
   /// usable: an online rewrite is opted into with <see cref="PgSqueeze"/>.
   /// </summary>
-  Auto,
+  Auto = 0,
 
   /// <summary>
   /// Online rewrite through the pg_squeeze extension, without a long exclusive lock, driven by the maintenance cycle
@@ -28,7 +30,16 @@ public enum TableRewriteStrategy {
   /// verdict's fix. It is never replaced by a blocking rewrite, and the boot-time step does not run it.
   /// </summary>
   [RequiresPostgresExtension("pg_squeeze", Feature = "Online table rewrite")]
-  PgSqueeze,
+  PgSqueeze = 1,
+
+  /// <summary>
+  /// <c>VACUUM FULL</c> at boot, under an ACCESS EXCLUSIVE lock, when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
+  /// permits it.
+  /// </summary>
+  VacuumFull = 2,
+
+  /// <summary>No table is rewritten. The maintenance cycle still detects, records and reports the tables that need it.</summary>
+  None = 3,
 
   /// <summary>
   /// Online rewrite through pg_repack, which holds an ACCESS EXCLUSIVE lock only briefly at the start and the end.
@@ -39,16 +50,7 @@ public enum TableRewriteStrategy {
   /// as it runs pg_squeeze. The boot-time step does not run it.
   /// </summary>
   [RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite (pg_repack)")]
-  PgRepack,
-
-  /// <summary>
-  /// <c>VACUUM FULL</c> at boot, under an ACCESS EXCLUSIVE lock, when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
-  /// permits it.
-  /// </summary>
-  VacuumFull,
-
-  /// <summary>No table is rewritten. The maintenance cycle still detects, records and reports the tables that need it.</summary>
-  None,
+  PgRepack = 4,
 }
 
 /// <summary>What the <c>Rewrite</c> step does on this start: the rewriter strategy to run, or none, and why.</summary>

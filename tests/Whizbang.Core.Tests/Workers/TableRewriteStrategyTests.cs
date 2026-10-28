@@ -71,6 +71,18 @@ public class TableRewriteStrategyTests {
   }
 
   [Test]
+  // The numeric value of each member is public API (#1761): a compiled caller embeds it, and a numeric setting binds
+  // by it. The members released before pg_repack keep their values; pg_repack takes the next free one.
+  [Arguments(TableRewriteStrategy.Auto, 0)]
+  [Arguments(TableRewriteStrategy.PgSqueeze, 1)]
+  [Arguments(TableRewriteStrategy.VacuumFull, 2)]
+  [Arguments(TableRewriteStrategy.None, 3)]
+  [Arguments(TableRewriteStrategy.PgRepack, 4)]
+  public async Task EachMember_KeepsItsReleasedNumericValueAsync(TableRewriteStrategy strategy, int value) {
+    await Assert.That((int)strategy).IsEqualTo(value);
+  }
+
+  [Test]
   public async Task Resolve_AValueOutsideTheEnum_IsRefusedAsync() {
     await Assert.That(() => TableRewriteStrategyResolver.Resolve((TableRewriteStrategy)42, true, true))
       .Throws<ArgumentOutOfRangeException>();

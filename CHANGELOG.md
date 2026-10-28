@@ -448,6 +448,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probed under; a provider constructed directly takes them as the optional `capabilities` and `capabilityScope`
   arguments, and without them reads no statement statistics. A read that fails while the capability reads Ready (the
   extension dropped after the probe) is no longer swallowed.
+- **Breaking (binary): `PostgresTableStatisticsProvider`'s two constructors gain the optional `capabilities` and
+  `capabilityScope` parameters (#1754).** Source that constructs the provider compiles unchanged; an assembly compiled
+  against 0.2625.0 that calls either constructor directly is recompiled. Recorded in the package's
+  `CompatibilitySuppressions.xml` (#1761).
 - **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
   Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
   `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
