@@ -1079,7 +1079,7 @@ public interface IWorkCoordinator {
       await ComputeStreamDigestsAsync(originServiceId, eventTypes, settleWindow, cancellationToken).ConfigureAwait(false));
 
   /// <summary>
-  /// Stream-integrity Phase L: finds LOCAL coverage gaps — streams holding settled, non-ephemeral,
+  /// Stream-integrity Phase L: finds LOCAL coverage gaps, streams holding settled, non-ephemeral,
   /// stamped events that a registered perspective (message association) should fold, where that
   /// perspective has NO cursor on the stream and the events have no pending work items (typically:
   /// the perspective was born after the history). An event without a commit sequence is never a gap:
