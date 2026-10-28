@@ -304,13 +304,13 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_EmptyList_ReturnsZeroAsync() {
+  public async Task RenewHeldLeasesAsync_EmptyList_ReportsNothingAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = _createCoordinator(dbContext);
 
-    var renewed = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, []);
+    var notHeld = await coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, Guid.CreateVersion7(), []);
 
-    await Assert.That(renewed).IsEqualTo(0);
+    await Assert.That(notHeld).IsEmpty();
   }
 
   [Test]

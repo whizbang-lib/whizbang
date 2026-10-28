@@ -26,16 +26,22 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
 
   private sealed class LeaseCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public ConcurrentQueue<(WorkCategory Category, Guid[] Ids, int LeaseSeconds)> Renewals { get; } = new();
+    public ConcurrentQueue<Guid> RenewingInstances { get; } = new();
     public ConcurrentQueue<(Guid InstanceId, Guid[] Ids)> Releases { get; } = new();
     public Exception? RenewFailure { get; set; }
     public Exception? ReleaseFailure { get; set; }
 
-    public Task<int> RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+    /// <summary>Rows another instance has re-claimed: a renewal reports them instead of renewing them (#1852).</summary>
+    public HashSet<Guid> HeldElsewhere { get; } = [];
+
+    public Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids,
+        int leaseSeconds = 300, CancellationToken cancellationToken = default) {
       if (RenewFailure is not null) {
-        return Task.FromException<int>(RenewFailure);
+        return Task.FromException<IReadOnlyList<Guid>>(RenewFailure);
       }
+      RenewingInstances.Enqueue(instanceId);
       Renewals.Enqueue((category, [.. ids], leaseSeconds));
-      return Task.FromResult(ids.Count);
+      return Task.FromResult<IReadOnlyList<Guid>>([.. ids.Where(HeldElsewhere.Contains)]);
     }
 
     public Task<int> ReleaseUnprocessedInboxAsync(Guid instanceId, IReadOnlyList<Guid> messageIds, CancellationToken cancellationToken = default) {
@@ -153,6 +159,85 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
       .IsEqualTo(InboxDispatchWorker.MAX_LEASE_LAPSES_LOGGED_PER_SWEEP);
     await Assert.That(h.Logs.Any(l => l.Message.Contains("3 more", StringComparison.Ordinal))).IsTrue();
     await Assert.That(coordinator.Releases.Single().Ids.Length).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task Keeper_RenewsAsThisInstance_SoOnlyTheRowsItHoldsAreRenewedAsync() {
+    var (h, writer, coordinator) = _harness();
+    await writer.WriteAsync(InboxDispatchUnitHarness.Work());
+    h.Time.Advance(_halfLease);
+
+    await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.RenewingInstances.Single()).IsEqualTo(h.InstanceId)
+      .Because("a renewal that does not name its instance extends whatever lease the row has, including another instance's (#1852)");
+  }
+
+  [Test]
+  public async Task Keeper_ARowItsRenewalDidNotCover_StopsBeingHeld_AndIsNotDispatchedAsync() {
+    var (h, writer, coordinator) = _harness();
+    var lost = InboxDispatchUnitHarness.Work(attempts: 11, messageType: TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));
+    var kept = InboxDispatchUnitHarness.Work();
+    await writer.WriteAsync(lost);
+    await writer.WriteAsync(kept);
+    coordinator.HeldElsewhere.Add(lost.MessageId);
+    h.Time.Advance(_halfLease);
+
+    await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
+
+    await Assert.That(writer.IsInFlight(lost.MessageId)).IsFalse()
+      .Because("another instance holds the row now, so this one stops holding it");
+    await Assert.That(writer.IsInFlight(kept.MessageId)).IsTrue();
+    await h.Worker.DispatchQueuedAsync(lost, CancellationToken.None);
+    await Assert.That(h.Commits.All).IsEmpty()
+      .Because("its queued copy is not dispatched here: the instance that holds it now dispatches it");
+    var log = h.Logs.Single(l => l.Message.Contains(lost.MessageId.ToString(), StringComparison.Ordinal)
+      && l.Message.Contains("no longer held", StringComparison.Ordinal));
+    await Assert.That(log.Level).IsEqualTo(LogLevel.Warning);
+  }
+
+  [Test]
+  public async Task Keeper_ARowItsRenewalDidNotCover_KeepsItsDispatchDeadlineAsync() {
+    var registry = new LeaseRegistry();
+    var (h, writer, coordinator) = _harness(registry);
+    var lost = InboxDispatchUnitHarness.Work();
+    var kept = InboxDispatchUnitHarness.Work();
+    await writer.WriteAsync(lost);
+    await writer.WriteAsync(kept);
+    _ = writer.TryBeginDispatch(lost.MessageId);
+    _ = writer.TryBeginDispatch(kept.MessageId);
+    using var lostHandle = new LeaseHandle(lost.MessageId, WorkCategory.Inbox, h.Time.GetUtcNow() + TimeSpan.FromSeconds(270),
+      maxRenewals: 6, timeProvider: h.Time, linkedTokens: []);
+    using var keptHandle = new LeaseHandle(kept.MessageId, WorkCategory.Inbox, h.Time.GetUtcNow() + TimeSpan.FromSeconds(270),
+      maxRenewals: 6, timeProvider: h.Time, linkedTokens: []);
+    registry.Register(lostHandle);
+    registry.Register(keptHandle);
+    coordinator.HeldElsewhere.Add(lost.MessageId);
+    h.Time.Advance(_halfLease);
+
+    await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
+
+    await Assert.That(lostHandle.RenewalCount).IsEqualTo(0)
+      .Because("the store lease was not renewed, so the handler's deadline does not move past the lease it lost");
+    await Assert.That(keptHandle.RenewalCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Keeper_ManyRowsItsRenewalDidNotCover_LogTheFirstIndividually_ThenASummaryAsync() {
+    var (h, writer, coordinator) = _harness();
+    for (var i = 0; i < 8; i++) {
+      var work = InboxDispatchUnitHarness.Work();
+      coordinator.HeldElsewhere.Add(work.MessageId);
+      await writer.WriteAsync(work);
+    }
+    h.Time.Advance(_halfLease);
+
+    await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
+
+    await Assert.That(h.Logs.Count(l => l.Message.Contains("no longer held", StringComparison.Ordinal)))
+      .IsEqualTo(InboxDispatchWorker.MAX_LEASE_LAPSES_LOGGED_PER_SWEEP);
+    await Assert.That(h.Logs.Any(l => l.Message.Contains("3 more", StringComparison.Ordinal)
+      && l.Message.Contains("not renewed", StringComparison.Ordinal))).IsTrue();
   }
 
   [Test]

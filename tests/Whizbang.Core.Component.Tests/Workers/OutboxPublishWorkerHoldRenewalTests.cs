@@ -168,6 +168,50 @@ public class OutboxPublishWorkerHoldRenewalTests {
   }
 
   /// <summary>
+  /// A held row another instance has re-claimed (its lease lapsed and a claim took it) is not renewed: the renewal
+  /// names this instance, reports the row, and the hold stops holding it, so it is neither re-buffered nor published
+  /// here, and it stops being tracked as in flight (#1852).
+  /// </summary>
+  [Test]
+  public async Task Bulk_ARowItsRenewalDidNotCover_IsNoLongerHeldOrPublishedAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var lost = _work();
+    var kept = _work();
+    var coordinator = new HeldLeaseCoordinator(clock, _lease);
+    coordinator.Claim(lost.MessageId);
+    coordinator.Claim(kept.MessageId);
+    coordinator.HeldElsewhere[lost.MessageId] = true;
+    var strategy = new SteppedReadinessStrategy(bulk: true);
+    var fx = _build(strategy, coordinator, clock);
+    // Queued before the start, so the first bulk read takes both rows as one batch.
+    fx.Channel.TryWrite(lost);
+    fx.Channel.TryWrite(kept);
+
+    using var cts = new CancellationTokenSource();
+    try {
+      await fx.Worker.StartAsync(cts.Token);
+
+      await strategy.PassAsync(ready: false);
+      await coordinator.WaitForRenewalsAsync(1);
+      await Assert.That(coordinator.Renewals.Single().InstanceId).IsEqualTo(fx.InstanceId)
+        .Because("a renewal names the instance renewing, so it extends only the leases that instance holds");
+
+      // A re-buffered batch is read again whole, so had the lost row been re-buffered it would publish with the kept one.
+      await strategy.PassAsync(ready: true);
+      await fx.Completion.WaitForCountAsync(1);
+      await Assert.That(strategy.Published.Select(w => w.MessageId)).IsEquivalentTo([kept.MessageId])
+        .Because("the instance that holds the row now publishes it; this one does not");
+      await Assert.That(fx.Channel.Released).Contains(lost.MessageId)
+        .Because("a row this instance no longer holds stops being tracked as in flight here");
+      await Assert.That(fx.Failure.All).IsEmpty()
+        .Because("losing a row to another instance is not a failed publish, and reporting one would charge the new holder's row");
+    } finally {
+      await cts.CancelAsync();
+      await fx.Worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
   /// A renewal that fails (the database is unreachable for a moment) does not turn the hold into a failed
   /// publish: nothing is reported to the failure channel, which would release the row and charge an attempt on
   /// its re-claim. The row stays held, and the next pass renews it.
@@ -239,7 +283,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private sealed record Fixture(
-    OutboxPublishWorker Worker, WorkChannel Channel, CompletionChannel Completion, FailureChannel Failure);
+    OutboxPublishWorker Worker, WorkChannel Channel, CompletionChannel Completion, FailureChannel Failure, Guid InstanceId);
 
   private static Fixture _build(SteppedReadinessStrategy strategy, HeldLeaseCoordinator coordinator, TimeProvider clock) {
     var services = new ServiceCollection();
@@ -250,6 +294,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
     var channel = new WorkChannel();
     var completion = new CompletionChannel();
     var failure = new FailureChannel();
+    var instance = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
     var worker = new OutboxPublishWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       workChannelWriter: channel,
@@ -263,7 +308,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
         TransportNotReadyRetryDelayMilliseconds = 0,
       }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      instanceProvider: instance,
       publishStrategy: strategy,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
@@ -275,7 +320,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
       occurrenceGate: new NoOpOccurrencePublishGate(),
       leaseRegistry: new LeaseRegistry(),
       timeProvider: clock);
-    return new Fixture(worker, channel, completion, failure);
+    return new Fixture(worker, channel, completion, failure, instance.InstanceId);
   }
 
   private static OutboxWork _work() {
@@ -349,8 +394,9 @@ public class OutboxPublishWorkerHoldRenewalTests {
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
     public bool TryWrite(OutboxWork work) => _channel.Writer.TryWrite(work);
     public void Complete() => _channel.Writer.Complete();
+    public ConcurrentQueue<Guid> Released { get; } = new();
     public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
+    public void RemoveInFlight(Guid messageId) => Released.Enqueue(messageId);
     public void ClearInFlight() { }
     public bool ShouldRenewLease(Guid messageId) => false;
     public event Action? OnNewWorkAvailable;

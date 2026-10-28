@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Without the cap, a hung handler whose dispatch worker enqueues lease renewals every cycle
 /// gets its DB lease extended forever. The slice 6 change: when the in-process LeaseHandle's
 /// <see cref="LeaseHandle.TryExtendDeadline"/> returns false (cap hit OR disposed), the
-/// renewal worker skips submitting that work_id to <c>RenewLeasesAsync</c>. The SQL lease
+/// renewal worker skips submitting that work_id to <c>RenewHeldLeasesAsync</c>. The SQL lease
 /// expires naturally → <c>claim_orphaned_*</c> re-issues → step 8's attempts bump → eventual
 /// dead-letter.
 /// </remarks>
@@ -69,7 +69,7 @@ public class LeaseRenewalWorkerCapTests {
       return signal.Task.WaitAsync(timeout);
     }
 
-    Task<int> IWorkCoordinator.RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken cancellationToken) {
+    Task<IReadOnlyList<Guid>> IWorkCoordinator.RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken cancellationToken) {
       lock (_lock) {
         _calls.Add((category, ids.ToArray()));
         IReadOnlyList<(WorkCategory Cat, Guid[] Ids)> snapshot = [.. _calls];
@@ -81,7 +81,7 @@ public class LeaseRenewalWorkerCapTests {
           }
         }
       }
-      return Task.FromResult(ids.Count);
+      return Task.FromResult<IReadOnlyList<Guid>>([]);
     }
   }
 
@@ -124,6 +124,7 @@ public class LeaseRenewalWorkerCapTests {
       }),
       logger: NullLogger<LeaseRenewalWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1),
       leaseRegistry: registry,
       timeProvider: time);
     return (worker, coord, time, registry);
@@ -176,7 +177,7 @@ public class LeaseRenewalWorkerCapTests {
 
     await worker.StartAsync(cts.Token);
 
-    // Enqueue 4 renewals — only the first 3 should reach RenewLeasesAsync.
+    // Enqueue 4 renewals — only the first 3 should reach RenewHeldLeasesAsync.
     for (var i = 0; i < 4; i++) {
       await worker.EnqueueAsync(WorkCategory.Inbox, workId, cts.Token);
       // Drain each enqueue separately so the cap engages incrementally. Iteration 4 must NOT
@@ -193,7 +194,7 @@ public class LeaseRenewalWorkerCapTests {
 
     var totalDbRenewalsForThisWorkId = coord.RenewalsFor(workId);
     await Assert.That(totalDbRenewalsForThisWorkId).IsEqualTo(3)
-      .Because("4 renewal requests with cap=3 — only 3 should reach RenewLeasesAsync; the 4th must be skipped so the lease expires naturally");
+      .Because("4 renewal requests with cap=3 — only 3 should reach RenewHeldLeasesAsync; the 4th must be skipped so the lease expires naturally");
     await Assert.That(handle.RenewalCount).IsEqualTo(3);
 
     await cts.CancelAsync();
@@ -242,6 +243,7 @@ public class LeaseRenewalWorkerCapTests {
       }),
       logger: NullLogger<LeaseRenewalWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1),
       leaseRegistry: null,
       // not wired
       timeProvider: time);

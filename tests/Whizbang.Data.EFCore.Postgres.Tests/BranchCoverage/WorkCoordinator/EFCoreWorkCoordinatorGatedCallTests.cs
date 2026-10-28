@@ -234,8 +234,10 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
         CompletedStatus = MessageProcessingStatus.Stored,
         Error = "gate failure"
       }]));
-    register("RenewLeases", "RenewLeasesAsync", async (c, _) =>
-      await Assert.That(await c.RenewLeasesAsync(WorkCategory.Outbox, [_newId()])).IsEqualTo(0));
+    register("RenewHeldLeases", "RenewHeldLeasesAsync", async (c, _) => {
+      var unknown = _newId();
+      await Assert.That(await c.RenewHeldLeasesAsync(WorkCategory.Outbox, _newId(), [unknown])).IsEquivalentTo([unknown]);
+    });
     register("ReleaseUnprocessedInbox", "ReleaseUnprocessedInboxAsync", async (c, _) =>
       await Assert.That(await c.ReleaseUnprocessedInboxAsync(_newId(), [_newId()])).IsEqualTo(0));
     register("ReleaseUnstartedLeases", "ReleaseUnstartedLeasesAsync", (c, _) =>
