@@ -532,6 +532,40 @@ live backend, which is the production failure. `claimsDirect: true` stands in fo
 | `PgDutyElectorLockReleaseTests` | a duty release that found nothing, on both release paths |
 
 
+## Trap 9: the migration ran against the service's own workers (#1636)
+
+A fresh or upgrading database deadlocked its migration (`40P01`, again and again) against workers of the same
+instance. Three things had to be true at once, and each is now false:
+
+1. **Idempotent DDL takes its lock before it looks.** `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes ACCESS
+   EXCLUSIVE and `CREATE INDEX IF NOT EXISTS` takes SHARE whether or not there is anything to do. Migrations 109, 110,
+   184 and 203 add columns to the instance and role tables; 184's ALTER is also in the bootstrap closure, so the
+   ordinary pass re-applied it to columns the bootstrap had just added, against the electors using them. Shipped
+   migrations cannot be edited, so `CatalogCheckedDdl.Guard` rewrites each such top-level statement as it is
+   executed (never what is hashed) into a `DO` block that asks the catalog first: plain migration segments and the
+   core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
+2. **Workers ran before their stage.** The duty holder, the partition assigner, the notification connection and the
+   work-available probes started with the host. They are registered with `AddHostedServiceAtStage` now (Coordinate,
+   Coordinate, end of Preflight) or read the schema-ready gate, and the stage gate falls back to that gate for every
+   stage up to Coordinate, so a host whose schema is provisioned out of band never waits. The migrator election is
+   not gated: it is what Elect is. Do not move a worker that the election itself needs behind Coordinate.
+3. **A deadlock ended the attempt.** Since #1637 a step is its own transaction; a step that loses a deadlock is now
+   run again in place after a short back-off (`MigrationDeadlockRetry`), at Warning, up to five times.
+
+Also found on the way: the init registry keyed its once-guard on the provider object, and `app.Services` and the root
+scope singletons are built from are two objects, so an explicit initialization during the hosted one ran beside it.
+It keys on the host's `IServiceScopeFactory` now, and a call made while one runs waits for it.
+
+| Guard | What it catches |
+|---|---|
+| `CatalogCheckedDdlPostgresTests.Unguarded_AnAddColumnOfAColumnThatExists_StillWaitsForTheWorkerAsync` | the characterization: the server still locks with nothing to do |
+| `MigrationAgainstRunningWorkersTests.ARerun_WhileAWorkerHoldsTheInstanceAndRoleTables_CompletesWithoutWaitingForItAsync` | any re-applied statement on those tables waiting for a worker (55P03 under a lock_timeout) |
+| `DapperSchemaAgainstRunningWorkersTests.ARestart_WhileAWorkerHoldsTheInstanceAndRoleTables_DoesNotWaitForItAsync` | the same on the Dapper driver, which applies the core ensure at every start |
+| `MigrationAgainstRunningWorkersTests.ADeadlockInAFreshPass_IsRetriedInPlace_AndThePassCompletesInTheSameAttemptAsync` | a 40P01 (raised by the server from an event trigger) ending the attempt |
+| `StartupPreflightHostTests.NothingVotesBeforeCoordinate_AndNoWorkerAsksForAnObjectThatDoesNotExistYetAsync` | a role vote before Coordinate, or a worker's 42P01/42883 during startup |
+| `StartupPreflightHostTests.ASecondInitialization_ReturnsOnlyOnceTheFirstHasFinishedAsync` | an explicit initialization not joining the hosted one |
+| `StartupStageWiringTests` | a worker registered ungated again |
+
 ## A fixture does not create its own database
 
 Every test here wants a database of its own, and dozens of fixtures in one shard ask for one at the
