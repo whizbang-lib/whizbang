@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -28,7 +29,7 @@ public class StartupStageGatedServiceTests {
   [Test]
   [Timeout(30000)]
   public async Task TheServiceStarts_OnlyOnceItsStageIsReachedAsync(CancellationToken cancellationToken) {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     var inner = new RecordingService(gate, StartupStage.Coordinate);
     using var wrapper = new StartupStageGatedService<RecordingService>(inner, StartupStage.Coordinate, gate);
 
@@ -50,7 +51,7 @@ public class StartupStageGatedServiceTests {
   [Test]
   [Timeout(30000)]
   public async Task StoppedBeforeItsStage_TheServiceIsNeverStartedOrStoppedAsync(CancellationToken cancellationToken) {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     var inner = new RecordingService(gate, StartupStage.Coordinate);
     using var wrapper = new StartupStageGatedService<RecordingService>(inner, StartupStage.Coordinate, gate);
     await wrapper.StartAsync(cancellationToken);
@@ -80,7 +81,7 @@ public class StartupStageGatedServiceTests {
   [Test]
   [Timeout(30000)]
   public async Task AFailureOfTheServicesOwnLoop_IsTheWrappersSoTheHostSeesItAsync(CancellationToken cancellationToken) {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await gate.OnStageChangedAsync(_at(StartupStage.Coordinate), true, cancellationToken);
     var inner = new FailingLoop();
     using var wrapper = new StartupStageGatedService<FailingLoop>(inner, StartupStage.Coordinate, gate);
@@ -94,7 +95,7 @@ public class StartupStageGatedServiceTests {
   [Test]
   [Timeout(30000)]
   public async Task AStoppedLoop_EndsTheWrapperWithoutAFaultAsync(CancellationToken cancellationToken) {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await gate.OnStageChangedAsync(_at(StartupStage.Coordinate), true, cancellationToken);
     var inner = new WaitingLoop();
     using var wrapper = new StartupStageGatedService<WaitingLoop>(inner, StartupStage.Coordinate, gate);
@@ -110,7 +111,7 @@ public class StartupStageGatedServiceTests {
   [Test]
   public async Task Registration_WrapsTheServiceAtItsStage_OncePerServiceTypeAsync() {
     var services = new ServiceCollection();
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     services.AddSingleton<IStartupStageGate>(gate);
     services.AddSingleton(_ => new WaitingLoop());
 

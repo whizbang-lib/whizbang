@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 
 [assembly: Rock(typeof(IRoleAssignmentReader), BuildType.Create)]
 
@@ -44,7 +45,7 @@ public class RoleAssignmentHealthSourceTests {
   [Test]
   public async Task BeforeTheElectionStage_NothingIsRead_AndTheRolesAreDegradedAsync() {
     var reader = new IRoleAssignmentReaderCreateExpectations();
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await gate.OnStageChangedAsync(
       new StartupStageSnapshot(StartupStage.Preflight, "host starting", false, DateTimeOffset.UnixEpoch), false, CancellationToken.None);
 
@@ -62,7 +63,7 @@ public class RoleAssignmentHealthSourceTests {
     reader.Setups.ReadAssignmentsAsync(Arg.Any<CancellationToken>())
       .ReturnValue(Task.FromResult<IReadOnlyList<RoleAssignmentSnapshot>>(
         [_snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held)]));
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await gate.OnStageChangedAsync(
       new StartupStageSnapshot(StartupStage.Elect, "voting", false, DateTimeOffset.UnixEpoch), false, CancellationToken.None);
 

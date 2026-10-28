@@ -15,24 +15,25 @@ namespace Whizbang.Core.Startup;
 /// never started.
 /// </remarks>
 /// <param name="schemaReady">
-/// The schema-ready gate, which opens at the end of <see cref="StartupStage.Coordinate"/>; null when the host has none.
+/// The schema-ready gate, which opens at the end of <see cref="StartupStage.Coordinate"/>. Required: a host whose schema
+/// is provisioned out of band has one that is open from the start, never none.
 /// </param>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageGateTests.cs</tests>
-public sealed class StartupStageGate(ISchemaReadyGate? schemaReady = null) : IStartupStageGate, IStartupStageObserver {
-  private readonly ISchemaReadyGate? _schemaReady = schemaReady;
+public sealed class StartupStageGate(ISchemaReadyGate schemaReady) : IStartupStageGate, IStartupStageObserver {
+  private readonly ISchemaReadyGate _schemaReady = schemaReady ?? throw new ArgumentNullException(nameof(schemaReady));
   private readonly Dictionary<StartupStage, TaskCompletionSource> _reached = StartupStages.Startup
     .ToDictionary(s => s, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 
   /// <inheritdoc />
   public bool HasReached(StartupStage stage) =>
-    _signal(stage).Task.IsCompleted || (_bySchemaGate(stage) && _schemaReady!.IsReady);
+    _signal(stage).Task.IsCompleted || (_bySchemaGate(stage) && _schemaReady.IsReady);
 
   /// <inheritdoc />
   public Task WaitForAsync(StartupStage stage, CancellationToken cancellationToken) {
     var reached = _signal(stage).Task;
     return _bySchemaGate(stage)
-      ? _eitherAsync(reached, _schemaReady!.WaitForReadyAsync(cancellationToken), cancellationToken)
+      ? _eitherAsync(reached, _schemaReady.WaitForReadyAsync(cancellationToken), cancellationToken)
       : reached.WaitAsync(cancellationToken);
   }
 
@@ -55,7 +56,7 @@ public sealed class StartupStageGate(ISchemaReadyGate? schemaReady = null) : ISt
       : throw new ArgumentOutOfRangeException(nameof(stage), stage, "Only a startup stage can be waited for.");
 
   /// <summary>Whether the schema-ready gate opening also reaches <paramref name="stage"/>.</summary>
-  private bool _bySchemaGate(StartupStage stage) => _schemaReady is not null && stage <= StartupStage.Coordinate;
+  private static bool _bySchemaGate(StartupStage stage) => stage <= StartupStage.Coordinate;
 
   private static async Task _eitherAsync(Task reached, Task schemaReady, CancellationToken cancellationToken) {
     await Task.WhenAny(reached, schemaReady).ConfigureAwait(false);

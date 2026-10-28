@@ -24,7 +24,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task BeforeAnyStage_NothingIsReached_AndAWaitIsPendingAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
 
     var wait = gate.WaitForAsync(StartupStage.Preflight, CancellationToken.None);
 
@@ -34,7 +34,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task EnteringAStage_ReachesItAndEveryStageBeforeIt_ButNotTheOnesAfterAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     var coordinate = gate.WaitForAsync(StartupStage.Coordinate, CancellationToken.None);
     var accepting = gate.WaitForAsync(StartupStage.AcceptingCommands, CancellationToken.None);
 
@@ -49,7 +49,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task ASkippedStage_IsReachedLikeAnEnteredOneAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     var elect = gate.WaitForAsync(StartupStage.Elect, CancellationToken.None);
 
     await gate.OnStageChangedAsync(_at(StartupStage.Elect, skipped: true), recorded: false, CancellationToken.None);
@@ -61,7 +61,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task AWaitForAStageAlreadyReached_CompletesAtOnceAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await gate.OnStageChangedAsync(_at(StartupStage.Running), recorded: true, CancellationToken.None);
 
     var wait = gate.WaitForAsync(StartupStage.Elect, CancellationToken.None);
@@ -71,7 +71,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task AShutdownStage_ReachesNothing_SoAWorkerWaitingForItsStageNeverStartsAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     var coordinate = gate.WaitForAsync(StartupStage.Coordinate, CancellationToken.None);
 
     await gate.OnStageChangedAsync(_at(StartupStage.Draining), recorded: true, CancellationToken.None);
@@ -123,7 +123,7 @@ public class StartupStageGateTests {
 
   [Test]
   public async Task AShutdownStage_CannotBeWaitedForOrAskedAboutAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
 
     await Assert.That(() => gate.HasReached(StartupStage.Draining)).Throws<ArgumentOutOfRangeException>();
     await Assert.That(() => gate.WaitForAsync(StartupStage.Stopped, CancellationToken.None))
@@ -132,8 +132,13 @@ public class StartupStageGateTests {
   }
 
   [Test]
+  public async Task ANullSchemaGate_IsRefused_BecauseAMissingOneWouldBeAWaitThatNeverHappensAsync() {
+    await Assert.That(() => new StartupStageGate(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task ThroughTheReporter_EachStageEnteredIsReachedAsItIsLoggedAsync() {
-    var gate = new StartupStageGate();
+    var gate = new StartupStageGate(new SchemaReadyGate());
     await using var services = new ServiceCollection().BuildServiceProvider();
     using var reporter = new StartupStageReporter(
       services.GetRequiredService<IServiceScopeFactory>(), new FixedInstance(), [gate], NullLogger<StartupStageReporter>.Instance);

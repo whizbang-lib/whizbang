@@ -40,7 +40,7 @@ public sealed class StartupStageWiringTests {
     services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
     services.AddSingleton<ISchemaReadyGate>(new SchemaReadyGate());
-    services.AddSingleton<IStartupStageGate>(new StartupStageGate());
+    services.AddSingleton<IStartupStageGate>(new StartupStageGate(new SchemaReadyGate()));
     services.AddWhizbangPostgresNotifications();
     services.AddWhizbangPostgresNotifications();
     return services.BuildServiceProvider();
