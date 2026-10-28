@@ -796,6 +796,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IWorkCoordinator` gains `IntegrityProbeRepairBacklogAsync`, one bounded read that answers the backlog and which keys
   are already tracked; without it (or when it fails, logged) the per-comparison cap alone applies. The burst path
   (`RepairDrainEnabled = false`) and `ReportOnly` are unchanged. No migration.
+- **The paced repair drain claims only deficits; identity mismatches and local surpluses are no longer re-requested
+  (Fixes #1842).** A manifest comparison writes a ledger row for every divergence it reports, and the drain's claim
+  selected rows by origin, stream and backoff alone, so with `RepairDrainEnabled` (the default) it asked the origin to
+  redeliver mismatches and surpluses on every backoff step, a redelivery that cannot change them, and those rows counted
+  toward `MaxRepairDrainBacklog` and could defer real deficits. The comparison now states each divergence's kind when it
+  reports it (`IntegrityReportObservation.IsDeficit`, required), recorded in the new `wh_integrity_ledger.is_deficit`
+  column by the new report batch `wh_integrity_report_divergences` (migration 251); the ledger row cannot derive the kind,
+  because its digest halves are hashes, not counts. The claim (`wh_integrity_claim_repair_drain`) takes deficit rows only,
+  and the backlog probe counts only the rows the claim can take (deficits, not marked unhealable) and treats a bucket as
+  tracked only when the ledger holds it as a deficit; both read a new partial index over exactly those rows. A row of
+  unknown kind is never claimed: rows recorded before this release (no backfill is possible; the next comparison that
+  sees the bucket records its kind), and rows whose signature a report without the kind moved (the per-bucket fallback,
+  or an older version during a rolling upgrade). Mismatches and surpluses stay in the ledger for reporting.
 - **A rebuild folds a row that events were re-keyed onto from its own stream and every re-keyed source (Fixes #1820).**
   A row that received events re-keyed from another stream was rebuilt from an empty model with only the re-keyed
   events, so its own history was lost. The rebuild now collects every re-key in the run and folds each target row
