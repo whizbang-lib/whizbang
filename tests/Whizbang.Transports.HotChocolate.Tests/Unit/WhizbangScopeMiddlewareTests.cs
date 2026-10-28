@@ -554,6 +554,37 @@ public class WhizbangScopeMiddlewareTests {
 
   #endregion
 
+  #region Claim propagation (#1854)
+
+  [Test]
+  public async Task InvokeAsync_PropagatedClaimTypes_AreListedOnTheScopeContextAsync() {
+    var options = new WhizbangScopeOptions();
+    options.PropagatedClaimTypes.Add("department");
+    var (middleware, accessor) = _createMiddleware(options);
+    var context = _createContextWithClaims(("department", "finance"), ("email", "someone@example.test"));
+
+    await middleware.InvokeAsync(context, accessor);
+
+    var established = (ImmutableScopeContext)accessor.Current!;
+    await Assert.That(established.PropagatedClaimTypes).IsEquivalentTo(["department"])
+      .Because("the edge that reads the claims decides which of them may leave the process");
+    await Assert.That(established.Claims.Keys).IsEquivalentTo(["department", "email"])
+      .Because("the request itself still sees every claim; the list only governs outgoing messages");
+  }
+
+  [Test]
+  public async Task InvokeAsync_NoPropagatedClaimTypes_ListsNoneAsync() {
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions());
+    var context = _createContextWithClaims(("department", "finance"));
+
+    await middleware.InvokeAsync(context, accessor);
+
+    await Assert.That(((ImmutableScopeContext)accessor.Current!).PropagatedClaimTypes).IsEmpty()
+      .Because("by default no claim is copied into message metadata");
+  }
+
+  #endregion
+
   #region Extension Mappings
 
   [Test]
