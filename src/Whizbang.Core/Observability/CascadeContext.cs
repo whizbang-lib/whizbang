@@ -123,6 +123,7 @@ public sealed record CascadeContext {
   /// blank (the "no scope" case). The lowest-level scope primitive shared by the hop builders that stamp scope
   /// from an explicit id pair — one place for the null-on-blank rule instead of re-inlining it per site.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/CascadeContextCoverageTests.cs:SecurityFromIds_BothBlankIsNull_AndEitherIdCarriesAContextAsync</tests>
   public static SecurityContext? SecurityFromIds(string? tenantId, string? userId) =>
     string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)
       ? null
