@@ -49,7 +49,7 @@ public class RedeliveredMissingEventRestoreSqlTests : EFCoreTestBase {
 
     await _storeAsync(_message(kept, stream, origin, 1) with { RestoreIfMissing = true },
       _message(lost, stream, origin, 2) with { RestoreIfMissing = true });
-    var presence = await _coordinator().AdoptRedeliveredOriginAsync(origin, [kept, lost], [1, 2]);
+    var presence = await _coordinator().AdoptRedeliveredOriginAsync(origin, null, [kept, lost], [1, 2]);
     await _leaseAsync(conn, instance, lost);
     await _emitInboxChainAsync(conn, instance);
 
@@ -155,7 +155,7 @@ public class RedeliveredMissingEventRestoreSqlTests : EFCoreTestBase {
     await _rememberAsync(conn, truncated);
 
     await _storeAsync(_message(truncated, stream, origin, 1) with { RestoreIfMissing = true });
-    var presence = await _coordinator().AdoptRedeliveredOriginAsync(origin, [truncated], [1]);
+    var presence = await _coordinator().AdoptRedeliveredOriginAsync(origin, null, [truncated], [1]);
     await _leaseAsync(conn, instance, truncated);
     await _emitInboxChainAsync(conn, instance);
 
@@ -163,7 +163,7 @@ public class RedeliveredMissingEventRestoreSqlTests : EFCoreTestBase {
       .IsFalse().Because("restoring it could bring back an event the stream's truncation removed on purpose");
     await Assert.That(await _scalarAsync<string>(conn, "SELECT error FROM wh_inbox_state WHERE message_id = $1 AND processed_at IS NOT NULL", truncated))
       .IsEqualTo(REFUSED_TRUNCATED).Because("the refusal is stored settled, with the reason, so it is durable and inspectable");
-    await Assert.That(presence).IsEquivalentTo([new RedeliveredBucketPresence(stream, null, await _normalizedTypeAsync(conn), Present: 0, Adopted: 0, Refused: 1)])
+    await Assert.That(presence).IsEquivalentTo([new RedeliveredBucketPresence(stream, null, await _normalizedTypeAsync(conn), Present: 0, Adopted: 0, RefusedTruncated: 1)])
       .Because("the reconciliation hears about the refusal, so the bucket is reported once as one repair cannot change");
   }
 

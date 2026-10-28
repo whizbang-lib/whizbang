@@ -1839,21 +1839,28 @@ public interface IWorkCoordinator {
   /// the origin identity the bundle carries: <paramref name="originServiceId"/> fills an empty origin, the event's
   /// sequence in <paramref name="commitSequences"/> fills an empty origin commit sequence, its integrity digest
   /// moves from the local lane to the origin's lane, and the sealed epochs it touched are refolded. An event that
-  /// already carries a different origin is never changed. Events the store does not hold are not reported; the
-  /// bundle stores them as usual, unless the store refused to restore one past deduplication because its stream's
-  /// earlier history was truncated here, which is counted as <see cref="RedeliveredBucketPresence.Refused"/> (#1843).
+  /// already carries a different origin is never changed. An event with an empty origin whose stored first hop
+  /// names another service than <paramref name="originServiceName"/> was not authored by the origin (an event this
+  /// service authored, which the origin's store had filed as its own), so it adopts nothing and is counted as
+  /// <see cref="RedeliveredBucketPresence.RefusedForeignOrigin"/> (#1844); a first hop that carries no service identity
+  /// adopts as above. Events the store does not hold are not reported; the bundle stores them as usual, unless the store
+  /// refused to restore one past deduplication because its stream's earlier history was truncated here, which is
+  /// counted as <see cref="RedeliveredBucketPresence.RefusedTruncated"/> (#1843).
   /// </summary>
   /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="originServiceName">The origin's service name, from the bundle's first hop; null when the bundle
+  /// carries none, which leaves the first-hop check nothing to compare and adopts as when a stored hop has none.</param>
   /// <param name="eventIds">The bundle's event ids.</param>
   /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
   /// null when the origin had not stamped it.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held, how many of those
-  /// adopted the origin identity, and how many the store refused to restore; null = unsupported.</returns>
+  /// adopted the origin identity, how many the first-hop check refused, and how many the store refused to restore;
+  /// null = unsupported.</returns>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs</tests>
   Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
-    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 

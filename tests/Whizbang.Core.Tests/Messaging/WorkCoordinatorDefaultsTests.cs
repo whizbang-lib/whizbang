@@ -543,7 +543,7 @@ public class WorkCoordinatorDefaultsTests {
   public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
-    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, [], []);
+    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, null, [], []);
 
     await Assert.That(result).IsNull()
       .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");

@@ -22,20 +22,26 @@ namespace Whizbang.Core.Messaging;
 /// <param name="EventType">The stored event type.</param>
 /// <param name="Present">The bundle's events this bucket already held.</param>
 /// <param name="Adopted">Of those, the events whose empty origin columns the bundle filled.</param>
-/// <param name="Refused">The bundle's events deduplication remembers and the event store does not hold that the store
-/// refused to restore, because the stream's earlier history was truncated here (#1843).</param>
+/// <param name="RefusedTruncated">The bundle's events deduplication remembers and the event store does not hold that the
+/// store refused to restore, because the stream's earlier history was truncated here (#1843).</param>
+/// <param name="RefusedForeignOrigin">Of the present events, those with empty origin columns the bundle did not fill,
+/// because the stored event's first hop names another service than the bundle's origin (#1844).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 public readonly record struct RedeliveredBucketPresence(
-  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int Refused = 0);
+  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
+  int RefusedForeignOrigin = 0);
 
 /// <summary>What reconciling one redelivery bundle changed at the receiver.</summary>
 /// <param name="Children">The bundle's children this receiver kept.</param>
 /// <param name="Present">Children already in the event store.</param>
 /// <param name="Adopted">Present children whose empty origin columns the bundle filled.</param>
 /// <param name="MarkedUnhealable">Buckets newly recorded as ones repair cannot change.</param>
-/// <param name="Refused">Children the store refused to restore past deduplication (#1843).</param>
+/// <param name="RefusedTruncated">Children the store refused to restore past deduplication (#1843).</param>
+/// <param name="RefusedForeignOrigin">Present children with empty origin columns the bundle did not fill, because their
+/// first hop names another service than the bundle's origin (#1844).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-public readonly record struct RedeliveryReconciliation(int Children, int Present, int Adopted, int MarkedUnhealable, int Refused = 0) {
+public readonly record struct RedeliveryReconciliation(
+  int Children, int Present, int Adopted, int MarkedUnhealable, int RefusedTruncated = 0, int RefusedForeignOrigin = 0) {
   /// <summary>Nothing was reconciled: no origin, no children, or no store that can answer.</summary>
   public static RedeliveryReconciliation None => default;
 }
@@ -71,11 +77,13 @@ public static partial class RedeliveryReconciler {
   /// <param name="services">The dispatch scope's services.</param>
   /// <param name="logger">Where the reports go.</param>
   /// <param name="now">The caller's clock.</param>
+  /// <param name="originServiceName">The origin's service name (<see cref="OriginServiceNameOf"/> of the bundle's
+  /// envelope); null when the bundle carries none.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>What the reconciliation changed.</returns>
   public static async Task<RedeliveryReconciliation> ReconcileAsync(
       IIdentityPreservingComposite composite, IReadOnlyList<InboxMessage> children, IServiceProvider services,
-      ILogger logger, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      ILogger logger, DateTimeOffset now, string? originServiceName = null, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(composite);
     ArgumentNullException.ThrowIfNull(children);
     ArgumentNullException.ThrowIfNull(services);
@@ -92,6 +100,7 @@ public static partial class RedeliveryReconciler {
       // A zero sequence is the origin's "not stamped yet" on the wire, never a position.
       var buckets = await coordinator.AdoptRedeliveredOriginAsync(
         origin,
+        originServiceName,
         [.. children.Select(c => c.MessageId)],
         [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)],
         cancellationToken).ConfigureAwait(false);
@@ -100,7 +109,7 @@ public static partial class RedeliveryReconciler {
       }
       var present = buckets.Sum(b => b.Present);
       var adopted = buckets.Sum(b => b.Adopted);
-      var refused = buckets.Sum(b => b.Refused);
+      var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
       var metrics = services.GetService<StreamIntegrityMetrics>();
       if (adopted > 0) {
         metrics?.OriginsAdopted.Add(adopted);
@@ -109,16 +118,16 @@ public static partial class RedeliveryReconciler {
       // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
       // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
       // bundle that stored nothing and adopted nothing marks the buckets of the events it found present.
-      List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.Refused > 0)];
-      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refused >= children.Count
-        ? [.. buckets.Where(b => b.Refused == 0)]
+      List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
+      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refusedTruncated >= children.Count
+        ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
         : [];
       if (refusedBuckets.Count + unchanged.Count == 0) {
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refused);
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated);
       }
       var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
       if (ledger is null) {
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refused);
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated);
       }
       var marked = await _markAsync(ledger, origin, refusedBuckets, now,
           key => LogRepairRefusedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
@@ -129,7 +138,7 @@ public static partial class RedeliveryReconciler {
       if (marked > 0) {
         metrics?.RepairsUnhealable.Add(marked);
       }
-      return new RedeliveryReconciliation(children.Count, present, adopted, marked, refused);
+      return new RedeliveryReconciliation(children.Count, present, adopted, marked, refusedTruncated);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -162,6 +171,20 @@ public static partial class RedeliveryReconciler {
             + "Compare the stream on both sides")]
   private static partial void LogRepairRefusedBucket(
     ILogger logger, string eventType, string? tenantScope, Guid streamId, Guid originServiceId);
+
+  /// <summary>
+  /// The service name a redelivery bundle's origin published it under: the service of the envelope's first hop (the
+  /// origin's own publish hop). Null when the envelope has no hop or its first hop carries no service identity
+  /// (<see cref="ServiceInstanceInfo.Unknown"/>), which leaves the first-hop check nothing to compare.
+  /// </summary>
+  /// <param name="bundleEnvelope">The redelivery bundle's envelope as received.</param>
+  /// <returns>The origin's service name, or null.</returns>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
+  public static string? OriginServiceNameOf(IMessageEnvelope bundleEnvelope) {
+    ArgumentNullException.ThrowIfNull(bundleEnvelope);
+    return null;
+  }
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Redelivery from origin {OriginServiceId} filled the origin identity of {Adopted} of its {Children} event(s) "

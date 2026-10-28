@@ -34,14 +34,16 @@ public class RedeliveryReconcilerTests {
     public Exception? Failure { get; set; }
     public int Calls { get; private set; }
     public Guid? Origin { get; private set; }
+    public string? OriginName { get; private set; }
     public IReadOnlyList<Guid> EventIds { get; private set; } = [];
     public IReadOnlyList<long?> Sequences { get; private set; } = [];
 
     public Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
-        Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+        Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
         CancellationToken cancellationToken = default) {
       Calls++;
       Origin = originServiceId;
+      OriginName = originServiceName;
       EventIds = eventIds;
       Sequences = commitSequences;
       return Failure is not null ? Task.FromException<IReadOnlyList<RedeliveredBucketPresence>?>(Failure) : Task.FromResult(Answer);
@@ -174,7 +176,8 @@ public class RedeliveryReconcilerTests {
     var readings = new List<(string Name, long Value)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.OriginsAdopted.Instrument) || ReferenceEquals(instrument, metrics.RepairsUnhealable.Instrument)) {
+      if (ReferenceEquals(instrument, metrics.OriginsAdopted.Instrument) || ReferenceEquals(instrument, metrics.RepairsUnhealable.Instrument)
+          || ReferenceEquals(instrument, metrics.OriginsRefused.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -200,6 +203,8 @@ public class RedeliveryReconcilerTests {
 
     await Assert.That(readings).Contains(("whizbang.stream_integrity.origins_adopted", 2L));
     await Assert.That(readings).Contains(("whizbang.stream_integrity.repairs_unhealable", 1L));
+    await Assert.That(readings.Any(r => r.Name == "whizbang.stream_integrity.origins_refused" && r.Value > 0)).IsFalse()
+      .Because("neither bundle had an event whose first hop names another service");
   }
 
   // ---- refused restores (#1843) ------------------------------------------------------------------
@@ -209,7 +214,7 @@ public class RedeliveryReconcilerTests {
     var origin = TrackedGuid.New().Value;
     var stream = TrackedGuid.New().Value;
     var bundle = _bundle(origin, stream, 1);
-    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, Present: 0, Adopted: 0, Refused: 1)] };
+    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, Present: 0, Adopted: 0, RefusedTruncated: 1)] };
     var ledger = new IntegrityRepairLedger();
     var key = new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, stream);
     _ = ledger.TryBeginReport(key, 1, 2, 3, 4, _now, TimeSpan.FromMinutes(5));
@@ -219,7 +224,7 @@ public class RedeliveryReconcilerTests {
     var first = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now);
     var second = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now.AddMinutes(1));
 
-    await Assert.That(first).IsEqualTo(new RedeliveryReconciliation(1, 0, 0, MarkedUnhealable: 1, Refused: 1));
+    await Assert.That(first).IsEqualTo(new RedeliveryReconciliation(1, 0, 0, MarkedUnhealable: 1, RefusedTruncated: 1));
     await Assert.That(second.MarkedUnhealable).IsEqualTo(0).Because("a bucket already marked is not reported again");
     await Assert.That(logger.Entries.Single(e => e.Level == LogLevel.Warning).Message).Contains("truncated")
       .Because("the report names why repair cannot restore the bucket");
@@ -234,7 +239,7 @@ public class RedeliveryReconcilerTests {
     var refusedStream = TrackedGuid.New().Value;
     var bundle = _bundle(origin, adoptedStream, 3);
     var coordinator = new AdoptingCoordinator {
-      Answer = [new(adoptedStream, null, EVENT_TYPE, 2, 2), new(refusedStream, null, EVENT_TYPE, 0, 0, Refused: 1)],
+      Answer = [new(adoptedStream, null, EVENT_TYPE, 2, 2), new(refusedStream, null, EVENT_TYPE, 0, 0, RefusedTruncated: 1)],
     };
     var ledger = new IntegrityRepairLedger();
     var adoptedKey = new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, adoptedStream);
@@ -246,7 +251,7 @@ public class RedeliveryReconcilerTests {
 
     var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now);
 
-    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(3, 2, 2, MarkedUnhealable: 1, Refused: 1));
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(3, 2, 2, MarkedUnhealable: 1, RefusedTruncated: 1));
     await Assert.That(ledger.TryBeginRepair(adoptedKey, _now, TimeSpan.FromSeconds(1), 3)).IsTrue()
       .Because("the bucket whose history adopted its origin changed, so repair is not given up on");
     await Assert.That(ledger.TryBeginRepair(refusedKey, _now.AddDays(1), TimeSpan.FromSeconds(1), 3)).IsFalse();
@@ -260,7 +265,7 @@ public class RedeliveryReconcilerTests {
     var refusedStream = TrackedGuid.New().Value;
     var bundle = _bundle(origin, presentStream, 2);
     var coordinator = new AdoptingCoordinator {
-      Answer = [new(presentStream, null, EVENT_TYPE, 1, 0), new(refusedStream, null, EVENT_TYPE, 0, 0, Refused: 1)],
+      Answer = [new(presentStream, null, EVENT_TYPE, 1, 0), new(refusedStream, null, EVENT_TYPE, 0, 0, RefusedTruncated: 1)],
     };
     var ledger = new IntegrityRepairLedger();
     _ = ledger.TryBeginReport(new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, presentStream), 1, 2, 3, 4, _now, TimeSpan.FromMinutes(5));
@@ -270,7 +275,7 @@ public class RedeliveryReconcilerTests {
 
     var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now);
 
-    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(2, 1, 0, MarkedUnhealable: 2, Refused: 1))
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(2, 1, 0, MarkedUnhealable: 2, RefusedTruncated: 1))
       .Because("nothing was stored and nothing adopted, so neither bucket can change");
     var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message).ToList();
     await Assert.That(warnings.Count).IsEqualTo(2);
@@ -285,7 +290,7 @@ public class RedeliveryReconcilerTests {
     var refusedStream = TrackedGuid.New().Value;
     var bundle = _bundle(origin, stream, 3);
     var coordinator = new AdoptingCoordinator {
-      Answer = [new(stream, null, EVENT_TYPE, 1, 0), new(refusedStream, null, EVENT_TYPE, 0, 0, Refused: 1)],
+      Answer = [new(stream, null, EVENT_TYPE, 1, 0), new(refusedStream, null, EVENT_TYPE, 0, 0, RefusedTruncated: 1)],
     };
     var ledger = new IntegrityRepairLedger();
     var storingKey = new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, stream);
@@ -295,7 +300,7 @@ public class RedeliveryReconcilerTests {
 
     var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, new CapturingLogger(), _now);
 
-    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(3, 1, 0, MarkedUnhealable: 1, Refused: 1));
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(3, 1, 0, MarkedUnhealable: 1, RefusedTruncated: 1));
     await Assert.That(ledger.TryBeginRepair(storingKey, _now, TimeSpan.FromSeconds(1), 3)).IsTrue()
       .Because("a child of this bundle is being stored, which is the repair working");
   }
@@ -305,12 +310,12 @@ public class RedeliveryReconcilerTests {
     var origin = TrackedGuid.New().Value;
     var stream = TrackedGuid.New().Value;
     var bundle = _bundle(origin, stream, 1);
-    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, 0, 0, Refused: 1)] };
+    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, 0, 0, RefusedTruncated: 1)] };
     await using var services = _services(coordinator, null);
 
     var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, new CapturingLogger(), _now);
 
-    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(1, 0, 0, 0, Refused: 1));
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(1, 0, 0, 0, RefusedTruncated: 1));
   }
 
   [Test]
@@ -332,7 +337,7 @@ public class RedeliveryReconcilerTests {
     var stream = TrackedGuid.New().Value;
     var ledger = new IntegrityRepairLedger();
     _ = ledger.TryBeginReport(new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, stream), 1, 2, 3, 4, _now, TimeSpan.FromMinutes(5));
-    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, 0, 0, Refused: 1)] };
+    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, 0, 0, RefusedTruncated: 1)] };
     await using var services = _services(coordinator, ledger, metrics);
     var bundle = _bundle(origin, stream, 1);
 
@@ -341,6 +346,133 @@ public class RedeliveryReconcilerTests {
 
     await Assert.That(readings).IsEquivalentTo([1L]);
   }
+
+  [Test]
+  public async Task Reconcile_PassesTheOriginsServiceName_ToTheStoreAsync() {
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var bundle = _bundle(origin, stream, 1);
+    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, 1, 1)] };
+    await using var services = _services(coordinator, new IntegrityRepairLedger());
+
+    _ = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, new CapturingLogger(), _now, "orders-service");
+
+    await Assert.That(coordinator.OriginName).IsEqualTo("orders-service")
+      .Because("the store adopts only events whose first hop names the bundle's origin");
+  }
+
+  [Test]
+  public async Task Reconcile_EventsWhoseFirstHopNamesAnotherService_AreCountedAndLoggedOnceAsync() {
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterServices.GetRequiredService<IMeterFactory>()));
+    var readings = new List<(string Name, long Value)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument, metrics.OriginsRefused.Instrument) || ReferenceEquals(instrument, metrics.OriginsAdopted.Instrument)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (readings) { readings.Add((instrument.Name, value)); }
+    });
+    listener.Start();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var otherStream = TrackedGuid.New().Value;
+    var bundle = _bundle(origin, stream, 3);
+    var coordinator = new AdoptingCoordinator {
+      Answer = [new(stream, null, EVENT_TYPE, Present: 2, Adopted: 1, RefusedForeignOrigin: 1), new(otherStream, null, EVENT_TYPE, 1, 0, RefusedForeignOrigin: 1)],
+    };
+    await using var services = _services(coordinator, new IntegrityRepairLedger(), metrics);
+    var logger = new CapturingLogger();
+
+    var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now, "orders-service");
+    listener.RecordObservableInstruments();
+
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(3, 3, 1, 0, RefusedForeignOrigin: 2));
+    await Assert.That(readings).Contains(("whizbang.stream_integrity.origins_refused", 2L));
+    await Assert.That(readings).Contains(("whizbang.stream_integrity.origins_adopted", 1L));
+    var warning = logger.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains(origin.ToString()).And.Contains("orders-service").And.Contains("2")
+      .Because("the refusal is reported once per bundle, naming the origin and how many events it did not adopt");
+  }
+
+  [Test]
+  public async Task Reconcile_EveryPresentEventRefused_MarksTheBucketUnhealable_AndReportsTheRefusalAsync() {
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var bundle = _bundle(origin, stream, 1);
+    var coordinator = new AdoptingCoordinator { Answer = [new(stream, null, EVENT_TYPE, Present: 1, Adopted: 0, RefusedForeignOrigin: 1)] };
+    var ledger = new IntegrityRepairLedger();
+    var key = new IntegrityRepairLedger.DivergenceKey(origin, null, EVENT_TYPE, stream);
+    _ = ledger.TryBeginReport(key, 1, 2, 3, 4, _now, TimeSpan.FromMinutes(5));
+    await using var services = _services(coordinator, ledger);
+    var logger = new CapturingLogger();
+
+    var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now, null);
+
+    await Assert.That(result).IsEqualTo(new RedeliveryReconciliation(1, 1, 0, MarkedUnhealable: 1, RefusedForeignOrigin: 1))
+      .Because("a redelivery the first-hop check refuses will be refused again, so repair cannot change the bucket");
+    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(2)
+      .Because("the refusal and the bucket repair cannot change are each reported once");
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_TheBundlesFirstHop_NamesTheOriginAsync() {
+    var envelope = _envelope(
+      new MessageHop { ServiceInstance = _instance("orders-service"), Timestamp = _now },
+      new MessageHop { ServiceInstance = _instance("billing-service"), Timestamp = _now });
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsEqualTo("orders-service");
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_NoHops_IsNullAsync() {
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(_envelope())).IsNull();
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_AFirstHopWithoutAServiceIdentity_IsNullAsync() {
+    var envelope = _envelope(new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = _now });
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsNull()
+      .Because("the unknown sentinel is no identity to compare a stored hop with");
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_AnEnvelopeReadWithoutHops_IsNullAsync() {
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = new MessageId(TrackedGuid.New().Value),
+      Payload = JsonElement.Parse("{}"),
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Inbox },
+    };
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsNull()
+      .Because("an envelope deserialized without a hop list carries no origin name");
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_AFirstHopWithABlankServiceName_IsNullAsync() {
+    var envelope = _envelope(new MessageHop { ServiceInstance = _instance(" "), Timestamp = _now });
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsNull();
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_NullEnvelope_ThrowsAsync() {
+    await Assert.That(() => RedeliveryReconciler.OriginServiceNameOf(null!)).Throws<ArgumentNullException>();
+  }
+
+  private static ServiceInstanceInfo _instance(string service) =>
+    new() { ServiceName = service, InstanceId = TrackedGuid.New().Value, HostName = "host", ProcessId = 1 };
+
+  private static MessageEnvelope<JsonElement> _envelope(params MessageHop[] hops) => new() {
+    MessageId = new MessageId(TrackedGuid.New().Value),
+    Payload = JsonElement.Parse("{}"),
+    Hops = [.. hops],
+    DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Inbox },
+  };
 
   [Test]
   public async Task Reconcile_BundleWithoutAnOrigin_AsksTheStoreNothingAsync() {
