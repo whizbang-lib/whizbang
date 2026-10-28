@@ -235,15 +235,15 @@ public class StreamDigestTests : EFCoreTestBase {
     const int DEEP_STREAMS = 400;
 
     await _seedUncoveredStreamsAsync(conn, SHALLOW_STREAMS);
-    var shallow = await _coverageGapReadsAsync(conn, CAP);
+    var (_, shallowReads) = await _coverageGapReadsAsync(conn, CAP);
     await _seedUncoveredStreamsAsync(conn, DEEP_STREAMS - SHALLOW_STREAMS);
-    var deep = await _coverageGapReadsAsync(conn, CAP);
-    Console.WriteLine($"coverage gaps capped at {CAP}: read {shallow.Reads} behind {SHALLOW_STREAMS} streams, {deep.Reads} behind {DEEP_STREAMS}");
+    var (deepGaps, deepReads) = await _coverageGapReadsAsync(conn, CAP);
+    Console.WriteLine($"coverage gaps capped at {CAP}: read {shallowReads} behind {SHALLOW_STREAMS} streams, {deepReads} behind {DEEP_STREAMS}");
 
-    await Assert.That(deep.Gaps).IsEqualTo(CAP);
-    await Assert.That(deep.Reads).IsLessThanOrEqualTo(shallow.Reads + (shallow.Reads / 4))
-      .Because($"reporting {CAP} gaps read {shallow.Reads} event-store rows and index entries behind {SHALLOW_STREAMS} " +
-               $"uncovered streams and {deep.Reads} behind {DEEP_STREAMS}. The report cap must bound the query, not " +
+    await Assert.That(deepGaps).IsEqualTo(CAP);
+    await Assert.That(deepReads).IsLessThanOrEqualTo(shallowReads + (shallowReads / 4))
+      .Because($"reporting {CAP} gaps read {shallowReads} event-store rows and index entries behind {SHALLOW_STREAMS} " +
+               $"uncovered streams and {deepReads} behind {DEEP_STREAMS}. The report cap must bound the query, not " +
                "trim its answer after it has read and grouped the whole store (#1791).");
   }
 

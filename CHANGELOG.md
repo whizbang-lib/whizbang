@@ -735,6 +735,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or a heal lifts the mark, and a bucket whose origin never answered keeps the terminal cadence. New counters
   `whizbang.stream_integrity.origins_adopted` and `whizbang.stream_integrity.repairs_unhealable`; `IWorkCoordinator`
   gains `AdoptRedeliveredOriginAsync` and `IntegrityMarkUnhealableBatchAsync` (Fixes #1790)
+- **Stream integrity no longer treats history stamped after an upgrade as live gaps.** Right after an upgrade the
+  historical events are unstamped, and the commit-order stamper gives them sequences over the next minutes or hours.
+  Three parts of stream integrity counted that history as new live traffic. The first checkpoint baselined at the
+  highest stamped sequence, so the history stamped later fell into the following windows, where no consumer can hold it
+  under those sequences, and every bucket became a gap that was confirmed and repaired. The baseline now also records a
+  history floor (`integrity_checkpoint_history_floor` in `wh_settings`, the last insertion-order value handed out), and
+  windows count only events written after it; a store an earlier version baselined takes the floor on its next advance.
+  The local lane's type-level digest folded unstamped events into its open window; it now waits for the stamp, as the
+  windowed answer and the settled maximum already did (migration 250), while a received event with no origin sequence
+  still folds there. Coverage-gap detection reported unstamped events, which the stamp fence holds back from
+  perspectives, as never folded and asked for rebuilds; it now skips them, and its query walks streams one at a time
+  and stops at the report cap instead of grouping the whole store first. (Fixes #1791)
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and
