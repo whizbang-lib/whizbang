@@ -952,14 +952,17 @@ public interface IWorkCoordinator {
   /// advanced window — the payload of one <see cref="IntegrityCheckpoint"/>. Multi-instance safe:
   /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
   /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
-  /// window at the current watermark) so history is never counted retroactively. At-most-once
+  /// window at the current watermark) so history is never counted retroactively. The baseline also
+  /// takes a history floor: events written before it that the stamper sequences only afterwards
+  /// (history left unstamped by an upgrade) land above the baseline but are left out of every
+  /// window, since they were delivered under no sequence; the digests verify them instead. At-most-once
   /// schedule occurrences, checkpoints themselves and the <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/>
   /// audit records are excluded from the counts. Default: null
   /// (engines without commit-sequence stamping cannot checkpoint).
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The advanced window, or null when unsupported / lost the advance race.</returns>
-  /// <docs>resilience/stream-integrity</docs>
+  /// <docs>resilience/stream-integrity#checkpoint-history-floor</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointAdvanceTests.cs</tests>
   Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IntegrityCheckpointWindow?>(null);

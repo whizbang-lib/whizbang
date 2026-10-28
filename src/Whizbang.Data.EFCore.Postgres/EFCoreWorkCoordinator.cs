@@ -53,6 +53,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   // part of the query, not a value.
   private const string P_IDS = "p_ids";
   private const string P_KEY = "p_key";
+  private const string P_FLOOR_KEY = "p_floor_key";
+  private const string P_FLOOR = "p_floor";
   private const string P_LIMIT = "p_limit";
   private const string P_MAX = "p_max";
   private const string P_NOW = "p_now";
@@ -3270,6 +3272,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var schema = _resolveSchema(typeof(OutboxRecord));
     const string WATERMARK_KEY = "integrity_checkpoint_watermark";
+    const string HISTORY_FLOOR_KEY = "integrity_checkpoint_history_floor";
+    const string HISTORY_FLOOR_DESCRIPTION =
+      "Stream-integrity checkpoint history floor (highest insert_order written before counting began; rows at or below it are verified by digest, not counted in windows)";
     var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -3277,41 +3282,77 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
 
     // Head watermark = the highest STAMPED sequence (the async stamper's barrier guarantees
-    // everything at/below it is committed and stable), plus the previously advanced watermark.
+    // everything at/below it is committed and stable), plus the previously advanced watermark, the
+    // history floor, and the last insertion-order value handed out (the floor a baseline takes).
     long current;
     long? prior;
+    long? floor;
+    long insertOrderHead;
     await using (var read = conn.CreateCommand().WithCoordinatorTimeout()) {
       read.CommandText =
         $"SELECT COALESCE((SELECT MAX(commit_sequence) FROM {schema}.wh_event_store), 0), " +
-        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_key)";
+        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_key), " +
+        $"       (SELECT setting_value FROM {settings} WHERE setting_key = @p_floor_key), " +
+        $"       (SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM {schema}.wh_event_insert_order_seq)";
       read.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
+      read.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR_KEY, HISTORY_FLOOR_KEY));
       await using var reader = await read.ExecuteReaderAsync(cancellationToken);
       await reader.ReadAsync(cancellationToken);
       current = reader.GetInt64(0);
-      prior = await reader.IsDBNullAsync(1, cancellationToken)
-        ? null
-        : long.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture);
+      prior = await _readSettingInt64Async(reader, 1, cancellationToken);
+      floor = await _readSettingInt64Async(reader, 2, cancellationToken);
+      insertOrderHead = reader.GetInt64(3);
     }
 
     if (prior is null) {
       // First run: BASELINE at the current head without counting history — a fresh consumer set
       // has nothing to compare retroactive counts against, and a startup count storm helps no one.
-      // The command's scope closes before the return: returning from inside an `await using` puts
-      // that scope's end sequence point on cleanup nothing reaches.
-      int inserted;
+      // The baseline also takes the history floor (#1791): rows written before it that are still
+      // unstamped get sequences ABOVE the baseline later, and no consumer can hold them under those
+      // sequences, so the windows leave them to the digests. Both rows are written by one statement,
+      // and only by the instance whose baseline wins. The command's scope closes before the return:
+      // returning from inside an `await using` puts that scope's end sequence point on cleanup
+      // nothing reaches.
+      long inserted;
       await using (var init = conn.CreateCommand().WithCoordinatorTimeout()) {
-        init.CommandText =
-          $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) " +
-          "VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)') " +
-          "ON CONFLICT DO NOTHING";
+        init.CommandText = $"""
+          WITH baseline AS (
+            INSERT INTO {settings} (setting_key, setting_value, value_type, description)
+            VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)')
+            ON CONFLICT DO NOTHING
+            RETURNING 1
+          ), history_floor AS (
+            INSERT INTO {settings} (setting_key, setting_value, value_type, description)
+            SELECT @p_floor_key, @p_floor, 'integer', @p_floor_description FROM baseline
+            ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value
+            RETURNING 1
+          )
+          SELECT COUNT(*) FROM baseline
+          """;
         init.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
         init.Parameters.Add(new Npgsql.NpgsqlParameter("p_value", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        inserted = await init.ExecuteNonQueryAsync(cancellationToken);
+        _addHistoryFloorParams(init, HISTORY_FLOOR_KEY, HISTORY_FLOOR_DESCRIPTION, insertOrderHead);
+        inserted = (long)(await init.ExecuteScalarAsync(cancellationToken))!;
       }
 
       return inserted == 1
         ? new IntegrityCheckpointWindow { FromCommitSequence = current, ToCommitSequence = current }
         : null;   // another instance baselined first — it owns this window
+    }
+
+    if (floor is null) {
+      // A store an earlier version baselined has a watermark and no floor, and may still be stamping the
+      // history it baselined over. The first advance to find it missing takes the floor here; whatever
+      // value is stored first is the one every instance counts against.
+      await using var take = conn.CreateCommand().WithCoordinatorTimeout();
+      take.CommandText = $"""
+        INSERT INTO {settings} AS s (setting_key, setting_value, value_type, description)
+        VALUES (@p_floor_key, @p_floor, 'integer', @p_floor_description)
+        ON CONFLICT (setting_key) DO UPDATE SET setting_value = s.setting_value
+        RETURNING s.setting_value
+        """;
+      _addHistoryFloorParams(take, HISTORY_FLOOR_KEY, HISTORY_FLOOR_DESCRIPTION, insertOrderHead);
+      floor = long.Parse((string)(await take.ExecuteScalarAsync(cancellationToken))!, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     if (current < prior.Value) {
@@ -3342,6 +3383,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
+          AND es.insert_order > @p_floor
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.event_type <> @p_checkpoint_type
           AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
@@ -3350,6 +3392,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
       _addDigestExemptParam(count);
@@ -3369,6 +3412,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ToCommitSequence = current,
       Buckets = buckets
     };
+  }
+
+  /// <summary>Reads a <c>wh_settings</c> value holding an integer, or null when the setting is absent.</summary>
+  private static async Task<long?> _readSettingInt64Async(
+      System.Data.Common.DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken)
+      ? null
+      : long.Parse(reader.GetString(ordinal), System.Globalization.CultureInfo.InvariantCulture);
+
+  /// <summary>The parameters both statements that write the checkpoint history floor take.</summary>
+  private static void _addHistoryFloorParams(
+      System.Data.Common.DbCommand cmd, string key, string description, long insertOrderHead) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR_KEY, key));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, insertOrderHead.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_floor_description", description));
   }
 
   /// <inheritdoc />
