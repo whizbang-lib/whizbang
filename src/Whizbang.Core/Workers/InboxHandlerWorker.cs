@@ -26,6 +26,11 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
 
+  /// <summary>
+  /// How many failed rows one flush logs individually before the rest are summarized in one line (#1789).
+  /// </summary>
+  internal const int MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH = 5;
+
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,

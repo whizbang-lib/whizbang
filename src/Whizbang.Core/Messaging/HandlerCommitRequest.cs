@@ -33,7 +33,16 @@ public sealed record HandlerCommitRequest(
   HandlerInboxCompletion InboxCompletion,
   IReadOnlyList<OutboxMessage>? NewOutboxMessages = null,
   IReadOnlyList<InboxMessage>? NewInboxMessages = null,
-  bool DebugMode = false);
+  bool DebugMode = false) {
+  /// <summary>
+  /// The message type of the inbox row being acknowledged, when the caller knows it. Diagnostics only:
+  /// a commit that fails names the type in its log line, so an operator can tell which traffic is
+  /// failing without reading the row. Never part of the commit payload.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerTests.cs</tests>
+  public string? MessageType { get; init; }
+}
 
 /// <summary>The inbox row being acknowledged by a handler.</summary>
 /// <param name="MessageId">The wh_inbox.message_id row to mark.</param>
