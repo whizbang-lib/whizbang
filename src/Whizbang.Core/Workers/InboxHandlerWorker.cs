@@ -39,7 +39,9 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     IOptions<InboxHandlerWorkerOptions> options,
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
-    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
+    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
+    IInboxChannelWriter? inboxChannelWriter = null) {
+    _ = inboxChannelWriter;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(failureChannel);

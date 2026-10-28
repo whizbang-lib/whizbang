@@ -467,6 +467,76 @@ public sealed class InboxHandlerWorkerTests {
       .Because("logging is capped, routing is not: every failed row still reaches the failure channel");
   }
 
+  // ==========================================================================
+  // #1788: a row waiting for its commit stops being held once the commit flush ends
+  // ==========================================================================
+
+  private static async Task<(InboxChannelWriter Writer, Guid Id)> _heldCommitPendingAsync() {
+    var writer = new InboxChannelWriter();
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await writer.WriteAsync(new InboxWork {
+      MessageId = id,
+      Envelope = new Whizbang.Core.Observability.MessageEnvelope<System.Text.Json.JsonElement> {
+        MessageId = Whizbang.Core.ValueObjects.MessageId.From(id),
+        Payload = System.Text.Json.JsonElement.Parse("{}"),
+        Hops = [],
+        DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+          Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
+          Source = MessageSource.Inbox,
+        },
+      },
+      MessageType = "Contracts.Orders.OrderPlaced, Contracts",
+    });
+    _ = writer.TryBeginDispatch(id);
+    writer.MarkCommitPending(id);
+    writer.EndDispatch(id);
+    return (writer, id);
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task CommitFlush_ReleasesTheHeldRow_WhetherItCommittedOrNotAsync(bool success) {
+    var (writer, id) = await _heldCommitPendingAsync();
+    var coordinator = new StubCoordinator(reqs =>
+      [new HandlerBatchResult(reqs[0].HandlerId, Success: success, ErrorMessage: success ? null : "commit refused")]);
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: writer);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.EnqueueAsync(_request(id, id), cts.Token);
+    // StopAsync drains the flusher, so the flush of this request has ended when it returns.
+    await worker.StopAsync(cts.Token);
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse()
+      .Because("a committed row is gone from the store, and a failed one must be offered again; neither is held any more");
+  }
+
+  [Test]
+  public async Task DisabledCommits_ReleaseTheHeldRow_TheyRefuseAsync() {
+    var (writer, id) = await _heldCommitPendingAsync();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: writer);
+
+    await worker.EnqueueAsync(_request(id, id));
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse()
+      .Because("a refused commit will never land, so the row must not stay held waiting for it");
+  }
+
   [Test]
   public async Task EnqueueAsync_ThrowsOnNullRequestAsync() {
     var worker = new InboxHandlerWorker(
