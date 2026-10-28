@@ -128,7 +128,7 @@ public class CatalogCheckedDdlTests {
 
   [Test]
   public async Task AScriptWithNothingToGuard_IsReturnedAsItIsAsync() {
-    const string SQL = "CREATE TABLE IF NOT EXISTS t (id int);\nCOMMENT ON TABLE t IS 'it''s; b';\nSELECT 4 - 2 / 1;";
+    const string SQL = "CREATE TABLE IF NOT EXISTS t (id int);\nCOMMENT ON TABLE t IS 'it''s; b';\nSELECT 4 - 2 / 1;\nSELECT e'it\\'s';";
 
     await Assert.That(CatalogCheckedDdl.Guard(SQL)).IsSameReferenceAs(SQL);
   }
@@ -154,6 +154,7 @@ public class CatalogCheckedDdlTests {
   [Arguments("CREATE INDEX IF NOT EXISTS i ON;")]
   [Arguments("CREATE INDEX IF NOT EXISTS i ON ONLY;")]
   [Arguments("CREATE INDEX IF NOT EXISTS i;")]
+  [Arguments("CREATE INDEX IF NOT EXISTS;")]
   [Arguments("CREATE UNIQUE TABLE t (c int);")]
   [Arguments("CREATE TABLE t (c int);")]
   [Arguments("CREATE;")]

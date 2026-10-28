@@ -113,6 +113,50 @@ public sealed partial class DapperSchemaAgainstRunningWorkersTests {
       .Because("the file that lost the deadlock was applied by its retry");
   }
 
+  /// <summary>
+  /// A deadlock that does not clear fails the start once the in-place retries are spent, recorded on the file's ledger
+  /// row like any other failure. This start has no logger, so the retries are not said anywhere, and still happen.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ADeadlockThatKeepsHappening_FailsTheStart_OnceTheRetriesAreSpentAsync(CancellationToken cancellationToken) {
+    var (file, function) = _aFileWithAFunctionOfItsOwn();
+    await using (var connection = new NpgsqlConnection(_database.ConnectionString)) {
+      await connection.OpenAsync(cancellationToken);
+      await using var trigger = new NpgsqlCommand($"""
+        CREATE SEQUENCE public.test_deadlocks;
+        CREATE FUNCTION public.test_inject_deadlock() RETURNS event_trigger LANGUAGE plpgsql AS $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
+            IF r.object_identity LIKE 'public.{function}(%' THEN
+              PERFORM nextval('public.test_deadlocks');
+              RAISE EXCEPTION 'injected deadlock' USING ERRCODE = '40P01';
+            END IF;
+          END LOOP;
+        END $$;
+        CREATE EVENT TRIGGER test_inject_deadlock ON ddl_command_end
+          WHEN TAG IN ('CREATE FUNCTION') EXECUTE FUNCTION public.test_inject_deadlock();
+        """, connection);
+      await trigger.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var failure = await Assert.That(async () =>
+        await new PostgresSchemaInitializer(_database.ConnectionString).InitializeSchemaAsync(cancellationToken))
+      .Throws<PostgresException>();
+
+    await Assert.That(failure!.SqlState).IsEqualTo("40P01");
+    await using var probe = new NpgsqlConnection(_database.ConnectionString);
+    await probe.OpenAsync(cancellationToken);
+    await using var attempts = new NpgsqlCommand("SELECT last_value FROM public.test_deadlocks", probe);
+    await Assert.That((long)(await attempts.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(6L)
+      .Because("the first attempt and five in-place retries");
+    await using var recorded = new NpgsqlCommand(
+      "SELECT status FROM wh_schema_migrations WHERE file_name = $1", probe) { Parameters = { new() { Value = file } } };
+    await Assert.That((short)(await recorded.ExecuteScalarAsync(cancellationToken))!).IsEqualTo((short)-1)
+      .Because("a spent deadlock is recorded as the file's failure");
+  }
+
   [GeneratedRegex(@"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(?<name>\w+)\s*\(", RegexOptions.IgnoreCase)]
   private static partial Regex _createFunction();
 
