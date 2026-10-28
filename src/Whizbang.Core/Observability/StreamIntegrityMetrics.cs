@@ -121,6 +121,16 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
   public PassiveCounter<long> RepairsUnhealable { get; }
 
+  /// <summary>
+  /// #1792: deficit buckets a manifest comparison could not add to the paced repair drain's ledger,
+  /// deferred to a later audit. Tagged by origin and reason: <c>per_audit_cap</c>
+  /// (<c>MaxAutoRepairRequestsPerAudit</c> new buckets already admitted by this comparison) or
+  /// <c>backlog_cap</c> (the ledger holds <c>MaxRepairDrainBacklog</c> rows). Sustained growth means
+  /// discovery outpaces the drain: raise <c>RepairDrainRatePerSecond</c> or accept the pace.
+  /// </summary>
+  public PassiveCounter<long> RepairsDeferred { get; }
+
+  private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
   private static readonly string[] _discardRoles = ["origin_request", "consumer_bundle", "maintenance_sweep"];
@@ -203,6 +213,9 @@ public sealed class StreamIntegrityMetrics {
     RepairsUnhealable = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repairs_unhealable",
       description: "Buckets a redelivery could not change; repair stops asking for them until they change or heal");
+    RepairsDeferred = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repairs_deferred",
+      description: "Deficit buckets a comparison deferred instead of adding to the paced repair drain's ledger; tagged by origin + reason (per_audit_cap | backlog_cap)");
     RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
@@ -238,6 +251,7 @@ public sealed class StreamIntegrityMetrics {
     ManifestChunksSent.Touch("level", Enum.GetNames<Whizbang.Core.Messaging.ManifestLevel>());
     DigestDriftHealed.Touch("kind", _driftKinds);
     RepairTrafficDiscarded.Touch("role", _discardRoles);
+    RepairsDeferred.Touch("reason", _deferralReasons);
   }
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;

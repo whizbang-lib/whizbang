@@ -103,6 +103,9 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(observed).Contains("whizbang.stream_integrity.redelivery_events_shipped");
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifest_pages_followed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifest_pages_capped");
+    // #1792: deficits a comparison could not add to the paced drain's ledger (per-comparison cap or
+    // total backlog bound), deferred to a later audit, so they must be countable.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repairs_deferred");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }

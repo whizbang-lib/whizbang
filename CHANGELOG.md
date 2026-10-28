@@ -782,6 +782,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already misfiled are moved by the operator repair `IFanoutChildRefiler` (registered by both PostgreSQL drivers),
   which calls the new `wh_refile_events` function (migration 247) to renumber both streams and move each event's
   digest, inbox and applied-ledger rows in one transaction, then names the streams to rebuild.
+- **With the paced repair drain on, `MaxAutoRepairRequestsPerAudit` caps what one comparison adds to the drain, and
+  the drain's backlog has a total bound (Fixes #1792).** The drain (`RepairDrainEnabled`, the default) dispatches from
+  the repair ledger, and a manifest comparison wrote every deficit bucket of every chunk into it: the per-audit cap was
+  applied only on the burst path, so with the drain on it capped nothing, and the ledger grew with the number of
+  divergent streams and accumulated across audits. At `AutoRepairCapped` with the drain on, a comparison now admits at
+  most `MaxAutoRepairRequestsPerAudit` new deficit buckets, and none once the ledger holds the new
+  `Whizbang:StreamIntegrity:MaxRepairDrainBacklog` per-stream rows (default 10,000, at least 1, checked at host start).
+  A bucket the ledger already tracks is refreshed without counting. A deficit over either cap is deferred, not
+  dropped: nothing is written for it, it stays divergent, and a later audit re-detects it once the drain has made room.
+  Each comparison that defers logs one warning with the counts and the backlog, and
+  `whizbang.stream_integrity.repairs_deferred` counts them by origin and reason (`per_audit_cap`, `backlog_cap`).
+  `IWorkCoordinator` gains `IntegrityProbeRepairBacklogAsync`, one bounded read that answers the backlog and which keys
+  are already tracked; without it (or when it fails, logged) the per-comparison cap alone applies. The burst path
+  (`RepairDrainEnabled = false`) and `ReportOnly` are unchanged. No migration.
 - **A rebuild folds a row that events were re-keyed onto from its own stream and every re-keyed source (Fixes #1820).**
   A row that received events re-keyed from another stream was rebuilt from an empty model with only the re-keyed
   events, so its own history was lost. The rebuild now collects every re-key in the run and folds each target row

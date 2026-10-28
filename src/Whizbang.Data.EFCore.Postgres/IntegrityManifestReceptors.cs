@@ -36,6 +36,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 internal static class IntegrityManifestTags {
   /// <summary>Names the service a manifest message came from.</summary>
   internal const string ORIGIN = "origin";
+
+  /// <summary>Why a deficit bucket was deferred instead of added to the paced repair drain.</summary>
+  internal const string DEFERRAL_REASON = "reason";
 }
 
 /// <summary>
@@ -464,6 +467,12 @@ public sealed partial class IntegrityManifestReceptor(
         metrics?.BucketHealSeconds.Record(age);
       }
     }
+    // #1792: with the paced drain dispatching, a ledger row IS a queued repair, so the caps have to
+    // bound which deficits get a row. Runs after the heals, so the backlog it reads is current.
+    if (options.RepairDrainEnabled && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
+      divergent = await _admitToRepairDrainAsync(coordinator, options, message, divergent, metrics, cancellationToken)
+        .ConfigureAwait(false);
+    }
     var observations = new IntegrityReportObservation[divergent.Count];
     for (var i = 0; i < divergent.Count; i++) {
       var (origin, mine, _, _) = divergent[i];
@@ -599,6 +608,99 @@ public sealed partial class IntegrityManifestReceptor(
     // MaxDigestsPerManifest streams — the rest was never compared, never repaired, and the seal
     // never certified the window (the type-level seal rule requires a null cursor).
     await _followResumeCursorAsync(services, options, message, types, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #1792: decides which deficit buckets this comparison may add to the paced repair drain's ledger.
+  /// A bucket the ledger already tracks is always admitted (its row is refreshed, the backlog does not
+  /// grow). A NEW bucket is admitted while this comparison has added fewer than
+  /// <see cref="StreamIntegrityOptions.MaxAutoRepairRequestsPerAudit"/> and the backlog is below
+  /// <see cref="StreamIntegrityOptions.MaxRepairDrainBacklog"/>. Everything else is deferred: nothing is
+  /// written for it, it stays divergent, and a later audit re-detects it. Non-deficit divergences are
+  /// never repaired, so they pass through untouched. Without a backlog reading (an engine that cannot
+  /// probe, or a failed probe) the per-comparison cap alone applies, and every key counts as new.
+  /// </summary>
+  /// <returns>The divergences to record, in manifest order, with the deferred deficits removed.</returns>
+  /// <docs>resilience/stream-integrity#repair-caps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestDrainAdmissionTests.cs</tests>
+  private async Task<List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>> _admitToRepairDrainAsync(
+      IWorkCoordinator coordinator, StreamIntegrityOptions options, IntegrityManifest message,
+      List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> divergent,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, CancellationToken cancellationToken) {
+    var deficitKeys = divergent
+      .Where(e => e.IsDeficit)
+      .Select(e => new IntegrityRepairLedger.DivergenceKey(
+        message.OriginServiceId, e.Origin.TenantScope, e.Origin.EventType, e.Origin.StreamId))
+      .ToList();
+    if (deficitKeys.Count == 0) {
+      return divergent;
+    }
+
+    var backlogCap = options.MaxRepairDrainBacklog;
+    var probe = await coordinator.IntegrityProbeRepairBacklogAsync(
+      message.OriginServiceId, deficitKeys, backlogCap, cancellationToken).ConfigureAwait(false);
+    if (probe is not null && probe.Tracked.Count != deficitKeys.Count) {
+      probe = null;   // an answer that does not line up with the keys cannot be trusted per key.
+    }
+    var headroom = probe is null ? long.MaxValue : Math.Max(0L, backlogCap - probe.Backlog);
+    var perComparison = Math.Max(0, options.MaxAutoRepairRequestsPerAudit);
+
+    var (admitted, byCap, byBacklog) = _partitionForDrain(divergent, probe?.Tracked, headroom, perComparison);
+    // Deferring the repair does not make the divergence any less detected.
+    foreach (var (origin, _, _, reason) in divergent.Except(admitted)) {
+      metrics?.DivergencesDetected.Add(1,
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName),
+        new KeyValuePair<string, object?>("event_type", origin.EventType),
+        new KeyValuePair<string, object?>("reason", reason));
+    }
+
+    if (byCap + byBacklog > 0) {
+      LogRepairAdmissionDeferred(logger, byCap + byBacklog, message.OriginServiceName, byCap, perComparison, byBacklog,
+        probe is null ? "unknown" : $"{probe.Backlog} of {backlogCap}");
+      metrics?.RepairsDeferred.Add(byCap,
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName),
+        new KeyValuePair<string, object?>(IntegrityManifestTags.DEFERRAL_REASON, "per_audit_cap"));
+      metrics?.RepairsDeferred.Add(byBacklog,
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName),
+        new KeyValuePair<string, object?>(IntegrityManifestTags.DEFERRAL_REASON, "backlog_cap"));
+    }
+    return admitted;
+  }
+
+  /// <summary>
+  /// The admission rule itself, kept free of I/O: walks the divergences in manifest order and keeps
+  /// every non-deficit, every tracked deficit (<paramref name="tracked"/> answers deficit i; null =
+  /// none known), and new deficits while fewer than <paramref name="perComparison"/> have been kept
+  /// and fewer than <paramref name="headroom"/>. Each deferral is attributed to the backlog bound when
+  /// the headroom is spent, else to the per-comparison cap.
+  /// </summary>
+  private static (List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> Admitted, int ByCap, int ByBacklog) _partitionForDrain(
+      List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> divergent,
+      IReadOnlyList<bool>? tracked, long headroom, int perComparison) {
+    var admitted = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>(divergent.Count);
+    var admittedNew = 0;
+    var byCap = 0;
+    var byBacklog = 0;
+    var deficitIndex = 0;
+    foreach (var entry in divergent) {
+      var keep = true;
+      if (entry.IsDeficit) {
+        keep = tracked?[deficitIndex] == true;
+        deficitIndex++;
+      }
+      if (!keep && admittedNew < headroom && admittedNew < perComparison) {
+        admittedNew++;
+        keep = true;
+      }
+      if (keep) {
+        admitted.Add(entry);
+      } else if (admittedNew >= headroom) {
+        byBacklog++;
+      } else {
+        byCap++;
+      }
+    }
+    return (admitted, byCap, byBacklog);
   }
 
   /// <summary>
@@ -1071,6 +1173,13 @@ public sealed partial class IntegrityManifestReceptor(
   [LoggerMessage(EventId = 65, Level = LogLevel.Debug,
     Message = "AUDIT cursor-follow to '{OriginServiceName}' skipped — no origin request topic learned yet")]
   static partial void LogCursorFollowSkippedNoOriginTopic(ILogger logger, string originServiceName);
+
+  [LoggerMessage(EventId = 67, Level = LogLevel.Warning,
+    Message = "AUDIT Deferred {Deferred} new deficit bucket(s) from '{OriginServiceName}' instead of adding them to the " +
+              "paced repair drain: {ByCap} past the per-audit cap of {PerAuditCap}, {ByBacklog} past the backlog bound; " +
+              "drain backlog {Backlog}. They stay divergent and a later audit re-detects them once the drain has made room.")]
+  static partial void LogRepairAdmissionDeferred(ILogger logger, int deferred, string originServiceName, int byCap,
+    int perAuditCap, int byBacklog, string backlog);
 
   [LoggerMessage(EventId = 66, Level = LogLevel.Warning,
     Message = "AUDIT bulk backfill requested: {EventType} (tenant {TenantScope}) — {Deficit} event(s) missing " +
