@@ -772,6 +772,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, per-message failures (lock lost, message not found, session cannot be locked), quota exceeded and errors
   from the message handler, a settlement or a lock renewal are not disconnects. A subscription reports at most one,
   and none while the application has paused or disposed it or disposed the transport.
+- **Repeated disconnects of one destination back off across reconnects (Fixes #1840).** When a destination kept
+  failing right after each successful subscribe (an Azure Service Bus entity that stays disabled or an identity that
+  stays unauthorized, or a RabbitMQ channel that closes again as soon as it opens), every reconnect started a fresh
+  backoff, so the consumer reconnected every `InitialRetryDelay` forever, flipping the destination between Healthy and
+  Recovering each cycle and flooding the broker, `SubscriptionStatusChanged` handlers and the logs. Each reconnect now
+  waits the previous reconnect's delay times `BackoffMultiplier`, up to `MaxRetryDelay`, while the subscription keeps
+  dropping before it has stayed healthy for the new `SubscriptionResilienceOptions.ReconnectBackoffResetAfter` (30
+  seconds by default). A subscription that stays healthy that long has recovered, and its next disconnect waits
+  `InitialRetryDelay` again, so an ordinary one-off drop reconnects as quickly as before; `TimeSpan.Zero` keeps the old
+  behavior. The disconnect warning now says how long the reconnect waits. `SubscriptionRetryHelper.SubscribeWithRetryAsync`
+  has an overload that takes a `TimeProvider`, and `TransportConsumerWorker` takes an optional one (the system clock
+  when omitted) for its retry, reconnect and health-monitor waits.
+- **A released debugger-aware clock pause subscription is not called again.** Disposing the subscription returned by
+  `IDebuggerAwareClock.OnPauseStateChanged` stopped the wait for new pause changes, but a change already queued when it
+  was disposed was still passed to the handler afterwards, so a handler could run after its owner had released it and
+  torn down what it uses. The subscription now checks for release before taking each queued change, and leaves the
+  changes it did not take in the queue. A call already running when `Dispose` is called may still finish; `Dispose`
+  does not wait for it, so it can be called from the handler itself.
 - **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
   subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
   state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure

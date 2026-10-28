@@ -310,4 +310,78 @@ public class DebuggerAwareClockCoverageTests {
       .Because("the state that arrived before the fault still has to reach the subscriber — the "
         + "quiet exit is about how the loop ends, not about dropping what it already read");
   }
+
+  // ============================================================
+  // Releasing a subscription stops dispatch at once
+  // ============================================================
+
+  // A subscription is released by canceling the token its loop reads with. A state already
+  // buffered when that happens used to be dispatched anyway: the loop only checked the token
+  // while it waited for the channel, never between the states it had already been woken for, so
+  // the handler was called after its owner released it and could reach into state the owner had
+  // already torn down. The interleaving is forced here: the first call is held in flight, a second
+  // state is buffered behind it, the release happens, and only then does the first call return.
+  [Test]
+  public async Task RunPauseStateReadLoop_ReleasedWhileACallIsInFlight_DispatchesNothingAfterItAsync(
+      CancellationToken ct) {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<bool>();
+    var received = new List<bool>();
+    var firstCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var releaseFirstCall = new SemaphoreSlim(0, 1);
+    using var subscription = new CancellationTokenSource();
+
+    var loop = DebuggerAwareClock.RunPauseStateReadLoopAsync(
+      channel.Reader,
+      isPaused => {
+        received.Add(isPaused);
+        if (received.Count == 1) {
+          firstCallEntered.TrySetResult();
+          releaseFirstCall.Wait(ct);
+        }
+      },
+      subscription.Token);
+
+    channel.Writer.TryWrite(true);
+    await firstCallEntered.Task.WaitAsync(ct);
+    channel.Writer.TryWrite(false); // buffered behind the call that is still running
+    await subscription.CancelAsync(); // the release completes while that call is in flight
+    releaseFirstCall.Release();
+    await loop.WaitAsync(ct);
+
+    bool[] expectedStates = [true];
+    await Assert.That(received).IsEquivalentTo(expectedStates)
+      .Because("the call in flight at the release may finish, but nothing may be dispatched after "
+        + "the release returned, not even a state that was already buffered");
+    await Assert.That(channel.Reader.TryRead(out var leftBehind) && !leftBehind).IsTrue()
+      .Because("a released subscription must stop consuming the channel, leaving the buffered "
+        + "state for whoever still listens");
+  }
+
+  // The same guarantee when the handler releases its own subscription, the usual shape of
+  // "act on the first change and stop listening": the states already buffered behind the call
+  // that released it must not reach the handler.
+  [Test]
+  public async Task RunPauseStateReadLoop_ReleasedByItsOwnHandler_DispatchesNothingAfterItAsync() {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<bool>();
+    var received = new List<bool>();
+    using var subscription = new CancellationTokenSource();
+    channel.Writer.TryWrite(true);
+    channel.Writer.TryWrite(false);
+
+    var loop = DebuggerAwareClock.RunPauseStateReadLoopAsync(
+      channel.Reader,
+      isPaused => {
+        received.Add(isPaused);
+        subscription.Cancel();
+      },
+      subscription.Token);
+    await loop;
+
+    bool[] expectedStates = [true];
+    await Assert.That(received).IsEquivalentTo(expectedStates)
+      .Because("the handler released the subscription during the first call, so the state "
+        + "buffered behind it must not be dispatched");
+    await Assert.That(channel.Reader.TryRead(out var leftBehind) && !leftBehind).IsTrue()
+      .Because("the released loop must leave the buffered state in the channel");
+  }
 }

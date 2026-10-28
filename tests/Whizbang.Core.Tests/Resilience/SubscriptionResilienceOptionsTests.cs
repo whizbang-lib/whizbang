@@ -71,6 +71,15 @@ public class SubscriptionResilienceOptionsTests {
   }
 
   [Test]
+  public async Task ReconnectBackoffResetAfter_Default_IsThirtySecondsAsync() {
+    // Arrange
+    var options = new SubscriptionResilienceOptions();
+
+    // Assert - a subscription healthy for 30 seconds has recovered; its next disconnect starts a fresh backoff
+    await Assert.That(options.ReconnectBackoffResetAfter).IsEqualTo(TimeSpan.FromSeconds(30));
+  }
+
+  [Test]
   public async Task AllowPartialSubscriptions_Default_IsTrueAsync() {
     // Arrange
     var options = new SubscriptionResilienceOptions();

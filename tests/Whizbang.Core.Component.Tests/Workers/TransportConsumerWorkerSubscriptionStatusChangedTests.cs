@@ -16,6 +16,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Tests.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
@@ -341,6 +342,42 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
     await Assert.That(transport.Subscriptions.Last().DisposeCount).IsEqualTo(1);
   }
 
+  [Test]
+  public async Task SubscriptionDisconnectsRightAfterEveryReconnect_EachReconnectWaitsLongerOnTheWorkersClockAsync() {
+    // A destination whose receiving fails right after every successful subscribe (#1840): the worker's reconnects
+    // back off across the cycles on the clock the worker was given, instead of reconnecting every initial delay.
+    var transport = new StatusTransport();
+    var clock = new TimerRecordingClock();
+    var resilience = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromSeconds(1),
+      HealthCheckInterval = TimeSpan.FromHours(1),
+    };
+    var worker = _buildWorker(transport, _destinations("keeps-dropping"), resilience, timeProvider: clock);
+    using var recorder = new SubscriptionStatusRecorder(worker);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
+
+    var waits = new List<TimeSpan>();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      var subscription = transport.Subscriptions.Last();
+      await subscription.DisconnectHandled.Task.WaitAsync(_guard);
+      subscription.Disconnect(new InvalidOperationException("receiving failed right after subscribing"));
+      // The health monitor arms its one-hour sweep on the same clock; that timer is not a reconnect.
+      var wait = await clock.NextTimerAsync(dueTime => dueTime != resilience.HealthCheckInterval).WaitAsync(_guard);
+      clock.Advance(wait);
+      await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: cycle + 1).WaitAsync(_guard);
+      waits.Add(wait);
+    }
+
+    await Assert.That(string.Join(",", waits.Select(w => w.TotalSeconds))).IsEqualTo("1,2,4")
+      .Because("each reconnect waits the previous reconnect's delay times the multiplier, on the worker's clock");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   // ============================================================
   // Helpers and test doubles
   // ============================================================
@@ -362,7 +399,8 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       ITransport transport,
       TransportConsumerOptions options,
       SubscriptionResilienceOptions resilience,
-      ILogger<TransportConsumerWorker>? logger = null) {
+      ILogger<TransportConsumerWorker>? logger = null,
+      TimeProvider? timeProvider = null) {
     var serviceProvider = new ServiceCollection().BuildServiceProvider();
     return new TransportConsumerWorker(
       transport: transport,
@@ -382,7 +420,8 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      controlClass: Options.Create(new ControlClassOptions()));
+      controlClass: Options.Create(new ControlClassOptions()),
+      timeProvider: timeProvider);
   }
 
   private sealed class StatusSubscription(Exception? disconnectWhileAttaching = null) : ISubscription {
