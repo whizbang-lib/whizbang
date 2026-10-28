@@ -26,7 +26,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
   // #1788: rows wait here for their commit while held by the inbox channel writer; each flush releases them.
-  private readonly IInboxChannelWriter? _inboxChannelWriter;
+  private readonly IInboxChannelWriter _inboxChannelWriter;
 
   /// <summary>
   /// How many failed rows one flush logs individually before the rest are summarized in one line (#1789).
@@ -34,6 +34,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   internal const int MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH = 5;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  /// <remarks>The inbox channel writer is the one the dispatch path holds rows in; each flush releases the rows it finishes (#1788).</remarks>
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
@@ -41,8 +42,9 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     IOptions<InboxHandlerWorkerOptions> options,
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
-    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
-    IInboxChannelWriter? inboxChannelWriter = null) {
+    IInboxChannelWriter inboxChannelWriter,
+    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
+    ArgumentNullException.ThrowIfNull(inboxChannelWriter);
     _inboxChannelWriter = inboxChannelWriter;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -71,7 +73,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     // convert a config choice into a crash loop.
     if (!_options.Enabled) {
       LogCommitsDisabledOnEnqueue(_logger, request.InboxCompletion.MessageId);
-      _inboxChannelWriter?.RemoveInFlight(request.HandlerId);
+      _inboxChannelWriter.RemoveInFlight(request.HandlerId);
       return ValueTask.CompletedTask;
     }
 
@@ -96,10 +98,8 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     try {
       await _flushCoreAsync(batch, ct);
     } finally {
-      if (_inboxChannelWriter is { } held) {
-        foreach (var request in batch) {
-          held.RemoveInFlight(request.HandlerId);
-        }
+      foreach (var request in batch) {
+        _inboxChannelWriter.RemoveInFlight(request.HandlerId);
       }
     }
   }

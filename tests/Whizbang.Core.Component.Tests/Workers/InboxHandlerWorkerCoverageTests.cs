@@ -56,7 +56,8 @@ public sealed class InboxHandlerWorkerCoverageTests {
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(opts),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
@@ -88,7 +89,8 @@ public sealed class InboxHandlerWorkerCoverageTests {
       schemaReadyGate: new SlowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
       options: Options.Create(_enabledOptions()),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);

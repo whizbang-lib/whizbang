@@ -65,6 +65,7 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
       options: Options.Create(new InboxHandlerWorkerOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       metrics: metrics);
 
     await worker.EnqueueAsync(_request());

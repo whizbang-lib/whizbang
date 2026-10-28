@@ -84,7 +84,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -106,7 +107,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -155,7 +157,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -168,7 +171,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -181,7 +185,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: null!,
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -193,7 +198,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: null!,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -206,7 +212,22 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: null!,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_ThrowsOnNullInboxChannelWriterAsync() {
+    var options = Options.Create(_enabledOptions());
+    await Assert.That(() => new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -228,7 +249,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(opts),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     // Act - Start, wait for ExecuteAsync's disabled arm to actually log (the body's first
     // statement on this path), enqueue a request, then stop. Without that wait a zero-commit
@@ -269,7 +291,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -298,7 +321,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -329,7 +353,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -379,7 +404,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -413,7 +439,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -446,7 +473,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(options),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -562,7 +590,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await Assert.That(async () => await worker.EnqueueAsync(null!)).Throws<ArgumentNullException>();
   }
