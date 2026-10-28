@@ -191,9 +191,10 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
     await h.Worker.DispatchQueuedAsync(lost, CancellationToken.None);
     await Assert.That(h.Commits.All).IsEmpty()
       .Because("its queued copy is not dispatched here: the instance that holds it now dispatches it");
-    var log = h.Logs.Single(l => l.Message.Contains(lost.MessageId.ToString(), StringComparison.Ordinal)
-      && l.Message.Contains("no longer held", StringComparison.Ordinal));
-    await Assert.That(log.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(h.Logs.Count(l => l.Level == LogLevel.Warning
+      && l.Message.Contains(lost.MessageId.ToString(), StringComparison.Ordinal)
+      && l.Message.Contains("no longer held by this instance", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("losing a row to another instance is logged once, with the row, where an operator looks");
   }
 
   [Test]
@@ -234,7 +235,7 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
 
     await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
 
-    await Assert.That(h.Logs.Count(l => l.Message.Contains("no longer held", StringComparison.Ordinal)))
+    await Assert.That(h.Logs.Count(l => l.Message.Contains("no longer held by this instance", StringComparison.Ordinal)))
       .IsEqualTo(InboxDispatchWorker.MAX_LEASE_LAPSES_LOGGED_PER_SWEEP);
     await Assert.That(h.Logs.Any(l => l.Message.Contains("3 more", StringComparison.Ordinal)
       && l.Message.Contains("not renewed", StringComparison.Ordinal))).IsTrue();

@@ -199,7 +199,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       await Assert.That(Category).IsEqualTo(WorkCategory.PerspectiveEvent);
       await Assert.That(Ids).Contains(sinkWork.WorkId)
         .Because("an enqueued sink renewal must survive the registry filter and reach " +
-                 "IWorkCoordinator.RenewHeldLeasesAsync — without a registered LeaseHandle the flush " +
+                 "IWorkCoordinator.RenewHeldLeasesAsync; without a registered LeaseHandle the flush " +
                  "silently drops it and the DB lease still expires mid-apply.");
     } finally {
       dispatcher.ReleaseDispatch.TrySetResult();

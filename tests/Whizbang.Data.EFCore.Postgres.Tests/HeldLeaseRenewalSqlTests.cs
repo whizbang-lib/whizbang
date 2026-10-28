@@ -26,11 +26,18 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
 
-  private sealed record Table(string Name, string Key);
+  /// <summary>A category's work table, as the statements that read and lapse one row's lease.</summary>
+  private sealed record Table(string ReadLease, string Lapse);
 
-  private static readonly Table _inbox = new("wh_inbox_state", "message_id");
-  private static readonly Table _outbox = new("wh_outbox", "message_id");
-  private static readonly Table _perspective = new("wh_perspective_events", "event_work_id");
+  private static readonly Table _inbox = new(
+    "SELECT instance_id, lease_expiry FROM wh_inbox_state WHERE message_id = @row",
+    "UPDATE wh_inbox_state SET lease_expiry = NOW() - INTERVAL '1 second' WHERE message_id = @row");
+  private static readonly Table _outbox = new(
+    "SELECT instance_id, lease_expiry FROM wh_outbox WHERE message_id = @row",
+    "UPDATE wh_outbox SET lease_expiry = NOW() - INTERVAL '1 second' WHERE message_id = @row");
+  private static readonly Table _perspective = new(
+    "SELECT instance_id, lease_expiry FROM wh_perspective_events WHERE event_work_id = @row",
+    "UPDATE wh_perspective_events SET lease_expiry = NOW() - INTERVAL '1 second' WHERE event_work_id = @row");
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {
     var connection = ctx.Database.GetDbConnection();
@@ -118,21 +125,26 @@ public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
   private static Task _claimPerspectiveAsync(NpgsqlConnection conn, Guid instance) => _drainAsync(conn,
     "SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 0, 1)", instance);
 
-  /// <summary>Lapses the row's lease and its stream's lease, as time would, on the database clock.</summary>
-  private static async Task _lapseAsync(NpgsqlConnection conn, Table table, Guid row, Guid stream) {
-    await _execAsync(conn, $"UPDATE {table.Name} SET lease_expiry = NOW() - INTERVAL '1 second' WHERE {table.Key} = @row",
-      ("row", row));
+  /// <summary>
+  /// Lapses the row's lease and its stream's lease, as time would, on the database clock, and reaps the holder's
+  /// registration: an instance paused past its lease (a long collection, a lost connection) stops heartbeating, the
+  /// stale-instance cleanup removes it, and a claim takes over the stream of an instance it does not see. The paused
+  /// instance still holds the row in memory when it resumes, which is when it renews.
+  /// </summary>
+  private static async Task _lapseAsync(NpgsqlConnection conn, Table table, Guid holder, Guid row, Guid stream) {
+    await _execAsync(conn, "DELETE FROM wh_service_instances WHERE instance_id = @inst", ("inst", holder));
+    await _execAsync(conn, table.Lapse, ("row", row));
     await _execAsync(conn, "UPDATE wh_active_streams SET lease_expiry = NOW() - INTERVAL '1 second' WHERE stream_id = @sid",
       ("sid", stream));
   }
 
   private static async Task<(Guid? Holder, DateTime? Lease)> _rowLeaseAsync(NpgsqlConnection conn, Table table, Guid row) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT instance_id, lease_expiry FROM {table.Name} WHERE {table.Key} = @row";
-    cmd.Parameters.AddWithValue("row", row);
+    cmd.CommandText = table.ReadLease;
+    cmd.Parameters.AddWithValue(nameof(row), row);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
-      throw new InvalidOperationException($"No {table.Name} row {row}");
+      throw new InvalidOperationException($"No row {row} for: {table.ReadLease}");
     }
     return (await reader.IsDBNullAsync(0) ? null : reader.GetGuid(0), await reader.IsDBNullAsync(1) ? null : reader.GetDateTime(1));
   }
@@ -151,9 +163,9 @@ public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
   private static async Task<Guid[]> _renewAsync(NpgsqlConnection conn, string category, Guid instance, Guid[] ids, int leaseSeconds) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_renew_held_leases(@category, @inst, @ids, @lease)";
-    cmd.Parameters.AddWithValue("category", category);
+    cmd.Parameters.AddWithValue(nameof(category), category);
     cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(ids), NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids });
     cmd.Parameters.AddWithValue("lease", leaseSeconds);
     return (Guid[])(await cmd.ExecuteScalarAsync())!;
   }
@@ -176,10 +188,12 @@ public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
     var (firstHolder, _) = await _rowLeaseAsync(conn, table, row);
     await Assert.That(firstHolder).IsEqualTo(a).Because("the scenario starts with A holding the row");
 
-    await _lapseAsync(conn, table, row, stream);
+    await _lapseAsync(conn, table, a, row, stream);
     await claim(conn, b);
     var (holder, _) = await _rowLeaseAsync(conn, table, row);
     await Assert.That(holder).IsEqualTo(b).Because("the scenario needs B to have claimed the row A's lapsed lease left");
+    var (streamHolder, _) = await _streamLeaseAsync(conn, stream);
+    await Assert.That(streamHolder).IsEqualTo(b).Because("the scenario needs B to have taken over the stream with the row");
     return (row, stream, a, b);
   }
 

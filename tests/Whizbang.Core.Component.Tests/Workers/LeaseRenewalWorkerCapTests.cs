@@ -177,7 +177,7 @@ public class LeaseRenewalWorkerCapTests {
 
     await worker.StartAsync(cts.Token);
 
-    // Enqueue 4 renewals — only the first 3 should reach RenewHeldLeasesAsync.
+    // Enqueue 4 renewals: only the first 3 should reach RenewHeldLeasesAsync.
     for (var i = 0; i < 4; i++) {
       await worker.EnqueueAsync(WorkCategory.Inbox, workId, cts.Token);
       // Drain each enqueue separately so the cap engages incrementally. Iteration 4 must NOT
@@ -194,7 +194,7 @@ public class LeaseRenewalWorkerCapTests {
 
     var totalDbRenewalsForThisWorkId = coord.RenewalsFor(workId);
     await Assert.That(totalDbRenewalsForThisWorkId).IsEqualTo(3)
-      .Because("4 renewal requests with cap=3 — only 3 should reach RenewHeldLeasesAsync; the 4th must be skipped so the lease expires naturally");
+      .Because("4 renewal requests with cap=3: only 3 should reach RenewHeldLeasesAsync; the 4th must be skipped so the lease expires naturally");
     await Assert.That(handle.RenewalCount).IsEqualTo(3);
 
     await cts.CancelAsync();
