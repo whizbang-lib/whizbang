@@ -885,6 +885,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a compiler input. The extraction now leaves a file that differs only in line endings alone, for the ledger and
   the message registry alike, and the ledger is written with LF on every operating system. In a repository with no
   line-ending normalization whose ledger was committed with CRLF, the first content change rewrites it with LF.
+- **The migration tool's commented decision file keeps every decision it holds (Fixes #1766).** Saving a decision file
+  with comments wrote the tenant and stream-id detection, the routing domains and topics, the per-class and
+  per-interface strategy maps, `preserve_packages` and `connection_string_name` as fixed template values, so loading
+  it back silently reverted them to their defaults, and an unset pre-migration commit or current category loaded as an
+  empty string instead of unset. Every field is now written from the recorded decisions and JSON-escaped, so a
+  commented file loads back with exactly the decisions it was saved with.
 - **The migration tool reads back the decision file it generates for a Windows project path, and a blank docs
   path no longer throws on Windows (#1764).** `whizbang-migrate apply --generate-decision-file` wrote the commented
   decision file by interpolating values into a JSON template, so the backslashes of a path such as `C:\Users\me\App`
