@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// claim is the real claim function, so the second instance takes the row the way it would in a deployed service.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/252_LeaseRenewalIsScopedToTheHolder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/255_LeaseRenewalIsScopedToTheHolder.sql</code-under-test>
 [Category("Shard1")]
 public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
 
@@ -202,20 +202,20 @@ public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
       Func<NpgsqlConnection, Task<(Guid Row, Guid Stream)>> seed,
       Func<NpgsqlConnection, Guid, Task> claim) {
     var (row, stream, a, b) = await _reclaimedByAnotherAsync(conn, table, seed, claim);
-    var before = await _rowLeaseAsync(conn, table, row);
-    var streamBefore = await _streamLeaseAsync(conn, stream);
+    var (_, leaseBefore) = await _rowLeaseAsync(conn, table, row);
+    var (_, streamLeaseBefore) = await _streamLeaseAsync(conn, stream);
 
     var notRenewed = await _renewAsync(conn, category, a, [row], 1800);
 
     await Assert.That(notRenewed).IsEquivalentTo([row])
       .Because("A no longer holds the row, so its renewal reports it, and A stops holding it");
-    var after = await _rowLeaseAsync(conn, table, row);
-    await Assert.That(after.Holder).IsEqualTo(b);
-    await Assert.That(after.Lease).IsEqualTo(before.Lease)
+    var (holderAfter, leaseAfter) = await _rowLeaseAsync(conn, table, row);
+    await Assert.That(holderAfter).IsEqualTo(b);
+    await Assert.That(leaseAfter).IsEqualTo(leaseBefore)
       .Because("A's renewal must not extend the lease B holds, or the row stays away from the instance working it");
-    var streamAfter = await _streamLeaseAsync(conn, stream);
-    await Assert.That(streamAfter.Holder).IsEqualTo(b);
-    await Assert.That(streamAfter.Lease).IsEqualTo(streamBefore.Lease)
+    var (streamHolderAfter, streamLeaseAfter) = await _streamLeaseAsync(conn, stream);
+    await Assert.That(streamHolderAfter).IsEqualTo(b);
+    await Assert.That(streamLeaseAfter).IsEqualTo(streamLeaseBefore)
       .Because("the stream lease is B's too, and A's renewal leaves it alone");
   }
 
@@ -224,17 +224,17 @@ public class HeldLeaseRenewalSqlTests : EFCoreTestBase {
       Func<NpgsqlConnection, Task<(Guid Row, Guid Stream)>> seed,
       Func<NpgsqlConnection, Guid, Task> claim) {
     var (row, stream, _, b) = await _reclaimedByAnotherAsync(conn, table, seed, claim);
-    var before = await _rowLeaseAsync(conn, table, row);
-    var streamBefore = await _streamLeaseAsync(conn, stream);
+    var (_, leaseBefore) = await _rowLeaseAsync(conn, table, row);
+    var (_, streamLeaseBefore) = await _streamLeaseAsync(conn, stream);
 
     var notRenewed = await _renewAsync(conn, category, b, [row], 1800);
 
     await Assert.That(notRenewed).IsEmpty().Because("B holds the row, so its renewal covers it");
-    var after = await _rowLeaseAsync(conn, table, row);
-    await Assert.That(after.Lease!.Value - before.Lease!.Value).IsGreaterThan(TimeSpan.FromMinutes(20))
+    var (_, leaseAfter) = await _rowLeaseAsync(conn, table, row);
+    await Assert.That(leaseAfter!.Value - leaseBefore!.Value).IsGreaterThan(TimeSpan.FromMinutes(20))
       .Because("a renewal to 1,800 seconds moves a five minute lease well past where the claim left it");
-    var streamAfter = await _streamLeaseAsync(conn, stream);
-    await Assert.That(streamAfter.Lease!.Value - streamBefore.Lease!.Value).IsGreaterThan(TimeSpan.FromMinutes(20))
+    var (_, streamLeaseAfter) = await _streamLeaseAsync(conn, stream);
+    await Assert.That(streamLeaseAfter!.Value - streamLeaseBefore!.Value).IsGreaterThan(TimeSpan.FromMinutes(20))
       .Because("the holder's renewal keeps its stream lease with its rows (148)");
   }
 

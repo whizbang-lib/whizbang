@@ -763,7 +763,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A lease renewal extends only the leases the renewing instance holds (Fixes #1852).** Renewal matched rows by id
   alone, in every category, so an instance whose lease had lapsed, and whose row another instance had then claimed,
   extended the new holder's row and stream leases on its next renewal; the row stayed away from the instance working
-  it and both treated it as theirs. Renewal now goes through `wh_renew_held_leases` (migration 252), which renews a row
+  it and both treated it as theirs. Renewal now goes through `wh_renew_held_leases` (migration 255), which renews a row
   only while the renewing instance holds it and returns the ids it did not renew (re-claimed, completed or gone).
   `IWorkCoordinator.RenewLeasesAsync` is replaced by `RenewHeldLeasesAsync(category, instanceId, ids, leaseSeconds)`,
   which returns those ids, on both Postgres drivers, and every caller stops holding them: the inbox dispatch keeper

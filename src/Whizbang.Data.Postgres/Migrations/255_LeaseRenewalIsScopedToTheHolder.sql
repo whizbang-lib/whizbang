@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 252_LeaseRenewalIsScopedToTheHolder.sql
+-- Migration: 255_LeaseRenewalIsScopedToTheHolder.sql
 -- Date: 2026-10-28
 -- Description: A lease renewal extends only the leases the renewing instance holds, and reports the rows it did
 --              not renew (#1852).
