@@ -716,6 +716,27 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>
+  /// Commits an expanded composite's children (and its pre-fanout outbox) in one request, then reconciles a
+  /// redelivery bundle with the events the store already held (#1790): a redelivered event the store already holds
+  /// is skipped as a duplicate, so once the bundle has landed, history stored before origins were recorded adopts
+  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
+  private async Task _commitExpansionAsync(
+      InboxWork work, ICompositeEvent composite, IReadOnlyList<InboxMessage> children,
+      IReadOnlyList<OutboxMessage>? preFanoutOutbox, IServiceProvider scopeProvider, CancellationToken ct) {
+    var commitRequest = _buildCommitRequest(
+      work, status: (int)MessageProcessingStatus.EventStored,
+      newInboxMessages: children, newOutboxMessages: preFanoutOutbox);
+    var committed = await _commitCompositeAsync(commitRequest, children.Count, scopeProvider, ct).ConfigureAwait(false);
+    if (committed && composite is RedeliveryComposite redelivery) {
+      _ = await RedeliveryReconciler.ReconcileAsync(
+        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
   /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
   /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
   /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
@@ -778,17 +799,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }
 
-      var commitRequest = _buildCommitRequest(
-        work, status: (int)MessageProcessingStatus.EventStored,
-        newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
-      var committed = await _commitCompositeAsync(commitRequest, result.Children.Count, scopeProvider, ct).ConfigureAwait(false);
-      // #1790: a redelivered event the store already holds is skipped as a duplicate, so the bundle is reconciled with
-      // those events once it has landed: history stored before origins were recorded adopts the bundle's origin, and
-      // a bundle that changed nothing marks its buckets as ones repair cannot change.
-      if (committed && composite is RedeliveryComposite redelivery) {
-        _ = await RedeliveryReconciler.ReconcileAsync(
-          redelivery, result.Children, scopeProvider, _logger, _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
-      }
+      await _commitExpansionAsync(work, composite, result.Children, preFanoutOutbox, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
 

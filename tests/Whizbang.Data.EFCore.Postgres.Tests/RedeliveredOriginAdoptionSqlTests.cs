@@ -54,7 +54,7 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
   /// it has none). An event stored before origins were recorded is one with <paramref name="origin"/> null.
   /// </summary>
   private static async Task<Guid> _storeAsync(NpgsqlConnection conn, Guid stream, int version, Guid? origin = null,
-      long? originSequence = null, int flags = 0) {
+      long? originSequence = null, int flags = 0, string tenant = TENANT) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = """
@@ -67,7 +67,7 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue(nameof(stream), stream);
       store.Parameters.AddWithValue("type", EVENT_TYPE);
-      store.Parameters.AddWithValue("tenant", TENANT);
+      store.Parameters.AddWithValue(nameof(tenant), tenant);
       store.Parameters.AddWithValue(nameof(version), version);
       store.Parameters.AddWithValue(nameof(flags), flags);
       store.Parameters.AddWithValue(nameof(origin), (object?)origin ?? DBNull.Value);
@@ -86,7 +86,7 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
         event_count = d.event_count + 1
       """;
     fold.Parameters.AddWithValue("lane", origin ?? _zeroLane);
-    fold.Parameters.AddWithValue("tenant", TENANT);
+    fold.Parameters.AddWithValue(nameof(tenant), tenant);
     fold.Parameters.AddWithValue("type", EVENT_TYPE);
     fold.Parameters.AddWithValue(nameof(stream), stream);
     fold.Parameters.AddWithValue("event", eventId);
@@ -139,6 +139,20 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
     await Assert.That(buckets).IsEquivalentTo([new RedeliveredBucketPresence(stream, TENANT, EVENT_TYPE, Present: 2, Adopted: 2)]);
     await Assert.That(await _originOfAsync(conn, first)).IsEqualTo((origin, 7L));
     await Assert.That(await _originOfAsync(conn, second)).IsEqualTo((origin, 8L));
+  }
+
+  [Test]
+  public async Task Adopt_AnEventWithNoTenant_ReportsItsBucketWithoutATenantAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var stored = await _storeAsync(conn, stream, 1, tenant: "");
+
+    var buckets = await _coordinator().AdoptRedeliveredOriginAsync(origin, [stored], [3]);
+
+    await Assert.That(buckets).IsEquivalentTo([new RedeliveredBucketPresence(stream, null, EVENT_TYPE, Present: 1, Adopted: 1)])
+      .Because("the ledger keys an untenanted bucket by the empty scope, which the coordinator reports as no tenant");
+    await Assert.That(await _originOfAsync(conn, stored)).IsEqualTo((origin, 3L));
   }
 
   [Test]
