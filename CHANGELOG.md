@@ -747,6 +747,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still folds there. Coverage-gap detection reported unstamped events, which the stamp fence holds back from
   perspectives, as never folded and asked for rebuilds; it now skips them, and its query walks streams one at a time
   and stops at the report cap instead of grouping the whole store first. (Fixes #1791)
+- **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
+  A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
+  with the message id, type and error before it is routed to the failure channel; one flush logs the first five and
+  summarizes the rest, and a failure result naming no request is logged too. The control-plane drop line now carries
+  the row's last recorded error and names its cause: a lease that lapsed without a reported outcome, a recorded
+  failure, or none recorded. `HandlerCommitRequest` gains an init-only `MessageType` for the log line.
+- **Inbox rows this instance holds keep their leases and are queued once (Fixes #1788).** Nothing renewed inbox
+  leases, so a row queued in memory past its lease lost it without being dispatched, was re-claimed with another
+  attempt charged, and was queued again while its first copy waited (the drain re-queued every leased row each time
+  the claim re-offered its stream). The inbox channel writer now tracks each held row as queued, dispatching or
+  waiting for its commit. The dispatch worker's lease keeper renews held rows once half their lease is spent (up to
+  `LeaseHandleOptions.MaxRenewalsPerWork` per state, extending a running row's dispatch deadline with it); a row whose
+  renewals run out is logged with its type and state, and one never dispatched is handed back with its attempt
+  refunded. Only the first copy of a row dispatches, the drain skips rows already held, a row stays held until its
+  commit lands, and rows retired at the attempt bound no longer count as drain throughput. The lease renewal
+  killswitch (`Whizbang:Workers:LeaseRenewal:Enabled`) turns the keeper off. No migration.
+- **Inbox memory is bounded by payload bytes, not row counts (Fixes #1793).** The deserialize cache is bounded by
+  `Whizbang:Workers:InboxDeserializeCache:MaxBytes` (default 64 MiB, measured as each payload's UTF-8 JSON) as well as
+  its entry count, does not cache a payload larger than the budget, and drops a row's entry when the row completes.
+  The rows held in memory for dispatch are bounded by `Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes` (default
+  128 MiB; zero disables): a fetched row that would exceed it is not queued, and it and the rest of its stream in that
+  fetch are handed back with their attempts refunded, to be offered again once the working set drains. With nothing
+  held one row is always admitted, however large.
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and
@@ -816,6 +839,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IPerspectiveRunner.RunRekeyedRowAsync` is a new default member; routing lives in `RebuildRowRouting`. A rebuild of
   selected streams that names a target but not its sources cannot see the events re-keyed onto it; rebuild the sources
   with it.
+- **An Azure Service Bus subscription whose processor stops for good now reports a disconnect (Fixes #1838).**
+  Nothing raised `OnDisconnected` for Azure Service Bus, so a processor that could no longer receive left its
+  destination Healthy while the service silently stopped consuming from it. The transport's processor error handler
+  now raises it, and records `Disconnection`, for a receive or session-accept failure the processor will not get past
+  by retrying: a non-transient `MessagingEntityNotFound` or `MessagingEntityDisabled`, an `UnauthorizedAccessException`,
+  or an `ObjectDisposedException` (the processor or its client disposed underneath the subscription). The consumer
+  then replaces the subscription, which provisions a deleted entity and its filter rules again when provisioning is
+  on and otherwise retries with backoff, so the destination reads Recovering. Transient failures the SDK retries
+  itself, per-message failures (lock lost, message not found, session cannot be locked), quota exceeded and errors
+  from the message handler, a settlement or a lock renewal are not disconnects. A subscription reports at most one,
+  and none while the application has paused or disposed it or disposed the transport.
+- **Repeated disconnects of one destination back off across reconnects (Fixes #1840).** When a destination kept
+  failing right after each successful subscribe (an Azure Service Bus entity that stays disabled or an identity that
+  stays unauthorized, or a RabbitMQ channel that closes again as soon as it opens), every reconnect started a fresh
+  backoff, so the consumer reconnected every `InitialRetryDelay` forever, flipping the destination between Healthy and
+  Recovering each cycle and flooding the broker, `SubscriptionStatusChanged` handlers and the logs. Each reconnect now
+  waits the previous reconnect's delay times `BackoffMultiplier`, up to `MaxRetryDelay`, while the subscription keeps
+  dropping before it has stayed healthy for the new `SubscriptionResilienceOptions.ReconnectBackoffResetAfter` (30
+  seconds by default). A subscription that stays healthy that long has recovered, and its next disconnect waits
+  `InitialRetryDelay` again, so an ordinary one-off drop reconnects as quickly as before; `TimeSpan.Zero` keeps the old
+  behavior. The disconnect warning now says how long the reconnect waits. `SubscriptionRetryHelper.SubscribeWithRetryAsync`
+  has an overload that takes a `TimeProvider`, and `TransportConsumerWorker` takes an optional one (the system clock
+  when omitted) for its retry, reconnect and health-monitor waits.
+- **A released debugger-aware clock pause subscription is not called again.** Disposing the subscription returned by
+  `IDebuggerAwareClock.OnPauseStateChanged` stopped the wait for new pause changes, but a change already queued when it
+  was disposed was still passed to the handler afterwards, so a handler could run after its owner had released it and
+  torn down what it uses. The subscription now checks for release before taking each queued change, and leaves the
+  changes it did not take in the queue. A call already running when `Dispose` is called may still finish; `Dispose`
+  does not wait for it, so it can be called from the handler itself.
+- **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
+  subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
+  state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure
+  Service Bus processor or a composite's child subscriptions behind, with the helper's disconnect handler still
+  attached. The reconnect now detaches the handler and disposes the old subscription, off the transport's callback,
+  before it subscribes again. A disposal that throws is logged as a warning naming the destination, and the reconnect
+  goes on. Connection recovery, shutdown and the reconnect take the subscription out of the state atomically, so
+  whichever path takes it disposes it and it is never disposed twice.
 - **A transport disconnect while a subscription is being established is no longer missed (Fixes #1831).** The
   subscription retry helper recorded a destination as Healthy and only then attached its disconnect handler, so a
   disconnect in between had no listener: the status stayed Healthy and no reconnect was attempted, and the consumer

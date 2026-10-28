@@ -16,6 +16,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Tests.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
@@ -281,8 +282,110 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
   }
 
   // ============================================================
+  // The subscription a reconnect replaces is disposed exactly once (#1839)
+  // ============================================================
+
+  [Test]
+  public async Task SubscriptionDisconnects_ReconnectDisposesTheReplacedSubscriptionAndShutdownDoesNotDisposeItAgainAsync() {
+    var transport = new StatusTransport();
+    var worker = _buildWorker(transport, _destinations("flapping"), _reconnectQuickly());
+    using var recorder = new SubscriptionStatusRecorder(worker);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
+    var replaced = transport.Subscriptions.Single();
+    await replaced.DisconnectHandled.Task.WaitAsync(_guard);
+
+    replaced.Disconnect(new InvalidOperationException("link dropped"));
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: 2).WaitAsync(_guard);
+    var current = transport.Subscriptions.Last();
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1)
+      .Because("the reconnect disposes the subscription it replaces before it subscribes again");
+    await Assert.That(replaced.HandlerCount).IsEqualTo(0);
+    await Assert.That(current.DisposeCount).IsEqualTo(0);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1)
+      .Because("shutdown disposes the live subscription, never the one the reconnect already disposed");
+    await Assert.That(current.DisposeCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task SubscriptionDisconnects_ConnectionRecoveredAfterTheReconnect_DisposesOnlyTheLiveSubscriptionAsync() {
+    var transport = new RecoverableStatusTransport(failFirstSubscribes: 0);
+    var worker = _buildWorker(transport, _destinations("recovered-after-flap"), _reconnectQuickly());
+    using var recorder = new SubscriptionStatusRecorder(worker);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
+    var replaced = transport.Subscriptions.Single();
+    await replaced.DisconnectHandled.Task.WaitAsync(_guard);
+    replaced.Disconnect(new InvalidOperationException("link dropped"));
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: 2).WaitAsync(_guard);
+    var reconnected = transport.Subscriptions.Last();
+
+    await transport.SimulateRecoveryAsync().WaitAsync(_guard);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1)
+      .Because("connection recovery disposes what the state holds, which is no longer the replaced subscription");
+    await Assert.That(reconnected.DisposeCount).IsEqualTo(1);
+    await Assert.That(transport.Subscriptions.Count).IsEqualTo(3);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1);
+    await Assert.That(reconnected.DisposeCount).IsEqualTo(1);
+    await Assert.That(transport.Subscriptions.Last().DisposeCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task SubscriptionDisconnectsRightAfterEveryReconnect_EachReconnectWaitsLongerOnTheWorkersClockAsync() {
+    // A destination whose receiving fails right after every successful subscribe (#1840): the worker's reconnects
+    // back off across the cycles on the clock the worker was given, instead of reconnecting every initial delay.
+    var transport = new StatusTransport();
+    var clock = new TimerRecordingClock();
+    var resilience = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromSeconds(1),
+      HealthCheckInterval = TimeSpan.FromHours(1),
+    };
+    var worker = _buildWorker(transport, _destinations("keeps-dropping"), resilience, timeProvider: clock);
+    using var recorder = new SubscriptionStatusRecorder(worker);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
+
+    var waits = new List<TimeSpan>();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      var subscription = transport.Subscriptions.Last();
+      await subscription.DisconnectHandled.Task.WaitAsync(_guard);
+      subscription.Disconnect(new InvalidOperationException("receiving failed right after subscribing"));
+      // The health monitor arms its one-hour sweep on the same clock; that timer is not a reconnect.
+      var wait = await clock.NextTimerAsync(dueTime => dueTime != resilience.HealthCheckInterval).WaitAsync(_guard);
+      clock.Advance(wait);
+      await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: cycle + 1).WaitAsync(_guard);
+      waits.Add(wait);
+    }
+
+    await Assert.That(string.Join(",", waits.Select(w => w.TotalSeconds))).IsEqualTo("1,2,4")
+      .Because("each reconnect waits the previous reconnect's delay times the multiplier, on the worker's clock");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  // ============================================================
   // Helpers and test doubles
   // ============================================================
+
+  private static SubscriptionResilienceOptions _reconnectQuickly() => new() {
+    InitialRetryDelay = TimeSpan.Zero,
+    HealthCheckInterval = TimeSpan.FromHours(1),
+  };
 
   private static TransportConsumerOptions _destinations(params string[] addresses) {
     var options = new TransportConsumerOptions();
@@ -296,7 +399,8 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       ITransport transport,
       TransportConsumerOptions options,
       SubscriptionResilienceOptions resilience,
-      ILogger<TransportConsumerWorker>? logger = null) {
+      ILogger<TransportConsumerWorker>? logger = null,
+      TimeProvider? timeProvider = null) {
     var serviceProvider = new ServiceCollection().BuildServiceProvider();
     return new TransportConsumerWorker(
       transport: transport,
@@ -316,11 +420,16 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      controlClass: Options.Create(new ControlClassOptions()));
+      controlClass: Options.Create(new ControlClassOptions()),
+      timeProvider: timeProvider);
   }
 
   private sealed class StatusSubscription(Exception? disconnectWhileAttaching = null) : ISubscription {
     private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
+    private int _disposeCount;
+
+    public int DisposeCount => Volatile.Read(ref _disposeCount);
+    public int HandlerCount => _onDisconnected?.GetInvocationList().Length ?? 0;
 
     /// <summary>Completes when a disconnect handler is attached: the precondition for a disconnect to be handled.</summary>
     public TaskCompletionSource DisconnectHandled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -342,7 +451,7 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
     }
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
-    public void Dispose() { }
+    public void Dispose() => Interlocked.Increment(ref _disposeCount);
 
     public void Disconnect(Exception error) {
       var args = new SubscriptionDisconnectedEventArgs {

@@ -39,12 +39,17 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheTests.cs</tests>
 public sealed class InboxDeserializeCache {
   private const int DEFAULT_MAX_ENTRIES = 10_000;
+
+  /// <summary>Default byte budget (#1793): 64 MiB of payload, measured as the payload's UTF-8 JSON.</summary>
+  public const long DEFAULT_MAX_BYTES = 64L * 1024 * 1024;
   private static readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(2);
 
   private readonly ConcurrentDictionary<Guid, Entry> _entries = new();
   private readonly ITimeProvider _timeProvider;
   private readonly TimeSpan _ttl;
   private readonly int _maxEntries;
+  private readonly long _maxBytes;
+  private long _bytes;
   private readonly Lock _evictionLock = new();
 
   /// <summary>
@@ -53,10 +58,12 @@ public sealed class InboxDeserializeCache {
   /// <param name="timeProvider">Time source — inject a fake in tests for deterministic TTL.</param>
   /// <param name="ttl">Time-to-live for an entry. Default 2 minutes.</param>
   /// <param name="maxEntries">Hard cap on resident entries. Default 10k. When exceeded, the oldest ~10% evict on next insert.</param>
+  /// <param name="maxBytes">Byte budget across resident entries (#1793). Default <see cref="DEFAULT_MAX_BYTES"/>.</param>
   public InboxDeserializeCache(
     ITimeProvider timeProvider,
     TimeSpan? ttl = null,
-    int maxEntries = DEFAULT_MAX_ENTRIES) {
+    int maxEntries = DEFAULT_MAX_ENTRIES,
+    long maxBytes = DEFAULT_MAX_BYTES) {
     ArgumentNullException.ThrowIfNull(timeProvider);
     if (maxEntries < 1) {
       throw new ArgumentOutOfRangeException(nameof(maxEntries), "maxEntries must be at least 1.");
@@ -65,9 +72,13 @@ public sealed class InboxDeserializeCache {
     if (ttlValue <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(ttl), "ttl must be positive.");
     }
+    if (maxBytes < 1) {
+      throw new ArgumentOutOfRangeException(nameof(maxBytes), "maxBytes must be at least 1.");
+    }
     _timeProvider = timeProvider;
     _ttl = ttlValue;
     _maxEntries = maxEntries;
+    _maxBytes = maxBytes;
   }
 
   /// <summary>Number of resident entries (may include some expired-but-not-swept).</summary>
@@ -96,11 +107,43 @@ public sealed class InboxDeserializeCache {
   /// Re-storing an existing key resets the expiry. Triggers cap-eviction if the insert pushes
   /// <see cref="Count"/> past the configured maximum.
   /// </summary>
-  public void Set(Guid messageId, object message) {
+  public void Set(Guid messageId, object message) => Set(messageId, message, 0);
+
+  /// <summary>
+  /// Stores <paramref name="message"/> with the size of the payload it was parsed from (#1793). Past the byte budget the
+  /// oldest entries are evicted until it fits; a payload larger than the whole budget is not cached, and any older
+  /// entry for the key is dropped so a stale copy is never served.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  public void Set(Guid messageId, object message, long sizeBytes) {
     ArgumentNullException.ThrowIfNull(message);
-    var expiresAt = _timeProvider.GetUtcNow() + _ttl;
-    _entries[messageId] = new Entry(message, expiresAt);
-    _enforceCapIfNeeded();
+    var size = Math.Max(0, sizeBytes);
+    lock (_evictionLock) {
+      _removeLocked(messageId);
+      if (size > _maxBytes) {
+        return;
+      }
+      _entries[messageId] = new Entry(message, _timeProvider.GetUtcNow() + _ttl, size);
+      _bytes += size;
+      _enforceCapLocked();
+    }
+  }
+
+  /// <summary>Drops the entry for a row that completed (#1793); its payload will not be parsed again.</summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  public void Remove(Guid messageId) {
+    lock (_evictionLock) {
+      _removeLocked(messageId);
+    }
+  }
+
+  /// <summary>Payload bytes the resident entries were parsed from (#1793).</summary>
+  public long Bytes => Interlocked.Read(ref _bytes);
+
+  private void _removeLocked(Guid messageId) {
+    if (_entries.TryRemove(messageId, out var old)) {
+      _bytes -= old.Size;
+    }
   }
 
   /// <summary>
@@ -109,28 +152,31 @@ public sealed class InboxDeserializeCache {
   /// </summary>
   public void SweepExpired() {
     var now = _timeProvider.GetUtcNow();
-    foreach (var pair in _entries) {
-      if (pair.Value.ExpiresAt <= now) {
-        ((System.Collections.Generic.ICollection<KeyValuePair<Guid, Entry>>)_entries)
-          .Remove(pair);
+    lock (_evictionLock) {
+      foreach (var pair in _entries) {
+        if (pair.Value.ExpiresAt <= now) {
+          _removeLocked(pair.Key);
+        }
       }
     }
   }
 
-  private void _enforceCapIfNeeded() {
-    if (_entries.Count <= _maxEntries) {
+  private void _enforceCapLocked() {
+    var overflow = _entries.Count - _maxEntries;
+    if (overflow > 0) {
+      // Evict the oldest ~10% so we don't hit the cap again on the very next insert.
+      foreach (var key in SelectEvictionKeys(_entries, Math.Max(overflow, _maxEntries / 10))) {
+        _removeLocked(key);
+      }
+    }
+    if (_bytes <= _maxBytes) {
       return;
     }
-    lock (_evictionLock) {
-      var overflow = _entries.Count - _maxEntries;
-      if (overflow <= 0) {
-        return;
-      }
-      // Evict the oldest ~10% so we don't hit the cap again on the very next insert.
-      var batch = Math.Max(overflow, _maxEntries / 10);
-      foreach (var key in SelectEvictionKeys(_entries, batch)) {
-        _entries.TryRemove(key, out _);
-      }
+    // #1793: oldest first until the payloads fit the byte budget. The newest entry fits on its own (Set refuses one
+    // that does not), so the walk ends before it runs out of keys.
+    var oldestFirst = new Queue<Guid>(SelectEvictionKeys(_entries, _entries.Count));
+    while (_bytes > _maxBytes) {
+      _removeLocked(oldestFirst.Dequeue());
     }
   }
 
@@ -190,5 +236,5 @@ public sealed class InboxDeserializeCache {
     return keys;
   }
 
-  internal readonly record struct Entry(object Payload, DateTimeOffset ExpiresAt);
+  internal readonly record struct Entry(object Payload, DateTimeOffset ExpiresAt, long Size = 0);
 }

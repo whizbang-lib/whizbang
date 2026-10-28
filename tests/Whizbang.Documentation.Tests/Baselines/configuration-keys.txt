@@ -388,6 +388,7 @@ Whizbang:Transports:AzureServiceBus:SubscriptionResilience:HealthCheckInterval
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:InitialRetryAttempts
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:InitialRetryDelay
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:MaxRetryDelay
+Whizbang:Transports:AzureServiceBus:SubscriptionResilience:ReconnectBackoffResetAfter
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:RetryIndefinitely
 Whizbang:Transports:RabbitMQ
 Whizbang:Transports:RabbitMQ:AutoDeclareDeadLetterExchange
@@ -416,6 +417,7 @@ Whizbang:Transports:RabbitMQ:SubscriptionResilience:HealthCheckInterval
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:InitialRetryAttempts
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:InitialRetryDelay
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:MaxRetryDelay
+Whizbang:Transports:RabbitMQ:SubscriptionResilience:ReconnectBackoffResetAfter
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:RetryIndefinitely
 Whizbang:UnobservedExceptionDiagnostics:EnableFirstChanceExceptionLogging
 Whizbang:UnobservedExceptionDiagnostics:FirstChanceExceptionTypeAllowList:*
@@ -476,6 +478,7 @@ Whizbang:Workers:InboxBatch:MaxSize
 Whizbang:Workers:InboxBatch:MaxWait
 Whizbang:Workers:InboxBatch:SlidingWindow
 Whizbang:Workers:InboxDeserializeCache:Enabled
+Whizbang:Workers:InboxDeserializeCache:MaxBytes
 Whizbang:Workers:InboxDeserializeCache:MaxEntries
 Whizbang:Workers:InboxDeserializeCache:TtlMinutes
 Whizbang:Workers:InboxDispatch:Enabled
@@ -492,6 +495,7 @@ Whizbang:Workers:InboxDrain:Batcher:SlidingWindow
 Whizbang:Workers:InboxDrain:DepthHeadroomFactor
 Whizbang:Workers:InboxDrain:Enabled
 Whizbang:Workers:InboxDrain:MaxBytesPerStream
+Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes
 Whizbang:Workers:InboxDrain:MaxPerStream
 Whizbang:Workers:InboxDrain:MaxPerStreamCeiling
 Whizbang:Workers:InboxDrain:MaxRowsPerCycle

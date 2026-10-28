@@ -475,7 +475,8 @@ public static class WorkerPipelineExtensions {
       return new InboxDeserializeCache(
         timeProvider: time,
         ttl: TimeSpan.FromMinutes(Math.Max(1, opts.TtlMinutes)),
-        maxEntries: Math.Max(1, opts.MaxEntries));
+        maxEntries: Math.Max(1, opts.MaxEntries),
+        maxBytes: Math.Max(1, opts.MaxBytes));
     });
 
     // Phase H step 9 slice 7: lease-tied cancellation infrastructure. LeaseRegistry is the

@@ -53,24 +53,39 @@ public sealed class AzureServiceBusSubscription : ISubscription {
 
   /// <inheritdoc />
   /// <remarks>
-  /// Azure Service Bus SDK handles reconnection internally. The OnDisconnected event
-  /// is raised when the transport detects a connection-level error that requires
-  /// subscription re-establishment.
+  /// <para>
+  /// The SDK's processor heals transient failures itself (lost connections, a busy or timed-out namespace), so those
+  /// are not disconnects. This event is raised, at most once, when the processor hits a failure it will not get past
+  /// by retrying: the topic or subscription is not found or is disabled, the identity is not authorized, or the
+  /// processor was disposed underneath this subscription. The caller replaces the subscription, which provisions a
+  /// deleted entity again when provisioning is on.
+  /// </para>
+  /// <para>
+  /// It is never raised while the subscription is paused, after it is disposed or after its transport is disposed:
+  /// those stops are the application's own. A failure in the message handler, a settlement or a lock renewal is not a
+  /// disconnect either; the processor goes on receiving.
+  /// </para>
   /// </remarks>
+  /// <docs>messaging/transports/transports#subscription-disconnects</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProcessorStopsReceivingTests.cs:ProcessorError_EntityGoneOrDisabled_ReportsAnUnexpectedDisconnectAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProcessorStopsReceivingTests.cs:ProcessorError_AFailureTheProcessorRecoversFrom_IsNotADisconnectAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProcessorStopsReceivingTests.cs:ProcessorError_AfterTheApplicationPausedTheSubscription_IsNotADisconnectAsync</tests>
   public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
 
   /// <summary>
-  /// Raises the OnDisconnected event. Called by the transport when connection errors are detected.
+  /// Records and raises the subscription's unexpected disconnect. Called by the transport's processor error handler
+  /// for a failure the processor will not recover from on its own.
   /// </summary>
+  /// <remarks>
+  /// Only the first call records and raises: the processor reports every failed receive, but one lost subscription is
+  /// replaced once. A call after the subscription is disposed does nothing.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusSubscriptionTests.cs:RaiseDisconnected_Twice_NotifiesTheSubscriberOnceAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProcessorStopsReceivingTests.cs:ProcessorError_RepeatedTerminalErrors_ReportOneDisconnectAsync</tests>
   internal void RaiseDisconnected(string reason, Exception? exception) {
     if (_isDisposed) {
       return;
     }
-
-    _logger.LogWarning(
-      "Azure Service Bus subscription disconnected: {Reason}",
-      reason
-    );
 
     // Recorded before it is raised, so a handler attached after the disconnect still finds it (#1831).
     var disconnection = new SubscriptionDisconnectedEventArgs {
@@ -78,7 +93,14 @@ public sealed class AzureServiceBusSubscription : ISubscription {
       Exception = exception,
       IsApplicationInitiated = false
     };
-    Interlocked.CompareExchange(ref _disconnection, disconnection, null);
+    if (Interlocked.CompareExchange(ref _disconnection, disconnection, null) is not null) {
+      return;
+    }
+
+    _logger.LogWarning(
+      "Azure Service Bus subscription disconnected: {Reason}",
+      reason
+    );
     OnDisconnected?.Invoke(this, disconnection);
   }
 

@@ -43,6 +43,14 @@ public interface ISubscription : IDisposable {
   /// Event raised when the subscription is disconnected unexpectedly.
   /// Subscribers can use this to trigger immediate reconnection attempts.
   /// </summary>
+  /// <remarks>
+  /// A transport raises it for a loss it will not recover from by itself and records it in <see cref="Disconnection"/>
+  /// first. A subscription that reported a disconnect is replaced, never reused: the subscription retry helper acts on
+  /// the first report only, and detaches its handler and disposes the subscription, exactly once, before it subscribes
+  /// again.
+  /// </remarks>
+  /// <docs>messaging/transports/transports#subscription-disconnects</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_ReconnectAfterADisconnect_DisposesTheReplacedSubscriptionOnceAndDetachesItsHandlerAsync</tests>
   event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
 
   /// <summary>

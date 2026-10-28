@@ -28,4 +28,16 @@ public sealed class InboxDeserializeCacheOptions {
   /// exceeds ~80 messages/sec for the entire TTL window.
   /// </summary>
   public int MaxEntries { get; set; } = 10_000;
+
+  /// <summary>
+  /// Byte budget across resident entries, measured as the UTF-8 JSON each payload was parsed from. Default 64 MiB.
+  /// </summary>
+  /// <remarks>
+  /// The entry cap alone let memory scale with message size: re-delivery bundles carry up to 192 KB each, so 10,000
+  /// of them could hold about 1.9 GB (#1793). Past the budget the oldest entries are evicted, and a payload larger
+  /// than the whole budget is not cached at all. The cache is a performance aid; an evicted entry is parsed again.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  public long MaxBytes { get; set; } = InboxDeserializeCache.DEFAULT_MAX_BYTES;
 }

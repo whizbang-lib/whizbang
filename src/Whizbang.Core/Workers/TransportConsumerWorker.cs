@@ -59,6 +59,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
+  private readonly TimeProvider _timeProvider;
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
@@ -139,6 +140,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
   /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
+  /// <param name="timeProvider">
+  /// The clock the subscription retry and reconnect delays and the health monitor's sweep wait on; the system clock
+  /// when omitted.
+  /// </param>
   /// <remarks>
   /// <para>
   /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from the per-message scope
@@ -172,7 +177,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
     Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
     TransportBatchOptions? transportBatchOptions = null,
-    Tags.ControlClassResolver? controlClassResolver = null
+    Tags.ControlClassResolver? controlClassResolver = null,
+    TimeProvider? timeProvider = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -186,6 +192,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _transport = transport;
     _options = options;
     _resilienceOptions = resilienceOptions;
+    _timeProvider = timeProvider ?? TimeProvider.System;
     _scopeFactory = scopeFactory;
     _metrics = metrics;
     _logger = logger;
@@ -476,6 +483,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       state,
       _resilienceOptions,
       _logger,
+      _timeProvider,
       cancellationToken
     );
   }
@@ -489,8 +497,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Reset all states to Pending
     // The status is written last, so an observer of the change to Pending reads the reset state.
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
-      state.Subscription = null;
+      // Taken atomically, so a reconnect racing this recovery for the same subscription cannot dispose it again (#1839).
+      state.ReleaseSubscription()?.Dispose();
       state.ResetAttempts();
       state.Status = SubscriptionStatus.Pending;
     }
@@ -507,7 +515,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private async Task _monitorSubscriptionHealthAsync(CancellationToken cancellationToken) {
     while (!cancellationToken.IsCancellationRequested) {
       try {
-        await Task.Delay(_resilienceOptions.HealthCheckInterval, cancellationToken);
+        await Task.Delay(_resilienceOptions.HealthCheckInterval, _timeProvider, cancellationToken);
 
         var failedStates = _states.Values
           .Where(s => s.Status == SubscriptionStatus.Failed)
@@ -1350,7 +1358,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
+      state.ReleaseSubscription()?.Dispose();
     }
 
     _states.Clear();

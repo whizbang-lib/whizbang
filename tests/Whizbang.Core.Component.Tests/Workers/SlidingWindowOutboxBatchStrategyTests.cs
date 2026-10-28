@@ -70,14 +70,15 @@ public class SlidingWindowOutboxBatchStrategyTests {
   // ===== cross-stream concurrency =====
 
   [Test]
-  public async Task AppendAsync_DifferentStreams_FlushIndependentlyAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_DifferentStreams_FlushIndependentlyAsync(CancellationToken testToken) {
     var streamA = _idProvider.NewGuid();
     var streamB = _idProvider.NewGuid();
     var captured = new List<(Guid? Stream, int Count)>();
     var lockObj = new object();
     var bothFlushed = new TaskCompletionSource();
-    var seenA = false;
-    var seenB = false;
+    var flushedA = 0;
+    var flushedB = 0;
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, _) => {
@@ -85,12 +86,15 @@ public class SlidingWindowOutboxBatchStrategyTests {
         lock (lockObj) {
           captured.Add((stream, msgs.Length));
           if (stream == streamA) {
-            seenA = true;
+            flushedA += msgs.Length;
           }
           if (stream == streamB) {
-            seenB = true;
+            flushedB += msgs.Length;
           }
-          if (seenA && seenB) {
+          // Signal on what the assertions count: both A messages and the B message flushed. Signaling on
+          // "each stream flushed once" raced on a loaded runner: A's window could close on its first
+          // message alone, so the second A message was still buffered when the test asserted.
+          if (flushedA == 2 && flushedB == 1) {
             bothFlushed.TrySetResult();
           }
         }
@@ -103,11 +107,11 @@ public class SlidingWindowOutboxBatchStrategyTests {
         MaxSize = 100,
       });
 
-    await sut.AppendAsync(_make(streamA));
-    await sut.AppendAsync(_make(streamB));
-    await sut.AppendAsync(_make(streamA));
+    await sut.AppendAsync(_make(streamA), testToken);
+    await sut.AppendAsync(_make(streamB), testToken);
+    await sut.AppendAsync(_make(streamA), testToken);
 
-    await bothFlushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await bothFlushed.Task.WaitAsync(testToken);
 
     // Stream A and Stream B each had their own window. They produced separate batches.
     var aBatches = captured.Where(c => c.Stream == streamA).ToList();

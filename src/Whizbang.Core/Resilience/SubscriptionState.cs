@@ -105,10 +105,83 @@ public class SubscriptionState(TransportDestination destination) {
   /// </summary>
   public DateTimeOffset? LastErrorTime { get; set; }
 
+  private ISubscription? _subscription;
+
   /// <summary>
   /// Reference to the active subscription, if any.
   /// </summary>
-  public ISubscription? Subscription { get; set; }
+  public ISubscription? Subscription {
+    get => Volatile.Read(ref _subscription);
+    set => Volatile.Write(ref _subscription, value);
+  }
+
+  /// <summary>
+  /// Takes the subscription out of the state, leaving none, and returns it for the caller to dispose.
+  /// </summary>
+  /// <remarks>
+  /// Connection recovery, shutdown and the per-destination reconnect each dispose what they take. The take is atomic,
+  /// so of two paths that race for one subscription exactly one gets it and it is disposed exactly once (#1839).
+  /// </remarks>
+  /// <returns>The subscription the state held, or <see langword="null"/> when it held none.</returns>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionDisconnects_ReconnectDisposesTheReplacedSubscriptionAndShutdownDoesNotDisposeItAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionDisconnects_ConnectionRecoveredAfterTheReconnect_DisposesOnlyTheLiveSubscriptionAsync</tests>
+  internal ISubscription? ReleaseSubscription() => Interlocked.Exchange(ref _subscription, null);
+
+  /// <summary>
+  /// Takes <paramref name="subscription"/> out of the state only while the state still holds it.
+  /// </summary>
+  /// <param name="subscription">The subscription the caller expects the state to hold.</param>
+  /// <returns><see langword="true"/> when the state held it and now holds none; the caller then disposes it.</returns>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_ReconnectAfterADisconnect_DisposesTheReplacedSubscriptionOnceAndDetachesItsHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_ReplacedSubscriptionTakenFromTheStateBeforeTheReconnectRuns_IsNotDisposedByTheReconnectAsync</tests>
+  internal bool TryReleaseSubscription(ISubscription subscription) =>
+    ReferenceEquals(Interlocked.CompareExchange(ref _subscription, null, subscription), subscription);
+
+  private readonly Lock _reconnectGate = new();
+  private TimeSpan? _lastReconnectDelay;
+  private DateTimeOffset _healthySince;
+
+  /// <summary>
+  /// Records when the current subscription became healthy, the start of the stretch
+  /// <see cref="NextReconnectDelay"/> measures.
+  /// </summary>
+  /// <param name="at">When the subscription was established.</param>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperReconnectBackoffTests.cs</tests>
+  internal void MarkHealthy(DateTimeOffset at) {
+    lock (_reconnectGate) {
+      _healthySince = at;
+    }
+  }
+
+  /// <summary>
+  /// The delay the reconnect after a disconnect at <paramref name="now"/> waits, remembered as the last one (#1840).
+  /// </summary>
+  /// <remarks>
+  /// The first reconnect, and the first after a subscription stayed healthy for
+  /// <see cref="SubscriptionResilienceOptions.ReconnectBackoffResetAfter"/>, waits
+  /// <see cref="SubscriptionResilienceOptions.InitialRetryDelay"/>. One whose subscription dropped sooner waits the
+  /// last reconnect's delay grown by <see cref="SubscriptionRetryHelper.CalculateNextDelay"/>, so a destination that
+  /// fails right after every successful subscribe backs off across the cycles instead of reconnecting at the initial
+  /// delay forever. Connection recovery and the health monitor leave the streak alone: they subscribe again, which
+  /// starts a new healthy stretch, and the next disconnect is judged by how long that stretch lasted.
+  /// </remarks>
+  /// <param name="now">When the disconnect was accepted.</param>
+  /// <param name="options">The backoff settings.</param>
+  /// <returns>How long the reconnect waits before subscribing again.</returns>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperReconnectBackoffTests.cs</tests>
+  internal TimeSpan NextReconnectDelay(DateTimeOffset now, SubscriptionResilienceOptions options) {
+    lock (_reconnectGate) {
+      var delay = _lastReconnectDelay is { } last && now - _healthySince < options.ReconnectBackoffResetAfter
+        ? SubscriptionRetryHelper.CalculateNextDelay(last, options)
+        : options.InitialRetryDelay;
+      _lastReconnectDelay = delay;
+      return delay;
+    }
+  }
 
   /// <summary>
   /// Increments the attempt count by one.
