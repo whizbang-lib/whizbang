@@ -78,6 +78,7 @@ public class TransportManager(
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   public Task PublishToTargetsAsync<TMessage>(
@@ -243,6 +244,9 @@ public class TransportManager(
           CausationId = context.CausationId,
           Scope = scopeDelta,
           TraceParent = HopStamping.AmbientTraceParent,
+          // Names the stream the message's [StreamId] names, as the dispatcher's hop does, so a receiver stores it
+          // there rather than on its message id (#1798).
+          Metadata = StreamIdentity.HopMetadataFor(message!, streamIds: null),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }

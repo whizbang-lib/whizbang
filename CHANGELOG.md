@@ -732,7 +732,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a migration strategy from column types, so it is unaffected.
 - **The commit-order stamper drains a whole-store backlog in time proportional to its size (Fixes #1786).** After an
   upgrade that left every historical event unstamped, the stamper's batch fell to one row per call and stayed there.
-  Two causes, both fixed. The stamp (migration 247) is now four statements that can each be planned only one way: the
+  Two causes, both fixed. The stamp (migration 248) is now four statements that can each be planned only one way: the
   walk reads its batch through the insert-transaction index and stops, with sorting off for it; no step joins the
   batch's own intermediate sets (205's one statement was planned as nested loops on the small estimates an unknown
   backlog gives, so a 1,000-row call compared about a million pairs, twice); and the update reaches each row by key.
@@ -741,6 +741,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twice its size, the batch stops shrinking there, and any call well inside the budget grows the batch again, past
   any size a slow call or a timeout backed off to, instead of the cap holding until the backlog drained.
 
+- **A receiver stores every event under the stream its producer stored it on (Fixes #1798).** A typed composite's
+  children were filed under the composite's stream, a re-delivery bundle's children under the bundle envelope's id
+  (a random stream), and a lone audit record or an event sent through `TransportManager.PublishToTargetsAsync` or
+  `DispatcherTransportBridge` under its message id, because nothing on the hop named the stream. Live apply keyed the
+  row by that stream, so the event folded onto a row no reader asks for and never reached the row it is about, and a
+  later rebuild recorded the wrong stream's position on the right row, which the ordering guard then held against
+  every later rebuild. Every hop writer and every inbox-row builder now goes through one helper, `StreamIdentity`; a
+  re-delivery bundle records each child's stream (`RedeliveryComposite.InnerStreamIds`), with a fallback for bundles
+  from older senders. A parity suite stores each delivery shape the producer's way and the receiver's way and checks
+  they agree, and a source guard fails when a new path reads or writes the hop's stream outside the helper. Events
+  already misfiled are moved by the operator repair `IFanoutChildRefiler` (registered by both PostgreSQL drivers),
+  which calls the new `wh_refile_events` function (migration 247) to renumber both streams and move each event's
+  digest, inbox and applied-ledger rows in one transaction, then names the streams to rebuild.
+- **A rebuild folds a row that events were re-keyed onto from its own stream and every re-keyed source (Fixes #1820).**
+  A row that received events re-keyed from another stream was rebuilt from an empty model with only the re-keyed
+  events, so its own history was lost. The rebuild now collects every re-key in the run and folds each target row
+  once, from its own stream and all its sources, merged by commit sequence with each stream's own order kept.
+  `IPerspectiveRunner.RunRekeyedRowAsync` is a new default member; routing lives in `RebuildRowRouting`. A rebuild of
+  selected streams that names a target but not its sources cannot see the events re-keyed onto it; rebuild the sources
+  with it.
 - **A transport disconnect while a subscription is being established is no longer missed (Fixes #1831).** The
   subscription retry helper recorded a destination as Healthy and only then attached its disconnect handler, so a
   disconnect in between had no listener: the status stayed Healthy and no reconnect was attempted, and the consumer

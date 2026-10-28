@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 247_StampReadsOnlyTheBatchItStamps.sql
+-- Migration: 248_StampReadsOnlyTheBatchItStamps.sql
 -- Date: 2026-10-27
 -- Description: A stamp costs what it stamps whatever the planner believes about the backlog, so a whole-store backlog
 --              drains in time proportional to its size (#1786).
@@ -239,4 +239,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.stamp_pending_commit_sequences(INTEGER, BOOLEAN) IS
-'247 supersedes 205. Stamps rows past the visibility horizon (unchanged): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';
+'248 supersedes 205. Stamps rows past the visibility horizon (unchanged): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';

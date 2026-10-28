@@ -72,6 +72,35 @@ public class RedeliveryPumpTests {
     await Assert.That(compositeB.InnerCommitSequences).IsEquivalentTo([(long?)1]);
   }
 
+  /// <summary>
+  /// A re-delivery bundle records the stream the origin stored each event on, and names the bundle's stream on its wire
+  /// hop, so the receiver files every repaired event under that stream (#1798). The bundle used to carry neither: the
+  /// receiver's fan-out then filed each repaired event under the bundle envelope's own message id, a random stream no
+  /// row is keyed by, and the row the event is about never received it.
+  /// </summary>
+  [Test]
+  public async Task Publish_RecordsTheStreamEachEventIsStoredOnAsync() {
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
+
+    await pump.PublishAsync(
+      [_evt(streamA, TrackedGuid.New().Value, 1), _evt(streamA, TrackedGuid.New().Value, 2), _evt(streamB, TrackedGuid.New().Value, 1)],
+      topic: "repair-topic", target: "svc-x");
+
+    IRawInnerComposite bundleA = serializer.Captured[0].Payload;
+    IRawInnerComposite bundleB = serializer.Captured[1].Payload;
+    await Assert.That(bundleA.InnerStreamIds).IsEquivalentTo([streamA, streamA])
+      .Because("each child carries the stream the origin stored it on, and the receiver restores it");
+    await Assert.That(bundleB.InnerStreamIds).IsEquivalentTo([streamB]);
+    await Assert.That(StreamIdentity.FromHops(serializer.Captured[0])).IsEqualTo(streamA)
+      .Because("the wire hop names the bundle's stream as every dispatched message does, so a receiver that predates "
+             + "the per-child streams still files the repaired events under the right one");
+    await Assert.That(StreamIdentity.FromHops(serializer.Captured[1])).IsEqualTo(streamB);
+  }
+
   /// <summary>A pump answering an operator's request marks every bundle, so a report-only receiver applies it (#1028).</summary>
   [Test]
   public async Task Publish_ForAnOperatorRequest_MarksEveryBundleOperatorRequestedAsync() {
