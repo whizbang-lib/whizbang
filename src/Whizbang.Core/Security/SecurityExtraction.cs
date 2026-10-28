@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Frozen;
 using Whizbang.Core.Lenses;
 
 namespace Whizbang.Core.Security;
@@ -66,4 +67,17 @@ public sealed record SecurityExtraction {
   /// impersonation, or service account.
   /// </summary>
   public SecurityContextType ContextType { get; init; } = SecurityContextType.User;
+
+  /// <summary>
+  /// The claim types whose values may leave this process on the scope of an outgoing message. Empty by
+  /// default, so no claim is ever copied into message metadata unless the application opted in for it.
+  /// </summary>
+  /// <remarks>
+  /// The edge that reads the claims decides: the HTTP scope middleware copies its
+  /// <c>WhizbangScopeOptions.PropagatedClaimTypes</c> here. A scope restored from a message's hops lists
+  /// every claim it carries, because each of them was opted in where the chain started.
+  /// </remarks>
+  /// <docs>fundamentals/security/message-security#hop-scope</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTests.cs</tests>
+  public IReadOnlySet<string> PropagatedClaimTypes { get; init; } = FrozenSet<string>.Empty;
 }

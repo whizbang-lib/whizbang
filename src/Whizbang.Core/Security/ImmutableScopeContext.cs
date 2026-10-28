@@ -84,6 +84,14 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
   /// <inheritdoc />
   public IReadOnlyDictionary<string, string> Claims => _extraction.Claims;
 
+  /// <summary>
+  /// The claim types whose values may cross a hop on an outgoing message's scope (see
+  /// <see cref="SecurityExtraction.PropagatedClaimTypes"/>). Claims of any other type stay in this process.
+  /// </summary>
+  /// <docs>fundamentals/security/message-security#hop-scope</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTests.cs</tests>
+  public IReadOnlySet<string> PropagatedClaimTypes => _extraction.PropagatedClaimTypes;
+
   /// <inheritdoc />
   public string? ActualPrincipal => _extraction.ActualPrincipal;
 

@@ -3064,8 +3064,8 @@ public abstract partial class Dispatcher(
     // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
     // Priority 3: control-plane traffic has no ambient user by design — say so explicitly, so that a
     // scope that is simply MISSING stays a detectable fault rather than looking intentional.
-    CascadeContext.ScopeDeltaFromMessageContext(context)
-      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient())
+    HopScope.FromMessageContext(context)
+      ?? HopScope.FromAmbient()
       ?? Security.SystemScopeResolver.ForUnscoped(messageType, _declaredUnscopedTypes);
 
   /// <summary>
@@ -4587,19 +4587,18 @@ public abstract partial class Dispatcher(
     if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
       return null;
     }
-    // Scope honours the ShouldPropagate contract via GetSecurityFromAmbient (identical to
+    // Scope honours the ShouldPropagate contract via HopScope.FromAmbient (identical to
     // CascadeContext.ResolveHopFirstScope's ambient branch — the ONE ambient-scope rule). Do NOT re-add an
     // initiating-scope fallback here: it would bypass PropagateToOutgoingMessages=false and leak a deliberately
     // non-propagating scope onto the child hop (the divergence the audit found; the fallback was accidental
     // symmetry copied from the identity capture, never a contract decision).
-    var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = initiating.CorrelationId,
       CausationId = initiating.MessageId,
-      Scope = ambientSecurity is not null ? ScopeDelta.FromSecurityContext(ambientSecurity) : null,
+      Scope = HopScope.FromAmbient(),
     };
     return new MessageEnvelope<object> {
       MessageId = initiating.MessageId,

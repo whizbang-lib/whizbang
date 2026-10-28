@@ -143,7 +143,7 @@ public sealed record CascadeContext {
   /// from an explicit message context (dispatcher initial hop + the transport envelope builders).
   /// </summary>
   public static ScopeDelta? ScopeDeltaFromMessageContext(IMessageContext context) =>
-    ScopeDelta.FromSecurityContext(SecurityFromIds(context.TenantId, context.UserId));
+    HopScope.FromMessageContext(context);
 
   /// <summary>
   /// Resolves the cascade identity (<see cref="CorrelationId"/> + causation <see cref="MessageId"/>) to stamp
@@ -254,12 +254,8 @@ public sealed record CascadeContext {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_HopPresent_WinsOverDifferentAmbientAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync</tests>
-  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
-      ? ScopeDelta.FromSecurityContext(SecurityFromScope(s.Scope))
-      : null;
-    return sourceScope ?? ScopeDelta.FromSecurityContext(GetSecurityFromAmbient());
-  }
+  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) =>
+    HopScope.FromEnvelope(sourceEnvelope) ?? HopScope.FromAmbient();
 
   /// <summary>
   /// Creates a new CascadeContext with the specified metadata added/updated.

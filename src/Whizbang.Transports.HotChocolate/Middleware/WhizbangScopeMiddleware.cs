@@ -408,4 +408,18 @@ public class WhizbangScopeOptions {
   /// <see cref="ExtensionClaimMappings"/>.
   /// </remarks>
   public Dictionary<string, string> ExtensionHeaderMappings { get; } = [];
+
+  /// <summary>
+  /// Claim types whose values cross a hop on the scope of the messages a request dispatches. Empty by default,
+  /// so no claim is copied into message metadata unless it is listed here.
+  /// </summary>
+  /// <remarks>
+  /// Scope extensions always travel with the scope. A claim is different: it can be a token, an email address
+  /// or another personal value, so each one that a downstream service needs is opted in by its claim type
+  /// (for example <c>Whizbang:Scope:PropagatedClaimTypes:0</c>). A receiving service restores the listed claims
+  /// into its scope context and passes them on to the messages it dispatches in turn.
+  /// </remarks>
+  /// <docs>fundamentals/security/message-security#hop-scope</docs>
+  /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangScopeMiddlewareTests.cs</tests>
+  public HashSet<string> PropagatedClaimTypes { get; } = new(StringComparer.Ordinal);
 }
