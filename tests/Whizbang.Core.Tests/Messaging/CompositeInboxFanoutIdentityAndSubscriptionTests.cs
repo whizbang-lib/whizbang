@@ -144,6 +144,34 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
       .Because("a re-delivery bundle carries previously persisted events whose ids consumers converge on; derivation never overrides a supplied id");
   }
 
+  // ---- repair traffic (#1843) ---------------------------------------------------------------------
+
+  [Test]
+  public async Task TryExpand_RedeliveryBundle_ChildrenAreRepairTrafficAsync() {
+    var streamId = Guid.CreateVersion7();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [JsonSerializer.Deserialize<JsonElement>("{\"v\":1}"), JsonSerializer.Deserialize<JsonElement>("{\"v\":2}")],
+      InnerTypeNames = ["Contracts.Job.RowAddedEvent, Contracts", "Contracts.Job.RowAddedEvent, Contracts"],
+      InnerEventIds = [Guid.CreateVersion7(), Guid.CreateVersion7()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _source(streamId), _scope());
+
+    await Assert.That(result.Children.Select(c => c.RestoreIfMissing).ToList()).IsEquivalentTo([true, true])
+      .Because("a redelivery restores what the event store lost, so the store checks deduplication against the event store for its children");
+  }
+
+  [Test]
+  public async Task TryExpand_RawBundleThatIsNotARedelivery_ChildrenTrustDeduplicationAsync() {
+    var bundle = new RawBundle(("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"));
+
+    var result = CompositeInboxFanout.TryExpand(bundle, _source(Guid.CreateVersion7()), _scope());
+
+    await Assert.That(result.Children.Single().RestoreIfMissing).IsFalse()
+      .Because("only repair traffic may be stored past deduplication");
+  }
+
   // ---- positive classification -------------------------------------------------------------------
 
   [Test]

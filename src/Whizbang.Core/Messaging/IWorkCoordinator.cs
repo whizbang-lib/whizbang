@@ -3390,6 +3390,20 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
   public string? DiscardedOnReceive { get; init; }
+
+  /// <summary>
+  /// Set on the children of a redelivery that stream integrity or an operator requested (a
+  /// <see cref="Whizbang.Core.Minting.RedeliveryComposite"/>): inbox deduplication is checked against the event store
+  /// rather than trusted alone. A child whose id deduplication remembers but which neither the event store nor the
+  /// inbox holds is stored again, as state only, so a repairable gap converges instead of being asked for forever
+  /// (#1843). It is refused, stored settled with the reason, when its stream's earlier history was truncated here,
+  /// because restoring it could bring back an event removed on purpose. False for every other message: deduplication
+  /// alone decides, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#remembered-but-missing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs</tests>
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool RestoreIfMissing { get; init; }
 }
 
 /// <summary>

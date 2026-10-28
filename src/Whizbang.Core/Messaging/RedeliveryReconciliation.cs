@@ -22,17 +22,20 @@ namespace Whizbang.Core.Messaging;
 /// <param name="EventType">The stored event type.</param>
 /// <param name="Present">The bundle's events this bucket already held.</param>
 /// <param name="Adopted">Of those, the events whose empty origin columns the bundle filled.</param>
+/// <param name="Refused">The bundle's events deduplication remembers and the event store does not hold that the store
+/// refused to restore, because the stream's earlier history was truncated here (#1843).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 public readonly record struct RedeliveredBucketPresence(
-  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted);
+  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int Refused = 0);
 
 /// <summary>What reconciling one redelivery bundle changed at the receiver.</summary>
 /// <param name="Children">The bundle's children this receiver kept.</param>
 /// <param name="Present">Children already in the event store.</param>
 /// <param name="Adopted">Present children whose empty origin columns the bundle filled.</param>
 /// <param name="MarkedUnhealable">Buckets newly recorded as ones repair cannot change.</param>
+/// <param name="Refused">Children the store refused to restore past deduplication (#1843).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-public readonly record struct RedeliveryReconciliation(int Children, int Present, int Adopted, int MarkedUnhealable) {
+public readonly record struct RedeliveryReconciliation(int Children, int Present, int Adopted, int MarkedUnhealable, int Refused = 0) {
   /// <summary>Nothing was reconciled: no origin, no children, or no store that can answer.</summary>
   public static RedeliveryReconciliation None => default;
 }
