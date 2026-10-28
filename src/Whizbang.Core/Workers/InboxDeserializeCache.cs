@@ -172,12 +172,11 @@ public sealed class InboxDeserializeCache {
     if (_bytes <= _maxBytes) {
       return;
     }
-    // #1793: oldest first until the payloads fit the byte budget.
-    foreach (var key in SelectEvictionKeys(_entries, _entries.Count)) {
-      _removeLocked(key);
-      if (_bytes <= _maxBytes) {
-        return;
-      }
+    // #1793: oldest first until the payloads fit the byte budget. The newest entry fits on its own (Set refuses one
+    // that does not), so the walk ends before it runs out of keys.
+    var oldestFirst = new Queue<Guid>(SelectEvictionKeys(_entries, _entries.Count));
+    while (_bytes > _maxBytes) {
+      _removeLocked(oldestFirst.Dequeue());
     }
   }
 

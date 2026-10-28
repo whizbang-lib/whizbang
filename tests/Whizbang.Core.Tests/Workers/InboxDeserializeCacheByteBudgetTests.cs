@@ -51,6 +51,24 @@ public sealed class InboxDeserializeCacheByteBudgetTests {
   }
 
   [Test]
+  public async Task OverTheBudget_AsManyOldEntriesAreEvictedAsItTakesAsync() {
+    var (clock, cache) = _cache(maxBytes: 250);
+    var a = _id();
+    var b = _id();
+    var c = _id();
+    cache.Set(a, "a", 100);
+    clock.Advance(TimeSpan.FromSeconds(1));
+    cache.Set(b, "b", 100);
+    clock.Advance(TimeSpan.FromSeconds(1));
+    cache.Set(c, "c", 200);
+
+    await Assert.That(cache.TryGet(a, out _)).IsFalse();
+    await Assert.That(cache.TryGet(b, out _)).IsFalse();
+    await Assert.That(cache.TryGet(c, out _)).IsTrue();
+    await Assert.That(cache.Bytes).IsEqualTo(200);
+  }
+
+  [Test]
   public async Task APayloadLargerThanTheWholeBudget_IsNotCachedAsync() {
     var (_, cache) = _cache(maxBytes: 100);
     var big = _id();
