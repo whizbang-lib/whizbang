@@ -81,7 +81,7 @@ public static class HopScope {
   /// <param name="claims">The restored claims.</param>
   /// <returns>Their types.</returns>
   internal static IReadOnlySet<string> ClaimTypesOf(IReadOnlyDictionary<string, string> claims) =>
-    claims.Count == 0 ? FrozenSet<string>.Empty : claims.Keys.ToFrozenSet(StringComparer.Ordinal);
+    claims.Keys.ToFrozenSet(StringComparer.Ordinal);
 
   private static ImmutableScopeContext? _propagatingAmbient() =>
     ScopeContextAccessor.CurrentContext is ImmutableScopeContext { ShouldPropagate: true } ambient ? ambient : null;

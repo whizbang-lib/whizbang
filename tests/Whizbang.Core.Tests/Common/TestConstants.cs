@@ -124,7 +124,10 @@ public static class TestConstants {
   /// <para>DispatcherPublishOnceTests.cs adds 1 (PublishOnceFailingEventReceptor: a publish that fails after
   /// its claim was won, #1414).</para>
   ///
-  /// <para>Total: 129 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>HopScopeDispatchParityTests.cs adds 1 (HopScopeParityLocalCommandReceptor: a local receptor that
+  /// records the scope it ran under and returns an event the dispatcher cascades, #1854).</para>
+  ///
+  /// <para>Total: 130 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 129;
+  public const int EXPECTED_RECEPTOR_COUNT = 130;
 }

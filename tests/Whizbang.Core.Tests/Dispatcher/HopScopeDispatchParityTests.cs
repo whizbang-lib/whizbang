@@ -37,6 +37,7 @@ public class HopScopeDispatchParityTests {
     Publish,
     PublishMany,
     PublishScheduled,
+    PublishFromAReceptor,
     LocalInvokeCascade,
     SendLocalCascade,
     EventStoreAppend,
@@ -50,6 +51,7 @@ public class HopScopeDispatchParityTests {
   [Arguments(DispatchPath.Publish)]
   [Arguments(DispatchPath.PublishMany)]
   [Arguments(DispatchPath.PublishScheduled)]
+  [Arguments(DispatchPath.PublishFromAReceptor)]
   [Arguments(DispatchPath.LocalInvokeCascade)]
   [Arguments(DispatchPath.SendLocalCascade)]
   [Arguments(DispatchPath.EventStoreAppend)]
@@ -106,17 +108,27 @@ public class HopScopeDispatchParityTests {
           new MessageContext { TenantId = "tenant-hop", UserId = "user-hop" });
         break;
       case DispatchPath.SendMany:
-        await dispatcher.SendManyAsync(new[] { new HopScopeParityCommand(id) });
+        await dispatcher.SendManyAsync<HopScopeParityCommand>([new HopScopeParityCommand(id)]);
         break;
       case DispatchPath.Publish:
         await dispatcher.PublishAsync(new HopScopeParityEvent(id));
         break;
       case DispatchPath.PublishMany:
-        await dispatcher.PublishManyAsync(new[] { new HopScopeParityEvent(id) });
+        await dispatcher.PublishManyAsync<HopScopeParityEvent>([new HopScopeParityEvent(id)]);
         break;
       case DispatchPath.PublishScheduled:
         await dispatcher.PublishAsync(new HopScopeParityEvent(id),
           new DispatchOptions().WithScheduledFor(DateTimeOffset.UnixEpoch.AddYears(100)));
+        break;
+      case DispatchPath.PublishFromAReceptor:
+        // A receptor publishing mid-handling: the dispatcher captures the establishing context as the source hop.
+        ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {
+          CorrelationId = CorrelationId.New(),
+          TenantId = "tenant-hop",
+          UserId = "user-hop",
+          ScopeContext = ScopeContextAccessor.CurrentContext,
+        };
+        await dispatcher.PublishAsync(new HopScopeParityEvent(id));
         break;
       case DispatchPath.LocalInvokeCascade:
         await dispatcher.LocalInvokeAsync<HopScopeParityEmittedEvent>(new HopScopeParityLocalCommand(id));
