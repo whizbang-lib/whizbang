@@ -24,12 +24,16 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
   private readonly BatchFlusher<CategorizedFailure> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
+  /// <docs>operations/configuration/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:FailureFlushWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   public FailureFlushWorker(
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
     IOptions<FailureFlushWorkerOptions> options,
     ILogger<FailureFlushWorker> logger,
-    IPinnedConnectionPool pinnedPool) {
+    IPinnedConnectionPool pinnedPool,
+    TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(schemaReadyGate);
@@ -38,7 +42,7 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger);
+    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
   }
 
   /// <inheritdoc />

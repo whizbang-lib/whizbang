@@ -873,6 +873,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ReconcileTerminalCountsAsync` gain overloads that take the deriver. `SagaItemStreams.Of(sagaId, item)`, the
   existing reconciler overloads, and a service given options it built itself or none keep the process-wide namespace,
   now documented as such; code running in a host should inject the deriver (Fixes #1888)
+- **The transport batch collector and the batch flusher run on an injected clock.** `TransportBatchCollector<T>` armed
+  its sliding window and hard max on raw `System.Threading.Timer`s, and `BatchFlusher<T>` measured its coalesce
+  window with `Environment.TickCount` and waited out its retry backoff and its shutdown drain bound on the real clock,
+  so neither could be driven by a test clock and their tests slept. Both now take an optional `TimeProvider` (null
+  keeps the system clock). The RabbitMQ and Azure Service Bus transports hand their own clock to the collectors they
+  build, `InProcessTransport` gains a constructor that takes one, and the five flush workers (outbox and perspective
+  completions, failures, lease renewals, inbox handler commits) take an optional `TimeProvider` that the container
+  fills with the host's registered clock. The flusher's coalesce window now waits on the channel instead of spinning
+  with `Task.Yield` until its deadline, so an idle window no longer burns a thread-pool thread; a batch already at
+  `ImmediateFlushThreshold`, the first item included, flushes without opening a window; and shutdown flushes a batch
+  whose window is still open at once instead of sitting it out. The collector and flusher tests run on a fake clock
+  and wait on signals. The same change stops two batch flushes inheriting a caller's ambient context, as #1883 did for
+  the sliding-window batchers: the collector and `BatchWorkCoordinatorStrategy` started a size-triggered flush of their
+  shared batch with `Task.Run` from inside the call that filled it, and created their timers in the constructor, so a
+  flush ran with the `AsyncLocal` values (a pinned connection, a scope, an activity) of the caller that crossed the
+  threshold or of whoever built the collector or first resolved the strategy. Both flushes now start, and both timers
+  are created, with the flow suppressed (Fixes #1868).
 - **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
   whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
   failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate

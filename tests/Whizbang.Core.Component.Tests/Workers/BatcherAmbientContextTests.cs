@@ -5,14 +5,17 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -35,6 +38,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowApplyBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerStreamSerializer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/AmbientFreeTask.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Workers/TransportBatchCollector.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Messaging/BatchWorkCoordinatorStrategy.cs</code-under-test>
 public class BatcherAmbientContextTests {
   private const string FIRST_APPENDER = "first-appender";
 
@@ -149,6 +154,187 @@ public class BatcherAmbientContextTests {
     await Assert.That(ExecutionContext.IsFlowSuppressed()).IsFalse()
       .Because("the start suppresses the flow only around itself, so the caller's later awaits still flow");
     await started;
+  }
+
+  // ========================================
+  // #1868: the batch collector's and the batch strategy's flushes
+  // ========================================
+  //
+  // A transport batch collector and the batch work coordinator strategy buffer work from many callers and flush the
+  // shared batch on their own: when a caller's enqueue fills it, or when one of their timers fires. The size-triggered
+  // flush was started with Task.Run from inside the call that crossed the threshold, so it ran with that caller's
+  // ambient context; and the timers were created in the constructor, so every tick, and the flush it starts, ran with
+  // the context of whoever constructed the collector or resolved the strategy.
+
+  [Test]
+  [Timeout(30000)]
+  public async Task CollectorSizeTriggeredFlush_DoesNotSeeTheEnqueuersAmbientContextAsync(
+      CancellationToken cancellationToken) {
+    var seen = new TaskCompletionSource<Seen>(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var collector = new TransportBatchCollector<int>(
+      new TransportBatchOptions { BatchSize = 2, SlideMs = 600_000, MaxWaitMs = 600_000 },
+      _ => {
+        seen.TrySetResult(Seen.Now());
+        return Task.CompletedTask;
+      },
+      new ArmingClock());
+
+    collector.Enqueue(1);
+    await _asTheFirstAppenderAsync(() => {
+      collector.Enqueue(2);
+      return ValueTask.CompletedTask;
+    });
+
+    await _assertNothingLeakedAsync(await seen.Task.WaitAsync(cancellationToken));
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task CollectorTimerFlush_DoesNotSeeTheConstructorsAmbientContextAsync(
+      CancellationToken cancellationToken) {
+    // The clock runs each timer in the context that created it, as the system clock does
+    var clock = new ArmingClock(flowsExecutionContext: true);
+    var slide = TimeSpan.FromMilliseconds(50);
+    var seen = new TaskCompletionSource<Seen>(TaskCreationOptions.RunContinuationsAsynchronously);
+    TransportBatchCollector<int>? collector = null;
+    await _asTheFirstAppenderAsync(() => {
+      collector = new TransportBatchCollector<int>(
+        new TransportBatchOptions { BatchSize = 1000, SlideMs = (int)slide.TotalMilliseconds, MaxWaitMs = 600_000 },
+        _ => {
+          seen.TrySetResult(Seen.Now());
+          return Task.CompletedTask;
+        },
+        clock);
+      return ValueTask.CompletedTask;
+    });
+
+    await using var built = collector!;
+    built.Enqueue(1);
+    clock.Advance(slide);
+
+    await _assertNothingLeakedAsync(await seen.Task.WaitAsync(cancellationToken));
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task StrategyBatchSizeFlush_DoesNotSeeTheQueuersAmbientContextAsync(CancellationToken cancellationToken) {
+    var coordinator = new SeeingWorkCoordinator();
+    // The debounce window is far out of reach: only the batch size can start this flush
+    var strategy = _strategy(coordinator, batchSize: 2, debounceMs: 600_000);
+    try {
+      strategy.QueueOutboxMessage(_outbox(TrackedGuid.New()));
+      await _asTheFirstAppenderAsync(() => {
+        strategy.QueueOutboxMessage(_outbox(TrackedGuid.New()));
+        return ValueTask.CompletedTask;
+      });
+
+      await _assertNothingLeakedAsync(await coordinator.Observed.Task.WaitAsync(cancellationToken));
+    } finally {
+      await strategy.DisposeAsync();
+    }
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task StrategyDebounceFlush_DoesNotSeeTheConstructorsAmbientContextAsync(CancellationToken cancellationToken) {
+    // The debounce timer is created when the strategy is, which for a lazily resolved strategy is inside whichever
+    // caller resolves it first. A debounce of zero fires as soon as a queue arms it, so nothing here waits on time.
+    var coordinator = new SeeingWorkCoordinator();
+    BatchWorkCoordinatorStrategy? strategy = null;
+    await _asTheFirstAppenderAsync(() => {
+      strategy = _strategy(coordinator, batchSize: 1000, debounceMs: 0);
+      return ValueTask.CompletedTask;
+    });
+    try {
+      strategy!.QueueOutboxMessage(_outbox(TrackedGuid.New()));
+
+      await _assertNothingLeakedAsync(await coordinator.Observed.Task.WaitAsync(cancellationToken));
+    } finally {
+      await strategy!.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task AmbientFreeTimer_CreatedWhileFlowIsAlreadySuppressed_RunsWithNoCapturedContextAsync() {
+    // A caller that already suppressed the flow must still be able to create a timer: suppressing it a second time
+    // throws. The timer captures nothing, and the caller's suppression is left as it was.
+    var clock = new ArmingClock(flowsExecutionContext: true);
+    Seen? ticked = null;
+    ITimer timer;
+    bool stillSuppressed;
+    _callerScope.Value = FIRST_APPENDER;
+    // Nothing is awaited while the flow is suppressed: the undo has to run on the thread that suppressed it.
+    var flow = ExecutionContext.SuppressFlow();
+    try {
+      timer = AmbientFreeTask.CreateTimer(clock, _ => ticked = Seen.Now());
+      stillSuppressed = ExecutionContext.IsFlowSuppressed();
+    } finally {
+      flow.Undo();
+      _callerScope.Value = null;
+    }
+
+    await using (timer) {
+      timer.Change(TimeSpan.FromMilliseconds(1), Timeout.InfiniteTimeSpan);
+      clock.Advance(TimeSpan.FromMilliseconds(1));
+    }
+
+    await Assert.That(stillSuppressed).IsTrue()
+      .Because("the flow the caller suppressed stays suppressed after the timer is created");
+    await Assert.That(ticked).IsNotNull();
+    await Assert.That(ticked!.CallerScope).IsNull()
+      .Because("a timer created with the flow suppressed captures no context to run its ticks in");
+  }
+
+  [Test]
+  public async Task AmbientFreeTimer_RestoresTheCallersFlowAfterTheCreateAsync() {
+    await using var timer = AmbientFreeTask.CreateTimer(new ArmingClock(), _ => { });
+
+    await Assert.That(ExecutionContext.IsFlowSuppressed()).IsFalse()
+      .Because("creating the timer suppresses the flow only around itself, so the caller's later awaits still flow");
+  }
+
+  private static BatchWorkCoordinatorStrategy _strategy(IWorkCoordinator coordinator, int batchSize, int debounceMs) =>
+    new(
+      coordinator: coordinator,
+      instanceProvider: new ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1),
+      options: new WorkCoordinatorOptions {
+        Strategy = WorkCoordinatorStrategy.Batch,
+        BatchSize = batchSize,
+        IntervalMilliseconds = debounceMs,
+      },
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      detachedWork: new DetachedLifecycleWork());
+
+  /// <summary>A coordinator that records what the first outbox store could see of the context it ran in.</summary>
+  private sealed class SeeingWorkCoordinator : IWorkCoordinator {
+    public TaskCompletionSource<Seen> Observed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+      Observed.TrySetResult(Seen.Now());
+      return Task.CompletedTask;
+    }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   /// <summary>

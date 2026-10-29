@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -79,6 +80,13 @@ public class SubscribeBatchTests {
   }
 
   [Test]
+  public async Task Constructor_NullClock_ThrowsAsync() {
+    // The parameterless constructor is how a caller asks for the system clock; a null clock is a mistake to report,
+    // not a request for a default.
+    await Assert.That(() => new InProcessTransport(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task SubscribeBatchAsync_BatchHandlerReceivesPublishedMessagesAsync() {
     // Arrange
     var transport = new InProcessTransport();
@@ -118,13 +126,16 @@ public class SubscribeBatchTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_SlideWindowFlushesPartialBatchAsync() {
-    // Arrange
-    var transport = new InProcessTransport();
+  [Timeout(30000)]
+  public async Task SubscribeBatchAsync_SlideWindowFlushesPartialBatchAsync(CancellationToken cancellationToken) {
+    // Arrange: the subscription's collector runs on the transport's clock (#1868), so the sliding window closes
+    // only when the test moves that clock
+    var clock = new ArmingClock();
+    var transport = new InProcessTransport(clock);
     var destination = new TransportDestination("test-topic");
     var batchOptions = new TransportBatchOptions { BatchSize = 100, SlideMs = 50, MaxWaitMs = 10000 };
     var receivedBatches = new List<IReadOnlyList<TransportMessage>>();
-    var batchReceived = new TaskCompletionSource();
+    var batchReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription = await transport.SubscribeBatchAsync(
       (batch, _) => {
@@ -133,14 +144,16 @@ public class SubscribeBatchTests {
         return Task.CompletedTask;
       },
       destination,
-      batchOptions
+      batchOptions,
+      cancellationToken
     );
 
-    // Act — publish fewer than batchSize, let slide window flush
-    await transport.PublishAsync(_createTestEnvelope(), destination, "Type1");
-    await transport.PublishAsync(_createTestEnvelope(), destination, "Type2");
+    // Act: publish fewer than batchSize, then let the slide window pass with no further publish
+    await transport.PublishAsync(_createTestEnvelope(), destination, "Type1", cancellationToken: cancellationToken);
+    await transport.PublishAsync(_createTestEnvelope(), destination, "Type2", cancellationToken: cancellationToken);
+    clock.Advance(TimeSpan.FromMilliseconds(50));
 
-    await batchReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await batchReceived.Task.WaitAsync(cancellationToken);
 
     // Assert — partial batch flushed after slide window
     await Assert.That(receivedBatches).Count().IsEqualTo(1);
@@ -207,13 +220,16 @@ public class SubscribeBatchTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_BatchHandlerError_DoesNotLoseMessagesAsync() {
+  [Timeout(30000)]
+  public async Task SubscribeBatchAsync_BatchHandlerError_DoesNotLoseMessagesAsync(CancellationToken cancellationToken) {
     // Arrange
-    var transport = new InProcessTransport();
+    var clock = new ArmingClock();
+    var transport = new InProcessTransport(clock);
     var destination = new TransportDestination("test-topic");
+    var slide = TimeSpan.FromMilliseconds(20);
     var batchOptions = new TransportBatchOptions { BatchSize = 1, SlideMs = 20, MaxWaitMs = 1000 };
     var callCount = 0;
-    var secondCallReceived = new TaskCompletionSource();
+    var secondCallReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription = await transport.SubscribeBatchAsync(
       (_, ct) => {
@@ -226,16 +242,19 @@ public class SubscribeBatchTests {
         return Task.CompletedTask;
       },
       destination,
-      batchOptions
+      batchOptions,
+      cancellationToken
     );
 
-    // Act
-    await transport.PublishAsync(_createTestEnvelope(), destination, "Type1");
+    // Act: the failed batch is re-queued behind a re-armed sliding window on the transport's clock
+    await transport.PublishAsync(_createTestEnvelope(), destination, "Type1", cancellationToken: cancellationToken);
+    await clock.WaitForArmedAsync(slide, cancellationToken);
+    clock.Advance(slide);
 
-    await secondCallReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await secondCallReceived.Task.WaitAsync(cancellationToken);
 
-    // Assert — handler was called at least twice (initial + retry)
-    await Assert.That(callCount).IsGreaterThanOrEqualTo(2)
+    // Assert: handler was called twice (initial + retry)
+    await Assert.That(Volatile.Read(ref callCount)).IsEqualTo(2)
       .Because("Failed batch should be re-queued and retried");
 
     subscription.Dispose();

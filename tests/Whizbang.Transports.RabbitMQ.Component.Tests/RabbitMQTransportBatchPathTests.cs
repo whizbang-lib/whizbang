@@ -16,6 +16,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -347,22 +348,27 @@ public class RabbitMQTransportBatchPathTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_PartialBatchTimerFlush_InvokesHandlerAndAcksAsync() {
-    // Partial batch: only the sliding-window timer can trigger the flush here (BatchSize
-    // is never reached). The WAIT is still a completion signal (ACK semaphore), not a delay.
-    var options = new TransportBatchOptions { BatchSize = 50, SlideMs = 50, MaxWaitMs = 10_000 };
-    var (channel, batches, _) = await _subscribeBatchAsync(options);
+  [Timeout(30000)]
+  public async Task SubscribeBatchAsync_PartialBatchTimerFlush_InvokesHandlerAndAcksAsync(CancellationToken cancellationToken) {
+    // Partial batch: only the sliding-window timer can trigger the flush here (BatchSize is never reached). The
+    // window runs on the transport's clock (#1868), so it closes when the test moves that clock, after both
+    // deliveries: they always land in one batch.
+    var clock = new ArmingClock();
+    // A window far longer than the test may run: only the transport's own clock can close it.
+    var slide = TimeSpan.FromMinutes(10);
+    var options = new TransportBatchOptions { BatchSize = 50, SlideMs = (int)slide.TotalMilliseconds, MaxWaitMs = 2 * (int)slide.TotalMilliseconds };
+    var (channel, batches, _) = await _subscribeBatchAsync(options, timeProvider: clock);
 
     var (props1, body1) = RabbitTestWire.ValidWireMessage("m1");
     var (props2, body2) = RabbitTestWire.ValidWireMessage("m2");
     await RabbitTestWire.DeliverAsync(channel, props1, body1, 1);
     await RabbitTestWire.DeliverAsync(channel, props2, body2, 2);
+    clock.Advance(slide);
 
-    await channel.WaitForAckAttemptsAsync(2);
+    await channel.WaitForAckAttemptsAsync(2).WaitAsync(cancellationToken);
 
-    // Under heavy CI load the slide timer may fire between the two deliveries and split
-    // them into two flushes — the invariant is that every message is handled and ACKed.
-    await Assert.That(batches.Sum(b => b.Count)).IsEqualTo(2);
+    await Assert.That(batches).Count().IsEqualTo(1);
+    await Assert.That(batches[0]).Count().IsEqualTo(2);
     await Assert.That(channel.AckAttempts).Count().IsEqualTo(2);
     await Assert.That(channel.NackAttempts).IsEmpty();
   }
@@ -736,11 +742,12 @@ public class RabbitMQTransportBatchPathTests {
     TransportBatchOptions options,
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? handler = null,
     RecordingChannel? channel = null,
-    ILogger<RabbitMQTransport>? logger = null
+    ILogger<RabbitMQTransport>? logger = null,
+    TimeProvider? timeProvider = null
   ) {
     channel ??= new RecordingChannel();
     var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
-    var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, logger: logger);
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, logger: logger, timeProvider: timeProvider);
 
     var batches = new List<IReadOnlyList<TransportMessage>>();
     var subscription = await transport.SubscribeBatchAsync(

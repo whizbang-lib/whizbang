@@ -19,26 +19,35 @@ namespace Whizbang.Core.Tests.Workers;
 /// consequence.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/BatchFlusher.cs</code-under-test>
+/// <remarks>
+/// The flusher runs on a fake clock (#1868): each retry backoff is a timer on that clock, so a test reads the backoff
+/// the flusher chose from the timer it armed, and only then moves the clock past it. Nothing waits on real time.
+/// </remarks>
 public class BatchFlusherRetryTests {
+  private const int FIRST_BACKOFF_MS = 100;
+  private const int MAX_BACKOFF_MS = 150;
+
   /// <summary>
-  /// Flushes on item COUNT, not on time: the coalesce window is long enough never to elapse in a test,
-  /// and the immediate-flush threshold is exactly the number of items the test writes, so the batch
-  /// composition does not depend on scheduling.
+  /// Flushes on item COUNT, not on time: the coalesce window never closes on a clock the test does not move for it,
+  /// and the immediate-flush threshold is exactly the number of items the test writes, so the batch composition does
+  /// not depend on scheduling.
   /// </summary>
-  private static BatchFlusherOptions _fastRetryOptions(int maxAttempts, int flushAt) => new() {
+  private static BatchFlusherOptions _retryOptions(int maxAttempts, int flushAt) => new() {
     CoalesceWindowMs = 10_000,
     MaxBatchSize = 100,
     ImmediateFlushThreshold = flushAt,
     MaxFlushAttempts = maxAttempts,
-    FlushRetryBackoffMs = 1,
-    FlushRetryMaxBackoffMs = 2,
+    FlushRetryBackoffMs = FIRST_BACKOFF_MS,
+    FlushRetryMaxBackoffMs = MAX_BACKOFF_MS,
   };
 
   [Test]
-  public async Task FlushFailsOnce_RetriesTheSameBatchAndDeliversItAsync() {
+  [Timeout(30000)]
+  public async Task FlushFailsOnce_RetriesTheSameBatchAndDeliversItAsync(CancellationToken cancellationToken) {
     var calls = new List<IReadOnlyList<int>>();
     var delivered = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new CapturingLogger<BatchFlusher<int>>();
+    var clock = new ArmingClock();
     await using var flusher = new BatchFlusher<int>(
       flush: (items, _) => {
         lock (calls) { calls.Add([.. items]); }
@@ -48,13 +57,19 @@ public class BatchFlusherRetryTests {
         delivered.TrySetResult(items);
         return Task.CompletedTask;
       },
-      options: _fastRetryOptions(maxAttempts: 5, flushAt: 3),
-      logger: logger);
+      options: _retryOptions(maxAttempts: 5, flushAt: 3),
+      logger: logger,
+      timeProvider: clock);
 
-    await flusher.Writer.WriteAsync(1);
-    await flusher.Writer.WriteAsync(2);
-    await flusher.Writer.WriteAsync(3);
-    var items = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await flusher.Writer.WriteAsync(1, cancellationToken);
+    await flusher.Writer.WriteAsync(2, cancellationToken);
+    await flusher.Writer.WriteAsync(3, cancellationToken);
+    // The retry waits out its backoff on the flusher's clock
+    await clock.WaitForArmedAsync(TimeSpan.FromMilliseconds(FIRST_BACKOFF_MS), cancellationToken);
+    await Assert.That(delivered.Task.IsCompleted).IsFalse()
+      .Because("the retry has not run while its backoff is still pending");
+    clock.Advance(TimeSpan.FromMilliseconds(FIRST_BACKOFF_MS));
+    var items = await delivered.Task.WaitAsync(cancellationToken);
     // The counters are updated after the flush callback returns; draining the flusher (idempotent
     // dispose) is the completion signal that makes reading them deterministic.
     await flusher.DisposeAsync();
@@ -69,20 +84,28 @@ public class BatchFlusherRetryTests {
   }
 
   [Test]
-  public async Task FlushAlwaysFails_DropsAfterMaxAttemptsAndNamesTheConsequenceAsync() {
+  [Timeout(30000)]
+  public async Task FlushAlwaysFails_DropsAfterMaxAttemptsAndNamesTheConsequenceAsync(CancellationToken cancellationToken) {
     var attempts = 0;
     var logger = new CapturingLogger<BatchFlusher<int>>();
+    var clock = new ArmingClock();
     await using var flusher = new BatchFlusher<int>(
       flush: (_, _) => {
         Interlocked.Increment(ref attempts);
         throw new InvalidOperationException("still broken");
       },
-      options: _fastRetryOptions(maxAttempts: 3, flushAt: 2),
-      logger: logger);
+      options: _retryOptions(maxAttempts: 3, flushAt: 2),
+      logger: logger,
+      timeProvider: clock);
 
-    await flusher.Writer.WriteAsync(10);
-    await flusher.Writer.WriteAsync(20);
-    var error = await logger.WaitForAsync(e => e.Level == LogLevel.Error).WaitAsync(TimeSpan.FromSeconds(10));
+    await flusher.Writer.WriteAsync(10, cancellationToken);
+    await flusher.Writer.WriteAsync(20, cancellationToken);
+    // Two backoffs separate three attempts: the first, then double it, capped at the maximum
+    await clock.WaitForArmedAsync(TimeSpan.FromMilliseconds(FIRST_BACKOFF_MS), cancellationToken);
+    clock.Advance(TimeSpan.FromMilliseconds(FIRST_BACKOFF_MS));
+    await clock.WaitForArmedAsync(TimeSpan.FromMilliseconds(MAX_BACKOFF_MS), cancellationToken);
+    clock.Advance(TimeSpan.FromMilliseconds(MAX_BACKOFF_MS));
+    var error = await logger.WaitForAsync(e => e.Level == LogLevel.Error).WaitAsync(cancellationToken);
     await flusher.DisposeAsync();
 
     await Assert.That(attempts).IsEqualTo(3)
