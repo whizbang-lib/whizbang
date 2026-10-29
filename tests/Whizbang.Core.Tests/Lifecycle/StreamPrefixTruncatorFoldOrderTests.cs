@@ -42,7 +42,7 @@ public class StreamPrefixTruncatorFoldOrderTests {
   [Test]
   public async Task Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync() {
     var coordinator = new OrderRecordingCoordinator();
-    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, NoOpDestructionHook.Instance, _noServices);
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, NoOpDestructionHook.Instance, _noServices, archiveStore: null);
 
     var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 3);
 

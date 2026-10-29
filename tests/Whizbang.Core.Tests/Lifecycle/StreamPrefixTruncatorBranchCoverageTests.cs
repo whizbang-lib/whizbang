@@ -59,7 +59,7 @@ public class StreamPrefixTruncatorBranchCoverageTests {
   public async Task Truncate_CoordinatorDeclinesTheClose_DoesNotFireThePostDestructionHookAsync() {
     var log = new List<string>();
     var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("gate_blocked", 0));
-    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new RecordingHook(log), _noServices);
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new RecordingHook(log), _noServices, archiveStore: null);
 
     var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 
@@ -89,7 +89,7 @@ public class StreamPrefixTruncatorBranchCoverageTests {
   public async Task Truncate_PostDestructionHookSuspends_WaitsForTheHookThenReturnsTheClosedResultAsync() {
     var log = new List<string>();
     var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("truncated", 3));
-    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new SuspendingAfterHook(log), _noServices);
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new SuspendingAfterHook(log), _noServices, archiveStore: null);
 
     var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 

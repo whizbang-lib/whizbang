@@ -201,6 +201,13 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<PhysicalColumnFillMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held
+        // before migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamLifecycleBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
@@ -297,6 +304,14 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
+        // writes through it; a blob store package registers its own IArchiveStore first and wins.
+        // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp =>
+          new PostgresTableArchiveStore(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            sp.GetService<ILogger<PostgresTableArchiveStore>>()));
         // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
         // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
         selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>

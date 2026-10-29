@@ -107,7 +107,18 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S3. Stream lifecycle ledger (candidate discovery without scanning the event store)
 
-**Status (2026-10-24):** open. No `wh_stream_lifecycle` table in any migration. S4, S5, S7 and S11 build on it.
+**Status (2026-10-29):** done in #1732 (migration 260), pending review. S4, S5, S7 and S11 build on it.
+
+- **Landed.** `wh_stream_lifecycle` with the planned columns; `state` is `Active`, `Sealed` or `Archived`
+  (`ck_stream_lifecycle_state`); `origin_generation` is nullable (null until a history mutation). All three write paths
+  (outbox chain, inbox chain, `wh_append_event`) keep it under the stream lock they already hold; `wh_purge_streams`
+  removes the row. Ephemeral events, compaction origins and the empty stream id get no row. Indexes: the key and
+  `idx_stream_lifecycle_due (disposition_due_at, stream_id) INCLUDE (state) WHERE disposition_due_at IS NOT NULL`;
+  fillfactor 45 (measured: 70 kept only 58% of whole-page rewrites heap-only). The backfill runs outside the
+  migration from the `stream-lifecycle-backfill` maintenance step (`StreamLifecycleBackfill`, both drivers), gated on
+  `stream_lifecycle_backfill_version` with a cursor in `stream_lifecycle_backfill_cursor`.
+- **Left for later slices.** Prefix truncation does not reduce `approx_bytes` (S7/S11 adjust it when they truncate on
+  purpose); nothing writes `sealed_at`, `disposition_due_at`, `archive_locator` or `origin_generation` yet.
 
 - **Change.** New migration with `wh_stream_lifecycle` (stream_id PK, stream_type, tenant,
   first_appended_at, last_appended_bucket, last_version, approx_bytes, state, sealed_at,
@@ -174,8 +185,17 @@ ephemeral events page this slice was to promote is already published. Depends on
 
 ### S7. B3: `IArchiveStore` and the Postgres-table store
 
-**Status (2026-10-24):** open. `wh_event_archive` and `GetArchivedEventsAsync` exist (migration 085), but there
-is no `IArchiveStore` type.
+**Status (2026-10-29):** implemented on `feat/1736-archive-store` (#1736), to ship with S3 (#1732) in one bundle, S3
+first. Migration `262_ArchiveStoreKeepsATombstone.sql`; `IArchiveStore`, `ArchiveBatch` (one stream, prefix or whole),
+`ArchiveLocator` (`{store}://{address}?codec={codec}&format={format}`, codec recorded per archive), and
+`PostgresTableArchiveStore` (codec `none`: the rows stay `jsonb`), registered by both drivers and used by the prefix
+truncate's archive path. A whole-stream archive parks cursors in `wh_event_archive_cursors`, keeps snapshots and leaves
+the tombstone (built from the events by 260's rules when the stream has no ledger row yet); a statement trigger on
+`wh_event_store` refuses version reuse (`WHA01`). The archive keeps `approx_bytes` measuring the hot store (a prefix
+subtracts what it moved, a whole stream counts 0, a restore adds back), and `wh_purge_streams` (copied from 260) also
+removes the parked cursors. `RestoreAsync` (restores exact positions) and `DeleteAsync` are implemented here, so S9
+only consumes them. Open for S9: the per-type append-to-archived policy on the write paths (today the trigger raises,
+which fails the whole emit-chain batch). Docs: `v1.0.0/fundamentals/events/archive-store.md` (docs branch `docs/1736`).
 
 - **Change.** `IArchiveStore` in Core: `WriteAsync(ArchiveBatch)`, `ReadAsync(streamId, fromVersion)`,
   `RestoreAsync(streamId)`, `DeleteAsync(streamId)`. `PostgresTableArchiveStore` wraps

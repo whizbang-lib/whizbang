@@ -164,6 +164,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -319,6 +320,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -454,12 +456,14 @@ public static class ServiceCollectionExtensions {
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
   /// connection of their own per call, and the repair for composite children filed under the composite's stream
-  /// (<see cref="IFanoutChildRefiler"/>, #1798). A host's own registration wins.
+  /// (<see cref="IFanoutChildRefiler"/>, #1798), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A host's
+  /// own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
       new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
@@ -467,6 +471,12 @@ public static class ServiceCollectionExtensions {
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
+    // registered first wins.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp =>
+      new PostgresTableArchiveStore(
+        ct => OpenConnectionAsync(connectionString, ct),
+        logger: sp.GetService<ILogger<PostgresTableArchiveStore>>()));
     services.TryAddSingleton<IFanoutChildRefiler>(sp =>
       new PostgresFanoutChildRefiler(
         ct => OpenConnectionAsync(connectionString, ct),
@@ -506,6 +516,16 @@ public static class ServiceCollectionExtensions {
   // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once (#1646)
   // and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and
   // is idle otherwise.
+  /// <summary>
+  /// TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held before
+  /// migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+  /// </summary>
+  private static void _addStreamLifecycleBackfill(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperStreamLifecycleBackfillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();
     services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>

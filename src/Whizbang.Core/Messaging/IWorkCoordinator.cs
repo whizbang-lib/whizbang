@@ -3004,10 +3004,27 @@ public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 /// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
 /// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/>: the preserved detail of a truncated stream prefix. Carries
 /// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
+/// <see cref="Whizbang.Core.Archival.IArchiveStore.ReadAsync"/> returns the same type with every stored column filled,
+/// so a reader can rebuild the event exactly as the hot store held it.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/archive-store#reading-an-archive</docs>
 public sealed record ArchivedEvent(
-  Guid EventId, Guid StreamId, long Version, string EventType, string? EventDataJson, string? MetadataJson);
+  Guid EventId, Guid StreamId, long Version, string EventType, string? EventDataJson, string? MetadataJson) {
+  /// <summary>The event's scope as stored (<c>jsonb</c> text), or null when it had none.</summary>
+  public string? ScopeJson { get; init; }
+
+  /// <summary>The aggregate id stored with the event, or null.</summary>
+  public Guid? AggregateId { get; init; }
+
+  /// <summary>The aggregate (stream) type stored with the event, or null.</summary>
+  public string? AggregateType { get; init; }
+
+  /// <summary>When the event was first stored, or null for a row archived without it.</summary>
+  public DateTimeOffset? CreatedAt { get; init; }
+
+  /// <summary>The event's flags (<c>EventFlags</c> bits), or null for a row archived before flags were kept.</summary>
+  public int? Flags { get; init; }
+}
 
 /// <summary>
 /// An ephemeral event body the reaper is about to delete (E2), passed to a destruction hook so it can

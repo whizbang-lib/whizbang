@@ -14,6 +14,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
+  (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
+  last append, last version, approximate bytes, state `Active`/`Sealed`/`Archived`, and the seal, disposition and
+  archive columns later slices write). The outbox and inbox emit chains keep it with one set-based upsert per batch in
+  the statement that copies the events, and `wh_append_event` keeps it for direct appends on both drivers, all under
+  the stream lock each already holds. Appends write no indexed column and the table has fillfactor 45, so updates stay
+  heap-only even when a batch rewrites every row on a page; measured on a 500-event batch, the ledger costs 5 blocks per
+  existing stream (+0.8% blocks, +5% execution time) and 6 per new stream (+9%, +16% for a batch of all-new streams).
+  Ephemeral, compaction-origin and stream-less events get no row; a purge removes it. Existing streams are seeded by a
+  batched, resumable, idempotent backfill gated on `stream_lifecycle_backfill_version`, driven by the new
+  `stream-lifecycle-backfill` maintenance step on both drivers.
+- **Archived streams leave the hot event store through a pluggable `IArchiveStore`, with a Postgres-table store built in
+  (#1736).** `WriteAsync(ArchiveBatch)` archives one stream's prefix (through the gated prefix truncate and all its
+  guards) or the whole stream, copying then truncating in one transaction, so a failure leaves the stream fully hot.
+  Every archive bumps the origin generation. A whole-stream archive parks the stream's cursors and leaves a tombstone on
+  its lifecycle row (state `Archived`, last version, locator, generation), and a trigger on `wh_event_store` refuses any
+  append at or below an archived stream's last version (SQLSTATE `WHA01`). `ReadAsync` returns the events byte-identical
+  in version order; `RestoreAsync` puts them back at their original versions and commit positions with their digests,
+  epochs and cursors; `DeleteAsync` drops the copy and keeps the tombstone. The archive locator
+  (`{store}://{address}?codec={codec}&format={format}`) records each archive's codec (`none` for the table store; Brotli
+  first for byte-stream stores). Both Postgres drivers register `PostgresTableArchiveStore`, and the prefix truncate's
+  archive path writes through it, so an archiving truncate now also works on the Dapper driver. The archive keeps the
+  stream's ledger row honest (built from the events when the backfill has not reached the stream, `approx_bytes` reduced
+  on archive and restored on restore), and a purge removes the parked cursors. Migration 262 (after the stream lifecycle
+  ledger, migration 260). New API: `IArchiveStore`, `ArchiveBatch`, `ArchiveLocator`,
+  `ArchiveCompression`, `ArchiveStatus`, `ArchiveWriteResult`, `ArchiveRestoreResult`, `PostgresTableArchiveStore`, and
+  the scope, aggregate, created-at and flags properties of `ArchivedEvent`.
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
   `pg_stats.correlation` was measured with each candidate seeded in its production write order
   (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle
