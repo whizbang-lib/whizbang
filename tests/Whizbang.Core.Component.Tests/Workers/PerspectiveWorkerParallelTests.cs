@@ -27,8 +27,9 @@ namespace Whizbang.Core.Tests.Workers;
 public sealed class PerspectiveWorkerParallelTests {
 
   [Test]
+  [Timeout(30000)]
   [Category("Performance")]
-  public async Task ProcessWorkBatch_WithMultiplePerspectives_ExecutesConcurrentlyAsync() {
+  public async Task ProcessWorkBatch_WithMultiplePerspectives_ExecutesConcurrentlyAsync(CancellationToken cancellationToken) {
     // Arrange — 5 perspective groups, MaxConcurrentPerspectives = 5
     const int perspectiveCount = 5;
     var streamId = Guid.CreateVersion7();
@@ -49,7 +50,7 @@ public sealed class PerspectiveWorkerParallelTests {
     // Act — pre-enqueue ALL work BEFORE starting the worker so its first drain pulls all 5 into
     // ONE batch (the sibling throttle test's lesson: enqueue-after-start races batch composition
     // under load — a partial first batch blocks on the gate and the countdown never reaches 0).
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     foreach (var name in perspectiveNames) {
       await harness.EnqueueWorkAsync(new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
@@ -60,25 +61,24 @@ public sealed class PerspectiveWorkerParallelTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for all 5 runners to enter RunAsync simultaneously.
-    // If sequential, only 1 enters at a time → CountdownEvent never reaches 0 → timeout.
-    var allEnteredInTime = allEntered.Wait(TimeSpan.FromSeconds(10));
+    // If sequential, only 1 enters at a time, the CountdownEvent never reaches 0, and the test times out.
+    allEntered.Wait(cancellationToken);
 
     // Release gate so runners can complete
     gate.Release(perspectiveCount);
 
     // Shut down
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
-    await Assert.That(allEnteredInTime).IsTrue()
-      .Because("All 5 perspectives should enter RunAsync concurrently — sequential would timeout");
     await Assert.That(runner.PeakConcurrency).IsEqualTo(perspectiveCount)
       .Because($"Peak concurrency should be {perspectiveCount} when all perspectives run in parallel");
   }
 
   [Test]
+  [Timeout(30000)]
   [Category("Performance")]
-  public async Task ProcessWorkBatch_WithMaxConcurrency2_ThrottlesTo2Async() {
+  public async Task ProcessWorkBatch_WithMaxConcurrency2_ThrottlesTo2Async(CancellationToken cancellationToken) {
     // 5 perspective groups, MaxConcurrentPerspectives = 2. The worker throttles the batch via
     // Parallel.ForEachAsync(MaxDegreeOfParallelism = 2), and each runner holds its throttle slot for the
     // whole RunAsync call. This proves the bound DETERMINISTICALLY — no peak-concurrency counter, no
@@ -100,7 +100,7 @@ public sealed class PerspectiveWorkerParallelTests {
 
     var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: maxConcurrency);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     // Pre-enqueue ALL work BEFORE starting the worker so its first drain pulls all 5 into ONE batch
     // (MaxStreamsPerBatch = 300 default). Deterministic batch composition — no "did they land together"
@@ -137,12 +137,13 @@ public sealed class PerspectiveWorkerParallelTests {
     await Assert.That(runner.TotalRunCount).IsEqualTo(perspectiveCount)
       .Because("All 5 perspectives eventually complete.");
 
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
   }
 
   [Test]
+  [Timeout(60000)]
   [Category("Performance")]
-  public async Task ProcessWorkBatch_WhenOneGroupThrows_OtherGroupsCompleteAsync() {
+  public async Task ProcessWorkBatch_WhenOneGroupThrows_OtherGroupsCompleteAsync(CancellationToken cancellationToken) {
     // Arrange — 3 perspectives: 2 normal + 1 throwing
     var streamId = Guid.CreateVersion7();
 
@@ -165,7 +166,7 @@ public sealed class PerspectiveWorkerParallelTests {
     // the bound only exists so a genuinely-broken worker fails instead of hanging. A tight bound
     // here read as flaky under CI load (the 5s window lost to scheduler pressure while the
     // invariant itself held).
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     // Release gate immediately so normal runners can complete
     gate.Release(2);
@@ -187,20 +188,20 @@ public sealed class PerspectiveWorkerParallelTests {
     await worker.StartAsync(cts.Token);
 
     // Wait on the completion signal with the test-lifetime bound.
-    var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));
+    // Normal perspectives should execute even when one throws.
+    allNormalEntered.Wait(cancellationToken);
 
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert — normal perspectives should still have run
-    await Assert.That(normalEntered).IsTrue()
-      .Because("Normal perspectives should execute even when one throws");
     await Assert.That(normalRunner.TotalRunCount).IsGreaterThanOrEqualTo(1)
       .Because("At least some normal perspectives should complete despite the throwing one");
   }
 
   [Test]
+  [Timeout(60000)]
   [Category("Performance")]
-  public async Task ProcessWorkBatch_WhenTheFirstGroupThrows_TheGroupsAfterItStillRunAsync() {
+  public async Task ProcessWorkBatch_WhenTheFirstGroupThrows_TheGroupsAfterItStillRunAsync(CancellationToken cancellationToken) {
     // A group whose runner throws has its failure fully handled inside its own body: recorded,
     // its rows parked, the failure reported. It must not also end the batch for its siblings.
     //
@@ -222,7 +223,7 @@ public sealed class PerspectiveWorkerParallelTests {
 
     var (worker, harness) = _createWorker(new ParallelTestWorkCoordinator(), registry, maxConcurrentPerspectives: 1);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     // Enqueued before start so all three land in the first batch, throwing group first.
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" }, cts.Token);
@@ -231,13 +232,12 @@ public sealed class PerspectiveWorkerParallelTests {
 
     // The bound only turns a broken worker into a failure instead of a hang; the signal is the
     // countdown. The failure capture proves the throwing group really ran and was reported.
-    var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));
-    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(45));
+    // A group that throws must not stop the groups after it in the same batch.
+    allNormalEntered.Wait(cancellationToken);
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
 
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
-    await Assert.That(normalEntered).IsTrue()
-      .Because("A group that throws must not stop the groups after it in the same batch");
     await Assert.That(normalRunner.TotalRunCount).IsEqualTo(2);
   }
 
@@ -255,10 +255,10 @@ public sealed class PerspectiveWorkerParallelTests {
   /// RanToCompletion or Canceled depending on thread-pool timing (and the throwing-runner test can
   /// fault it) — what matters here is that the body has stopped, not how it stopped.
   /// </remarks>
-  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts, CancellationToken cancellationToken) {
     await cts.CancelAsync();
     if (worker.ExecuteTask is { } body) {
-      await body.WaitAsync(TimeSpan.FromSeconds(30))
+      await body.WaitAsync(cancellationToken)
         .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
   }

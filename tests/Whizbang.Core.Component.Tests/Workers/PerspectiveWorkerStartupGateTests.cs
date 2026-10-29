@@ -51,20 +51,41 @@ public class PerspectiveWorkerStartupGateTests {
   /// does is create a scope, so a zero count means none of it has begun.</summary>
   private sealed class CountingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
     private readonly IServiceScopeFactory _inner = inner;
+    private readonly Lock _lock = new();
+    private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
     private int _count;
 
     public int Count => Volatile.Read(ref _count);
     public IServiceScope CreateScope() {
-      Interlocked.Increment(ref _count);
+      var count = Interlocked.Increment(ref _count);
+      lock (_lock) {
+        foreach (var waiter in _waiters.Where(w => count > w.Count).ToList()) {
+          _waiters.Remove(waiter);
+          waiter.Signal.TrySetResult();
+        }
+      }
       return _inner.CreateScope();
+    }
+
+    /// <summary>Completes once more than <paramref name="baseline"/> scopes have been created.</summary>
+    public Task CreatedMoreThan(int baseline) {
+      lock (_lock) {
+        if (Count > baseline) {
+          return Task.CompletedTask;
+        }
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((baseline, signal));
+        return signal.Task;
+      }
     }
   }
 
   [Test]
-  public async Task ExecuteAsync_DoesNoStartupWorkUntilTheGateOpensAsync() {
+  [Timeout(30000)]
+  public async Task ExecuteAsync_DoesNoStartupWorkUntilTheGateOpensAsync(CancellationToken cancellationToken) {
     var inner = new ServiceCollection().BuildServiceProvider();
     var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
-    var gate = new SchemaReadyGate();   // NOT ready
+    var gate = new ObservedGate();   // NOT ready
 
     var worker = new PerspectiveWorker(
       instanceProvider: new StubInstanceProvider(),
@@ -104,26 +125,25 @@ public class PerspectiveWorkerStartupGateTests {
     await worker.StartAsync(cts.Token);
 
     // The defect: without the gate, registry init / orphan reconcile / rewind scan begin
-    // immediately — every one of them starts by creating a scope.
-    await Task.Delay(300);
+    // immediately, and every one of them starts by creating a scope. The worker is waiting at the gate
+    // once it has entered it, and nothing it did before entering may have created one.
+    await gate.Entered.WaitAsync(cancellationToken);
     await Assert.That(scopeFactory.Count).IsEqualTo(baseline)
       .Because("no startup work may touch the database before migrations have completed — "
              + "this is the ungated repair the comment wrongly claimed was gated");
 
+    // Once the gate opens the startup work must actually run: waiting is not skipping.
     gate.MarkReady();
-    var deadline = DateTime.UtcNow.AddSeconds(5);
-    while (scopeFactory.Count == baseline && DateTime.UtcNow < deadline) {
-      await Task.Delay(10);
-    }
-    await Assert.That(scopeFactory.Count).IsGreaterThan(baseline)
-      .Because("once the gate opens the startup work must actually run — waiting is not skipping");
+    await scopeFactory.CreatedMoreThan(baseline).WaitAsync(cancellationToken);
+    await Assert.That(scopeFactory.Count).IsGreaterThan(baseline);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task ExecuteAsync_WithNoGateSupplied_BehavesAsBeforeAsync() {
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoGateSupplied_BehavesAsBeforeAsync(CancellationToken cancellationToken) {
     // Test fixtures construct the worker without a gate; they must keep compiling and running.
     var inner = new ServiceCollection().BuildServiceProvider();
     var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
@@ -162,10 +182,7 @@ public class PerspectiveWorkerStartupGateTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTime.UtcNow.AddSeconds(5);
-    while (scopeFactory.Count == baseline && DateTime.UtcNow < deadline) {
-      await Task.Delay(10);
-    }
+    await scopeFactory.CreatedMoreThan(baseline).WaitAsync(cancellationToken);
     await Assert.That(scopeFactory.Count).IsGreaterThan(baseline);
 
     await cts.CancelAsync();
@@ -231,7 +248,7 @@ public class PerspectiveWorkerStartupGateTests {
 
     // The load-bearing assertion: the public signal is settled, so a waiter is released.
     await worker.StartupScanComplete
-      .WaitAsync(TimeSpan.FromSeconds(20), testToken)
+      .WaitAsync(testToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     await Assert.That(worker.StartupScanComplete.IsCompleted).IsTrue()
       .Because("StartupScanComplete is public and awaited by other components — leaving it pending "
@@ -241,6 +258,21 @@ public class PerspectiveWorkerStartupGateTests {
              + "completing it normally would tell a waiter a startup pass happened that did not");
     await Assert.That(scopeFactory.Count).IsEqualTo(baseline)
       .Because("the worker returned at the gate, so none of the startup work touched the database");
+  }
+
+  /// <summary>A real schema gate that announces when a worker starts waiting on it.</summary>
+  private sealed class ObservedGate : ISchemaReadyGate {
+    private readonly SchemaReadyGate _inner = new();
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => _inner.IsReady;
+    public void MarkReady() => _inner.MarkReady();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _inner.WaitForReadyAsync(cancellationToken);
+    }
   }
 
   /// <summary>A schema gate that never opens and announces when a worker starts waiting on it.</summary>
