@@ -402,10 +402,10 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
     return folded.ToDictionary(
       t => t.Key,
       t => new EventTypeBytes(
-        SampledRows: t.Value.Rows,
-        MeanDataBytes: (double)t.Value.Data / t.Value.Rows,
-        MeanMetadataBytes: (double)t.Value.Metadata / t.Value.Rows,
-        EstimatedTotalBytes: request.Extrapolate(t.Value.Data + t.Value.Metadata)),
+        Data: new(t.Value.Rows, (double)t.Value.Data / t.Value.Rows, request.Extrapolate(t.Value.Data)),
+        Metadata: new(t.Value.Rows, (double)t.Value.Metadata / t.Value.Rows, request.Extrapolate(t.Value.Metadata)),
+        PointerRow: default,
+        OutboxMetadata: default),
       StringComparer.Ordinal);
   }
 

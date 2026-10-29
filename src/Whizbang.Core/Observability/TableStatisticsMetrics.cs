@@ -106,7 +106,8 @@ public sealed class TableStatisticsMetrics {
 
     meter.CreateObservableGauge(
       "whizbang.event_store.estimated_type_bytes",
-      observeValues: () => _eventTypeBytes.Select(kv => _measure(kv.Value.EstimatedTotalBytes, _tag(EVENT_TYPE_TAG, kv.Key))),
+      observeValues: () => _eventTypeBytes.Select(kv => _measure(
+        kv.Value.Data.EstimatedTotalBytes + kv.Value.Metadata.EstimatedTotalBytes, _tag(EVENT_TYPE_TAG, kv.Key))),
       unit: BYTES_UNIT,
       description: "Stored bytes of every event of each event type, extrapolated from a sample");
   }
@@ -132,8 +133,8 @@ public sealed class TableStatisticsMetrics {
   private static KeyValuePair<string, object?> _tag(string key, object? value) => new(key, value);
 
   private IEnumerable<Measurement<double>> _parts(string eventType, EventTypeBytes bytes) {
-    yield return _part(bytes.MeanDataBytes, eventType, "data");
-    yield return _part(bytes.MeanMetadataBytes, eventType, "metadata");
+    yield return _part(bytes.Data.MeanBytes, eventType, EventStoreBytesParts.DATA);
+    yield return _part(bytes.Metadata.MeanBytes, eventType, EventStoreBytesParts.METADATA);
   }
 
   private Measurement<double> _part(double bytes, string eventType, string part) =>

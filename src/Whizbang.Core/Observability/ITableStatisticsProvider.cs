@@ -268,14 +268,48 @@ public readonly record struct EventTypeSampleRequest(string ClaimKey, double Sam
     (long)Math.Round(sampledBytes * 100d / SamplePercent, MidpointRounding.AwayFromZero);
 }
 
-/// <summary>The stored bytes of one event type, from a sample of the event store.</summary>
-/// <param name="SampledRows">How many of the type's events the sample read.</param>
-/// <param name="MeanDataBytes">The mean stored size of the payload, after any compression.</param>
-/// <param name="MeanMetadataBytes">The mean stored size of the metadata, after any compression.</param>
-/// <param name="EstimatedTotalBytes">
-/// The payload and metadata bytes of every event of the type, extrapolated from the share sampled.
-/// </param>
+/// <summary>
+/// The values of the <c>part</c> tag on the event-type gauges: where in the database an event type's bytes are stored.
+/// </summary>
+/// <remarks>
+/// An event is stored in up to three places, and each has its own remedy, so each is its own series: the body
+/// (<see cref="DATA"/> and <see cref="METADATA"/>, in <c>wh_event_body</c>) shrinks by slimming the event or marking
+/// it ephemeral, the pointer row (<see cref="POINTER_ROW"/>, in <c>wh_event_store</c>) is paid once per event whatever
+/// its body, and the outbox copy of the metadata (<see cref="OUTBOX_METADATA"/>, in <c>wh_outbox</c>) is held only
+/// until the outbox row is purged.
+/// </remarks>
+/// <docs>operations/observability/metrics#event-type-bytes-parts</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsEventTypeTests.cs</tests>
+public static class EventStoreBytesParts {
+#pragma warning disable CA1707
+  /// <summary>The event's payload, stored in <c>wh_event_body.event_data</c>.</summary>
+  public const string DATA = "data";
+
+  /// <summary>The event's envelope metadata, mostly hops, stored in <c>wh_event_body.metadata</c>.</summary>
+  public const string METADATA = "metadata";
+
+  /// <summary>The event's whole row in <c>wh_event_store</c>: its identity, stream, type, scope and ordering.</summary>
+  public const string POINTER_ROW = "pointer";
+
+  /// <summary>The metadata an outbox row carries inline beside the event it publishes, in <c>wh_outbox.metadata</c>.</summary>
+  public const string OUTBOX_METADATA = "outbox_metadata";
+#pragma warning restore CA1707
+}
+
+/// <summary>What one part of an event type's storage holds, from a sample.</summary>
+/// <param name="SampledRows">How many rows of the part the sample read; zero where it read none.</param>
+/// <param name="MeanBytes">The mean stored size of the part per row read, after any compression.</param>
+/// <param name="EstimatedTotalBytes">The part's bytes for every row of the type, extrapolated from the share sampled.</param>
+/// <docs>operations/observability/metrics#event-type-bytes-parts</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsEventTypeTests.cs</tests>
+public readonly record struct EventPartBytes(long SampledRows, double MeanBytes, long EstimatedTotalBytes);
+
+/// <summary>The stored bytes of one event type, from a sample of the event store, by part.</summary>
+/// <param name="Data">The payload, in the event body table.</param>
+/// <param name="Metadata">The envelope metadata, in the event body table.</param>
+/// <param name="PointerRow">The event-store row every event has, whether or not its body is still stored.</param>
+/// <param name="OutboxMetadata">The metadata outbox rows for events of the type carry inline.</param>
 /// <docs>operations/observability/metrics#event-type-bytes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsEventTypeTests.cs</tests>
 public readonly record struct EventTypeBytes(
-    long SampledRows, double MeanDataBytes, double MeanMetadataBytes, long EstimatedTotalBytes);
+    EventPartBytes Data, EventPartBytes Metadata, EventPartBytes PointerRow, EventPartBytes OutboxMetadata);
