@@ -798,6 +798,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A failed pending-events statistics query is reported instead of swallowed.** The perspective worker refreshes
+  `whizbang.perspective.pending_events` about once a minute and discarded every failure of the query behind it
+  (`IWorkCoordinator.GatherStatisticsAsync`: a timeout, a missing permission, a function a partial migration never
+  created), so the gauge kept its last value with nothing to explain it, and a frozen number read as real lag or real
+  health. The worker still keeps running, and now logs the first failure of a streak at Warning with the exception,
+  naming the query and the stale gauge, logs further failures in the streak at Debug, logs at Information when a refresh
+  succeeds again and how many it missed, and counts every failed refresh on the new counter
+  `whizbang.perspective.pending_events_refresh_failures` (`PerspectiveMetrics.PendingEventsRefreshFailures`)
+  (Fixes #1865)
 - **A rewind's write is checked against the row version it read, and a refused rewind is reported.** A rewind replays a
   stream in memory and writes the row once at the end, without a row version, so the store's ordering guard was the
   only check on it: when another writer folded a newer event into the row while the rewind replayed (after a lease
