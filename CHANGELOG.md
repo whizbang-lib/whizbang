@@ -857,7 +857,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `Task.Yield` until its deadline, so an idle window no longer burns a thread-pool thread; a batch already at
   `ImmediateFlushThreshold`, the first item included, flushes without opening a window; and shutdown flushes a batch
   whose window is still open at once instead of sitting it out. The collector and flusher tests run on a fake clock
-  and wait on signals (Fixes #1868).
+  and wait on signals. The same change stops two batch flushes inheriting a caller's ambient context, as #1883 did for
+  the sliding-window batchers: the collector and `BatchWorkCoordinatorStrategy` started a size-triggered flush of their
+  shared batch with `Task.Run` from inside the call that filled it, and created their timers in the constructor, so a
+  flush ran with the `AsyncLocal` values (a pinned connection, a scope, an activity) of the caller that crossed the
+  threshold or of whoever built the collector or first resolved the strategy. Both flushes now start, and both timers
+  are created, with the flow suppressed (Fixes #1868).
 - **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
   whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
   failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate

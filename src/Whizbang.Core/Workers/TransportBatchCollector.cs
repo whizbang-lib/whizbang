@@ -70,8 +70,10 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     _options = options;
     _flushCallback = flushCallback;
     var clock = timeProvider ?? TimeProvider.System;
-    _slideTimer = clock.CreateTimer(SlideTimerTick, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-    _hardMaxTimer = clock.CreateTimer(_hardMaxTimerCallback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    // The timers belong to the collector, not to whoever constructed it: created with the flow suppressed, so a
+    // tick (and the flush it starts) never runs in the constructing caller's context (#1868)
+    _slideTimer = AmbientFreeTask.CreateTimer(clock, SlideTimerTick);
+    _hardMaxTimer = AmbientFreeTask.CreateTimer(clock, _hardMaxTimerCallback);
   }
 
   /// <summary>
@@ -143,10 +145,11 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     _startBackgroundFlush();
   }
 
-  // Recorded, so disposal waits for it instead of returning while it still hands a batch to the callback (#1721)
+  // Recorded, so disposal waits for it instead of returning while it still hands a batch to the callback (#1721).
+  // The batch is shared, so the flush runs without the context of the enqueuer that happened to fill it (#1868).
   private void _startBackgroundFlush() {
 #pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
-    InFlightFlushes.Track(Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } }));
+    InFlightFlushes.Track(AmbientFreeTask.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } }, CancellationToken.None));
 #pragma warning restore RCS1075
   }
 

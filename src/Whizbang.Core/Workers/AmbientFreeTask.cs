@@ -12,6 +12,11 @@ namespace Whizbang.Core.Workers;
 /// worker is started with the flow suppressed, so it begins with no ambient context at all.
 /// </summary>
 /// <docs>extending/internals/event-ordering-invariant</docs>
+/// <remarks>
+/// A timer has the same problem: <see cref="TimeProvider.CreateTimer"/> on the system clock captures the creator's
+/// context and runs every tick in it, so a component's own timer, created in a constructor that whichever caller
+/// resolved it happened to run, is created with the flow suppressed too (#1868).
+/// </remarks>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatcherAmbientContextTests.cs</tests>
 internal static class AmbientFreeTask {
   /// <summary>
@@ -31,5 +36,22 @@ internal static class AmbientFreeTask {
       started = Task.Run(work, cancellationToken);
     }
     return started;
+  }
+
+  /// <summary>
+  /// Creates an unarmed timer on <paramref name="timeProvider"/> without capturing the caller's
+  /// <see cref="ExecutionContext"/>, so its ticks run with no ambient context. A caller that already suppressed the flow
+  /// keeps it suppressed; any other caller's flow is restored before this returns.
+  /// </summary>
+  /// <param name="timeProvider">The clock the timer runs on.</param>
+  /// <param name="callback">Runs on each tick.</param>
+  /// <returns>The timer, due never until <see cref="ITimer.Change"/> arms it.</returns>
+  internal static ITimer CreateTimer(TimeProvider timeProvider, TimerCallback callback) {
+    if (ExecutionContext.IsFlowSuppressed()) {
+      return timeProvider.CreateTimer(callback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+    using (ExecutionContext.SuppressFlow()) {
+      return timeProvider.CreateTimer(callback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
   }
 }
