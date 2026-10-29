@@ -533,6 +533,48 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _tombstoneAsync(connection, stream)).IsNull();
   }
 
+  // ── The archive manifest (268, #1737) ────────────────────────────────────────────────────────────
+
+  // One manifest row for a chunk of the stream, as a blob store writes it after its archive.
+  private static Task _manifestRowAsync(NpgsqlConnection connection, Guid streamId, long firstVersion) =>
+    _executeAsync(connection,
+      "INSERT INTO wh_archive_manifest (stream_id, first_version, last_version, event_count, locator, byte_length, sha256, origin_generation) " +
+      $"VALUES (@id, {firstVersion}, {firstVersion + 1}, 2, 'azure-blob://c/s/chunk?codec=brotli&format=1', 10, " +
+      "'0000000000000000000000000000000000000000000000000000000000000000', 1)", streamId);
+
+  [Test]
+  public async Task Purge_AStreamArchivedOutsideTheDatabase_TakesItsManifestRows_AndLeavesOthersAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var purged = Guid.CreateVersion7();
+    var kept = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, purged, 2);
+    _ = await _streamAsync(connection, kept, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(purged));
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(kept));
+    await _manifestRowAsync(connection, purged, 1);
+    await _manifestRowAsync(connection, kept, 1);
+
+    _ = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [purged], RequestedBy = "operator-1", Reason = "archived by mistake" });
+
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", purged))
+      .IsEqualTo(0L).Because("a purged stream must never be restored from an object its manifest still names");
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", kept))
+      .IsEqualTo(1L).Because("the cascade follows the purged stream's lifecycle row only");
+  }
+
+  [Test]
+  public async Task Manifest_ARowForAStreamWithNoLifecycleRow_IsRefusedAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+
+    var refused = await Assert.ThrowsAsync<PostgresException>(() => _manifestRowAsync(connection, Guid.CreateVersion7(), 1));
+
+    await Assert.That(refused!.ConstraintName).IsEqualTo("fk_archive_manifest_stream")
+      .Because("every archive writes the stream's lifecycle row first, so a manifest row without one is a bug, not data");
+  }
+
   // ── Restore and delete ───────────────────────────────────────────────────────────────────────────
 
   [Test]
