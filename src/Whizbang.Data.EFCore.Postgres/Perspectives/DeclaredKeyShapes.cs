@@ -24,7 +24,9 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// <para>
 /// Entity Framework's model does not record whether a member is <see langword="required"/>, and its reader takes a
 /// missing key as the member's default. So which members are required is read from the serializer's metadata for the
-/// same type, matched by name: the startup pass reports the rows missing one, since that reader cannot refuse them.
+/// same type, matched by name, together with the members a type shared with an event declares required to
+/// <see cref="Whizbang.Core.Serialization.DeclaredRequiredMembers"/> (whose reader tolerates them): the startup pass
+/// reports the rows missing one, since that reader cannot refuse them.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>

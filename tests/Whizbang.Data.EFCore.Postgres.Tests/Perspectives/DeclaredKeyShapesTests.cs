@@ -137,9 +137,9 @@ public class DeclaredKeyShapesTests {
 
     var after = DeclaredKeyShape.FromSerializer(PerspectiveDocumentSerialization.Options, typeof(DeclaredHistoryStroke))!.Describe();
 
-    await Assert.That(before).IsEqualTo("{\"w\",\"Layer\"}")
+    await Assert.That(before).IsEqualTo("{\"Layer\",\"w\"}")
       .Because("a type an event carries is read tolerantly, so the serializer's metadata does not mark the member");
-    await Assert.That(after).IsEqualTo("{\"w\"!,\"Layer\"}")
+    await Assert.That(after).IsEqualTo("{\"Layer\",\"w\"!}")
       .Because("a type a row shares with an event is declared to the startup check, which reports rows missing it");
   }
 }

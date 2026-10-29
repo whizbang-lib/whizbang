@@ -155,14 +155,24 @@ exactly, finds nothing and reads the default with no error. Three pieces, one pe
   pass changed nothing and nothing is missing. The hash is over `DeclaredKeyShape.Describe()`, so a model change rescans
   once. A table this release creates empty is settled on its first check (Dapper) or its second start (EF).
 - **Reads.** `JsonContextRegistry.CreateCombinedOptions` sets `PropertyNameCaseInsensitive`: events are history and are
-  not rewritten, so the reader tolerates the old case. The message JSON context marks `required` / `[JsonRequired]`
-  members `IsRequired` unless the type admits null (the options omit nulls when writing), and gives a required
-  init-only member a setter that throws: System.Text.Json refuses a required property with no setter even when a
-  constructor parameter fills it, and never calls the setter of a property a parameter fills.
+  not rewritten, so the reader tolerates the old case.
+- **Required, rows only (owner decision 2026-10-29).** The message JSON context marks `required` / `[JsonRequired]`
+  members `IsRequired` (unless the type admits null; the options omit nulls when writing) only on types whose
+  `RequiredMemberReading` is `Refused`: a perspective model and the types only perspective models reach. Events,
+  commands, composites and other serializable types, and everything they carry, are `Tolerated`: a missing member
+  reads as its default, so a replay never fails because a later change added `required` (history is read tolerantly
+  and upcast; the compiler guards new messages). Reachability (`_requiredMemberReadings`) walks properties,
+  collection elements, dictionary values and polymorphic derived types from two root sets: perspective models (found
+  by either discovery path, read before dedup) and every other discovered message. A type reached from both is
+  `Reported`: one JsonTypeInfo per type serves both readers and history wins, so it is read tolerantly, and the
+  generated initializer calls `DeclaredRequiredMembers.Register(typeof(T), "<json names>")` so
+  `DeclaredKeyShape.FromSerializer` still marks the member required and the settle step still reports rows missing it.
+  A refused init-only member gets a setter that throws: System.Text.Json refuses a required property with no setter
+  even when a constructor parameter fills it, and never calls the setter of a property a parameter fills.
 
 Not handled: a stored key that differs by more than case (`Points` declared `pts`): that is a rename and needs
-`[StoredForm(PreviousName = ...)]`. EF's mapped reader cannot refuse a missing required key; the settle step's Error
-is the only signal on that path.
+`[StoredForm(PreviousName = ...)]`. EF's mapped reader cannot refuse a missing required key, and a type shared with
+an event is read tolerantly on every path; the settle step's Error is the only signal there.
 
 ## Objects a consumer owns over a temporal key
 

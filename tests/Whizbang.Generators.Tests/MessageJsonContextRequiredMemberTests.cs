@@ -173,12 +173,16 @@ public class MessageJsonContextRequiredMemberTests {
         public required string? Label { get; init; }
         public double Z { get; init; }
       }
+      public record SharedTag {
+        public string Name { get; init; } = "";
+      }
       public record Picture {
         public Guid Id { get; init; }
         public required string Title { get; init; }
         public Dictionary<string, SharedPoint> Anchors { get; init; } = [];
+        public SharedTag? Tag { get; init; }
       }
-      public record PointsDrawn([property: StreamId] Guid Id, List<SharedPoint> Points) : IEvent;
+      public record PointsDrawn([property: StreamId] Guid Id, List<SharedPoint> Points, SharedTag Tag) : IEvent;
       public class PictureProjection : IPerspectiveFor<Picture, PointsDrawn> {
         public Picture Apply(Picture currentData, PointsDrawn eventData) => currentData;
       }
@@ -190,8 +194,10 @@ public class MessageJsonContextRequiredMemberTests {
       .Because("the type is also read from history, and one JsonTypeInfo serves both readers");
     await Assert.That(_marksRequired(code, "Y")).IsFalse();
     await Assert.That(code).DoesNotContain("\"X is set through its constructor parameter.\"");
-    await Assert.That(initializer).Contains("global::Whizbang.Core.Serialization.DeclaredRequiredMembers.Register(typeof(global::TestApp.SharedPoint), \"x\", \"Y\");")
+    await Assert.That(initializer).Contains("global::Whizbang.Core.Serialization.DeclaredRequiredMembers.Register(typeof(global::TestApp.SharedPoint), \"Y\", \"x\");")
       .Because("the startup check still reports rows missing them, by their declared names, nullable ones excluded");
+    await Assert.That(initializer).DoesNotContain("typeof(global::TestApp.SharedTag)")
+      .Because("a shared type with no required member has nothing to declare");
   }
 
   [Test]
@@ -255,7 +261,8 @@ public class MessageJsonContextRequiredMemberTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_ADeclarationOfASharedType_CompilesAsync() {
-    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<MessageJsonContextGenerator>("""
+    // The context's facade references WhizbangIdJsonContext, which WhizbangIdGenerator emits, so both run.
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors([new MessageJsonContextGenerator(), new WhizbangIdGenerator()], """
       #nullable enable
       using System;
       using System.Collections.Generic;

@@ -4,12 +4,15 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.Postgres.Perspectives;
 
 /// <summary>One key a reader reads in a stored object, and what it reads under it.</summary>
 /// <param name="Name">The declared name: the key as the reader matches it.</param>
-/// <param name="IsRequired">Whether the reader refuses a document missing the key.</param>
+/// <param name="IsRequired">Whether the code declares the member required, so a stored document missing the key is a
+/// defect the startup check reports: the reader refuses it on a type only perspective rows carry, and reads it as its
+/// default on a type an event or another message also carries (<see cref="DeclaredRequiredMembers"/>).</param>
 /// <param name="Shape">What is read under the key, or <see langword="null"/> for a value with no keys of its own.</param>
 /// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
 public sealed record DeclaredMember(string Name, bool IsRequired = false, DeclaredKeyShape? Shape = null);
@@ -135,7 +138,7 @@ public sealed class DeclaredKeyShape {
     try {
       return info.Kind switch {
         JsonTypeInfoKind.Object => ForObject(info.Properties.Select(p =>
-          new DeclaredMember(p.Name, p.IsRequired, _fromSerializer(options, p.PropertyType, visiting)))),
+          new DeclaredMember(p.Name, _isRequired(underlying, p), _fromSerializer(options, p.PropertyType, visiting)))),
         JsonTypeInfoKind.Enumerable => _arrayOf(_fromSerializer(options, info.ElementType!, visiting)),
         _ => null,
       };
@@ -143,6 +146,10 @@ public sealed class DeclaredKeyShape {
       visiting.Remove(underlying);
     }
   }
+
+  // Refused by the reader, or declared required on a type the reader tolerates because history shares it (#1874).
+  private static bool _isRequired(Type declaringType, JsonPropertyInfo property) =>
+    property.IsRequired || DeclaredRequiredMembers.IsDeclared(declaringType, property.Name);
 
   // A collection of values with no keys has nothing to describe.
   private static DeclaredKeyShape? _arrayOf(DeclaredKeyShape? element) => element is null ? null : ForArray(element);

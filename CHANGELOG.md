@@ -844,17 +844,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path (`StoredFormConversionBlockedException`). Each table checked is recorded in `wh_stored_form_migrations` as
   `declared-names:<table>:<hash of its declarations>`, settled by the first pass that changes nothing and finds nothing
   missing, after which it is skipped with one lookup until its declarations change. A `required` member (or
-  `[JsonRequired]`) is now marked required by the generated message JSON context, as System.Text.Json's own generator
-  marks it, so a document missing it fails the read with a `JsonException` instead of defaulting; a required member
-  whose type admits null is not, because the framework omits a null when writing. Entity Framework's mapped reader
-  cannot refuse a missing key, so the startup pass reports stored rows missing a required member at Error, naming the
-  path, the row count and sample rows. Events are history and are not rewritten: the combined serializer options now
-  read property names case-insensitively, so an event stored under the C# name replays with its values; writing still
-  uses the declared name. **Upgrade:** the first start rewrites affected rows; deploy without a mixed fleet, or let a
-  second start catch rows an older instance wrote meanwhile (a pass that changed rows is not settled). A row holding
-  both spellings with different values stops startup until one key is removed. A `required` non-nullable member
-  missing from a stored event or document now fails its read; fill old documents with
-  `[StoredForm(DefaultWhenMissing = ...)]`, upcast old events, or drop the `required` modifier. A type with two
+  `[JsonRequired]`) is enforced on read-model rows only: the generated message JSON context marks it required on a
+  perspective model and on the types only perspective models carry, so a stored row missing it fails the read with a
+  `JsonException` instead of defaulting. Events, commands and every other message keep reading a missing member as
+  its default: events are history, read tolerantly and upcast, so a replay or rebuild never fails because a later
+  change added `required`, and new messages are still protected by the compiler's `required` at construction. A type
+  a perspective model shares with an event is read tolerantly too, since one type has one reader, and its required
+  members are declared to the startup check (`DeclaredRequiredMembers`). A required member whose type admits null is
+  never marked, because the framework omits a null when writing. Entity Framework's mapped reader cannot refuse a
+  missing key, so the startup pass reports stored rows missing a required member at Error, naming the path, the row
+  count and sample rows, on every path and for shared types as well. Events are history and are not rewritten: the
+  combined serializer options now read property names case-insensitively, so an event stored under the C# name
+  replays with its values; writing still uses the declared name. **Upgrade:** the first start rewrites affected rows;
+  deploy without a mixed fleet, or let a second start catch rows an older instance wrote meanwhile (a pass that
+  changed rows is not settled). A row holding both spellings with different values stops startup until one key is
+  removed. A `required` non-nullable member missing from a stored perspective row of a type only perspective models
+  carry now fails that row's read; fill old documents with `[StoredForm(DefaultWhenMissing = ...)]` or drop the
+  `required` modifier. Stored events and other messages are unaffected. A type with two
   members whose JSON names differ only in case now fails at first use with System.Text.Json's name-conflict error,
   because names are matched case-insensitively; rename one with `[JsonPropertyName]`. A stored key that differs from
   its declared name by more than case (a C# name `Points` declared `pts`) is not moved; declare it with

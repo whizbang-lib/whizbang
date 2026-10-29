@@ -655,7 +655,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return _buildMessageTypeInfo(typeSymbol, isCommand, isEvent, isSerializable, isComposite);
+    return _buildMessageTypeInfo(typeSymbol, isCommand, isEvent, isSerializable, isComposite) with { IsPerspectiveModel = isPerspectiveModel };
   }
 
   /// <summary>
@@ -765,12 +765,74 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var polymorphicTypes = _discoverAndMergePolymorphicTypes(
         messages, propertyPolymorphicTypes, compilation, synthesizedInheritance);
 
+    // A model found by two discovery paths may be kept from the one that did not recognize it as a model, so the
+    // models are read from every entry, before deduplication.
+    var models = allMessages.Where(static m => m.IsPerspectiveModel).Select(static m => m.FullyQualifiedName);
+    var reading = _requiredMemberReadings(messages, allTypes, polymorphicTypes, [.. models]);
+
     return new JsonContextAnalysis(
         compilation.AssemblyName,
-        [.. messages],
-        [.. nestedTypes],
+        [.. messages.Select(m => _withReading(m, reading))],
+        [.. nestedTypes.Select(t => _withReading(t, reading))],
         [.. _discoverEnumTypes(allTypes, compilation)],
         [.. polymorphicTypes]);
+  }
+
+  private static JsonMessageTypeInfo _withReading(JsonMessageTypeInfo type, Dictionary<string, RequiredMemberReading> reading) =>
+    reading.TryGetValue(type.FullyQualifiedName, out var r) ? type with { RequiredMembers = r } : type;
+
+  /// <summary>
+  /// Decides how each type's reader treats a missing required member (#1874): refused on a type only perspective
+  /// models reach, reported (read as its default, and declared to the startup check) on a type a perspective model
+  /// shares with an event, a command or another message, and tolerated, by omission from the result, everywhere else.
+  /// </summary>
+  /// <remarks>
+  /// One JsonTypeInfo serves a type wherever it appears, so a type an event carries cannot be strict inside a row and
+  /// tolerant inside the event. History wins: a replay must never fail because a later change added
+  /// <see langword="required"/>. A type is reached through its properties, collection elements and dictionary values
+  /// (as nested-type discovery reads them) and through the derived types of a polymorphic property.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
+  private static Dictionary<string, RequiredMemberReading> _requiredMemberReadings(
+      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      ImmutableArray<PolymorphicTypeInfo> polymorphicTypes,
+      HashSet<string> models) {
+    var byName = allTypes.ToDictionary(static t => t.FullyQualifiedName, StringComparer.Ordinal);
+    var derivedByBase = polymorphicTypes.ToDictionary(static p => p.BaseTypeName, static p => p.DerivedTypes, StringComparer.Ordinal);
+    var isRow = messages.ToLookup(m => models.Contains(m.FullyQualifiedName));
+    var rows = _reachableFrom(isRow[true], byName, derivedByBase);
+    var history = _reachableFrom(isRow[false], byName, derivedByBase);
+    return rows.ToDictionary(
+      static name => name,
+      name => history.Contains(name) ? RequiredMemberReading.Reported : RequiredMemberReading.Refused,
+      StringComparer.Ordinal);
+  }
+
+  /// <summary>The names of <paramref name="roots"/> and every discovered type their properties reach.</summary>
+  private static HashSet<string> _reachableFrom(
+      IEnumerable<JsonMessageTypeInfo> roots,
+      Dictionary<string, JsonMessageTypeInfo> byName,
+      Dictionary<string, EquatableArray<string>> derivedByBase) {
+    var reached = new HashSet<string>(StringComparer.Ordinal);
+    var pending = new Stack<JsonMessageTypeInfo>();
+    foreach (var root in roots) {
+      reached.Add(root.FullyQualifiedName);
+      pending.Push(root);
+    }
+    while (pending.Count > 0) {
+      foreach (var property in pending.Pop().Properties) {
+        // Every property names a type: a collection's element when it is one, the property's own type otherwise.
+        var name = _extractElementType(property.Type) ?? property.Type.TrimEnd('?');
+        IEnumerable<string> names = derivedByBase.TryGetValue(name, out var derived) ? [.. derived] : [name];
+        foreach (var candidate in names) {
+          if (byName.TryGetValue(candidate, out var type) && reached.Add(candidate)) {
+            pending.Push(type);
+          }
+        }
+      }
+    }
+    return reached;
   }
 
   /// <summary>
@@ -871,7 +933,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     context.AddSource("MessageJsonContext.g.cs", template);
 
     _generateWhizbangJsonContextFacade(context, assembly, assemblyName, namespaceName, converters);
-    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages);
+    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages, allTypes);
   }
 
   /// <summary>
@@ -910,7 +972,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       System.Reflection.Assembly assembly,
       string namespaceName,
-      ImmutableArray<JsonMessageTypeInfo> messages) {
+      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
     initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
     initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
@@ -918,8 +981,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate RegisterDerivedType calls for each message type
     var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
     initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+    initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "REQUIRED_MEMBER_DECLARATIONS", _generateRequiredMemberDeclarations(allTypes));
 
     context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
+  }
+
+  /// <summary>
+  /// Declares to <c>DeclaredRequiredMembers</c>, by declared JSON name, the required members of every type a
+  /// perspective model shares with history (<see cref="RequiredMemberReading.Reported"/>): their reader tolerates a
+  /// missing one, and the startup check of perspective rows reads the declaration to report it (#1874).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs:Generator_ATypeAModelSharesWithAnEvent_IsReadTolerantly_AndDeclaredToTheStartupCheckAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs:Generator_ADeclarationOfASharedType_CompilesAsync</tests>
+  private static string _generateRequiredMemberDeclarations(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var sb = new StringBuilder();
+    foreach (var type in allTypes.Where(static t => t.RequiredMembers == RequiredMemberReading.Reported)) {
+      var names = type.Properties.Where(static p => p.IsRequired).Select(static p => $"\"{_stringLiteralContent(p.WireName)}\"").ToArray();
+      if (names.Length > 0) {
+        sb.AppendLine($"    global::Whizbang.Core.Serialization.DeclaredRequiredMembers.Register(typeof({type.FullyQualifiedName}), {string.Join(", ", names)});");
+      }
+    }
+    return sb.ToString();
   }
 
   /// <summary>
@@ -1872,8 +1954,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     for (int i = 0; i < message.Properties.Length; i++) {
       var prop = message.Properties[i];
+      var refused = prop.IsRequired && message.RequiredMembers == RequiredMemberReading.Refused;
       var setter = !prop.CanWrite || prop.IsInitOnly
-          ? _boundThroughConstructorSetter(prop)
+          ? _boundThroughConstructorSetter(prop, refused)
           : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
       var propertyCode = propertyCreationSnippet
@@ -1888,7 +1971,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       if (_ignoreConditionStatement(prop, i) is { } ignoreCondition) {
         sb.AppendLine(ignoreCondition);
       }
-      if (prop.IsRequired) {
+      if (refused) {
         sb.AppendLine($"  properties[{i}].IsRequired = true;");
       }
       sb.AppendLine();
@@ -1900,12 +1983,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The setter of a property set only through its constructor parameter (an init-only or positional member):
-  /// none, unless the property is required. System.Text.Json refuses a required property with no setter even when a
-  /// constructor parameter fills it, and never calls the setter of a property a parameter fills, so a required one gets
-  /// a setter that says so if it is ever reached (#1874).
+  /// none, unless the reader refuses a document missing it. System.Text.Json refuses a required property with no
+  /// setter even when a constructor parameter fills it, and never calls the setter of a property a parameter fills, so
+  /// a refused one gets a setter that says so if it is ever reached (#1874).
   /// </summary>
-  private static string _boundThroughConstructorSetter(PropertyInfo prop) =>
-    prop.IsRequired
+  private static string _boundThroughConstructorSetter(PropertyInfo prop, bool refused) =>
+    refused
       ? $"static (_, _) => throw new global::System.InvalidOperationException(\"{prop.Name} is set through its constructor parameter.\")"
       : "null";
 
@@ -3530,7 +3613,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         continue;
       }
 
-      return _buildMessageTypeInfo(modelType, isCommand: false, isEvent: false, isSerializable: true, isComposite: false);
+      return _buildMessageTypeInfo(modelType, isCommand: false, isEvent: false, isSerializable: true, isComposite: false)
+        with { IsPerspectiveModel = true };
     }
 
     return null;
