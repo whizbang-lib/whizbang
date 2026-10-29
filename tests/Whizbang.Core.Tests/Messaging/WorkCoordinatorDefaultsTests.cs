@@ -427,6 +427,26 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task MeasureTableBloatAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var ratio = await coordinator.MeasureTableBloatAsync("x", Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+
+    await Assert.That(ratio).IsNull();
+  }
+
+  [Test]
+  public async Task RequestMeasuredTableRewriteAsync_WithoutProviderSupport_RecordsThePlainRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequestMeasuredTableRewriteAsync(
+      "x", new Whizbang.Core.Observability.BloatMeasurement(3.0, Whizbang.Core.Observability.BloatMeasurementMethod.Approx), 2.5);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
   public async Task VacuumWorkTablesAsync_WithoutProviderSupport_VacuumsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
