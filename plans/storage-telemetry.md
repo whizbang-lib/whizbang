@@ -78,7 +78,8 @@ Each slice is one red-then-green increment and its own commit.
 5. **Growth.** No new instrument: growth is `deriv()` or `delta()` over the gauges, which every
    Prometheus-compatible backend computes. The dashboard ships those panels. RED: the dashboard
    drift test (slice 7) checks each panel names a real instrument.
-   **Status (2026-10-24):** open. The growth panels ship with the dashboard. Depends on slice 7.
+   **Status (2026-10-29):** done in #1748: the dashboard's Growth row (`deriv()` and `delta()` over the size and row
+   gauges), checked by the drift test.
 6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is a bound, validated setting since #1668 (2026-10-23). The `database` tag on every table-statistics gauge and the configurable `MaxTrackedTables` cap (decisions 1 and 3) DONE in #1717 (2026-10-24). On `EventTypeSampleInterval`, one instance per window (the
    claim `IndexStatisticsMaintenanceStep` uses in `wh_unique_emission_claims`,
    `src/Whizbang.Data.EFCore.Postgres/IndexStatisticsMaintenanceStep.cs:42`) samples
@@ -102,7 +103,10 @@ Each slice is one red-then-green increment and its own commit.
    RED: a unit test that parses the JSON and fails when a panel's query names a metric that no meter
    in the repository declares, so a rename breaks the build rather than the dashboard. Docs: new
    `operations/observability/storage-dashboard.md` (import steps, panel meanings, the PromQL).
-   **Status (2026-10-24):** open. The repository has no `dashboards/` folder.
+   **Status (2026-10-29):** done in #1748. `dashboards/grafana/whizbang-storage.json`; the drift test is
+   `tests/Whizbang.Documentation.Component.Tests/StorageDashboardTests.cs` (Component, since it reads the source and the
+   dashboard from disk). The plan's `whizbang.postgres.extension.state` does not exist; the extension panel reads
+   `whizbang.capability.state{provider="postgres"}`.
 8. **Docs catch-up.** Add `whizbang.table.bloat_ratio` (shipped, undocumented) and every new
    instrument to `operations/observability/metrics.md#table-statistics`, and the new section to
    `operations/configuration/configuration-reference.md`.
@@ -139,4 +143,4 @@ All decided on 2026-10-22 in #1675 (the owner accepted the recommendations).
 1. **A `database` tag** is added to the table gauges before 1.0, while the series are new. DONE (#1717): every gauge on the meter carries it.
 2. **The bytes sample** also covers `wh_event_store` pointer rows and the inline outbox metadata. DONE (#1749).
 3. **The table cap** stays at 500 and becomes configurable. DONE (#1717): `Whizbang:TableStatistics:MaxTrackedTables`, validated at start, applied per database.
-4. **The dashboard** lives in this repository for 1.0.
+4. **The dashboard** lives in this repository for 1.0. DONE (#1748).

@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application role owns). EF Core driver. New API: `MaintenanceWorkerOptions.ReindexBloatThreshold`,
   `QueueIndexReindexStep`, `QueueIndexBloat`, `QueueIndexNames`, and `IWorkCoordinator.GetQueueIndexBloatAsync`,
   `DropInvalidQueueIndexAsync` and `ReindexQueueIndexAsync`.
+- **A Grafana dashboard for storage, kept in step with the meters by a drift test (#1748).**
+  `dashboards/grafana/whizbang-storage.json` charts table size and its heap, TOAST and index split, growth per day
+  (`deriv()` and `delta()` over the gauges), bytes per row, the bloat ratio by `method` with the rewrite threshold
+  line, the tables measured for a rewrite, maintenance rows and duration by task, unused index bytes, bytes per event
+  type by part with the metadata share, Postgres capability state and queue depths. The data source, service (`job`),
+  database and rewrite threshold are variables; no environment is named. `StorageDashboardTests` reads every
+  instrument the library's meters declare from the source, derives the names Prometheus exposes them by, and fails
+  when a panel or variable query names any other `whizbang_` metric, names a service or database literally, or sums
+  a per-instance table gauge without first taking the max across instances.
+
 - **The event-type bytes sample reports the event-store pointer rows and the inline outbox metadata (#1749).** The
   sample now reads three tables at the same share in one statement: `wh_event_body` for the payload and metadata,
   `wh_event_store` for the pointer row every event keeps (its whole stored width), and `wh_outbox` for the metadata

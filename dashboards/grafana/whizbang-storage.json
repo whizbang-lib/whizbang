@@ -1,0 +1,1050 @@
+{
+  "title": "Whizbang Storage",
+  "uid": "whizbang-storage",
+  "description": "Storage telemetry for a Whizbang service: table sizes and what they are made of, growth, bloat and rewrites, maintenance, bytes per event type by part, and storage extension state. Reads the Whizbang.TableStatistics, Whizbang.Maintenance and Whizbang.Capabilities meters through Prometheus.",
+  "tags": [
+    "whizbang",
+    "storage"
+  ],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "timezone": "browser",
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "job",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(whizbang_table_estimated_bytes, job)",
+          "refId": "job"
+        },
+        "definition": "label_values(whizbang_table_estimated_bytes, job)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {},
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(whizbang_table_estimated_bytes{job=~\"$job\"}, database)",
+          "refId": "database"
+        },
+        "definition": "label_values(whizbang_table_estimated_bytes{job=~\"$job\"}, database)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {},
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0
+      },
+      {
+        "name": "rewrite_threshold",
+        "label": "Rewrite threshold",
+        "type": "textbox",
+        "query": "3",
+        "current": {
+          "text": "3",
+          "value": "3"
+        },
+        "hide": 0,
+        "description": "The bloat ratio at which a table is queued for a rewrite; set it to the service's table_rewrite_bloat_threshold (default 3.0)."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Size",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Total size",
+      "description": "Every wh_ table in the selected databases: heap, TOAST and indexes. Instances report the same reading, so each table is counted once (max across instances) and then summed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, table_name) (whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Event store share",
+      "description": "The event store (pointer rows plus bodies) as a share of every wh_ table.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, table_name) (whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\",table_name=~\"wh_event_store|wh_event_body\"})) / sum(max by (database, table_name) (whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "event store"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Growth, last day",
+      "description": "How much every wh_ table together grew over the last 24 hours (delta of the size gauge).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, table_name) (delta(whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}[1d])))",
+          "legendFormat": "growth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Live rows",
+      "description": "Every wh_ table's planner row estimate, summed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, table_name) (whizbang_table_live_rows{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "rows"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Largest tables",
+      "description": "The fifteen largest tables by total size.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "topk(15, max by (table_name) (whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{table_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Size by component",
+      "description": "Every table's size split into heap (rows stored inline), TOAST (large values) and indexes. The three add up to the total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (component) (max by (database, table_name, component) (whizbang_table_component_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{component}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 30
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "title": "Components per table",
+      "description": "Heap, TOAST and index bytes for each of the largest tables.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "topk(45, max by (table_name, component) (whizbang_table_component_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{table_name}} {{component}}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "id": 9,
+      "title": "Growth",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Growth per day, total",
+      "description": "Bytes added per day across every wh_ table: the derivative of the size gauge, scaled to a day.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, table_name) (deriv(whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}[6h]))) * 86400",
+          "legendFormat": "bytes per day"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Fastest-growing tables",
+      "description": "The ten tables that grew most over the last 24 hours.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "topk(10, max by (table_name) (delta(whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}[1d])))",
+          "legendFormat": "{{table_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Rows added per day",
+      "description": "The ten tables whose row count grew most over the last 24 hours.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "topk(10, max by (table_name) (delta(whizbang_table_live_rows{job=~\"$job\",database=~\"$database\"}[1d])))",
+          "legendFormat": "{{table_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Bytes per row",
+      "description": "Total size over live rows, for the largest tables. A rising line with a flat row count is bloat or wider rows.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "topk(10, max by (database, table_name) (whizbang_table_estimated_bytes{job=~\"$job\",database=~\"$database\"}) / (max by (database, table_name) (whizbang_table_live_rows{job=~\"$job\",database=~\"$database\"}) > 0))",
+          "legendFormat": "{{table_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "id": 14,
+      "title": "Bloat and rewrites",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "Bloat ratio",
+      "description": "Heap bytes per live row over the width the rows need; 1.0 is lean. method=estimate is the catalog estimate for every table; method=approx is a measurement taken before a table is queued for a rewrite. The dashed line is the rewrite threshold (the rewrite_threshold variable).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "topk(10, max by (table_name, method) (whizbang_table_bloat_ratio{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{table_name}} ({{method}})"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "B",
+          "editorMode": "code",
+          "range": true,
+          "expr": "vector($rewrite_threshold)",
+          "legendFormat": "rewrite threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rewrite threshold"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {}
+    },
+    {
+      "type": "table",
+      "id": 16,
+      "title": "Measured for a rewrite",
+      "description": "Tables the maintenance cycle measured with pgstattuple_approx, with the measured ratio. A table here at or over the threshold is in the rewrite queue.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "max by (database, table_name) (whizbang_table_bloat_ratio{job=~\"$job\",database=~\"$database\",method=\"approx\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Maintenance rows by task",
+      "description": "Rows each maintenance task removed or processed, per second. A reaping task flat at zero while its table grows is losing to churn.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (task) (rate(whizbang_maintenance_rows_affected_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{task}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 18,
+      "title": "Maintenance task duration, p95",
+      "description": "The 95th percentile of each maintenance task's per-cycle wall time.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 49
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "histogram_quantile(0.95, sum by (le, task) (rate(whizbang_maintenance_task_duration_milliseconds_bucket{job=~\"$job\"}[$__rate_interval])))",
+          "legendFormat": "{{task}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "bargauge",
+      "id": 19,
+      "title": "Unused index bytes",
+      "description": "Indexes on wh_ tables that nothing has scanned since the statistics were last reset, by size. A report only: nothing is dropped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "topk(15, max by (table_name, index_name) (whizbang_table_unused_index_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{table_name}}.{{index_name}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      }
+    },
+    {
+      "type": "row",
+      "id": 20,
+      "title": "Bytes per event type",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      },
+      "panels": []
+    },
+    {
+      "type": "bargauge",
+      "id": 21,
+      "title": "Top event types by bytes",
+      "description": "Every part of each event type summed: body payload and metadata, the event-store pointer row and the outbox metadata. Extrapolated from a sample taken on one instance per window.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "topk(15, sum by (event_type) (max by (database, event_type, part) (whizbang_event_store_estimated_type_bytes{job=~\"$job\",database=~\"$database\"})))",
+          "legendFormat": "{{event_type}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "Event store bytes by part",
+      "description": "Where the event types' bytes sit: data and metadata in the body table, pointer in the event store, outbox_metadata in the outbox.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (part) (max by (database, event_type, part) (whizbang_event_store_estimated_type_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "{{part}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 30
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "table",
+      "id": 23,
+      "title": "Bytes per event type by part",
+      "description": "Each of the largest event types split into its parts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 74
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "topk(60, sum by (event_type, part) (max by (database, event_type, part) (whizbang_event_store_estimated_type_bytes{job=~\"$job\",database=~\"$database\"})))",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "table",
+      "id": 24,
+      "title": "Mean bytes per event by part",
+      "description": "The mean stored size of one event's part, after compression. Metadata larger than the payload is what slimming is for.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 74
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "max by (event_type, part) (whizbang_event_store_sampled_bytes_per_event_bytes{job=~\"$job\",database=~\"$database\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "id": 25,
+      "title": "Metadata share",
+      "description": "Body metadata and outbox metadata as a share of every sampled event byte.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(max by (database, event_type, part) (whizbang_event_store_estimated_type_bytes{job=~\"$job\",database=~\"$database\",part=~\"metadata|outbox_metadata\"})) / sum(max by (database, event_type, part) (whizbang_event_store_estimated_type_bytes{job=~\"$job\",database=~\"$database\"}))",
+          "legendFormat": "metadata"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "id": 26,
+      "title": "Extensions and queues",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 87
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 27,
+      "title": "Postgres capability state",
+      "description": "Each storage extension and setting the provider probed, per database, with its state (Ready, Provisionable, NotPermitted, NeedsServerChange, NoPrivilege, Missing, Unknown) and whether the configuration requires it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "expr": "max by (capability, scope, state, required) (whizbang_capability_state{job=~\"$job\",provider=\"postgres\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 28,
+      "title": "Queue depths",
+      "description": "Unprocessed rows per queue: inbox, outbox and the dead-letter slices.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 88
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "max by (database, queue_name) (whizbang_queue_estimated_depth_messages{job=~\"$job\",database=~\"$database\"})",
+          "legendFormat": "{{database}} {{queue_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}
