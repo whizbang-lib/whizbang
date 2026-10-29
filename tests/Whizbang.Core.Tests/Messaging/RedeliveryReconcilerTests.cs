@@ -417,6 +417,8 @@ public class RedeliveryReconcilerTests {
       .Because("the refusal and the bucket repair cannot change are each reported once");
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task OriginServiceNameOf_TheBundlesFirstHop_NamesTheOriginAsync() {
     var envelope = _envelope(
@@ -426,11 +428,15 @@ public class RedeliveryReconcilerTests {
     await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsEqualTo("orders-service");
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task OriginServiceNameOf_NoHops_IsNullAsync() {
     await Assert.That(RedeliveryReconciler.OriginServiceNameOf(_envelope())).IsNull();
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task OriginServiceNameOf_AFirstHopWithoutAServiceIdentity_IsNullAsync() {
     var envelope = _envelope(new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = _now });
@@ -439,6 +445,8 @@ public class RedeliveryReconcilerTests {
       .Because("the unknown sentinel is no identity to compare a stored hop with");
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task OriginServiceNameOf_AnEnvelopeReadWithoutHops_IsNullAsync() {
     var envelope = new MessageEnvelope<JsonElement> {
@@ -452,11 +460,31 @@ public class RedeliveryReconcilerTests {
       .Because("an envelope deserialized without a hop list carries no origin name");
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task OriginServiceNameOf_AFirstHopWithABlankServiceName_IsNullAsync() {
     var envelope = _envelope(new MessageHop { ServiceInstance = _instance(" "), Timestamp = _now });
 
     await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsNull();
+  }
+
+  /// <summary>Owner decision: the Unknown sentinel names no service in any case.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
+  [Test]
+  [Arguments("unknown")]
+  [Arguments("UNKNOWN")]
+  public async Task OriginServiceNameOf_TheUnknownSentinelInAnyCase_IsNullAsync(string name) {
+    var envelope = _envelope(new MessageHop { ServiceInstance = _instance(name), Timestamp = _now });
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsNull();
+  }
+
+  [Test]
+  public async Task OriginServiceNameOf_KeepsTheNamesCase_ForTheStoreToCompareWithoutCaseAsync() {
+    var envelope = _envelope(new MessageHop { ServiceInstance = _instance("OrdersService"), Timestamp = _now });
+
+    await Assert.That(RedeliveryReconciler.OriginServiceNameOf(envelope)).IsEqualTo("OrdersService");
   }
 
   [Test]

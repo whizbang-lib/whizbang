@@ -1848,8 +1848,11 @@ public interface IWorkCoordinator {
   /// counted as <see cref="RedeliveredBucketPresence.RefusedTruncated"/> (#1843).
   /// </summary>
   /// <param name="originServiceId">The origin the bundle names.</param>
-  /// <param name="originServiceName">The origin's service name, from the bundle's first hop; null when the bundle
-  /// carries none, which leaves the first-hop check nothing to compare and adopts as when a stored hop has none.</param>
+  /// <param name="originServiceName">The origin's service name, from the bundle's first hop, compared with the stored
+  /// first hop's service without case (one service's name can be configured with different casing on different
+  /// hosts). Null, blank or the Unknown sentinel when the bundle carries none, which leaves the first-hop check
+  /// nothing to compare, so the event adopts as when a stored hop has no service identity: refusing would leave that
+  /// history requested forever.</param>
   /// <param name="eventIds">The bundle's event ids.</param>
   /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
   /// null when the origin had not stamped it.</param>

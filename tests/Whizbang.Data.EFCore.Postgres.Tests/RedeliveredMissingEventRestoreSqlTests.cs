@@ -65,6 +65,8 @@ public class RedeliveredMissingEventRestoreSqlTests : EFCoreTestBase {
       .Because("the origin's digest bucket now folds both events, so the next comparison finds it whole and the bucket heals");
   }
 
+  /// <summary>Owner decision: a restored event is stored state only (its trigger receptors do not run again).</summary>
+  /// <docs>resilience/stream-integrity#remembered-but-missing</docs>
   [Test]
   public async Task ARestoredEvent_IsStoredStateOnly_SoTriggerReceptorsThatRanOnItsFirstArrivalDoNotRunAgainAsync() {
     var origin = TrackedGuid.New().Value;

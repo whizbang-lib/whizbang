@@ -189,8 +189,16 @@ public static partial class RedeliveryReconciler {
   /// <summary>
   /// The service name a redelivery bundle's origin published it under: the service of the envelope's first hop (the
   /// origin's own publish hop). Null when the envelope has no hop or its first hop carries no service identity
-  /// (<see cref="ServiceInstanceInfo.Unknown"/>), which leaves the first-hop check nothing to compare.
+  /// (<see cref="ServiceInstanceInfo.Unknown"/>, in any case), which leaves the first-hop check nothing to compare.
   /// </summary>
+  /// <remarks>
+  /// Two owner decisions (#1844). A bundle that yields no name adopts: with nothing to compare, refusing would leave
+  /// history received before origins were recorded counted as missing and requested forever, which is the same
+  /// reason a stored first hop without a service identity adopts. The name is returned as written and the store
+  /// compares it without case, as the transport consumer compares service names, because one service's name can be
+  /// configured with different casing on different hosts, and a case difference must not turn the origin into
+  /// another service.
+  /// </remarks>
   /// <param name="bundleEnvelope">The redelivery bundle's envelope as received.</param>
   /// <returns>The origin's service name, or null.</returns>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>

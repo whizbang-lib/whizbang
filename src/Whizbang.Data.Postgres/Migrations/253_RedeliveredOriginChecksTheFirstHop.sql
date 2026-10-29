@@ -18,12 +18,15 @@
 --              The check: before an empty origin takes the bundle's origin, it reads the stored event's hops
 --              (wh_event_body.metadata Hops, the service under si.sn, or the legacy ServiceInstance.ServiceName)
 --              and adopts only when the first hop names the bundle's origin service (p_origin_service_name, the
---              service of the bundle's own publish hop). Names compare without case. A first hop that names
+--              service of the bundle's own publish hop). Names compare without case, as the transport consumer
+--              compares service names: one service's name can be configured with different casing on different
+--              hosts, and a case difference must not make the origin another service. A first hop that names
 --              another service refuses the adoption: the event keeps its empty origin, its digest stays in the
 --              local lane, and it is counted per bucket in refused_foreign_origin_count, which the caller reports
 --              once per bundle. A first hop with no service identity (the slim stored form leaves it out; the Unknown sentinel says the same), no
---              hops, no stored body, or a bundle that names no service leave nothing to compare, so the event
---              adopts as in 249 and that history still converges. The check guards only an empty origin: an
+--              hops, no stored body, or a bundle that names no service (NULL, blank, or Unknown) leave nothing to
+--              compare, so the event adopts as in 249 and that history still converges: refusing it would leave
+--              history received before origins were recorded counted as missing and requested forever. The check guards only an empty origin: an
 --              event that already carries an origin is handled exactly as in 249.
 --
 --              The truncation refusals: per bucket, the bundle's children store_inbox_messages (252) refused to
@@ -53,6 +56,10 @@
 -- 252's entry point, superseded by the one below; nothing calls it.
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_reconcile_redelivered_bundle(UUID, UUID[], BIGINT[]);
 
+-- <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs:Adopt_WithoutTheOriginsName_AdoptsAsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs:Adopt_ABlankOrUnknownOriginName_AdoptsAsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs:Adopt_ServiceNamesCompareWithoutCase_AndAnotherServiceInAnyCaseIsRefusedAsync</tests>
 -- <docs>resilience/stream-integrity#pre-stamp-history</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEvent_OnAStreamWhoseEarlierHistoryWasTruncated_IsRefused_AndReportedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEvent_DeduplicationRemembers_TheStoreLost_IsRestored_AndTheBucketHealsAsync</tests>

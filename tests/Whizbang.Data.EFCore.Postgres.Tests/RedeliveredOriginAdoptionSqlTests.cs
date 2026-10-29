@@ -484,6 +484,8 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       .Because("an event with no stored hops has no service identity to refuse it on");
   }
 
+  /// <summary>Locks a documented first-hop decision; fails if the behavior changes.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task Adopt_TheLegacyLongFormHop_IsReadAndComparedWithoutCaseAsync() {
     await using var conn = await _openAsync();
@@ -501,6 +503,8 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
     await Assert.That(await _originOfAsync(conn, authoredHere)).IsEqualTo(((Guid?)null, (long?)null));
   }
 
+  /// <summary>Owner decision: a bundle that names no origin service leaves nothing to compare, so it adopts.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
   [Test]
   public async Task Adopt_WithoutTheOriginsName_AdoptsAsBeforeAsync() {
     await using var conn = await _openAsync();
@@ -513,6 +517,54 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
 
     await Assert.That(buckets!.Single()).IsEqualTo(new RedeliveredBucketPresence(stream, TENANT, EVENT_TYPE, 1, 1, RefusedForeignOrigin: 0))
       .Because("a bundle that names no service leaves the first-hop check nothing to compare");
+  }
+
+  /// <summary>
+  /// Owner decision: a blank name, or the Unknown sentinel in any case, is no origin name, so the event adopts even
+  /// though its first hop names another service.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  [Arguments("Unknown")]
+  [Arguments("UNKNOWN")]
+  public async Task Adopt_ABlankOrUnknownOriginName_AdoptsAsBeforeAsync(string originName) {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var stored = await _storeAsync(conn, stream, 1);
+    await _storeBodyAsync(conn, stored, $"[{_hop(LOCAL_NAME)}]");
+
+    var buckets = await _coordinator().AdoptRedeliveredOriginAsync(origin, originName, [stored], [7]);
+
+    await Assert.That(buckets!.Single()).IsEqualTo(new RedeliveredBucketPresence(stream, TENANT, EVENT_TYPE, 1, 1, RefusedForeignOrigin: 0))
+      .Because("a name that identifies no service leaves the first-hop check nothing to compare");
+    await Assert.That(await _originOfAsync(conn, stored)).IsEqualTo((origin, 7L));
+  }
+
+  /// <summary>
+  /// Owner decision: service names compare without case, in the short form every current writer stores. The same
+  /// service in another case adopts; another service, in whatever case, is refused.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
+  [Test]
+  public async Task Adopt_ServiceNamesCompareWithoutCase_AndAnotherServiceInAnyCaseIsRefusedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var sameService = await _storeAsync(conn, stream, 1);
+    await _storeBodyAsync(conn, sameService, $"[{_hop("OrdersService")}]");
+    var otherService = await _storeAsync(conn, stream, 2);
+    await _storeBodyAsync(conn, otherService, $"[{_hop("INVENTORYSERVICE")}]");
+
+    var buckets = await _coordinator().AdoptRedeliveredOriginAsync(origin, "ordersservice", [sameService, otherService], [7, 8]);
+
+    await Assert.That(buckets!.Single()).IsEqualTo(new RedeliveredBucketPresence(stream, TENANT, EVENT_TYPE, 2, 1, RefusedForeignOrigin: 1));
+    await Assert.That(await _originOfAsync(conn, sameService)).IsEqualTo((origin, 7L))
+      .Because("OrdersService and ordersservice name one service");
+    await Assert.That(await _originOfAsync(conn, otherService)).IsEqualTo(((Guid?)null, (long?)null))
+      .Because("case never turns another service into the origin");
   }
 
   [Test]
