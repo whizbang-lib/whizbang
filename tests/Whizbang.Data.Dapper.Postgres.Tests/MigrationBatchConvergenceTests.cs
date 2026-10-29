@@ -188,7 +188,12 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
       );
       INSERT INTO public.wh_body_split_cursor (only_row, last_seq) VALUES (TRUE, 0);
       DELETE FROM public.wh_event_body;
-      DELETE FROM public.wh_event_store;");
+      DELETE FROM public.wh_event_store;
+      -- The pass cost is the backfill's own sequential reads. An autovacuum that lands inside the measured
+      -- window summarizes the event store's BRIN ranges (258) with a heap scan that pg_stat counts as one,
+      -- so autovacuum is held off these tables while the pass is measured.
+      ALTER TABLE public.wh_event_store SET (autovacuum_enabled = false);
+      ALTER TABLE public.wh_event_body SET (autovacuum_enabled = false);");
   }
 
   private static async Task _dropPreSplitShapeAsync(NpgsqlConnection connection) {
@@ -198,7 +203,9 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
       DROP TABLE IF EXISTS public.wh_body_split_todo;
       DROP TABLE IF EXISTS public.wh_body_split_cursor;
       ALTER TABLE public.wh_event_store DROP COLUMN IF EXISTS event_data;
-      ALTER TABLE public.wh_event_store DROP COLUMN IF EXISTS metadata;");
+      ALTER TABLE public.wh_event_store DROP COLUMN IF EXISTS metadata;
+      ALTER TABLE public.wh_event_store RESET (autovacuum_enabled);
+      ALTER TABLE public.wh_event_body RESET (autovacuum_enabled);");
   }
 
   private static async Task _seedBodiesAsync(NpgsqlConnection connection, int rows) {

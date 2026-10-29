@@ -91,6 +91,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   public async Task ARetentionTable_FallsBelowNearOne_AfterOneRetentionPassAsync(string table, string column, int retentionDays) {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    await _holdAutovacuumOffAsync(conn, table);
 
     for (var day = 0; day < retentionDays; day++) {
       await _insertRetentionDayAsync(conn, table, day);
@@ -238,6 +239,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// and vacuuming every few batches as autovacuum does, then analyzes it.
   /// </summary>
   private static async Task _seedEventStoreAsync(NpgsqlConnection conn) {
+    await _holdAutovacuumOffAsync(conn, "wh_event_store");
     var instanceId = (Guid)TrackedGuid.New();
     for (var batch = 0; batch < BATCHES; batch++) {
       var at = _start.AddHours(batch);
@@ -290,6 +292,14 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
     }
     await tx.CommitAsync();
   }
+
+  /// <summary>
+  /// The tests vacuum by hand at the points autovacuum would, so where row versions land is decided by the test, not
+  /// by when the server's autovacuum happens to wake. Left on, an autovacuum landing mid-seed moves stamped rows and
+  /// shifts the measured correlation and the planner's statistics from run to run.
+  /// </summary>
+  private static Task _holdAutovacuumOffAsync(NpgsqlConnection conn, string table) =>
+    _executeAsync(conn, $"ALTER TABLE {table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false)");
 
   /// <summary>Stamps until a call stamps nothing. Bounded: one batch's events at most.</summary>
   private static async Task _drainStampAsync(NpgsqlConnection conn) {
