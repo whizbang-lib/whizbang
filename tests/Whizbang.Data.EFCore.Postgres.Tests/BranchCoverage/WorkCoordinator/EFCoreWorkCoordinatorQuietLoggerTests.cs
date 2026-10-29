@@ -157,7 +157,9 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
   public async Task GetOrphanedLifecycleEvents_ScopeUnparseableAndNoLogger_ReturnsTheEventWithoutHopsAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
-    var (_, eventId) = await _seedOrphanAsync(connection, scope: """{"t":"tenant-quiet"}""");
+    // Valid jsonb that is no scope in either stored format. A readable scope is restored whole even when
+    // JsonElement is unresolvable (#1855), so only a scope that truly cannot be read reaches the catch.
+    var (_, eventId) = await _seedOrphanAsync(connection, scope: "[1]");
 
     // With JsonElement unresolvable, the payload falls back to a direct parse, and the scope
     // parse fails into its catch, which logs through the null-logger fallback.
