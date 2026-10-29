@@ -344,15 +344,16 @@ public sealed class DeadLetterRecoveryOptions {
   public int LoopBreakerCooldownMinutes { get; set; } = 60;
 
   private const string HOLD_FOR_REVIEW = "HoldForReview";
+  private const string AGGRESSIVE_RETRY = "AggressiveRetry";
 
   /// <summary>
   /// Per-<see cref="MessageFailureReason"/> recovery rules. Defaults follow the
   /// design doc's matrix (see plans/dlq-recovery.md).
   /// </summary>
   public Dictionary<MessageFailureReason, RecoveryPolicy> PolicyByReason { get; set; } = new() {
-    [MessageFailureReason.Throttled] = new("AggressiveRetry", 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
+    [MessageFailureReason.Throttled] = new(AGGRESSIVE_RETRY, 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.TransportException] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: false),
-    [MessageFailureReason.LeaseExpired] = new("AggressiveRetry", 5, TimeSpan.FromSeconds(0), HoldForReviewAfterExhaustion: false),
+    [MessageFailureReason.LeaseExpired] = new(AGGRESSIVE_RETRY, 5, TimeSpan.FromSeconds(0), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.MaxAttemptsExceeded] = new("ConservativeRetry", 1, TimeSpan.FromHours(6), HoldForReviewAfterExhaustion: true),
     [MessageFailureReason.EventStorageFailure] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     [MessageFailureReason.ValidationError] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
@@ -377,9 +378,9 @@ public sealed class DeadLetterRecoveryOptions {
     // #1871: a message the batcher could not store, nearly always because the database was unreachable or out of
     // connections for longer than the batcher's own retries. Recovery stores it through the outbox store, so re-drive
     // it soon and often, and hold it for review once the budget is spent so a store that keeps refusing is visible.
-    [MessageFailureReason.OutboxStoreFailed] = new("AggressiveRetry", 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.OutboxStoreFailed] = new(AGGRESSIVE_RETRY, 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
     // #1885: the same for a message the inbox batcher could not store; recovery stores it through the inbox store.
-    [MessageFailureReason.InboxStoreFailed] = new("AggressiveRetry", 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.InboxStoreFailed] = new(AGGRESSIVE_RETRY, 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
   };
 }
 
