@@ -34,6 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowInboxBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowApplyBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerStreamSerializer.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Workers/AmbientFreeTask.cs</code-under-test>
 public class BatcherAmbientContextTests {
   private const string FIRST_APPENDER = "first-appender";
 
@@ -111,6 +112,43 @@ public class BatcherAmbientContextTests {
     await _asTheFirstAppenderAsync(() => sut.EnqueueAsync(TrackedGuid.New(), cancellationToken));
 
     await _assertNothingLeakedAsync(await seen.Task.WaitAsync(cancellationToken));
+  }
+
+  [Test]
+  public async Task AmbientFreeTask_StartedWhileFlowIsAlreadySuppressed_RunsTheWorkAsync(
+      CancellationToken cancellationToken) {
+    // A caller that already suppressed the flow (a host starting its own detached work) must still be able to start a
+    // worker: suppressing it a second time throws.
+    var ran = new TaskCompletionSource<Seen>(TaskCreationOptions.RunContinuationsAsynchronously);
+    Task started;
+    bool stillSuppressed;
+    _callerScope.Value = FIRST_APPENDER;
+    // Nothing is awaited while the flow is suppressed: the undo has to run on the thread that suppressed it.
+    var flow = ExecutionContext.SuppressFlow();
+    try {
+      started = AmbientFreeTask.Run(() => {
+        ran.TrySetResult(Seen.Now());
+        return Task.CompletedTask;
+      }, CancellationToken.None);
+      stillSuppressed = ExecutionContext.IsFlowSuppressed();
+    } finally {
+      flow.Undo();
+      _callerScope.Value = null;
+    }
+
+    await Assert.That(stillSuppressed).IsTrue()
+      .Because("the flow the caller suppressed stays suppressed after the start");
+    await started.WaitAsync(cancellationToken);
+    await Assert.That((await ran.Task.WaitAsync(cancellationToken)).CallerScope).IsNull();
+  }
+
+  [Test]
+  public async Task AmbientFreeTask_RestoresTheCallersFlowAfterTheStartAsync() {
+    var started = AmbientFreeTask.Run(() => Task.CompletedTask, CancellationToken.None);
+
+    await Assert.That(ExecutionContext.IsFlowSuppressed()).IsFalse()
+      .Because("the start suppresses the flow only around itself, so the caller's later awaits still flow");
+    await started;
   }
 
   /// <summary>

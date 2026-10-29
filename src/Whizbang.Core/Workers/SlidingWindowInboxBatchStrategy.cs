@@ -168,7 +168,8 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     };
     var batcher = new SlidingWindowBatcher<InboxMessage>(channel.Reader, batcherOptions, _timeProvider);
     var buffer = new StreamBuffer(key, channel, _timeProvider.GetUtcNow());
-    buffer.Worker = Task.Run(() => _drainBufferAsync(buffer, batcher), _stopCts.Token);
+    // The worker serves every caller of the stream, not the one whose append started it, so it takes no ambient context (#1883).
+    buffer.Worker = AmbientFreeTask.Run(() => _drainBufferAsync(buffer, batcher), _stopCts.Token);
     return buffer;
   }
 

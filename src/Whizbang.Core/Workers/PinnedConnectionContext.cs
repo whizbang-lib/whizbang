@@ -18,9 +18,11 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// Mirrors the established Whizbang AsyncLocal idiom used by
 /// <c>ScopedEventTrackerAccessor.CurrentTracker</c>: the value flows across
-/// <c>await</c> boundaries within the same logical control-flow but does NOT
-/// leak to sibling tasks spawned with <c>Task.Run</c> (per
-/// <see cref="AsyncLocal{T}"/> semantics).
+/// <c>await</c> boundaries within the same logical control-flow, and also into
+/// any task the holder starts with <c>Task.Run</c>, which copies the caller's
+/// <see cref="ExecutionContext"/>. A long-lived worker started from inside a
+/// pinned scope must therefore start with the flow suppressed, as the per-stream
+/// batchers do (#1883), or it keeps seeing a connection its starter released.
 /// </para>
 /// <para>
 /// Use <see cref="Push"/> in <c>using var scope = ...</c> form so the

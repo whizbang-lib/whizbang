@@ -859,6 +859,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because names are matched case-insensitively; rename one with `[JsonPropertyName]`. A stored key that differs from
   its declared name by more than case (a C# name `Points` declared `pts`) is not moved; declare it with
   `[StoredForm(PreviousName = "Points")]`.
+- **A batch drain worker no longer runs with the ambient context of the caller that started it (Fixes #1883).** The
+  outbox, inbox and apply sliding-window batchers and the per-stream serializer start a stream's drain worker from
+  inside the first append for that stream, and `Task.Run` copied that caller's `ExecutionContext` into the worker. Every
+  later flush of the stream then saw the first appender's `AsyncLocal` values: its pinned connection
+  (`PinnedConnectionContext.Current`) after the caller released it, or while the caller was still using it, and its
+  scope, tenant and activity, carried into flushes of other callers' messages. Drain workers now start with the flow
+  suppressed, so a flush sees no ambient state from whoever appended first.
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

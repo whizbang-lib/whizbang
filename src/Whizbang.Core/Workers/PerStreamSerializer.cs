@@ -173,7 +173,8 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       FullMode = BoundedChannelFullMode.Wait,
     });
     var stream = new StreamChannel(key, channel, _timeProvider.GetUtcNow());
-    stream.Worker = Task.Run(() => _drainStreamAsync(stream), _stopCts.Token);
+    // The worker serves every caller of the stream, not the one whose enqueue started it, so it takes no ambient context (#1883).
+    stream.Worker = AmbientFreeTask.Run(() => _drainStreamAsync(stream), _stopCts.Token);
     return stream;
   }
 

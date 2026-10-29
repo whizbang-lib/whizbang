@@ -196,8 +196,9 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
     };
     var batcher = new SlidingWindowBatcher<OutboxMessage>(channel.Reader, batcherOptions, _timeProvider);
     var buffer = new StreamBuffer(key, channel, _timeProvider.GetUtcNow());
-    // No stop token: a worker canceled before it started would leave its stream's messages unreported (#1871).
-    buffer.Worker = Task.Run(() => _drainBufferAsync(buffer, batcher), CancellationToken.None);
+    // No stop token: a worker canceled before it started would leave its stream's messages unreported (#1871). No
+    // ambient context either: the worker serves every caller of the stream, not the one whose append started it (#1883).
+    buffer.Worker = AmbientFreeTask.Run(() => _drainBufferAsync(buffer, batcher), CancellationToken.None);
     return buffer;
   }
 
