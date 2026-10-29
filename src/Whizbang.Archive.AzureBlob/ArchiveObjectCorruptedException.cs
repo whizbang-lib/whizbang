@@ -11,7 +11,7 @@ namespace Whizbang.Archive.AzureBlob;
 /// <docs>fundamentals/events/archive-store#azure-blob-integrity</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_ACorruptedObject_IsDetectedByItsHash_AndNothingIsDecodedAsync</tests>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveObjectCorruptedExceptionTests.cs</tests>
-public sealed class ArchiveObjectCorruptedException : InvalidDataException {
+public sealed class ArchiveObjectCorruptedException : Exception {
   /// <summary>Creates the exception with no message.</summary>
   public ArchiveObjectCorruptedException() { }
 

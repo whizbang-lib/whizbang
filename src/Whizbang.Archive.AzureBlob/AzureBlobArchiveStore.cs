@@ -14,6 +14,7 @@ using NpgsqlTypes;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
 using Whizbang.Data.Postgres;
+using ArchiveStatus = Whizbang.Core.Archival.ArchiveStatus;
 
 namespace Whizbang.Archive.AzureBlob;
 
@@ -74,9 +75,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     ArgumentNullException.ThrowIfNull(database);
     ArgumentNullException.ThrowIfNull(container);
     ArgumentNullException.ThrowIfNull(options);
-    ArgumentOutOfRangeException.ThrowIfLessThan(options.CompressionLevel, AzureBlobArchiveOptions.MIN_COMPRESSION_LEVEL, nameof(options));
-    ArgumentOutOfRangeException.ThrowIfGreaterThan(options.CompressionLevel, AzureBlobArchiveOptions.MAX_COMPRESSION_LEVEL, nameof(options));
-    ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxEventsPerChunk, 1, nameof(options));
+    if (options.CompressionLevel is < AzureBlobArchiveOptions.MIN_COMPRESSION_LEVEL or > AzureBlobArchiveOptions.MAX_COMPRESSION_LEVEL) {
+      throw new ArgumentOutOfRangeException(nameof(options), options.CompressionLevel,
+        $"CompressionLevel is a Brotli quality, {AzureBlobArchiveOptions.MIN_COMPRESSION_LEVEL} to {AzureBlobArchiveOptions.MAX_COMPRESSION_LEVEL}.");
+    }
+    if (options.MaxEventsPerChunk < 1) {
+      throw new ArgumentOutOfRangeException(nameof(options), options.MaxEventsPerChunk, "MaxEventsPerChunk is 1 or more.");
+    }
     _database = database;
     _container = container;
     _quality = options.CompressionLevel;

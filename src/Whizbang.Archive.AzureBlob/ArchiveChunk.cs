@@ -78,7 +78,7 @@ internal static class ArchiveChunk {
 
   /// <summary>Reads what <see cref="Encode"/> wrote, by the codec the object's locator records.</summary>
   public static IReadOnlyList<ArchiveChunkLine> Decode(byte[] bytes, ArchiveCompression compression) {
-    var text = (compression switch {
+    ReadOnlyMemory<byte> text = (compression switch {
       ArchiveCompression.None => bytes,
       ArchiveCompression.Brotli => _decompress(bytes),
       _ => throw _unknown(compression),
