@@ -1700,6 +1700,42 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
 
   /// <summary>
+  /// Every B-tree index on the queue tables that churn to empty, with its size and the size the catalog estimates it
+  /// should have (#1746). The maintenance cycle's <see cref="Whizbang.Core.Workers.QueueIndexReindexStep"/> rebuilds the
+  /// most bloated one and drops what an interrupted rebuild left behind.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One entry per index; empty when the backend does not survey its indexes (the default).</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<QueueIndexBloat>>([]);
+
+  /// <summary>
+  /// Drops an invalid index on a queue table with <c>DROP INDEX CONCURRENTLY</c>: what an interrupted
+  /// <c>REINDEX CONCURRENTLY</c> leaves behind. A valid index, or one on any other table, is refused.
+  /// </summary>
+  /// <param name="indexName">An index <see cref="GetQueueIndexBloatAsync"/> reported as a leftover.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True when it was dropped; false when it was not (the coordinator logs why), or by default.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Rebuilds a valid index on a queue table with <c>REINDEX INDEX CONCURRENTLY</c>, which cannot run inside a
+  /// transaction and so runs on a connection of its own, and returns the index's size afterwards.
+  /// </summary>
+  /// <param name="indexName">An index <see cref="GetQueueIndexBloatAsync"/> reported.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The index's size in bytes after the rebuild; null when nothing was rebuilt (the coordinator logs why), or by default.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Records this instance's lifecycle phase (and, when known, library version) on its own
   /// instance row, so peers and the status surface can observe it — the standby handshake cannot
   /// wait for a state nobody can see. Returns false when the instance has no row yet (early
@@ -4252,3 +4288,64 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
 public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);
+
+/// <summary>
+/// One B-tree index on a queue table that churns to empty, as <see cref="IWorkCoordinator.GetQueueIndexBloatAsync"/>
+/// surveys it (#1746).
+/// </summary>
+/// <param name="IndexName">Unqualified index name.</param>
+/// <param name="TableName">Unqualified name of the queue table it indexes.</param>
+/// <param name="SizeBytes">The index's size on disk (<c>pg_relation_size</c>).</param>
+/// <param name="ExpectedBytes">
+/// The size a freshly built index over the same rows should have, estimated from the catalog; null when the catalog cannot
+/// say (the index has never been vacuumed or analyzed, or a column it holds has no statistics and no fixed width).
+/// </param>
+/// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+public readonly record struct QueueIndexBloat(string IndexName, string TableName, long SizeBytes, long? ExpectedBytes) {
+  /// <summary>False for an index Postgres marks invalid (<c>pg_index.indisvalid</c>): a build that did not finish.</summary>
+  public bool Valid { get; init; }
+
+  /// <summary>
+  /// True when an index build is running on this index's table now, or one this role cannot see is running in the
+  /// database: an invalid index may then be that build's work in progress rather than a leftover.
+  /// </summary>
+  public bool BuildInProgress { get; init; }
+
+  /// <summary>How <see cref="Ratio"/> was obtained: the catalog estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  public Whizbang.Core.Observability.BloatMeasurementMethod Method { get; init; }
+
+  /// <summary>The index's size over its expected size; about 1.0 is lean. Null when the expected size is not known.</summary>
+  public double? Ratio => ExpectedBytes is > 0 and var expected ? (double)SizeBytes / expected : null;
+
+  /// <summary>
+  /// True for an invalid index named the way <c>REINDEX CONCURRENTLY</c> names the copy it builds (<c>_ccnew</c>) or the
+  /// original it retires (<c>_ccold</c>), optionally followed by digits: what an interrupted rebuild leaves behind.
+  /// </summary>
+  public bool IsReindexLeftover => !Valid && QueueIndexNames.IsReindexLeftoverName(IndexName);
+}
+
+/// <summary>The names <c>REINDEX CONCURRENTLY</c> gives the indexes it builds and retires (#1746).</summary>
+/// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+public static class QueueIndexNames {
+  /// <summary>
+  /// Whether <paramref name="indexName"/> ends with <c>_ccnew</c> or <c>_ccold</c>, optionally followed by digits (Postgres
+  /// appends a number when the plain name is taken). Checked character by character, with no pattern engine.
+  /// </summary>
+  /// <param name="indexName">An unqualified index name.</param>
+  /// <returns>True when the name is one a concurrent rebuild gives.</returns>
+  public static bool IsReindexLeftoverName(string? indexName) {
+    if (string.IsNullOrEmpty(indexName)) {
+      return false;
+    }
+    var end = indexName.Length;
+    while (end > 0 && char.IsAsciiDigit(indexName[end - 1])) {
+      end--;
+    }
+    var stem = indexName.AsSpan(0, end);
+    return stem.EndsWith("_ccnew", StringComparison.Ordinal) || stem.EndsWith("_ccold", StringComparison.Ordinal);
+  }
+}

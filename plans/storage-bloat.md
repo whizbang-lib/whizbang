@@ -257,7 +257,16 @@ Each slice is one red-then-green increment and its own commit.
     first. RED: threshold decision unit tests; integration test that a bloated index shrinks and
     that an invalid leftover is cleaned. Docs: storage-maintenance page and
     `fundamentals/workers/maintenance-steps.md`.
-    **Status (2026-10-24):** open. `src/` has no reindex task and no `ReindexBloatThreshold`.
+    **Status (2026-10-29):** done in #1746. `QueueIndexReindexStep` (a framework `IMaintenanceStep`) surveys the
+    B-tree indexes of the queue tables from the catalog through `IWorkCoordinator.GetQueueIndexBloatAsync` (size against
+    a fresh index's expected size, method `estimate`), drops every invalid `_ccnew`/`_ccold` leftover with
+    `DROP INDEX CONCURRENTLY`, then rebuilds at most one index per cycle with `REINDEX INDEX CONCURRENTLY`: the valid
+    index over `ReindexBloatThreshold` (default 3.0, 0 disables, otherwise finite and above 1, validated at start) and
+    at least 1 MiB with the most bytes to give back. Fleet-once through an `IClaimedEmissionStore` claim per window of
+    half the maintenance interval; nothing is dropped or rebuilt while `pg_stat_progress_create_index` shows a build on
+    a queue table. The queue tables were derived from the migrations: the four above plus `wh_active_streams` and
+    `wh_doorbell_queue`; `wh_message_deduplication` is excluded (a retention window never drains). pgstatindex is not
+    used: it reads the whole index, the same reads as the rebuild. EF Core driver only; no migration.
 
 ### Defect 9: idle-gate ceiling as a time
 

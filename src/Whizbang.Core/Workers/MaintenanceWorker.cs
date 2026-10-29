@@ -1201,6 +1201,17 @@ public sealed class MaintenanceWorkerOptions {
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
 
   /// <summary>
+  /// How many times its expected size an index on a queue table that churns to empty may grow before the maintenance
+  /// cycle rebuilds it with <c>REINDEX INDEX CONCURRENTLY</c> (<c>Whizbang:Workers:Maintenance:ReindexBloatThreshold</c>).
+  /// Default <c>3.0</c>, the same line a table is queued for rewrite at; <c>0</c> turns the rebuild off. Any other value
+  /// must be finite and greater than 1, because a freshly built index measures about 1 and would be rebuilt every cycle.
+  /// One index is rebuilt per cycle, fleet-wide, the one with the most bytes to give back (#1746).
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+  public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
+
+  /// <summary>
   /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
   /// <see cref="Workers.TableRewriteStrategy.PgRepack"/> runs.
   /// </summary>

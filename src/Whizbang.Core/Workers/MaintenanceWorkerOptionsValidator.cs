@@ -24,6 +24,7 @@ public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<Mainten
     ArgumentNullException.ThrowIfNull(options);
     var failures = RetentionSettingsBridge.Validate(options.Retention);
     failures.AddRange(MaintenancePartitioningOptions.Validate(options.Partitioning));
+    failures.AddRange(QueueIndexReindexStep.ValidateThreshold(options.ReindexBloatThreshold));
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 }

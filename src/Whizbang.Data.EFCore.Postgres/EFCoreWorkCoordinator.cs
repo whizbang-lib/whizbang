@@ -1535,6 +1535,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return outcomes;
   }
 
+  /// <inheritdoc />
+  public Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<QueueIndexBloat>>([]);   // RED stub (#1746)
+
+  /// <inheritdoc />
+  public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);   // RED stub (#1746)
+
+  /// <inheritdoc />
+  public Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);   // RED stub (#1746)
+
   /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
   private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
       string initConnectionString, string schema, CancellationToken cancellationToken) {
