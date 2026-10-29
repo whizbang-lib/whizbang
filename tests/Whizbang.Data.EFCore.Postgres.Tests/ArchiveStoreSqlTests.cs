@@ -40,9 +40,6 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     if (connection.State != ConnectionState.Open) {
       await connection.OpenAsync();
     }
-    // The tombstone table belongs to the stream lifecycle ledger (migration 260, #1732). Until that migration is
-    // on this branch, the test creates it with the ledger's columns and installs the guard the way 262 does.
-    await StreamLifecycleTestTable.EnsureAsync(connection);
     return connection;
   }
 
@@ -237,6 +234,7 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
       "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at) VALUES (@id, 'P', " +
       $"'{ids[2]}', 0, NOW())", stream);
     var before = await _fullHotRowsAsync(connection, stream);
+    var ledger = await _ledgerRowAsync(connection, stream);
     var generation = await _generationAsync(connection);
     // The copy runs first, then the truncate deletes; this trigger fails the delete of the stream's pointers.
     await _executeAsync(connection, """
@@ -256,7 +254,8 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _archivedCountAsync(connection, stream)).IsEqualTo(0L)
       .Because("the copy rolled back with the truncate: nothing is half-archived");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @id", stream)).IsEqualTo(1L);
-    await Assert.That(await _tombstoneAsync(connection, stream)).IsNull();
+    await Assert.That(await _ledgerRowAsync(connection, stream)).IsEqualTo(ledger)
+      .Because("the stream's ledger row is as it was: no tombstone, no locator, the same bytes");
     await Assert.That(await _generationAsync(connection)).IsEqualTo(generation).Because("nothing moved, so integrity has nothing to re-verify");
   }
 
@@ -458,6 +457,82 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _hotCountAsync(connection, other)).IsEqualTo(1L);
   }
 
+  [Test]
+  public async Task Write_WholeStream_WithNoLedgerRowYet_BuildsTheTombstoneFromTheEventsAsync() {
+    // A stream the ledger backfill has not reached yet has no row; the tombstone is built from its events by the
+    // ledger's own rules: the first event's type, tenant and time, the UTC hour of the newest event.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    await _commitAsync(connection, Guid.CreateVersion7(), stream, scope: """{"t":"tenant-first"}""");
+    await _commitAsync(connection, Guid.CreateVersion7(), stream, scope: """{"t":"tenant-later"}""");
+    await _commitAsync(connection, Guid.CreateVersion7(), stream);
+    var expected = await _ledgerShapeFromEventsAsync(connection, stream);
+    await _executeAsync(connection, "DELETE FROM wh_stream_lifecycle WHERE stream_id = @id", stream);
+
+    var written = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(await _ledgerRowAsync(connection, stream))
+      .IsEqualTo($"{expected}|3|0|Archived|postgres-table://wh_event_archive?codec=none&format=1|{written.OriginGeneration}")
+      .Because("the tombstone carries the stream's identity even when the ledger had no row for it");
+    await Assert.That(expected.Split('|')[1]).IsEqualTo("tenant-first").Because("the tenant is the first event's, as the ledger records it");
+
+    var restored = await _store().RestoreAsync(stream);
+
+    await Assert.That(restored.Status).IsEqualTo(ArchiveStatus.RESTORED);
+    var row = await _tombstoneAsync(connection, stream);
+    await Assert.That(row!.Value.State).IsEqualTo("Active").Because("the restored events went in without tripping the guard");
+    await Assert.That(row.Value.LastVersion).IsEqualTo(3L);
+  }
+
+  [Test]
+  public async Task ApproxBytes_ArchiveSubtractsWhatLeft_RestoreAddsItBackAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 3);
+    var before = await _approxBytesAsync(connection, stream);
+    var prefixBytes = await _scalarAsync(connection,
+      "SELECT COALESCE(SUM(pg_column_size(eb.event_data) + pg_column_size(eb.metadata)), 0) FROM wh_event_store es " +
+      "JOIN wh_event_body eb ON eb.event_id = es.event_id WHERE es.stream_id = @id AND es.version <= 2", stream);
+    await Assert.That(prefixBytes).IsGreaterThan(0L).Because("the prefix must have bytes, or their subtraction proves nothing");
+    var store = _store();
+
+    _ = await store.WriteAsync(ArchiveBatch.Prefix(stream, 2));
+    await Assert.That(await _approxBytesAsync(connection, stream)).IsEqualTo(before - prefixBytes)
+      .Because("the ledger counts the hot store, and the archived prefix left it");
+    _ = await store.RestoreAsync(stream);
+    await Assert.That(await _approxBytesAsync(connection, stream)).IsEqualTo(before)
+      .Because("a restore brings the same bodies back");
+
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    await Assert.That(await _approxBytesAsync(connection, stream)).IsEqualTo(0L).Because("nothing of the stream is hot");
+    _ = await store.RestoreAsync(stream);
+    await Assert.That(await _approxBytesAsync(connection, stream)).IsEqualTo(before);
+  }
+
+  [Test]
+  public async Task Purge_AnArchivedStream_TakesItsArchiveParkedCursorsAndTombstoneAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    var ids = await _streamAsync(connection, stream, 2);
+    await _executeAsync(connection,
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at) VALUES (@id, 'P', " +
+      $"'{ids[1]}', 0, NOW())", stream);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    var report = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "archived by mistake" });
+
+    await Assert.That(report.Totals["wh_event_archive_cursors"]).IsEqualTo(1L)
+      .Because("a purged stream is gone, so the cursors parked for its restore go too");
+    await Assert.That(report.Totals["wh_event_archive"]).IsEqualTo(2L);
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_event_archive_cursors WHERE stream_id = @id", stream)).IsEqualTo(0L);
+    await Assert.That(await _tombstoneAsync(connection, stream)).IsNull();
+  }
+
   // ── Restore and delete ───────────────────────────────────────────────────────────────────────────
 
   [Test]
@@ -648,6 +723,29 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
 
   /// <summary>A context with an empty model in the default schema: enough for the driver to register its stores.</summary>
   private sealed class ArchiveRegistrationDbContext(DbContextOptions<ArchiveRegistrationDbContext> options) : DbContext(options);
+
+  // The identity part of a ledger row as 260 derives it from the events: type, tenant, first time, hour of the newest.
+  private static async Task<string> _ledgerShapeFromEventsAsync(NpgsqlConnection connection, Guid streamId) {
+    await using var c = connection.CreateCommand();
+    c.CommandText =
+      "SELECT concat_ws('|', f.aggregate_type, COALESCE(f.scope ->> 't', '<null>'), f.created_at, " +
+      "  (SELECT date_trunc('hour', MAX(es.created_at), 'UTC') FROM wh_event_store es WHERE es.stream_id = @id)) " +
+      "FROM (SELECT es.aggregate_type, es.scope, es.created_at FROM wh_event_store es WHERE es.stream_id = @id ORDER BY es.version LIMIT 1) f";
+    c.Parameters.AddWithValue("id", streamId);
+    return (string)(await c.ExecuteScalarAsync())!;
+  }
+
+  private static async Task<string> _ledgerRowAsync(NpgsqlConnection connection, Guid streamId) {
+    await using var c = connection.CreateCommand();
+    c.CommandText =
+      "SELECT concat_ws('|', stream_type, COALESCE(tenant, '<null>'), first_appended_at, last_appended_bucket, last_version, approx_bytes, " +
+      "  state, archive_locator, origin_generation) FROM wh_stream_lifecycle WHERE stream_id = @id";
+    c.Parameters.AddWithValue("id", streamId);
+    return (string)(await c.ExecuteScalarAsync())!;
+  }
+
+  private static Task<long> _approxBytesAsync(NpgsqlConnection connection, Guid streamId) =>
+    _scalarAsync(connection, "SELECT approx_bytes FROM wh_stream_lifecycle WHERE stream_id = @id", streamId);
 
   private static async Task<string> _cursorRowAsync(NpgsqlConnection connection, Guid streamId) {
     await using var c = connection.CreateCommand();

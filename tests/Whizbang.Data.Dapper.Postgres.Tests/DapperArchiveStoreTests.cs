@@ -39,7 +39,6 @@ public class DapperArchiveStoreTests : PostgresTestBase {
   private async Task<(NpgsqlConnection Connection, Guid Stream, Guid[] Ids)> _seedAsync(int count) {
     var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
-    await StreamLifecycleTestTable.EnsureAsync(connection);
     var stream = Guid.CreateVersion7();
     var ids = new Guid[count];
     for (var i = 0; i < count; i++) {
