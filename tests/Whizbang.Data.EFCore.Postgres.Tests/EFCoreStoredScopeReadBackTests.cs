@@ -94,12 +94,12 @@ public class EFCoreStoredScopeReadBackTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Seeds one event row with no recorded hops and the given scope column, plus a cursor showing its one
-  /// expected perspective applied it and no completion marker: the shape reconciliation picks up. Timestamps
-  /// come from the database clock.
+  /// Seeds one event row with no recorded hops and <paramref name="storedScope"/> in its scope column, plus a
+  /// cursor showing its one expected perspective applied it and no completion marker: the shape reconciliation
+  /// picks up. Timestamps come from the database clock.
   /// </summary>
   private static async Task<(Guid StreamId, Guid EventId)> _seedReconcilableHoplessRowAsync(
-      WorkCoordinationDbContext dbContext, string eventType, PerspectiveScope scope) {
+      WorkCoordinationDbContext dbContext, string eventType, PerspectiveScope storedScope) {
     var streamId = (Guid)TrackedGuid.New();
     var eventId = (Guid)TrackedGuid.New();
     var eventData = _json(new OrderCreatedEvent { OrderId = streamId, CustomerName = "stored-scope" });
@@ -121,7 +121,7 @@ public class EFCoreStoredScopeReadBackTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("evt", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("type", eventType);
-    cmd.Parameters.AddWithValue("scope", _json(scope));
+    cmd.Parameters.AddWithValue("scope", _json(storedScope));
     cmd.Parameters.AddWithValue("data", eventData);
     cmd.Parameters.AddWithValue("metadata", metadata);
     cmd.Parameters.AddWithValue("perspective", PERSPECTIVE);
