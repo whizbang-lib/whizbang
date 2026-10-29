@@ -4786,32 +4786,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-#pragma warning disable S2077
-    var sql = $@"
-      WITH expected AS (
-        SELECT * FROM unnest({{0}}::text[], {{1}}::text[]) AS x(event_type, perspective_name)
-      ),
-      expected_counts AS (
-        SELECT event_type, COUNT(*) AS cnt FROM expected GROUP BY event_type
-      )
-      SELECT e.event_id, e.stream_id, eb.event_data AS event_data, eb.metadata AS metadata, e.event_type, e.scope
-      FROM {eventStoreTable} e
-      JOIN expected_counts ec ON ec.event_type = e.event_type
-      LEFT JOIN {bodyTable} eb ON eb.event_id = e.event_id
-      WHERE e.created_at >= {{2}}
-        AND NOT EXISTS (
-          SELECT 1 FROM {completionsTable} lc WHERE lc.event_id = e.event_id
-        )
-        AND (
-          SELECT COUNT(DISTINCT pc.perspective_name)
-          FROM {cursorsTable} pc
-          JOIN expected x ON x.event_type = e.event_type AND x.perspective_name = pc.perspective_name
-          WHERE pc.stream_id = e.stream_id
-            AND pc.last_event_id >= e.event_id
-        ) = ec.cnt
-      ORDER BY e.created_at
-      LIMIT {{3}}";
-#pragma warning restore S2077
+    var sql = OrphanedLifecycleEventsSql.Build(eventStoreTable, bodyTable, cursorsTable, completionsTable);
 
     try {
       // Bounded even when the store is degraded: the reconcile may time out a pass and retry
