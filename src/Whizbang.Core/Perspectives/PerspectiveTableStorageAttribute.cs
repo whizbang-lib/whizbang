@@ -10,14 +10,15 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Applied by the schema pass, and only where the table differs, so a restart changes nothing. The compression
+/// Applied only where the table differs, so a restart changes nothing. The compression
 /// settings affect rows written from then on; rows already stored keep their layout until they are rewritten.
 /// </para>
 /// <para>
-/// The model is the authority for <see cref="FillFactor"/> and the six autovacuum settings: one it no longer declares
-/// (removed, set back to negative, or the whole attribute removed) is reset to the server's value, including a value
-/// set on the table by hand, since nothing records who set it. <see cref="ToastTupleTarget"/> and
-/// <see cref="DataCompression"/> stay on the table when removed, until reset by hand.
+/// The model is the authority for <see cref="FillFactor"/> and the six autovacuum settings, applied at every start
+/// whether or not the schema changed: one it no longer declares (removed, set back to negative, or the whole attribute
+/// removed) is reset to the server's value, including a value set on the table by hand, since nothing records who set
+/// it. A table listed in the <c>perspective_storage_manual_tables</c> database setting is left alone instead.
+/// <see cref="ToastTupleTarget"/> and <see cref="DataCompression"/> stay on the table when removed, until reset by hand.
 /// </para>
 /// <para>
 /// The autovacuum settings matter on a large table that is updated or deleted from often. The server's default
@@ -43,6 +44,7 @@ namespace Whizbang.Core.Perspectives;
 /// </example>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
 /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+/// <docs>fundamentals/perspectives/physical-fields#manually-managed-tables</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class PerspectiveTableStorageAttribute : Attribute {
   /// <summary>The compression method for the <c>data</c> column.</summary>
@@ -100,7 +102,7 @@ public sealed class PerspectiveTableStorageAttribute : Attribute {
   /// An update writes a new row version. When it fits on the same page and changes no indexed column, PostgreSQL
   /// writes no index entries and prunes the old version inside the page (a HOT update); otherwise every index gains
   /// an entry, which grows the indexes, the WAL and the vacuum work. 70 to 90 suits a table whose rows are updated.
-  /// A changed fillfactor applies only to pages written from then on, so the schema pass also queues a rewrite of a
+  /// A changed fillfactor applies only to pages written from then on, so the start that changes it also queues a rewrite of a
   /// table that already holds rows.
   /// </remarks>
   /// <docs>fundamentals/perspectives/physical-fields#perspective-fillfactor</docs>
