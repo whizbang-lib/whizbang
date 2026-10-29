@@ -290,7 +290,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       SpyLifecycleCoordinator? lifecycleCoordinator = null,
       IWorkNotificationListener? notificationListener = null,
       PerspectiveMetrics? metrics = null,
-      bool registerLifecycleCoordinator = true) {
+      bool registerLifecycleCoordinator = true,
+      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null) {
     var harness = new PerspectiveWorkerTestHarness();
     var lifecycle = lifecycleCoordinator ?? new SpyLifecycleCoordinator();
     var instanceProvider = new InstanceProvider();
@@ -319,7 +320,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
-      logger: NullLogger<PerspectiveWorker>.Instance,
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -685,6 +686,72 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     await Assert.That(pending).Count().IsEqualTo(1);
     await Assert.That(pending[0].Value).IsEqualTo(42d)
       .Because("the pending-events gauge publishes the count the periodic statistics gather returned");
+  }
+
+  /// <summary>
+  /// A failed pending-events statistics query is reported, not swallowed (#1865): the loop keeps running, a warning
+  /// names the query and what its failure leaves stale, and the failure is counted so a frozen gauge can be told apart
+  /// from a real backlog.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task Maintenance_StatisticsGatherFails_WarnsNamingTheQuery_AndCountsTheFailureAsync(CancellationToken cancellationToken) {
+    var coordinator = new StartupCoordinator { ThrowOnFirstGatherStatistics = true };
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var logger = new StatsCapturingLogger();
+    var fx = _build(coordinator, _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+        DrainBatcher = new SlidingWindowBatcherOptions {
+          MaxSize = 1,  // one drain stream per cycle → 1 cycle per enqueued id
+          SlidingWindow = TimeSpan.FromMilliseconds(1),
+          MaxWait = TimeSpan.FromMilliseconds(1),
+        },
+      },
+      metrics: metrics,
+      logger: logger);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    for (var i = 0; i < 60; i++) {
+      await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
+    }
+    await coordinator.WaitForGatherStatisticsAsync(1, cancellationToken);
+    await cts.CancelAsync();
+    // The failure is handled after the gather throws, inside the same cycle: the loop has to have finished it.
+    await fx.Worker.ExecuteTask!.WaitAsync(cancellationToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(fx.Worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("a failed statistics query is non-critical and must never take down the loop");
+    var warnings = logger.Entries
+      .Where(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("GatherStatisticsAsync"))
+      .ToList();
+    await Assert.That(warnings).Count().IsEqualTo(1)
+      .Because("the failure is logged at warning, naming the query that failed");
+    await Assert.That(warnings[0].Message).Contains("whizbang.perspective.pending_events")
+      .Because("and the consequence: the gauge it feeds keeps its last value");
+    await Assert.That(warnings[0].Exception).IsTypeOf<InvalidOperationException>();
+    var failures = meters.GetByName("whizbang.perspective.pending_events_refresh_failures");
+    await Assert.That(failures.Sum(m => m.Value)).IsEqualTo(1d)
+      .Because("the failed refresh is counted, so the gauge's staleness is visible on a dashboard");
+  }
+
+  /// <summary>Records what the worker logs at Information and above, with the exception.</summary>
+  private sealed class StatsCapturingLogger : Microsoft.Extensions.Logging.ILogger<PerspectiveWorker> {
+    private readonly ConcurrentQueue<(Microsoft.Extensions.Logging.LogLevel Level, string Message, Exception? Exception)> _entries = new();
+    public IReadOnlyList<(Microsoft.Extensions.Logging.LogLevel Level, string Message, Exception? Exception)> Entries => [.. _entries];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel >= Microsoft.Extensions.Logging.LogLevel.Information;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (IsEnabled(logLevel)) {
+        _entries.Enqueue((logLevel, formatter(state, exception), exception));
+      }
+    }
   }
 
   // ============================================================
