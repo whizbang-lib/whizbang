@@ -19,6 +19,11 @@ namespace Whizbang.Generators.Tests;
 /// <code-under-test>src/Whizbang.Generators/StreamIdGenerator.cs</code-under-test>
 [Category("SourceGenerators")]
 public class StreamIdDerivedFirstGeneratorTests {
+  private const string COMMAND = "ICommand";
+  private const string EVENT = "IEvent";
+  private const string ORDER_ID = "OrderId";
+  private const string INVOICE_ID = "InvoiceId";
+
   private static readonly Guid _baseId = Guid.Parse("11111111-1111-1111-1111-111111111111");
   private static readonly Guid _ownId = Guid.Parse("22222222-2222-2222-2222-222222222222");
   private static readonly Guid _setId = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -83,7 +88,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstCommandAfter", contracts,
-      _resolveAndSetProbe("DerivedFirstCommandAfter", "App.Contracts.Orders.ShipOrderCommand", "OrderId", "ICommand"));
+      _resolveAndSetProbe("DerivedFirstCommandAfter", "App.Contracts.Orders.ShipOrderCommand", ORDER_ID, COMMAND));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn())
       .Because("the base's namespace sorts first, and its check must not shadow the derived command's own [StreamId]");
@@ -102,7 +107,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstCommandOverride", contracts,
-      _resolveAndSetProbe("DerivedFirstCommandOverride", "App.Contracts.Orders.ShipOrderCommand", "OrderId", "ICommand"));
+      _resolveAndSetProbe("DerivedFirstCommandOverride", "App.Contracts.Orders.ShipOrderCommand", ORDER_ID, COMMAND));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn())
       .Because("an override is the stream id, so the base's check must not reach the derived command first");
@@ -123,7 +128,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstCommandBefore", contracts,
-      _resolveAndSetProbe("DerivedFirstCommandBefore", "App.Contracts.Billing.ChargeCommand", "InvoiceId", "ICommand"));
+      _resolveAndSetProbe("DerivedFirstCommandBefore", "App.Contracts.Billing.ChargeCommand", INVOICE_ID, COMMAND));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn())
       .Because("the same contract shape resolves the same way whichever namespace sorts first");
@@ -142,7 +147,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstCommandOverrideBefore", contracts,
-      _resolveAndSetProbe("DerivedFirstCommandOverrideBefore", "App.Contracts.Billing.ChargeCommand", "InvoiceId", "ICommand"));
+      _resolveAndSetProbe("DerivedFirstCommandOverrideBefore", "App.Contracts.Billing.ChargeCommand", INVOICE_ID, COMMAND));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn());
   }
@@ -222,7 +227,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstEventAfter", contracts,
-      _resolveAndSetProbe("DerivedFirstEventAfter", "App.Contracts.Orders.OrderShipped", "OrderId", "IEvent"));
+      _resolveAndSetProbe("DerivedFirstEventAfter", "App.Contracts.Orders.OrderShipped", ORDER_ID, EVENT));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn())
       .Because("events dispatch the same way as commands, most-derived first");
@@ -241,7 +246,7 @@ public class StreamIdDerivedFirstGeneratorTests {
       """;
 
     var observed = _runProbe("DerivedFirstEventBefore", contracts,
-      _resolveAndSetProbe("DerivedFirstEventBefore", "App.Contracts.Billing.InvoiceRaised", "InvoiceId", "IEvent"));
+      _resolveAndSetProbe("DerivedFirstEventBefore", "App.Contracts.Billing.InvoiceRaised", INVOICE_ID, EVENT));
 
     await Assert.That(observed).IsEqualTo(_expectedOwn());
   }
