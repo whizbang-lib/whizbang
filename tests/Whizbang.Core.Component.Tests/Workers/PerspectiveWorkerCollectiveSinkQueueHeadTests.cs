@@ -27,7 +27,8 @@ public class PerspectiveWorkerCollectiveSinkQueueHeadTests : PerspectiveWorkerCo
   /// A run that holds the head of a long queue reads its own rows and the one after them, never the whole queue.
   /// </summary>
   [Test]
-  public async Task CollectiveSink_QueueHead_NeverReadsTheWholeQueueAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_QueueHead_NeverReadsTheWholeQueueAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var held = _sinkWork(streamId);
     var heldId = Guid.CreateVersion7();
@@ -48,9 +49,9 @@ public class PerspectiveWorkerCollectiveSinkQueueHeadTests : PerspectiveWorkerCo
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await harness.CompletionCapture.EventWorkIdsCaptured(held.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(held.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Applied).IsEquivalentTo(["a"]);

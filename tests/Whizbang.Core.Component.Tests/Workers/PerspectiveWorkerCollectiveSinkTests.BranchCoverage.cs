@@ -19,7 +19,8 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
-  public async Task CollectiveSink_DispatchThrowsWithMetrics_CountsOneErrorAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_DispatchThrowsWithMetrics_CountsOneErrorAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var eventId = TrackedGuid.New().Value;
     var envelope = _envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") });
@@ -41,9 +42,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // The error is counted before the failure is reported, so the report is the signal.
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -53,7 +54,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   }
 
   [Test]
-  public async Task CollectiveSink_PostApplyReceptorThrowsWithMetrics_CountsTheErrorAndKeepsTheCompletionAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_PostApplyReceptorThrowsWithMetrics_CountsTheErrorAndKeepsTheCompletionAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var eventId = TrackedGuid.New().Value;
     var sinkWork = _sinkWork(streamId);
@@ -74,12 +76,12 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await invoker.FirstInvoke.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    await invoker.FirstInvoke.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     // The error is counted on the worker's thread right after the receptor throws; the body finishing is
     // what proves it has been.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
