@@ -612,6 +612,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
 
+    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
+    // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
+    // already in line is not altered. Never fatal.
+    await Whizbang.Data.EFCore.Postgres.PerspectiveStorageReconcile.RunAsync(
+      dbContext, "__SCHEMA__", System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql), segmentConnectionFactory,
+      logger, cancellationToken);
+
     // No maintenance here (#1351). Schema initialization runs on every instance at every start, and a
     // service that scales out on its backlog starts instances at the peak of a load: the purge runs in
     // the maintenance cycle behind its busy check, and the work tables are vacuumed by the instance that

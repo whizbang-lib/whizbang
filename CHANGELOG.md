@@ -56,7 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sample read no rows of is not reported. Types are ranked and folded under `other` by every part together.
   Breaking (pre-1.0): `EventTypeBytes` is now one `EventPartBytes` (sampled rows, mean bytes, extrapolated total) per
   part (`Data`, `Metadata`, `PointerRow`, `OutboxMetadata`), and `EventStoreBytesParts` names the tag values.
-
+- **Perspective tables follow their model's fillfactor and autovacuum settings at every start; a table can be managed by hand (#1747).**
+  The seven parameters `[PerspectiveTableStorage]` governs (`fillfactor`, the four `autovacuum_vacuum_*` and the two
+  `toast.autovacuum_vacuum_*`) are no longer set by the hashed perspective schema SQL, which runs only when a schema
+  changes. The generated schema declares them in a `-- @whizbang:table-storage` marker line, and every start of every
+  instance, on both drivers, reads every perspective table's `reloptions` in one catalog query and alters only a table
+  that differs: a declared value is set, and a governed parameter the model does not declare (removed, negative, or no
+  attribute) is reset. One `ALTER TABLE … SET (…), RESET (…)` per table, under a 5-second lock timeout (a busy table is
+  skipped with a warning and retried at the next start); a set or reset fillfactor on a table with rows queues a
+  rewrite. Migration 259 adds the `perspective_storage_manual_tables` setting in `wh_settings`: a comma-separated list
+  of bare table names whose governed parameters are neither set nor reset; each start logs the listed tables once
+  (Information) and warns of each listed table whose model declares values it ignores. Parameters the attribute cannot
+  set are never touched; `toast_tuple_target` and compression are applied as before and not reset. **Upgrade note:**
+  a hand-set value of one of those seven parameters on a perspective table is reset at the first start on this release,
+  unless the table is listed in `perspective_storage_manual_tables` first. New API: `PerspectiveStorageParameters`,
+  `TableStorageDeclaration`, `TableStorageChange`, `PerspectiveStorageReport` (Whizbang.Data.Postgres.Schema),
+  `PerspectiveStorageReconcile` (EF Core), `ColumnStorageSql.StorageMarker` and `STORAGE_MARKER`. Removed (pre-1.0):
+  `ColumnStorageSql.SetFillFactor`.
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
   the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate
