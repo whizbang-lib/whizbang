@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wh_message_deduplication.first_seen_at` measure 1.0 while they only grow and 0.60, 0.27 and 0.81 after one retention
   pass at their default retention (freed oldest pages take the newest rows), so they keep their B-trees. No index is
   dropped.
+- **Bloated indexes on the queue tables that churn to empty are rebuilt with `REINDEX INDEX CONCURRENTLY` (#1746).**
+  A B-tree never returns its pages to the file, so after a burst an index on a drained queue keeps its peak size. The
+  new `queue-index-reindex` maintenance step surveys the B-tree indexes of `wh_outbox`, `wh_inbox`, `wh_inbox_state`,
+  `wh_perspective_events`, `wh_active_streams` and `wh_doorbell_queue` from the catalog (size against the size a fresh
+  index over the same rows needs; method `estimate`), drops every invalid `_ccnew`/`_ccold` leftover of an interrupted
+  rebuild with `DROP INDEX CONCURRENTLY`, and then rebuilds at most one index per cycle: of the valid indexes more than
+  `Whizbang:Workers:Maintenance:ReindexBloatThreshold` times their expected size (default `3.0`, `0` turns it off, any
+  other value must be finite and above 1) and at least 1 MiB, the one with the most bytes to give back. It runs once per
+  fleet through a claim keyed by a window of half the maintenance interval, does nothing while an index build is running
+  on a queue table, and runs on the schema-initialization connection when configured (otherwise only for a table the
+  application role owns). EF Core driver. New API: `MaintenanceWorkerOptions.ReindexBloatThreshold`,
+  `QueueIndexReindexStep`, `QueueIndexBloat`, `QueueIndexNames`, and `IWorkCoordinator.GetQueueIndexBloatAsync`,
+  `DropInvalidQueueIndexAsync` and `ReindexQueueIndexAsync`.
 
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While

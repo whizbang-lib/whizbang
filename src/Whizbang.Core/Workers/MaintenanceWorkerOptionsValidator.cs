@@ -7,8 +7,9 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Rejects a negative retention window in <see cref="MaintenanceWorkerOptions.Retention"/>, and a partition
-/// <see cref="MaintenancePartitioningOptions.CreateAhead"/> below one, where the options are read, naming the
-/// configuration key, instead of letting it reach the sweep.
+/// <see cref="MaintenancePartitioningOptions.CreateAhead"/> below one, and a
+/// <see cref="MaintenanceWorkerOptions.ReindexBloatThreshold"/> that is neither 0 nor a finite value above 1, where the
+/// options are read, naming the configuration key, instead of letting it reach the sweep.
 /// </summary>
 /// <remarks>
 /// The sweep turns each window into <c>NOW() - n * INTERVAL</c>. A negative value puts the cutoff in the future,
@@ -18,6 +19,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs:TheThreshold_IsValidatedAsync</tests>
 public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<MaintenanceWorkerOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, MaintenanceWorkerOptions options) {

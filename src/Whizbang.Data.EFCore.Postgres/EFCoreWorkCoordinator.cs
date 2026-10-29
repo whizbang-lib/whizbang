@@ -1536,16 +1536,149 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) =>
-    Task.FromResult<IReadOnlyList<QueueIndexBloat>>([]);   // RED stub (#1746)
+  /// <remarks>
+  /// <para>
+  /// One catalog read; nothing scans an index. The expected size is the leaf pages the index's rows need at its fill
+  /// factor (90 unless set), plus the metapage, and never less than two pages (the metapage and one leaf): each index
+  /// tuple is an 8-byte header and the columns' widths (<c>pg_stats.avg_width</c>, else the type's fixed length) rounded
+  /// up to 8, plus a 4-byte line pointer, and a page holds its size less its 24-byte header and 16-byte B-tree trailer.
+  /// The row count is the index's own <c>reltuples</c>, which counts only the rows a partial index holds. With none
+  /// recorded (-1) or a column of unknown width, the expected size is null and the index is not judged.
+  /// </para>
+  /// <para>
+  /// <c>BuildInProgress</c> reads <c>pg_stat_progress_create_index</c>: a build on the index's table, or one in this
+  /// database whose table this role is not allowed to see (the view hides it), counts.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  public async Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var prefix = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = QueueIndexSql.SURVEY;
+    cmd.Parameters.AddWithValue("prefix", prefix);
+    cmd.Parameters.AddWithValue("tables", QueueIndexSql.TABLES);
+    var results = new List<QueueIndexBloat>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      results.Add(new QueueIndexBloat(
+          reader.GetString(0), reader.GetString(1), reader.GetInt64(2), reader.IsDBNull(3) ? null : reader.GetInt64(3)) {
+        Valid = reader.GetBoolean(4),
+        BuildInProgress = reader.GetBoolean(5),
+        Method = BloatMeasurementMethod.Estimate,
+      });
+    }
+    return results;
+  }
 
   /// <inheritdoc />
-  public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
-    Task.FromResult(false);   // RED stub (#1746)
+  /// <remarks>
+  /// <c>DROP INDEX CONCURRENTLY</c> cannot run in a transaction, so it runs on a connection of its own: the
+  /// schema-initialization one when configured (its role owns the tables), otherwise the coordinator's, and only for a
+  /// table its role owns. The name reaches the statement only once the catalog has said it is an invalid index on a queue
+  /// table, and then quoted.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  public async Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
+    return await _onQueueIndexAsync(indexName, wantValid: false, QueueIndexSql.DROPPED, refused: false,
+      static async (conn, qualified, ct) => {
+        await using var drop = conn.CreateCommand();
+#pragma warning disable S2077 // Index name checked as a plain identifier and against the catalog; DROP INDEX takes no parameters
+        drop.CommandText = $"DROP INDEX CONCURRENTLY IF EXISTS {qualified}";
+#pragma warning restore S2077
+        drop.CommandTimeout = 0;   // waits for the transactions using the table to finish, as a concurrent drop must
+        await drop.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        return true;
+      }, cancellationToken).ConfigureAwait(false);
+  }
 
   /// <inheritdoc />
-  public Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
-    Task.FromResult<long?>(null);   // RED stub (#1746)
+  /// <remarks>
+  /// <c>REINDEX INDEX CONCURRENTLY</c> cannot run in a transaction, so it runs on a connection of its own, chosen as for
+  /// <see cref="DropInvalidQueueIndexAsync"/>. It builds a copy while the table stays readable and writable and swaps it
+  /// in, so it has no timeout: one index per cycle bounds it. An interruption leaves the copy invalid, and the next
+  /// cycle drops it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  public async Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
+    return await _onQueueIndexAsync<long?>(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: null,
+      static async (conn, qualified, ct) => {
+        await using (var reindex = conn.CreateCommand()) {
+#pragma warning disable S2077 // Index name checked as a plain identifier and against the catalog; REINDEX takes no parameters
+          reindex.CommandText = $"REINDEX INDEX CONCURRENTLY {qualified}";
+#pragma warning restore S2077
+          reindex.CommandTimeout = 0;
+          await reindex.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        await using var size = conn.CreateCommand().WithCoordinatorTimeout();
+        size.CommandText = "SELECT pg_relation_size(to_regclass(@q))";
+        var parameter = size.CreateParameter();
+        parameter.ParameterName = "q";
+        parameter.Value = qualified;
+        size.Parameters.Add(parameter);
+        return (long)(await size.ExecuteScalarAsync(ct).ConfigureAwait(false))!;
+      }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Runs <paramref name="work"/> on the index when the catalog says it is an index on a queue table with the validity
+  /// <paramref name="wantValid"/>, on a connection whose role owns the table; otherwise logs why not and returns
+  /// <paramref name="refused"/>. The work is handed the index's name quoted and schema-qualified.
+  /// </summary>
+  private async Task<T> _onQueueIndexAsync<T>(
+      string indexName, bool wantValid, string action, T refused,
+      Func<System.Data.Common.DbConnection, string, CancellationToken, Task<T>> work, CancellationToken cancellationToken) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var qualified = BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.PgIdentifier.Quote(indexName));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+
+    var (table, valid) = await _queueIndexAsync(conn, BuildSchemaQualifiedName(schema, ""), indexName, cancellationToken).ConfigureAwait(false);
+    if (_queueIndexRefusal(table, valid, wantValid) is { } refusal) {
+      EFCoreWorkCoordinatorLog.QueueIndexNotTouched(_log, indexName, action, refusal);
+      return refused;
+    }
+
+    if (_schemaInitConnectionString() is { } initConnectionString) {
+      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      return await work(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    }
+    var tableQualified = BuildSchemaQualifiedName(schema, table!);
+    if (await _notOwnedReasonAsync(conn, tableQualified, table!, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+      EFCoreWorkCoordinatorLog.QueueIndexNotTouched(_log, indexName, action, notOwned);
+      return refused;
+    }
+    return await work(conn, qualified, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>Why the index may not be touched, or null when it may: it must be on a queue table and of the validity wanted.</summary>
+  private static string? _queueIndexRefusal(string? table, bool valid, bool wantValid) => (table, valid, wantValid) switch {
+    (null, _, _) => "it is not an index on a queue table",
+    _ when valid == wantValid => null,
+    (_, _, true) => "it is invalid; it is dropped, not rebuilt",
+    _ => "it is valid; only an invalid leftover is dropped",
+  };
+
+  /// <summary>The queue table <paramref name="indexName"/> indexes and whether it is valid; a null table when it is not one.</summary>
+  private static async Task<(string? Table, bool Valid)> _queueIndexAsync(
+      Npgsql.NpgsqlConnection conn, string prefix, string indexName, CancellationToken cancellationToken) {
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = QueueIndexSql.LOOKUP;
+    cmd.Parameters.AddWithValue(nameof(prefix), prefix);
+    cmd.Parameters.AddWithValue("tables", QueueIndexSql.TABLES);
+    cmd.Parameters.AddWithValue("index", indexName);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+      ? (reader.GetString(0), reader.GetBoolean(1))
+      : (null, false);
+  }
 
   /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
   private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
@@ -5979,4 +6112,8 @@ internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(EventId = 76, Level = LogLevel.Warning,
     Message = "Table {Table} was not rewritten: {Reason}")]
   public static partial void TableNotRewritten(ILogger logger, string table, string reason);
+
+  [LoggerMessage(EventId = 77, Level = LogLevel.Warning,
+    Message = "Index {Index} was not {Action}: {Reason}")]
+  public static partial void QueueIndexNotTouched(ILogger logger, string index, string action, string reason);
 }

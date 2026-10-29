@@ -261,6 +261,12 @@ public static class WorkerPipelineExtensions {
         sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
         sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
         sp.GetRequiredService<ILogger<OnlineTableRewriteStep>>())));
+    // #1746: bloated indexes on the queue tables that churn to empty are rebuilt concurrently, one per cycle, fleet-once.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, QueueIndexReindexStep>(sp =>
+      new QueueIndexReindexStep(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<ILogger<QueueIndexReindexStep>>(),
+        sp.GetService<TimeProvider>())));
     // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
     // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>

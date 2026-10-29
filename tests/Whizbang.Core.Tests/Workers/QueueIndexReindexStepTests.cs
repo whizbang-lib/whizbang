@@ -49,6 +49,7 @@ public class QueueIndexReindexStepTests {
     public Dictionary<string, long?> SizeAfter { get; init; } = new(StringComparer.Ordinal);
     public HashSet<string> NotDropped { get; init; } = new(StringComparer.Ordinal);
     public HashSet<string> Throws { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> Cancels { get; init; } = new(StringComparer.Ordinal);
     public List<string> Calls { get; } = [];
     public int Scans { get; private set; }
 
@@ -59,6 +60,9 @@ public class QueueIndexReindexStepTests {
 
     public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
       Calls.Add("drop:" + indexName);
+      if (Cancels.Contains(indexName)) {
+        throw new OperationCanceledException();
+      }
       if (Throws.Contains(indexName)) {
         throw new InvalidOperationException($"drop of {indexName} failed");
       }
@@ -530,6 +534,18 @@ public class QueueIndexReindexStepTests {
       .BuildServiceProvider();
 
     await Assert.That(async () => await step.RunAsync(provider, CancellationToken.None)).Throws<OperationCanceledException>();
+  }
+
+  /// <summary>Cancellation during a leftover's drop is shutdown too: it propagates, and nothing is rebuilt after it.</summary>
+  [Test]
+  public async Task Run_CancellationDuringADrop_PropagatesAsync() {
+    var coordinator = new ReindexCoordinator {
+      Survey = [_index("idx_a", 400 * MIB, 10 * MIB), _leftover("idx_a_ccnew")],
+      Cancels = { "idx_a_ccnew" },
+    };
+
+    await Assert.That(async () => await _runAsync(coordinator)).Throws<OperationCanceledException>();
+    await Assert.That(coordinator.Calls).IsEquivalentTo(["drop:idx_a_ccnew"]);
   }
 
   /// <summary>The step is registered with the workers, once however often they are added.</summary>
