@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
+  `pg_stats.correlation` was measured with each candidate seeded in its production write order
+  (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle
+  reconciliation filters it by a thirty-minute range that no index reached, so the query read the whole store;
+  migration 258 adds `idx_event_store_created_at_brin` (`pages_per_range = 128`) and the query now reads only the
+  ranges holding the window. `commit_sequence` also correlates near 1, but its readers need its order, which only its
+  existing B-tree gives. `wh_log.logged_at`, `wh_lifecycle_completions.completed_at` and
+  `wh_message_deduplication.first_seen_at` measure 1.0 while they only grow and 0.60, 0.27 and 0.81 after one retention
+  pass at their default retention (freed oldest pages take the newest rows), so they keep their B-trees. No index is
+  dropped.
+
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
   the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate
