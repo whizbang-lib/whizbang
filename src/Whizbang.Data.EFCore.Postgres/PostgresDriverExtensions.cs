@@ -201,6 +201,13 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<PhysicalColumnFillMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held
+        // before migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamLifecycleBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,

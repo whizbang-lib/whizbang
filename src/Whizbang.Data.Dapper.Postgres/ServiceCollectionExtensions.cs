@@ -164,6 +164,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -319,6 +320,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -506,6 +508,16 @@ public static class ServiceCollectionExtensions {
   // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once (#1646)
   // and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and
   // is idle otherwise.
+  /// <summary>
+  /// TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held before
+  /// migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+  /// </summary>
+  private static void _addStreamLifecycleBackfill(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperStreamLifecycleBackfillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();
     services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>

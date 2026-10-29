@@ -9,6 +9,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -135,7 +136,7 @@ public class DapperStreamLifecycleLedgerTests : PostgresTestBase {
     }
   }
 
-  private static Task _restartAsync(NpgsqlConnection conn) =>
+  private static Task<int> _restartAsync(NpgsqlConnection conn) =>
     conn.ExecuteAsync($"""
       UPDATE wh_settings SET setting_value = '0' WHERE setting_key = '{VERSION_KEY}';
       UPDATE wh_settings SET setting_value = '{Guid.Empty}' WHERE setting_key = '{CURSOR_KEY}';
