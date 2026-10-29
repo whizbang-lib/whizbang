@@ -18,8 +18,12 @@
 --              The emit chain is the hottest write path in the framework, so the table is built for heap-only
 --              updates. Only state and disposition_due_at are indexed besides the key (one partial index over the rows
 --              with a disposition scheduled), and an append writes neither: it moves last_version, adds to
---              approx_bytes, and moves last_appended_bucket only when the UTC hour changes. Fillfactor 70 leaves room
---              on each page for the new row version a heap-only update needs, and autovacuum runs on a fixed count of
+--              approx_bytes, and moves last_appended_bucket only when the UTC hour changes. Fillfactor 45 leaves room
+--              on each page for a new version of every row on it: one batch can rewrite every stream on a page
+--              (streams created together share pages, and a bulk load appends to them together) and still stay
+--              heap-only, because the dead versions it leaves cannot be pruned until it commits. Measured with every
+--              row of a 2,000-row table updated twice, one transaction each: 2,304 of 4,000 updates heap-only at
+--              fillfactor 70, 3,243 at 60, 3,932 at 50 and all 4,000 at 45. Autovacuum runs on a fixed count of
 --              dead rows, as for wh_stream_digests (222), because every append batch leaves one per stream.
 --
 --              The streams the store held before this migration are seeded by a one-time backfill that runs outside
@@ -57,7 +61,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_stream_lifecycle (
   origin_generation BIGINT NULL,
   CONSTRAINT ck_stream_lifecycle_state CHECK (state IN ('Active', 'Sealed', 'Archived'))
 ) WITH (
-  fillfactor = 70,
+  fillfactor = 45,
   autovacuum_vacuum_scale_factor = 0,
   autovacuum_vacuum_threshold = 10000
 );

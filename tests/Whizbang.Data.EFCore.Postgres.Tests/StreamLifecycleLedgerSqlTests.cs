@@ -145,6 +145,26 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task OneBatchAppendingToEveryStreamOnItsPages_IsStillHeapOnlyAsync() {
+    await using var conn = await _openAsync();
+    // Streams created in one batch share the ledger's pages, and a bulk load appends to all of them together.
+    var streams = Enumerable.Range(0, 60).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    await _emitOutboxAsync(conn, _t0, [.. streams.Select(s => _event(s, EVENT_TYPE, tenant: "tenant-page"))]);
+    var pages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::int");
+
+    await using var tx = await conn.BeginTransactionAsync();
+    var start = await _ledgerTransactionCountsAsync(conn);
+    await _emitOutboxAsync(conn, _t0.AddMinutes(1), [.. streams.Select(s => _event(s, LATER_TYPE))]);
+    var end = await _ledgerTransactionCountsAsync(conn);
+    await tx.RollbackAsync();
+
+    await Assert.That(pages).IsGreaterThan(1L).Because("the rows fill more than one page, so every page is rewritten whole");
+    await Assert.That(end.Updated - start.Updated).IsEqualTo(60L);
+    await Assert.That(end.Hot - start.Hot).IsEqualTo(60L)
+      .Because("fillfactor 45 leaves room on a page for a new version of every row on it; at 70 about half of these updates leave the page");
+  }
+
+  [Test]
   public async Task TheLedger_IndexesOnlyItsKeyStateAndDueTime_AndLeavesRoomOnEachPageAsync() {
     await using var conn = await _openAsync();
 
@@ -174,7 +194,7 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
       .Because("an update is heap-only only when no indexed column changes: the stream id never changes, and state and the due time change only at end of life");
     await Assert.That(predicate).IsEquivalentTo(_duePredicate)
       .Because("the due index holds only the streams that have a disposition scheduled");
-    await Assert.That(options.Single()).Contains("fillfactor=70")
+    await Assert.That(options.Single()).Contains("fillfactor=45")
       .Because("each append rewrites its stream's row, and a heap-only update needs free space on the row's page");
   }
 
