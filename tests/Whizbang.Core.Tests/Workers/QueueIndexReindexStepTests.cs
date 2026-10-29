@@ -486,9 +486,11 @@ public class QueueIndexReindexStepTests {
 
     var (_, logger) = await _runAsync(coordinator);
 
-    await Assert.That(_messages(logger)).Contains(
-      "Queue index rebuild: idx_a on wh_outbox rebuilt concurrently, 41943040 -> 8388608 bytes; it measured 5x its expected "
-      + "8388608 bytes (estimate), over Whizbang:Workers:Maintenance:ReindexBloatThreshold (3)");
+    var messages = _messages(logger);
+    await Assert.That(messages).Contains(
+      "Queue index rebuild: rebuilding idx_a on wh_outbox; it measured 5x its expected 8388608 bytes (estimate), over "
+      + "Whizbang:Workers:Maintenance:ReindexBloatThreshold (3)");
+    await Assert.That(messages).Contains("Queue index rebuild: idx_a on wh_outbox rebuilt concurrently, 41943040 -> 8388608 bytes");
   }
 
   /// <summary>A rebuild the coordinator did not run, or one that failed, is logged and does not fail the cycle.</summary>

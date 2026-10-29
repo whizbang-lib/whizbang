@@ -150,6 +150,10 @@ public sealed partial class QueueIndexReindexStep(
 
   private async Task _rebuildAsync(
       IWorkCoordinator coordinator, QueueIndexBloat chosen, double threshold, CancellationToken cancellationToken) {
+    var ratio = Math.Round(chosen.Ratio.GetValueOrDefault(), 2);
+    var expected = chosen.ExpectedBytes.GetValueOrDefault();
+    var method = chosen.Method.ToValue();
+    LogChosen(_logger, chosen.IndexName, chosen.TableName, ratio, expected, method, threshold);
     long? after;
     try {
       after = await coordinator.ReindexQueueIndexAsync(chosen.IndexName, cancellationToken).ConfigureAwait(false);
@@ -161,11 +165,7 @@ public sealed partial class QueueIndexReindexStep(
       LogNotRebuilt(_logger, chosen.IndexName, chosen.TableName);
       return;
     }
-    var ratio = Math.Round(chosen.Ratio.GetValueOrDefault(), 2);
-    var expected = chosen.ExpectedBytes.GetValueOrDefault();
-    var method = chosen.Method.ToValue();
-    LogRebuilt(_logger, chosen.IndexName, chosen.TableName, chosen.SizeBytes, afterBytes, ratio, expected, method,
-      THRESHOLD_KEY, threshold);
+    LogRebuilt(_logger, chosen.IndexName, chosen.TableName, chosen.SizeBytes, afterBytes);
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
@@ -189,11 +189,14 @@ public sealed partial class QueueIndexReindexStep(
   static partial void LogDropFailed(ILogger logger, string index, string table, Exception exception);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
-    Message = "Queue index rebuild: {Index} on {Table} rebuilt concurrently, {Before} -> {After} bytes; it measured {Ratio}x its expected "
-            + "{Expected} bytes ({Method}), over {Key} ({Threshold})")]
-  static partial void LogRebuilt(
-      ILogger logger, string index, string table, long before, long after, double ratio, long expected, string method, string key,
-      double threshold);
+    Message = "Queue index rebuild: {Index} on {Table} rebuilt concurrently, {Before} -> {After} bytes")]
+  static partial void LogRebuilt(ILogger logger, string index, string table, long before, long after);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Information,
+    Message = "Queue index rebuild: rebuilding {Index} on {Table}; it measured {Ratio}x its expected {Expected} bytes ({Method}), over "
+            + THRESHOLD_KEY + " ({Threshold})")]
+  static partial void LogChosen(
+      ILogger logger, string index, string table, double ratio, long expected, string method, double threshold);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Queue index rebuild: {Index} on {Table} was not rebuilt (the coordinator logged why)")]

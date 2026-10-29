@@ -1624,6 +1624,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }, cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>Runs <paramref name="work"/> on a connection of its own opened from the schema-initialization connection string.</summary>
+  private static async Task<T> _onSchemaInitConnectionAsync<T>(
+      string initConnectionString, string qualified,
+      Func<System.Data.Common.DbConnection, string, CancellationToken, Task<T>> work, CancellationToken cancellationToken) {
+    await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+    await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    return await work(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+  }
+
   /// <summary>
   /// Runs <paramref name="work"/> on the index when the catalog says it is an index on a queue table with the validity
   /// <paramref name="wantValid"/>, on a connection whose role owns the table; otherwise logs why not and returns
@@ -1646,9 +1655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     if (_schemaInitConnectionString() is { } initConnectionString) {
-      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
-      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      return await work(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+      return await _onSchemaInitConnectionAsync(initConnectionString, qualified, work, cancellationToken).ConfigureAwait(false);
     }
     var tableQualified = BuildSchemaQualifiedName(schema, table!);
     if (await _notOwnedReasonAsync(conn, tableQualified, table!, cancellationToken).ConfigureAwait(false) is { } notOwned) {
