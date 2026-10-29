@@ -93,7 +93,7 @@ public class DapperStreamLifecycleLedgerTests : PostgresTestBase {
   public async Task AddWhizbangPostgres_RegistersTheStepAsync() {
     var withSql = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
     var withEntries = new ServiceCollection().AddWhizbangPostgres(
-      ConnectionString, new JsonSerializerOptions(), false, Array.Empty<KeyValuePair<string, string>>(), null);
+      ConnectionString, new JsonSerializerOptions(), false, [], null);
 
     foreach (var services in new[] { withSql, withEntries }) {
       await using var provider = services.BuildServiceProvider();

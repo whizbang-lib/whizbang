@@ -104,12 +104,12 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     await _emitOutboxAsync(conn, _t0, _event(a, EVENT_TYPE), _event(b, EVENT_TYPE));
 
     await using var tx = await conn.BeginTransactionAsync();
-    var start = await _ledgerTransactionCountsAsync(conn);
+    var (startInserted, startUpdated, _) = await _ledgerTransactionCountsAsync(conn);
     var batch = Enumerable.Range(0, 5).SelectMany(_ => new[] { _event(a, LATER_TYPE), _event(b, LATER_TYPE) }).ToArray();
     await _emitOutboxAsync(conn, _t0.AddMinutes(5), batch);
-    var end = await _ledgerTransactionCountsAsync(conn);
+    var (endInserted, endUpdated, _) = await _ledgerTransactionCountsAsync(conn);
     await tx.RollbackAsync();
-    var (inserted, updated) = (end.Inserted - start.Inserted, end.Updated - start.Updated);
+    var (inserted, updated) = (endInserted - startInserted, endUpdated - startUpdated);
 
     await Assert.That(inserted).IsEqualTo(0L);
     await Assert.That(updated).IsEqualTo(2L)
@@ -125,16 +125,16 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     await _emitOutboxAsync(conn, _t0, _event(stream, EVENT_TYPE));
 
     await using var tx = await conn.BeginTransactionAsync();
-    var start = await _ledgerTransactionCountsAsync(conn);
+    var (_, startUpdated, startHot) = await _ledgerTransactionCountsAsync(conn);
     await _emitOutboxAsync(conn, _t0.AddMinutes(20), _event(stream, LATER_TYPE));
-    var afterAppend = await _ledgerTransactionCountsAsync(conn);
+    var (_, appendUpdated, appendHot) = await _ledgerTransactionCountsAsync(conn);
 
     // Control: the same harness sees an update that changes an indexed column as not heap-only.
     await _executeAsync(conn, "UPDATE wh_stream_lifecycle SET state = 'Sealed' WHERE stream_id = @s", ("s", stream));
-    var afterControl = await _ledgerTransactionCountsAsync(conn);
+    var (_, controlUpdated, controlHot) = await _ledgerTransactionCountsAsync(conn);
     await tx.RollbackAsync();
-    var (updated, hot) = (afterAppend.Updated - start.Updated, afterAppend.Hot - start.Hot);
-    var (updatedAfterControl, hotAfterControl) = (afterControl.Updated - start.Updated, afterControl.Hot - start.Hot);
+    var (updated, hot) = (appendUpdated - startUpdated, appendHot - startHot);
+    var (updatedAfterControl, hotAfterControl) = (controlUpdated - startUpdated, controlHot - startHot);
 
     await Assert.That(updated).IsEqualTo(1L);
     await Assert.That(hot).IsEqualTo(1L)
@@ -153,14 +153,14 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     var pages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::int");
 
     await using var tx = await conn.BeginTransactionAsync();
-    var start = await _ledgerTransactionCountsAsync(conn);
+    var (_, startUpdated, startHot) = await _ledgerTransactionCountsAsync(conn);
     await _emitOutboxAsync(conn, _t0.AddMinutes(1), [.. streams.Select(s => _event(s, LATER_TYPE))]);
-    var end = await _ledgerTransactionCountsAsync(conn);
+    var (_, endUpdated, endHot) = await _ledgerTransactionCountsAsync(conn);
     await tx.RollbackAsync();
 
     await Assert.That(pages).IsGreaterThan(1L).Because("the rows fill more than one page, so every page is rewritten whole");
-    await Assert.That(end.Updated - start.Updated).IsEqualTo(60L);
-    await Assert.That(end.Hot - start.Hot).IsEqualTo(60L)
+    await Assert.That(endUpdated - startUpdated).IsEqualTo(60L);
+    await Assert.That(endHot - startHot).IsEqualTo(60L)
       .Because("fillfactor 45 leaves room on a page for a new version of every row on it; at 70 about half of these updates leave the page");
   }
 
