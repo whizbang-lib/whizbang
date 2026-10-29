@@ -456,12 +456,14 @@ public static class ServiceCollectionExtensions {
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
   /// connection of their own per call, and the repair for composite children filed under the composite's stream
-  /// (<see cref="IFanoutChildRefiler"/>, #1798). A host's own registration wins.
+  /// (<see cref="IFanoutChildRefiler"/>, #1798), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A host's
+  /// own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
       new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
@@ -469,6 +471,12 @@ public static class ServiceCollectionExtensions {
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
+    // registered first wins.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp =>
+      new PostgresTableArchiveStore(
+        ct => OpenConnectionAsync(connectionString, ct),
+        logger: sp.GetService<ILogger<PostgresTableArchiveStore>>()));
     services.TryAddSingleton<IFanoutChildRefiler>(sp =>
       new PostgresFanoutChildRefiler(
         ct => OpenConnectionAsync(connectionString, ct),

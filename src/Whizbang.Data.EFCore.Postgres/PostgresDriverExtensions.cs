@@ -304,6 +304,14 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
+        // writes through it; a blob store package registers its own IArchiveStore first and wins.
+        // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp =>
+          new PostgresTableArchiveStore(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            sp.GetService<ILogger<PostgresTableArchiveStore>>()));
         // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
         // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
         selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>
