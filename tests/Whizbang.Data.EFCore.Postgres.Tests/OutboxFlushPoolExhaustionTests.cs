@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowOutboxBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/256_UnstoredOutboxMessagesAreDeadLettered.sql</code-under-test>
+[Category("Shard5")]
 public class OutboxFlushPoolExhaustionTests : EFCoreTestBase {
   private const int POOL_SIZE = 2;
   private const int STREAMS = 6;
