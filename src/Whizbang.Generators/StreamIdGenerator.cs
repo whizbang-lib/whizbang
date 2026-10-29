@@ -360,13 +360,13 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// <c>is</c> check comes after every type derived from it and the generated file does not depend on discovery order.
   /// </summary>
   private static ImmutableArray<StreamIdInfo> _mostDerivedFirst(ImmutableArray<StreamIdInfo> infos) =>
-    infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.EventType, StringComparer.Ordinal).ToImmutableArray();
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.EventType, StringComparer.Ordinal)];
 
   /// <summary>
   /// Orders commands for type dispatch: deepest inheritance first, then by type name (see the event overload).
   /// </summary>
   private static ImmutableArray<CommandStreamIdInfo> _mostDerivedFirst(ImmutableArray<CommandStreamIdInfo> infos) =>
-    infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.CommandType, StringComparer.Ordinal).ToImmutableArray();
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.CommandType, StringComparer.Ordinal)];
 
   /// <summary>
   /// Reports diagnostics for events with and without stream keys.
