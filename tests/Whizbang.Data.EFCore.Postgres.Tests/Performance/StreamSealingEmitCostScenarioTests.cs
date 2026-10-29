@@ -31,6 +31,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// <c>EXPLAIN (ANALYZE, BUFFERS)</c>, because the ledger's block counts move between rounds by more than the probe costs.
 /// The server's execution time from <c>EXPLAIN ANALYZE</c> is reported beside them and gates nothing.
 /// </para>
+/// <para>
+/// Measured (three alternating rounds, medians): existing streams 32,348 blocks and 63.8 ms before, 32,356 blocks and
+/// 66.1 ms after, the probe 2 blocks; new streams 36,526 blocks and 68.6 ms before, 36,418 blocks and 70.1 ms after, the
+/// probe 201 blocks. The whole-chain block counts move between rounds by more than the probe costs.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#what-sealing-costs</docs>
 [Category("Benchmark")]

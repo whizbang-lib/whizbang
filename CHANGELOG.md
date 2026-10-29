@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StreamSealedException` (stream id, sealed at, reason) on both drivers; an outbox or inbox write dead-letters only the
   refused event with the new reason `StreamSealed` (25, held for review) and stores the rest of the batch. A restore
   returns a sealed stream to `Sealed`. Migration 266; the append path pays one probe of a partial index holding only the
-  sealed streams (COST_LINE).
+  sealed streams (measured on a 500-event batch: 2 blocks for 50 streams, 201 for 500 new streams, under 0.6% of the batch).
 - **Archived streams leave the hot event store through a pluggable `IArchiveStore`, with a Postgres-table store built in
   (#1736).** `WriteAsync(ArchiveBatch)` archives one stream's prefix (through the gated prefix truncate and all its
   guards) or the whole stream, copying then truncating in one transaction, so a failure leaves the stream fully hot.
