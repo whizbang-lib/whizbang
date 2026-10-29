@@ -26,7 +26,8 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class PerspectiveWorkerDeepPathDrainTests {
 
   [Test]
-  public async Task DrainMode_RefetchCanceledWhileWorkerRuns_ExitsLoopQuietlyAndKeepsCompletedWorkAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_RefetchCanceledWhileWorkerRuns_ExitsLoopQuietlyAndKeepsCompletedWorkAsync(CancellationToken cancellationToken) {
     // Arrange — first fetch succeeds (2 events, at the refetch min-batch), the refetch is canceled
     // while the worker itself is not shutting down. The sibling case (a refetch that throws a real
     // error) is DrainMode_RefetchThrows_ExitsLoopWithoutFailingCompletedWorkAsync; the difference
@@ -58,8 +59,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await cycleComplete.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -79,7 +80,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_RefetchRowsCarryNoReadableEvent_ExitsLoopAndKeepsCompletedWorkAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_RefetchRowsCarryNoReadableEvent_ExitsLoopAndKeepsCompletedWorkAsync(CancellationToken cancellationToken) {
     // Arrange — the first fetch applies 2 events (at the refetch min-batch), so a refetch fires.
     // The refetch brings back a row, but deserializing it yields no event: nothing to apply, and
     // the fetch helper answers "nothing came back" rather than an empty batch.
@@ -109,8 +111,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await cycleComplete.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

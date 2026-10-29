@@ -32,7 +32,8 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerDrainModeTests {
 
   [Test]
-  public async Task DrainMode_LegacyPathSkipped_WhenPerspectiveStreamIdsPopulated_Async() {
+  [Timeout(30000)]
+  public async Task DrainMode_LegacyPathSkipped_WhenPerspectiveStreamIdsPopulated_Async(CancellationToken cancellationToken) {
     // Arrange — coordinator returns PerspectiveStreamIds (drain mode) with no PerspectiveWork (legacy)
     var coordinator = new DrainModeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -127,14 +128,14 @@ public class PerspectiveWorkerDrainModeTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await cts.CancelAsync();
     // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
     // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no barrier at all
     // and the assertions below could read counters the drain consumer had not finished writing.
     // SuppressThrowing because a body leaving through a cancellation catch settles
     // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — drain mode should have been used
@@ -147,7 +148,8 @@ public class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
-  public async Task DrainMode_EmptyJoin_ReapsExhaustedOrphansOnContactAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_EmptyJoin_ReapsExhaustedOrphansOnContactAsync(CancellationToken cancellationToken) {
     // #679 reactive: when the drainer fetches a leased stream and the inner join returns
     // NOTHING, the stream's rows may be orphaned (source event absent). Rather than return
     // and let them re-claim forever, the drainer disposes exhausted orphans ON CONTACT via
@@ -209,9 +211,9 @@ public class PerspectiveWorkerDrainModeTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForReapAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
@@ -225,7 +227,8 @@ public class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
-  public async Task DrainMode_EmptyJoinReapWithDeadLetterMetrics_CountsTheReapedRowsAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_EmptyJoinReapWithDeadLetterMetrics_CountsTheReapedRowsAsync(CancellationToken cancellationToken) {
     // The reaped rows are dead-lettered in the database without passing through the dead-letter store, so
     // this counter is the only place the meter learns of them.
     var coordinator = new DrainModeWorkCoordinator {
@@ -288,10 +291,10 @@ public class PerspectiveWorkerDrainModeTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForReapAsync(cancellationToken);
     await cts.CancelAsync();
     // The counter moves after the reap returns, inside the same batch: the body has to have finished.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     int reapCalls;
@@ -307,7 +310,8 @@ public class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
-  public async Task DrainMode_ManyConsumers_StopWithoutFaultingTheWorkerAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_ManyConsumers_StopWithoutFaultingTheWorkerAsync(CancellationToken cancellationToken) {
     // More than one consumer loop takes the fan-out path, where the loops are awaited together.
     // On shutdown every loop ends by cancellation, so the await sees an OperationCanceledException
     // that is the normal way out and must not surface as a faulted worker: a host that stops would
@@ -371,9 +375,9 @@ public class PerspectiveWorkerDrainModeTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForReapAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
@@ -387,7 +391,8 @@ public class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
-  public async Task DrainMode_ReapThatThrows_IsLoggedAndTheDrainSurvivesAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_ReapThatThrows_IsLoggedAndTheDrainSurvivesAsync(CancellationToken cancellationToken) {
     // The reactive disposal can fail (the store is unreachable, the row set changed under it). That
     // failure must not take the drain loop down: it is logged, and the periodic maintenance sweep
     // remains the backstop for the orphaned rows.
@@ -449,9 +454,9 @@ public class PerspectiveWorkerDrainModeTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForReapAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
@@ -477,14 +482,8 @@ public class PerspectiveWorkerDrainModeTests {
     public List<StreamEventData> StreamEventsToReturn { get; set; } = [];
     public int GetStreamEventsCallCount { get; private set; }
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _completionReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Completion was not reported within {timeout}");
-      }
-    }
+    public Task WaitForCompletionReportedAsync(CancellationToken cancellationToken) =>
+      _completionReported.Task.WaitAsync(cancellationToken);
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var streamIds = new List<Guid>(StreamIdsToReturn);
@@ -515,10 +514,8 @@ public class PerspectiveWorkerDrainModeTests {
         ? Task.FromException<int>(new InvalidOperationException("simulated disposal failure"))
         : Task.FromResult(ReapReturns);
     }
-    public async Task WaitForReapAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try { await _reapCalled.Task.WaitAsync(cts.Token); } catch (OperationCanceledException) { throw new TimeoutException($"Reap was not called within {timeout}"); }
-    }
+    public Task WaitForReapAsync(CancellationToken cancellationToken) =>
+      _reapCalled.Task.WaitAsync(cancellationToken);
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
       _completionReported.TrySetResult();

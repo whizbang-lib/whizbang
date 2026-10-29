@@ -47,7 +47,8 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
   private sealed record ProbeEvent(string Data) : IEvent;
 
   [Test]
-  public async Task Batch_WithClaimedWork_AndDrainPassThatOnlyCooledEvents_StillProcessesTheClaimedWorkAsync() {
+  [Timeout(30000)]
+  public async Task Batch_WithClaimedWork_AndDrainPassThatOnlyCooledEvents_StillProcessesTheClaimedWorkAsync(CancellationToken cancellationToken) {
     // Two streams: the claimed one and the signaled one. The signaled stream's fetched rows are all
     // cooled, so the drain pass applies nothing for it.
     var claimedStream = Guid.NewGuid();
@@ -61,10 +62,10 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
       cooledWorkIds: [cooledWorkId]);
 
-    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = claimedStream, PerspectiveName = PERSPECTIVE });
-    await f.Harness.EnqueueDrainStreamAsync(signaledStream);
+    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = claimedStream, PerspectiveName = PERSPECTIVE }, cancellationToken);
+    await f.Harness.EnqueueDrainStreamAsync(signaledStream, cancellationToken);
 
-    await f.RunOneBatchAsync();
+    await f.RunOneBatchAsync(cancellationToken);
 
     // The claimed stream must reach its runner in this batch, cooled drain events or not.
     await Assert.That(f.Registry.InvocationsFor(claimedStream)).IsEqualTo(1)
@@ -74,7 +75,8 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
   }
 
   [Test]
-  public async Task Batch_ClaimedWork_ForTheStreamWhoseDrainPassOnlyCooled_IsProcessedAsync() {
+  [Timeout(30000)]
+  public async Task Batch_ClaimedWork_ForTheStreamWhoseDrainPassOnlyCooled_IsProcessedAsync(CancellationToken cancellationToken) {
     // Same stream on both sources. The drain pass cools everything for it, so the claimed path is the
     // only route to its pending rows.
     var stream = Guid.NewGuid();
@@ -87,17 +89,18 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
       cooledWorkIds: [cooledWorkId]);
 
-    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = PERSPECTIVE });
-    await f.Harness.EnqueueDrainStreamAsync(stream);
+    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = PERSPECTIVE }, cancellationToken);
+    await f.Harness.EnqueueDrainStreamAsync(stream, cancellationToken);
 
-    await f.RunOneBatchAsync();
+    await f.RunOneBatchAsync(cancellationToken);
 
     await Assert.That(f.Registry.InvocationsFor(stream)).IsEqualTo(1)
       .Because("a drain pass that only cooled the stream did no work for it; the claimed item must");
   }
 
   [Test]
-  public async Task Batch_ClaimedWork_ForAStreamTheDrainPassApplied_IsNotAppliedTwiceAsync() {
+  [Timeout(30000)]
+  public async Task Batch_ClaimedWork_ForAStreamTheDrainPassApplied_IsNotAppliedTwiceAsync(CancellationToken cancellationToken) {
     // The reason the old discard existed: a stream both claimed and signaled, with fresh events, must be
     // applied once (the drain pass owns it), not once by each path.
     var stream = Guid.NewGuid();
@@ -109,10 +112,10 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
       cooledWorkIds: []);
 
-    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = PERSPECTIVE });
-    await f.Harness.EnqueueDrainStreamAsync(stream);
+    await f.Harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = PERSPECTIVE }, cancellationToken);
+    await f.Harness.EnqueueDrainStreamAsync(stream, cancellationToken);
 
-    await f.RunOneBatchAsync();
+    await f.RunOneBatchAsync(cancellationToken);
 
     await Assert.That(f.Registry.InvocationsFor(stream)).IsEqualTo(1)
       .Because("the drain pass applied the stream; the claimed copy of the same stream is redundant");
@@ -226,7 +229,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     }
 
     /// <summary>Starts the worker, waits for the first batch that carried work, and stops it.</summary>
-    public async Task RunOneBatchAsync() {
+    public async Task RunOneBatchAsync(CancellationToken cancellationToken) {
       var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       var batches = 0;
       Worker.OnBatchCycleComplete += () => {
@@ -234,11 +237,11 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           batchComplete.TrySetResult();
         }
       };
-      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+      using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       await Worker.StartAsync(cts.Token);
-      await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      await batchComplete.Task.WaitAsync(cancellationToken);
       if (Worker.PendingPostLifecycle is { } pending) {
-        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await pending.WaitAsync(cancellationToken);
       }
       await cts.CancelAsync();
       // Await the worker BODY, not the task StartAsync returned: .NET hands that back as
@@ -247,7 +250,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       // were still moving. SuppressThrowing because a body leaving through a cancellation catch
       // settles RanToCompletion or Canceled depending on thread-pool timing — either is a clean stop.
       if (Worker.ExecuteTask is { } body) {
-        await body.WaitAsync(TimeSpan.FromSeconds(30))
+        await body.WaitAsync(cancellationToken)
           .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       }
     }
