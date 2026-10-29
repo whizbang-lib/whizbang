@@ -108,8 +108,10 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:DirectAppend_ToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
   /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
   /// events (WHIZ133); nothing is stored.</exception>
+  /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -193,8 +195,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
       // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
       command.Parameters.Add(new NpgsqlParameter("p_flags", NpgsqlDbType.Integer) { Value = Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver) });
-      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, with nothing stored.
-      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken));
+      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, or as StreamSealedException
+      // for a sealed stream (#1733), with nothing stored.
+      await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken)));
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
       // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(

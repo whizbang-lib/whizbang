@@ -58,8 +58,10 @@ public class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamGuardTests.cs:AppendAsync_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:AppendAsync_TerminalEvent_SealsTheStream_AndTheNextAppendThrowsStreamSealedExceptionAsync</tests>
   /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
   /// events (WHIZ133); nothing is stored.</exception>
+  /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -314,12 +316,14 @@ public class DapperPostgresEventStore(
     var parameters = _buildAppendParameters(streamId, envelope, jsonb, Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver));
 
     try {
-      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException.
-      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
-        connection,
-        GetAppendSql(),
-        parameters,
-        cancellationToken: cancellationToken));
+      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException, and (#1733)
+      // an append to a sealed stream as StreamSealedException.
+      await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
+          connection,
+          GetAppendSql(),
+          parameters,
+          cancellationToken: cancellationToken)));
     } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
       // The version is assigned under the stream's lock and can no longer collide, so a unique violation is
       // the event id: this event is already stored. Retrying would only fail the same way.

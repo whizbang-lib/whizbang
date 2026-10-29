@@ -464,6 +464,7 @@ public static class ServiceCollectionExtensions {
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:Finalize_ThroughTheRegisteredFinalizer_SealsTheStream_AndTheNextAppendThrowsAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
       new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
@@ -477,6 +478,13 @@ public static class ServiceCollectionExtensions {
       new PostgresTableArchiveStore(
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresTableArchiveStore>>()));
+    // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
+    // then refuses the stream's appends.
+    services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>
+      new PostgresStreamFinalizer(
+        ct => OpenConnectionAsync(connectionString, ct),
+        timeProvider: sp.GetService<TimeProvider>(),
+        logger: sp.GetService<ILogger<PostgresStreamFinalizer>>()));
     services.TryAddSingleton<IFanoutChildRefiler>(sp =>
       new PostgresFanoutChildRefiler(
         ct => OpenConnectionAsync(connectionString, ct),

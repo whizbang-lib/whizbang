@@ -225,6 +225,24 @@ public class StreamSealingSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task StoreOutboxMessages_AnAwaitedWriteToASealedStream_IsDeadLettered_NotRaisedAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
+    var stream = (Guid)TrackedGuid.New();
+    await coordinator.StoreOutboxMessagesAsync([_outbox(stream)], partitionCount: 10000);
+    await _finalizer(_t0).FinalizeAsync(stream, "Closed");
+    // The flag the immediate and scoped strategies set on a flush their caller awaits.
+    var awaited = _outbox(stream) with { RaiseOnMixedStream = true };
+
+    await coordinator.StoreOutboxMessagesAsync([awaited], partitionCount: 10000);
+
+    var conn = await _openAsync(dbContext);
+    await Assert.That((await _deadLetterAsync(conn, awaited.MessageId))!.FailureReason).IsEqualTo(STREAM_SEALED_REASON)
+      .Because("an outbox write is dead-lettered whoever waits on it; only the direct append raises StreamSealedException");
+    await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(1L);
+  }
+
+  [Test]
   public async Task OutboxBatch_EventsAfterATerminalEvent_AreDeadLettered_AndTheOnesBeforeItAreStoredAsync() {
     await using var conn = await _openAsync();
     var stream = (Guid)TrackedGuid.New();

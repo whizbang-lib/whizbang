@@ -312,6 +312,15 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
             sp.GetService<ILogger<PostgresTableArchiveStore>>()));
+        // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
+        // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
+        // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>
+          new PostgresStreamFinalizer(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            sp.GetService<TimeProvider>(),
+            sp.GetService<ILogger<PostgresStreamFinalizer>>()));
         // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
         // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
         selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>
