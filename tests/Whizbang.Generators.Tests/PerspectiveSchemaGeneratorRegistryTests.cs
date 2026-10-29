@@ -66,6 +66,31 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
     await Assert.That(result.Diagnostics.Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)).IsEmpty();
   }
 
+  /// <summary>
+  /// Issue #1874: the generated schema registers each table's model type at module load, so the Dapper driver can
+  /// read the names the model declares from the serializer's metadata, with no reflection. Once per table: two
+  /// perspectives of one model share its table.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_RegistersEachTablesModelTypeAtModuleLoadAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(NESTED_MODEL_SOURCE + """
+
+      public class SecondOwnerPerspective : IPerspectiveFor<Owner.Model, OwnedEvent> {
+        public Owner.Model Apply(Owner.Model currentData, OwnedEvent eventData) => currentData;
+      }
+      """);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    var registrations = generated!.Split('\n')
+      .Where(l => l.Contains("PerspectiveDocumentModels.Register(", StringComparison.Ordinal)).ToList();
+    await Assert.That(registrations.Count).IsEqualTo(1);
+    await Assert.That(registrations[0]).Contains("typeof(global::MyApp.Owner.Model)")
+      .Because("the model is named as C# names it, so typeof compiles for a nested type");
+    await Assert.That(result.Diagnostics.Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)).IsEmpty();
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_UnnamedAssembly_NamesTheServiceUnknownAsync() {
