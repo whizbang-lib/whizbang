@@ -69,4 +69,21 @@ public class ControlPlaneTypeRegistryTests {
     await Assert.That(ControlPlaneTypeRegistry.IsControlPlane(null!)).IsFalse()
       .Because("an unreadable type name must fail SAFE — keep the row rather than silently drop it");
   }
+
+  /// <summary>
+  /// Registration stays open for the life of the process (a consumer's module initializer runs when its assembly
+  /// first loads, which can be after the first message), so a type registered after lookups have run is seen by the
+  /// next lookup, however the lookup table is built.
+  /// </summary>
+  [Test]
+  public async Task Register_AfterLookups_IsSeenByTheNextLookupAsync() {
+    var name = $"Consumer.Ops.LateSignal{Guid.CreateVersion7():N}, Consumer.Ops";
+    await Assert.That(ControlPlaneTypeRegistry.IsControlPlane(name)).IsFalse();
+
+    ControlPlaneTypeRegistry.Register(name);
+
+    await Assert.That(ControlPlaneTypeRegistry.IsControlPlane(name)).IsTrue()
+      .Because("a lookup made before a registration must not leave the registration invisible");
+    await Assert.That(ControlPlaneTypeRegistry.IsControlPlane(name + ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null")).IsTrue();
+  }
 }
