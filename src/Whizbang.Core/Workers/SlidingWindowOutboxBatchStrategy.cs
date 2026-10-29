@@ -280,16 +280,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
   /// every message id, saying where it went and how to get it back (#1871).
   /// </summary>
   private async Task _reportAsync(OutboxFlushFailure failure) {
-    var deadLettered = false;
-    if (_onFlushFailed is not null) {
-      try {
-        // Not the stop token: a stop past its deadline is exactly when the messages need keeping. A provider already
-        // disposed fails here and the messages are logged as lost instead.
-        deadLettered = await _onFlushFailed(failure, CancellationToken.None).ConfigureAwait(false);
-      } catch (Exception ex) {
-        LogFailureNotRecorded(_logger, ex, failure.Messages.Count, failure.StreamId);
-      }
-    }
+    var deadLettered = await _recordAsync(failure).ConfigureAwait(false);
     _metrics?.OutboxFlushFailedMessages.Add(failure.Messages.Count,
       new KeyValuePair<string, object?>(WorkCoordinatorMetrics.CAUSE_TAG, failure.Cause.ToString()),
       new KeyValuePair<string, object?>(WorkCoordinatorMetrics.OUTCOME_TAG,
@@ -320,6 +311,23 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
       } catch {
         // Worker errors already logged in _drainBufferAsync; sweep continues.
       }
+    }
+  }
+
+  /// <summary>
+  /// Hands the batch to the failure callback. Not with the stop token: a stop past its deadline is exactly when the
+  /// messages need keeping. A callback that throws (a provider already disposed) is logged, and the batch is then
+  /// reported as lost.
+  /// </summary>
+  private async Task<bool> _recordAsync(OutboxFlushFailure failure) {
+    if (_onFlushFailed is null) {
+      return false;
+    }
+    try {
+      return await _onFlushFailed(failure, CancellationToken.None).ConfigureAwait(false);
+    } catch (Exception ex) {
+      LogFailureNotRecorded(_logger, ex, failure.Messages.Count, failure.StreamId);
+      return false;
     }
   }
 

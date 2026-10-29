@@ -4241,7 +4241,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
     await using var connectionScope = await CoordinatorConnectionScope.AcquireForEfCoreAsync(connection, cancellationToken);
     await using var cmd = connectionScope.Connection.CreateCommand().WithCoordinatorTimeout();
-    cmd.Transaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction;
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT {functionName}(@p_messages::jsonb, @p_dead_letter_ids, @p_failure_reason, @p_error_text, @p_attempts, @p_instance_id, @p_generation)";
 #pragma warning restore S2077
