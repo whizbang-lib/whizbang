@@ -1150,7 +1150,8 @@ public static class WorkerPipelineExtensions {
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
     var detachedWork = sp.GetService<DetachedLifecycleWork>();
-    var gate = sp.GetService<WorkCoordinatorGate>();
+    // AddWhizbangWorkers registers the gate (or keeps the consumer's), so it is always there.
+    var gate = sp.GetRequiredService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1195,7 +1196,7 @@ public static class WorkerPipelineExtensions {
 
       // Each stream's batch flushes on its own worker, so a burst over many streams would otherwise open as many
       // connections at once and overflow the pool; the store takes a slot of the process-wide gate (#1871).
-      using (gate is null ? default : await gate.AcquireAsync(ct, OUTBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+      using (await gate.AcquireAsync(ct, OUTBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
         await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
       }
 
@@ -1217,14 +1218,15 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
-    var gate = sp.GetService<WorkCoordinatorGate>();
+    // AddWhizbangWorkers registers the gate (or keeps the consumer's), so it is always there.
+    var gate = sp.GetRequiredService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       // The same cap as the outbox batches: concurrent per-stream flushes cannot open more connections than the
       // gate allows (#1871).
-      using (gate is null ? default : await gate.AcquireAsync(ct, INBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+      using (await gate.AcquireAsync(ct, INBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
         await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
       }
     };

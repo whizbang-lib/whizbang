@@ -806,6 +806,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-back path now restores the stored scope through one reader (`StoredScope`), field for field as the EF Core event
   store does; a first hop that recorded its own scope still keeps it, and a row stored without a scope still reads back
   unscoped. The hop-scope source guard now allows no tenant-and-user-only hop scope anywhere (Fixes #1855)
+- **An outbox message the producer-side batcher accepted is never dropped when its store fails (Fixes #1871).** An event
+  a receptor returned through `LocalInvokeAsync` (or one it published) is buffered per stream and stored by that
+  stream's worker after the caller has returned. A store that failed was logged ("Dispatcher re-emission will
+  recover") and its batch dropped, though nothing re-emits it, so a burst over many streams against a remote database
+  lost a random subset of events: the per-stream flushes overflowed the connection pool, and a pool or server
+  connection failure is not retried by the store. Now a transient database failure (lost connection, exhausted pool,
+  command timeout, server out of connection slots, deadlock) is retried on the stream's own worker with backoff on the
+  strategy's `TimeProvider`, so the stream's order is kept (`Whizbang:Workers:OutboxBatch:MaxFlushAttempts`, default 5;
+  `FlushRetryBackoff`, default 100 ms; `FlushRetryMaxBackoff`, default 5 s). A batch that still cannot be stored, fails
+  with an error a retry cannot fix, or is abandoned by a stop past its deadline is written to `wh_dead_letters` as
+  `wh_outbox` dead letters with the new reason `OutboxStoreFailed` (23), through `wh_store_outbox_dead_letters`
+  (migration 256), which also logs each message in `wh_log`; dead-letter recovery then stores it through
+  `store_outbox_messages` (default policy: five recoveries a minute apart, then held for review). It is counted
+  (`whizbang.work_coordinator.outbox_flush.failed_messages`, tagged `cause` and `outcome`; retries in
+  `whizbang.work_coordinator.outbox_flush.retries`), reported to every registered `IOutboxFlushFailureObserver`, and
+  logged at Error with every message id and how to recover it; when the dead-letter write fails too, the log says the
+  messages are lost unless re-sent. A stop past its deadline now waits for that report instead of discarding what was
+  buffered. The outbox and inbox batch flushes take a slot of the `WorkCoordinatorGate`, so concurrent per-stream
+  flushes cannot open more connections than the gate allows. `LocalInvokeAsync` still does not wait for the write.
+  `IWorkCoordinator` gains `StoreOutboxDeadLettersAsync`, implemented by both Postgres drivers.
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

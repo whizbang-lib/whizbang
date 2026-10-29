@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -106,4 +109,58 @@ public class BatchStrategyFlushCallbackWiringTests {
     await Assert.That(coordinator.StoredOutboxMessages[0].MessageId).IsEqualTo(msgId);
   }
 
+
+  /// <summary>
+  /// #1871: each per-stream batch flush takes a slot of the process-wide <see cref="WorkCoordinatorGate"/> around its
+  /// store, so many streams flushing at once cannot open more connections than the gate allows. The gate records the
+  /// slot it lent under the caller's name, which is the evidence the flush went through it.
+  /// </summary>
+  [Test]
+  public async Task OutboxAndInboxBulkFlushCallbacks_StoreThroughAWorkCoordinatorGateSlotAsync() {
+    var factory = new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: factory));
+    using var recorded = new MetricAssertionHelper(factory.Create(WorkCoordinatorMetrics.METER_NAME));
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    // Registered before the pipeline, so the pipeline keeps it.
+    services.AddSingleton(new WorkCoordinatorGate(4, NullLogger<WorkCoordinatorGate>.Instance, metrics: metrics));
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangWorkers();
+    services.AddWhizbangOutboxStrategy<ImmediateOutboxBatchStrategy>();
+    services.AddWhizbangInboxStrategy<ImmediateInboxBatchStrategy>();
+
+    await using var sp = services.BuildServiceProvider();
+    sp.GetRequiredService<ISchemaReadyGate>().MarkReady();
+    var outboxId = (Guid)TrackedGuid.New();
+    await sp.GetRequiredService<IOutboxBatchStrategy>().AppendAsync(new OutboxMessage {
+      MessageId = outboxId,
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(outboxId), JsonElement.Parse("{}"), []),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(outboxId), Hops = [] },
+    });
+    var inboxId = (Guid)TrackedGuid.New();
+    await sp.GetRequiredService<IInboxBatchStrategy>().AppendAsync(new InboxMessage {
+      MessageId = inboxId,
+      HandlerName = "TestHandler",
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From(inboxId),
+        Payload = JsonElement.Parse("{}"),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
+      },
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(inboxId), Hops = [] },
+    });
+
+    var callers = recorded.GetByName("whizbang.gate.hold_duration_ms").ConvertAll(m => m.Tags["caller"]);
+    await Assert.That(callers).Contains("OutboxBatchFlush")
+      .Because("the outbox batch's store held a gate slot");
+    await Assert.That(callers).Contains("InboxBatchFlush")
+      .Because("the inbox batch's store held a gate slot");
+    await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(1);
+    await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1);
+  }
 }
