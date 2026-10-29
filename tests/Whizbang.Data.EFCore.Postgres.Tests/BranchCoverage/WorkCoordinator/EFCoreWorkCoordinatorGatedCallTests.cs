@@ -180,6 +180,13 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("MeasureTableBloat", "MeasureTableBloatAsync", (c, _) => c.MeasureTableBloatAsync("wh_settings", BloatMeasurementMethod.Estimate));
     register("RequestMeasuredTableRewrite", "RequestMeasuredTableRewriteAsync", (c, _) =>
       c.RequestMeasuredTableRewriteAsync("wh_settings", new BloatMeasurement(4.5, BloatMeasurementMethod.Approx), 4.0));
+    register("GetQueueIndexBloat", "GetQueueIndexBloatAsync", async (c, _) =>
+      await Assert.That(await c.GetQueueIndexBloatAsync()).IsNotEmpty());
+    register("DropInvalidQueueIndex", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That(await c.DropInvalidQueueIndexAsync("idx_absent_ccnew")).IsFalse()
+        .Because("no such index is on a queue table, so nothing is dropped"));
+    register("ReindexQueueIndex", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That((await c.ReindexQueueIndexAsync("wh_active_streams_pkey")).HasValue).IsTrue());
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>

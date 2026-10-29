@@ -14,6 +14,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
+  `pg_stats.correlation` was measured with each candidate seeded in its production write order
+  (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle
+  reconciliation filters it by a thirty-minute range that no index reached, so the query read the whole store;
+  migration 258 adds `idx_event_store_created_at_brin` (`pages_per_range = 128`) and the query now reads only the
+  ranges holding the window. `commit_sequence` also correlates near 1, but its readers need its order, which only its
+  existing B-tree gives. `wh_log.logged_at`, `wh_lifecycle_completions.completed_at` and
+  `wh_message_deduplication.first_seen_at` measure 1.0 while they only grow and 0.60, 0.27 and 0.81 after one retention
+  pass at their default retention (freed oldest pages take the newest rows), so they keep their B-trees. No index is
+  dropped.
+- **Bloated indexes on the queue tables that churn to empty are rebuilt with `REINDEX INDEX CONCURRENTLY` (#1746).**
+  A B-tree never returns its pages to the file, so after a burst an index on a drained queue keeps its peak size. The
+  new `queue-index-reindex` maintenance step surveys the B-tree indexes of `wh_outbox`, `wh_inbox`, `wh_inbox_state`,
+  `wh_perspective_events`, `wh_active_streams` and `wh_doorbell_queue` from the catalog (size against the size a fresh
+  index over the same rows needs; method `estimate`), drops every invalid `_ccnew`/`_ccold` leftover of an interrupted
+  rebuild with `DROP INDEX CONCURRENTLY`, and then rebuilds at most one index per cycle: of the valid indexes more than
+  `Whizbang:Workers:Maintenance:ReindexBloatThreshold` times their expected size (default `3.0`, `0` turns it off, any
+  other value must be finite and above 1) and at least 1 MiB, the one with the most bytes to give back. It runs once per
+  fleet through a claim keyed by a window of half the maintenance interval, does nothing while an index build is running
+  on a queue table, and runs on the schema-initialization connection when configured (otherwise only for a table the
+  application role owns). EF Core driver. New API: `MaintenanceWorkerOptions.ReindexBloatThreshold`,
+  `QueueIndexReindexStep`, `QueueIndexBloat`, `QueueIndexNames`, and `IWorkCoordinator.GetQueueIndexBloatAsync`,
+  `DropInvalidQueueIndexAsync` and `ReindexQueueIndexAsync`.
+- **A Grafana dashboard for storage, kept in step with the meters by a drift test (#1748).**
+  `dashboards/grafana/whizbang-storage.json` charts table size and its heap, TOAST and index split, growth per day
+  (`deriv()` and `delta()` over the gauges), bytes per row, the bloat ratio by `method` with the rewrite threshold
+  line, the tables measured for a rewrite, maintenance rows and duration by task, unused index bytes, bytes per event
+  type by part with the metadata share, Postgres capability state and queue depths. The data source, service (`job`),
+  database and rewrite threshold are variables; no environment is named. `StorageDashboardTests` reads every
+  instrument the library's meters declare from the source, derives the names Prometheus exposes them by, and fails
+  when a panel or variable query names any other `whizbang_` metric, names a service or database literally, or sums
+  a per-instance table gauge without first taking the max across instances.
+
+- **The event-type bytes sample reports the event-store pointer rows and the inline outbox metadata (#1749).** The
+  sample now reads three tables at the same share in one statement: `wh_event_body` for the payload and metadata,
+  `wh_event_store` for the pointer row every event keeps (its whole stored width), and `wh_outbox` for the metadata
+  outbox rows holding an event carry inline (commands are left out). Both `whizbang.event_store.sampled_bytes_per_event`
+  and `whizbang.event_store.estimated_type_bytes` carry a `part` tag (`data`, `metadata`, `pointer`,
+  `outbox_metadata`), so a sum by `event_type` is a type's whole footprint and a sum by `part` is where it sits; a part
+  the sample read no rows of is not reported. Types are ranked and folded under `other` by every part together.
+  Breaking (pre-1.0): `EventTypeBytes` is now one `EventPartBytes` (sampled rows, mean bytes, extrapolated total) per
+  part (`Data`, `Metadata`, `PointerRow`, `OutboxMetadata`), and `EventStoreBytesParts` names the tag values.
+
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
   the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate

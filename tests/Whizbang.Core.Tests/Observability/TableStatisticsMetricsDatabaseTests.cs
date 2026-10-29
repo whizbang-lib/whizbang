@@ -82,7 +82,8 @@ public class TableStatisticsMetricsDatabaseTests {
     });
     metrics.UpdateUnusedIndexes(new Dictionary<string, UnusedIndex> { ["idx_outbox_topic"] = new("wh_outbox", 16_384) });
     metrics.UpdateEventTypeBytes(new Dictionary<string, EventTypeBytes> {
-      ["Orders.OrderPlaced, Orders"] = new(SampledRows: 4, MeanDataBytes: 120, MeanMetadataBytes: 80, EstimatedTotalBytes: 800),
+      ["Orders.OrderPlaced, Orders"] = new(
+        Data: new(4, 120, 480), Metadata: new(4, 80, 320), PointerRow: default, OutboxMetadata: default),
     });
   }
 

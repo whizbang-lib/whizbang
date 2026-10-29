@@ -237,8 +237,13 @@ Each slice is one red-then-green increment and its own commit.
     BRIN index only where correlation is near 1 and a range filter exists. The existing B-tree
     `idx_event_store_ephemeral_reap` stays: the reap needs its order. RED: a plan-shape test per added
     index (`EXPLAIN` uses it for the range query).
-    **Status (2026-10-24):** open. No migration creates a BRIN index, and no correlation measurement is
-    recorded.
+    **Status (2026-10-29):** done in code, #1745. Measured with each table seeded in its production write order
+    (`BrinIndexCandidatesTests`): `wh_event_store.created_at` 0.98 and `commit_sequence` 0.98; `wh_log.logged_at`,
+    `wh_lifecycle_completions.completed_at` and `wh_message_deduplication.first_seen_at` 1.0 while growing and 0.60,
+    0.27 and 0.81 after one retention pass at their default retention. One index qualifies: migration 258 adds
+    `idx_event_store_created_at_brin` for the startup orphaned-lifecycle window (the last thirty minutes of
+    `created_at`, which no index reached). `commit_sequence` readers need its order (B-tree); the retention tables'
+    order rotates. No index is replaced or dropped. Docs: storage-maintenance page, `#brin-indexes`.
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
     **Status (2026-10-24):** done. #1669, closed by PR #1695: `whizbang.table.unused_index_bytes` on the
@@ -252,7 +257,16 @@ Each slice is one red-then-green increment and its own commit.
     first. RED: threshold decision unit tests; integration test that a bloated index shrinks and
     that an invalid leftover is cleaned. Docs: storage-maintenance page and
     `fundamentals/workers/maintenance-steps.md`.
-    **Status (2026-10-24):** open. `src/` has no reindex task and no `ReindexBloatThreshold`.
+    **Status (2026-10-29):** done in #1746. `QueueIndexReindexStep` (a framework `IMaintenanceStep`) surveys the
+    B-tree indexes of the queue tables from the catalog through `IWorkCoordinator.GetQueueIndexBloatAsync` (size against
+    a fresh index's expected size, method `estimate`), drops every invalid `_ccnew`/`_ccold` leftover with
+    `DROP INDEX CONCURRENTLY`, then rebuilds at most one index per cycle with `REINDEX INDEX CONCURRENTLY`: the valid
+    index over `ReindexBloatThreshold` (default 3.0, 0 disables, otherwise finite and above 1, validated at start) and
+    at least 1 MiB with the most bytes to give back. Fleet-once through an `IClaimedEmissionStore` claim per window of
+    half the maintenance interval; nothing is dropped or rebuilt while `pg_stat_progress_create_index` shows a build on
+    a queue table. The queue tables were derived from the migrations: the four above plus `wh_active_streams` and
+    `wh_doorbell_queue`; `wh_message_deduplication` is excluded (a retention window never drains). pgstatindex is not
+    used: it reads the whole index, the same reads as the rebuild. EF Core driver only; no migration.
 
 ### Defect 9: idle-gate ceiling as a time
 

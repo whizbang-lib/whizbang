@@ -36,7 +36,8 @@ public class EventTypeBytesSamplerTests {
   private static readonly DateTimeOffset _start = new(2026, 1, 1, 0, 7, 0, TimeSpan.Zero);
 
   private static readonly Dictionary<string, EventTypeBytes> _sample = new() {
-    [ORDER_PLACED] = new(SampledRows: 12, MeanDataBytes: 300, MeanMetadataBytes: 600, EstimatedTotalBytes: 1_080_000),
+    [ORDER_PLACED] = new(
+      Data: new(12, 300, 360_000), Metadata: new(12, 600, 720_000), PointerRow: default, OutboxMetadata: default),
   };
 
   [Test]
@@ -55,7 +56,8 @@ public class EventTypeBytesSamplerTests {
     await Assert.That(provider.Requests[0]).IsEqualTo(new EventTypeSampleRequest(
       "whizbang:event-type-bytes:" + window.ToString(CultureInfo.InvariantCulture), 2.5, 7))
       .Because("every instance names the window the same way, from the clock, so exactly one of them gets it");
-    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 1_080_000d, ORDER_PLACED));
+    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 360_000d, ORDER_PLACED));
+    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 720_000d, ORDER_PLACED));
   }
 
   [Test]

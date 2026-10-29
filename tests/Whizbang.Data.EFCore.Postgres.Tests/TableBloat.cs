@@ -35,7 +35,7 @@ internal static class TableBloat {
         WHERE setting_key LIKE 'bloat\_%' AND substring(setting_key FROM 7)::INT > 1500";
       await carve.ExecuteNonQueryAsync(ct);
     }
-    await _waitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
+    await WaitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
     await using var analyze = conn.CreateCommand();
     analyze.CommandText = "ANALYZE wh_settings";
     await analyze.ExecuteNonQueryAsync(ct);
@@ -65,7 +65,7 @@ internal static class TableBloat {
   /// because a cleanup horizon is external state with nothing to subscribe to; it is a wait on a
   /// real condition rather than a sleep chosen by feel.</para>
   /// </remarks>
-  private static async Task _waitUntilTheDeletedRowsAreRemovableAsync(
+  internal static async Task WaitUntilTheDeletedRowsAreRemovableAsync(
       NpgsqlConnection conn, CancellationToken ct) {
     long deletedThrough;
     await using (var mark = conn.CreateCommand()) {

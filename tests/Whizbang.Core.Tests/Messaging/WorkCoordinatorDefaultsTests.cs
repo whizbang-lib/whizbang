@@ -455,6 +455,16 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(outcomes).IsEmpty();
   }
 
+  /// <summary>A backend that does not survey its queue indexes offers none, drops none and rebuilds none (#1746).</summary>
+  [Test]
+  public async Task QueueIndexCalls_WithoutProviderSupport_SurveyDropAndRebuildNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetQueueIndexBloatAsync()).IsEmpty();
+    await Assert.That(await coordinator.DropInvalidQueueIndexAsync("idx_x_ccnew")).IsFalse();
+    await Assert.That(await coordinator.ReindexQueueIndexAsync("idx_x")).IsNull();
+  }
+
   [Test]
   public async Task RecordInstanceStateAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();

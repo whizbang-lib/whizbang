@@ -342,10 +342,13 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   /// so the claim and the events are in the same schema.
   /// </para>
   /// <para>
-  /// <c>TABLESAMPLE SYSTEM</c> reads whole pages of <c>wh_event_body</c>, each with the requested probability, and
-  /// joins them to <c>wh_event_store</c> for the type. <c>pg_column_size</c> is the size the row stores, after
-  /// compression, which is what the disk pays for. A stored type name carrying its assembly version is the same
-  /// type as one without, so names are normalized before the types are ranked and the smallest folded under
+  /// <c>TABLESAMPLE SYSTEM</c> reads whole pages, each with the requested probability, of three tables, each sampled
+  /// on its own at the same share: <c>wh_event_body</c>, joined to <c>wh_event_store</c> for the type, for the
+  /// payload and metadata; <c>wh_event_store</c> for the pointer row every event keeps, measured as the whole row;
+  /// and <c>wh_outbox</c>, for the metadata its rows holding an event carry inline (a command is no event type's).
+  /// <c>pg_column_size</c> is the size the row stores, after compression, which is what the disk pays for. A stored
+  /// type name carrying its assembly version is the same type as one without, so names are normalized before the
+  /// types are ranked, by every part together, and the smallest folded under
   /// <see cref="TableStatisticsOptions.OTHER_EVENT_TYPES"/>.
   /// </para>
   /// </remarks>
@@ -366,47 +369,112 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
       return null;
     }
 
-    var perType = new Dictionary<string, (long Rows, long Data, long Metadata)>(StringComparer.Ordinal);
+    var perType = new Dictionary<string, PartSums>(StringComparer.Ordinal);
+    // One statement, three samples: each table is sampled on its own at the same share, so each part is extrapolated
+    // from its own table. The second column says which table a row came from.
     await using var cmd = new NpgsqlCommand($"""
-      SELECT es.event_type,
+      SELECT es.event_type, {BODY_SOURCE},
              count(*)::bigint,
              COALESCE(sum(pg_catalog.pg_column_size(b.event_data)), 0)::bigint,
              COALESCE(sum(pg_catalog.pg_column_size(b.metadata)), 0)::bigint
       FROM {quotedSchema}.wh_event_body b TABLESAMPLE SYSTEM (@percent)
       JOIN {quotedSchema}.wh_event_store es ON es.event_id = b.event_id
       GROUP BY es.event_type
+      UNION ALL
+      SELECT es.event_type, {POINTER_SOURCE},
+             count(*)::bigint,
+             COALESCE(sum(pg_catalog.pg_column_size(es.*)), 0)::bigint,
+             0::bigint
+      FROM {quotedSchema}.wh_event_store es TABLESAMPLE SYSTEM (@percent)
+      GROUP BY es.event_type
+      UNION ALL
+      SELECT o.message_type, {OUTBOX_SOURCE},
+             count(*)::bigint,
+             COALESCE(sum(pg_catalog.pg_column_size(o.metadata)), 0)::bigint,
+             0::bigint
+      FROM {quotedSchema}.wh_outbox o TABLESAMPLE SYSTEM (@percent)
+      WHERE o.is_event
+      GROUP BY o.message_type
       """, connection);
     cmd.Parameters.AddWithValue("percent", request.SamplePercent);
     await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
     while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
       var type = EventTypeMatchingHelper.NormalizeTypeName(reader.GetString(0));
-      perType.TryGetValue(type, out var sum);
-      perType[type] = (sum.Rows + reader.GetInt64(1), sum.Data + reader.GetInt64(2), sum.Metadata + reader.GetInt64(3));
+      if (!perType.TryGetValue(type, out var sums)) {
+        sums = new PartSums();
+        perType[type] = sums;
+      }
+      sums.Add(reader.GetInt32(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
     }
 
     return _fold(perType, request);
   }
 
   /// <summary>The largest types by bytes under their names, the rest summed under the other name.</summary>
-  private static Dictionary<string, EventTypeBytes> _fold(
-      Dictionary<string, (long Rows, long Data, long Metadata)> perType, EventTypeSampleRequest request) {
-    var folded = new Dictionary<string, (long Rows, long Data, long Metadata)>(StringComparer.Ordinal);
+  private static Dictionary<string, EventTypeBytes> _fold(Dictionary<string, PartSums> perType, EventTypeSampleRequest request) {
+    var folded = new Dictionary<string, PartSums>(StringComparer.Ordinal);
     var rank = 0;
-    foreach (var (type, sum) in perType
-        .OrderByDescending(t => t.Value.Data + t.Value.Metadata)
+    foreach (var (type, sums) in perType
+        .OrderByDescending(t => t.Value.TotalBytes)
         .ThenBy(t => t.Key, StringComparer.Ordinal)) {
       var name = rank++ < request.MaxEventTypes ? type : TableStatisticsOptions.OTHER_EVENT_TYPES;
-      folded.TryGetValue(name, out var total);
-      folded[name] = (total.Rows + sum.Rows, total.Data + sum.Data, total.Metadata + sum.Metadata);
+      if (!folded.TryGetValue(name, out var total)) {
+        total = new PartSums();
+        folded[name] = total;
+      }
+      total.Add(sums);
     }
-    return folded.ToDictionary(
-      t => t.Key,
-      t => new EventTypeBytes(
-        SampledRows: t.Value.Rows,
-        MeanDataBytes: (double)t.Value.Data / t.Value.Rows,
-        MeanMetadataBytes: (double)t.Value.Metadata / t.Value.Rows,
-        EstimatedTotalBytes: request.Extrapolate(t.Value.Data + t.Value.Metadata)),
-      StringComparer.Ordinal);
+    return folded.ToDictionary(t => t.Key, t => t.Value.ToBytes(request), StringComparer.Ordinal);
+  }
+
+  private const int BODY_SOURCE = 0;
+  private const int POINTER_SOURCE = 1;
+  private const int OUTBOX_SOURCE = 2;
+
+  /// <summary>One event type's sampled rows and bytes, per part, as the sample reads them.</summary>
+  private sealed class PartSums {
+    private long _bodyRows;
+    private long _data;
+    private long _metadata;
+    private long _pointerRows;
+    private long _pointer;
+    private long _outboxRows;
+    private long _outbox;
+
+    /// <summary>Every sampled byte of the type, which is what types are ranked by.</summary>
+    public long TotalBytes => _data + _metadata + _pointer + _outbox;
+
+    /// <summary>Adds one row of the sample: <paramref name="source"/> says which table it read.</summary>
+    public void Add(int source, long rows, long bytes, long metadataBytes) {
+      if (source == BODY_SOURCE) {
+        _bodyRows += rows;
+        _data += bytes;
+        _metadata += metadataBytes;
+      } else if (source == POINTER_SOURCE) {
+        _pointerRows += rows;
+        _pointer += bytes;
+      } else {
+        _outboxRows += rows;
+        _outbox += bytes;
+      }
+    }
+
+    /// <summary>Adds another type's sums, for folding it under the other name.</summary>
+    public void Add(PartSums other) {
+      Add(BODY_SOURCE, other._bodyRows, other._data, other._metadata);
+      Add(POINTER_SOURCE, other._pointerRows, other._pointer, 0);
+      Add(OUTBOX_SOURCE, other._outboxRows, other._outbox, 0);
+    }
+
+    public EventTypeBytes ToBytes(EventTypeSampleRequest request) => new(
+      Data: _part(_bodyRows, _data, request),
+      Metadata: _part(_bodyRows, _metadata, request),
+      PointerRow: _part(_pointerRows, _pointer, request),
+      OutboxMetadata: _part(_outboxRows, _outbox, request));
+
+    /// <summary>A part's mean and extrapolated total, or nothing where the sample read no rows of it.</summary>
+    private static EventPartBytes _part(long rows, long bytes, EventTypeSampleRequest request) =>
+      rows == 0 ? default : new(rows, (double)bytes / rows, request.Extrapolate(bytes));
   }
 
   /// <summary>The connection's current schema, quoted, where the provider was given none.</summary>
