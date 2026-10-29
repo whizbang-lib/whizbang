@@ -384,6 +384,32 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(2L);
   }
 
+  [Test]
+  public async Task Write_WaitsForTheStreamsAppendLock_SoNothingIsAppendedWhileItMovesAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 2);
+    // A second session holds the key the emit chains and the direct append take for this stream.
+    await using var appender = new NpgsqlConnection(ConnectionString);
+    await appender.OpenAsync();
+    await using var appending = await appender.BeginTransactionAsync();
+    await _executeAsync(appender, "SELECT pg_advisory_xact_lock(hashtext('wh_event_store:' || @id::text))", stream);
+
+    await using (var held = await connection.BeginTransactionAsync()) {
+      await _executeAsync(connection, "SET LOCAL lock_timeout = '100ms'");
+      var waited = await Assert.That(async () => await _executeAsync(connection, "SELECT * FROM wh_archive_stream(@id, NULL, 'x')", stream))
+        .Throws<PostgresException>();
+      await Assert.That(waited!.SqlState).IsEqualTo(PostgresErrorCodes.LockNotAvailable)
+        .Because("the archive waits for the append in flight instead of moving the stream under it");
+      await held.RollbackAsync();
+    }
+
+    // The control: once the append commits, the same call goes through.
+    await appending.CommitAsync();
+    await Assert.That((await _store().WriteAsync(ArchiveBatch.WholeStream(stream))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+  }
+
   // ── The tombstone blocks version reuse ─────────────────────────────────────────────────────────────
 
   [Test]
@@ -524,6 +550,25 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(result.Status).IsEqualTo(ArchiveStatus.VERSION_CONFLICT);
     await Assert.That(await _archivedCountAsync(connection, stream)).IsEqualTo(2L).Because("the archive is kept for an operator to resolve");
     await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task Restore_ARowArchivedBeforeTheStoreKeptPositions_IsStoredUnflaggedForTheStamperAsync() {
+    // Migration 085's copy kept no flags and no commit position; such a row goes back unflagged and unstamped.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    var id = Guid.CreateVersion7();
+    await _executeAsync(connection,
+      "INSERT INTO wh_event_archive (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at) " +
+      $"VALUES ('{id}', @id, @id, 'Agg', 'Old.Type', '{{\"a\":1}}'::jsonb, '{{}}'::jsonb, 1, '2026-01-02T03:04:05Z')", stream);
+
+    var restored = await _store().RestoreAsync(stream);
+
+    await Assert.That(restored.EventsRestored).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync(connection,
+        "SELECT count(*) FROM wh_event_store WHERE event_id = @id AND flags = 0 AND commit_sequence IS NULL AND insert_order IS NOT NULL", id))
+      .IsEqualTo(1L).Because("with no recorded position, the stamper gives the row a new one");
   }
 
   [Test]

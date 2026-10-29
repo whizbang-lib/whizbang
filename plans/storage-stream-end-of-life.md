@@ -185,8 +185,15 @@ ephemeral events page this slice was to promote is already published. Depends on
 
 ### S7. B3: `IArchiveStore` and the Postgres-table store
 
-**Status (2026-10-24):** open. `wh_event_archive` and `GetArchivedEventsAsync` exist (migration 085), but there
-is no `IArchiveStore` type.
+**Status (2026-10-29):** implemented on `feat/1736-archive-store` (#1736), to ship with S3 (#1732) in one bundle, S3
+first. Migration `262_ArchiveStoreKeepsATombstone.sql`; `IArchiveStore`, `ArchiveBatch` (one stream, prefix or whole),
+`ArchiveLocator` (`{store}://{address}?codec={codec}&format={format}`, codec recorded per archive), and
+`PostgresTableArchiveStore` (codec `none`: the rows stay `jsonb`), registered by both drivers and used by the prefix
+truncate's archive path. A whole-stream archive parks cursors in `wh_event_archive_cursors`, keeps snapshots and leaves
+the tombstone; a statement trigger on `wh_event_store` refuses version reuse (`WHA01`) and is installed once
+`wh_stream_lifecycle` exists. `RestoreAsync` (restores exact positions) and `DeleteAsync` are implemented here, so S9
+only consumes them. Open for S9: the per-type append-to-archived policy on the write paths (today the trigger raises,
+which fails the whole emit-chain batch). Docs: `v1.0.0/fundamentals/events/archive-store.md` (docs branch `docs/1736`).
 
 - **Change.** `IArchiveStore` in Core: `WriteAsync(ArchiveBatch)`, `ReadAsync(streamId, fromVersion)`,
   `RestoreAsync(streamId)`, `DeleteAsync(streamId)`. `PostgresTableArchiveStore` wraps
