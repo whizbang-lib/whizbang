@@ -823,6 +823,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the outbox publisher's not-ready hold stops re-buffering them, the outbox drain's hold no longer reports them as
   held, and the lease renewal worker (which now takes the instance provider) logs them. Each is logged at Warning.
   `renew_leases` is left in place, unused, for instances still on the previous release during a rolling deployment.
+- **An ephemeral perspective drops a late event once, instead of on every claim (Fixes #1862).** When a late event
+  lands behind an ephemeral perspective's row and no readable snapshot floor precedes it, the rewind is skipped by
+  design (a replay would read reaped bodies) and the event is dropped. The skip reported only "nothing replayed", so
+  the event's work stayed pending: the drain loop and every later claim found it behind the cursor again, skipped the
+  same rewind and logged the same drop, without end and across restarts. The skipped rewind now names the dropped
+  event (`PerspectiveCursorCompletion.DroppedStragglers`), and the worker retires its work once (rows completed with
+  nothing applied, cooldown and rewind memory marked, lifecycle signaled) without moving the cursor, then applies the
+  rest of the batch; a second straggler in the batch is dropped the same way. On the work-item path the events after
+  the cursor take the normal path instead of being skipped with the rewind. Work an older build left pending is
+  retired at the first claim after upgrading, and the cursor's rewind flag clears once nothing is pending. Each drop
+  logs one Warning (the misleading "performing full replay" warnings no longer precede it for an ephemeral
+  perspective) and counts once on the new `whizbang.perspective.stragglers_dropped` counter (tag `perspective_name`).
+  No migration.
 - **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
   A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
   with the message id, type and error before it is routed to the failure channel; one flush logs the first five and

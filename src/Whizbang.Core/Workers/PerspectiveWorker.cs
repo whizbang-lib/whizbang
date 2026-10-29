@@ -2618,6 +2618,15 @@ public partial class PerspectiveWorker(
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
         }
+        // #1862: an ephemeral runner with no snapshot floor drops a late event instead of rewinding for it. What it
+        // dropped is retired here, once, and the rest of the batch is handed back; otherwise the event's work stays
+        // pending and every lap and claim finds it, skips the same rewind and drops it again.
+        if (result.DroppedStragglers.Length > 0) {
+          (result, filteredEvents) = await _retireDroppedStragglersAsync(
+            runner, result, filteredEvents,
+            new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider),
+            batchContext, leaseCt);
+        }
         // The runner ran for this (stream, perspective): the batch's claimed copy of the same
         // group is redundant. Only a real runner invocation records here; a pass that cooled
         // everything returned above and left the group unrecorded on purpose (issue #700).
@@ -2978,7 +2987,7 @@ public partial class PerspectiveWorker(
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already replayed by a completed rewind; their rows are completed without a new rewind (#1361)")]
+    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already handled by an earlier rewind (replayed, or dropped as a straggler it could not replay); their rows are completed without a new rewind (#1361)")]
   private static partial void LogEventsCoveredByRewind(ILogger logger, Guid streamId, string perspectiveName, int count);
 
   [LoggerMessage(Level = LogLevel.Warning,
@@ -3143,6 +3152,64 @@ public partial class PerspectiveWorker(
     }
     return true;
   }
+
+  /// <summary>
+  /// #1862: retires the late events an ephemeral runner dropped instead of rewinding for them, and runs what is left of
+  /// the batch. The runner names one straggler per skipped rewind, so a batch holding several is handed back until no
+  /// straggler is left in it; every pass removes at least one event, so this ends.
+  /// </summary>
+  /// <remarks>
+  /// A dropped event is retired the way an event a rewind already covered is: its rows are completed with nothing
+  /// applied, it is marked in the cooldown and in the cursor cache's rewind memory (so a re-delivery under a new row is
+  /// covered rather than dropped again), its lifecycle is signaled, and waiters on it are released without claiming it
+  /// was applied. The cursor is not touched. A runner can only drop an event it was handed; a report that names none of
+  /// the batch retires nothing.
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StragglerDropped.cs</tests>
+  private async Task<(PerspectiveCursorCompletion Result, List<MessageEnvelope<IEvent>> Remaining)> _retireDroppedStragglersAsync(
+      IPerspectiveRunner runner,
+      PerspectiveCursorCompletion result,
+      List<MessageEnvelope<IEvent>> events,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext,
+      CancellationToken ct) {
+    var remaining = events;
+    while (result.DroppedStragglers.Length > 0) {
+      var dropped = result.DroppedStragglers.ToHashSet();
+      var retired = remaining.FindAll(e => dropped.Contains(e.MessageId.Value));
+      if (retired.Count == 0) {
+        break;
+      }
+      _retireDroppedStragglers(retired, streamCtx, batchContext);
+      remaining = remaining.FindAll(e => !dropped.Contains(e.MessageId.Value));
+      if (remaining.Count == 0) {
+        break;
+      }
+      result = await runner.RunWithEventsAsync(
+        streamCtx.StreamId, streamCtx.PerspectiveName, streamCtx.LastProcessedEventId, remaining, ct);
+    }
+    return (result, remaining);
+  }
+
+  private void _retireDroppedStragglers(
+      List<MessageEnvelope<IEvent>> retired,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext) {
+    var retiredIds = retired.ConvertAll(e => e.MessageId.Value);
+    _signalCooldownSkippedEvents(
+      retired, streamCtx.PerspectiveName, streamCtx.StreamId,
+      batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
+    _markProcessedInCooldown(_recentlyProcessedEventCache, retired, batchContext.RawByEventId, streamCtx.PerspectiveName);
+    _cursorCache.MarkReplayed(streamCtx.StreamId, streamCtx.PerspectiveName, (IEnumerable<Guid>)retiredIds);
+    _enqueueDrainModePerspectiveCompletions(streamCtx.StreamId, streamCtx.PerspectiveName, retired, batchContext.RawByEventId);
+    _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)retiredIds, streamCtx.PerspectiveName);
+    _recordStragglersDropped(streamCtx.PerspectiveName, retired.Count);
+  }
+
+  /// <summary>#1862: counts late events an ephemeral perspective dropped instead of rewinding for them.</summary>
+  private void _recordStragglersDropped(string perspectiveName, int count) =>
+    _metrics?.StragglersDropped.Add(count, new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
 
   /// <summary>
   /// #1361 — removes from <paramref name="freshEvents"/>, and returns, the events a completed rewind was already
@@ -4360,7 +4427,13 @@ public partial class PerspectiveWorker(
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
         eventsBehind, enablePerspectiveSpans, cancellationToken);
-      return (result, ProcessingMode.Replay, lockSkipped);
+      if (result.DroppedStragglers.Length == 0) {
+        return (result, ProcessingMode.Replay, lockSkipped);
+      }
+      // #1862: an ephemeral runner with no snapshot floor skipped the rewind and dropped the late event. The work
+      // item's rows are completed below whatever happens, and the events after the cursor it carries still need
+      // applying, so they take the normal path instead of being skipped with the rewind.
+      _recordStragglersDropped(streamCtx.PerspectiveName, result.DroppedStragglers.Length);
     }
 
     // Bootstrap snapshot if needed (existing stream with events but no snapshots)

@@ -64,17 +64,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    // The third fetch is made only after the second lap has finished, so both earlier laps are done here.
-    await coordinator.WaitForStreamEventsCallsAsync(laps, TimeSpan.FromSeconds(20));
-
-    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
-      .Because("the straggler is dropped once; a lap that finds it again must not skip the same rewind again");
-
+    // Completions are handed to the flush when the worker goes idle, so the drain and all its laps have ended here.
     await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(20), firstStragglerWork, aheadWork);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1);
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
+      .Because("the straggler is dropped once; a lap that finds it again must not skip the same rewind again");
     await Assert.That(runner.ReceivedBatches.Select(b => string.Join(",", b))).IsEquivalentTo([ahead.ToString()])
       .Because("the event after the cursor is still applied, in the same pass, and the straggler never reaches an apply");
     await Assert.That(_sum(meters, STRAGGLERS_DROPPED)).IsEqualTo(1d)
@@ -123,16 +119,12 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForStreamEventsCallsAsync(laps, TimeSpan.FromSeconds(20));
-
-    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
-      .Because("the loop an older build left behind stops at the first claim after the upgrade");
-
     await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(20), firstWork, secondWork);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1);
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
+      .Because("the loop an older build left behind stops at the first claim after the upgrade");
     await Assert.That(runner.ReceivedBatches.Select(b => string.Join(",", b))).IsEquivalentTo([second.ToString()])
       .Because("the second straggler is handed on once, the runner drops it in turn, and nothing is applied");
     await Assert.That(_sum(meters, STRAGGLERS_DROPPED)).IsEqualTo(2d)
@@ -178,18 +170,17 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForStreamEventsCallsAsync(laps, TimeSpan.FromSeconds(20));
-
-    await Assert.That(runner.ReceivedBatches.Select(b => string.Join(",", b)).Take(2))
-      .IsEquivalentTo([$"{straggler},{ahead}", ahead.ToString()])
-      .Because("the run that dropped the straggler is followed by one run of what is left, not by the same batch again");
-
     await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(20), stragglerWork, aheadWork);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(2)
-      .Because("later laps find both events already handled");
+    var batches = runner.ReceivedBatches.ToList();
+    await Assert.That(batches).Count().IsEqualTo(2)
+      .Because("the run that dropped the straggler is followed by one run of what is left, and later laps find both "
+             + "events already handled");
+    await Assert.That(batches[0]).IsEquivalentTo([straggler, ahead]);
+    await Assert.That(batches[1]).IsEquivalentTo([ahead])
+      .Because("what is handed back is the batch without the dropped straggler");
     await Assert.That(runner.RewindCalls.Count).IsEqualTo(0);
     await Assert.That(_sum(meters, STRAGGLERS_DROPPED)).IsEqualTo(1d);
   }

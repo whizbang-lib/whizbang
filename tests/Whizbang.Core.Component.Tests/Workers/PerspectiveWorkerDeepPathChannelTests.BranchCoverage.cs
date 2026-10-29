@@ -322,6 +322,22 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
+  public async Task Rewind_ThatDropsItsStraggler_WithNoMetrics_StillRunsTheNormalPathAsync() {
+    // The counter is optional; a worker built without metrics drops and moves on the same way.
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.DroppedStragglerUnmeteredPerspective";
+    var coordinator = _rewindCoordinator(streamId, perspectiveName, Guid.CreateVersion7());
+    var runner = new RecordingRunner { RewindDropsTheTrigger = true };
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(coordinator, registry, new BranchSetup());
+
+    await worker.ProcessChannelBatchAsync(
+      [_branchWork(streamId, perspectiveName, PerspectiveProcessingStatus.RewindRequired)], CancellationToken.None);
+
+    await Assert.That(runner.RunCallCount).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task Rewind_ThatDropsItsStraggler_CountsTheDropAndRunsTheNormalPathAsync() {
     // #1862: an ephemeral runner with no snapshot floor skips the rewind and drops the late event that flagged the
     // cursor. The work item still carries events after the cursor; skipping the rewind must not skip those too.

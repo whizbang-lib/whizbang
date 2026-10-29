@@ -461,12 +461,12 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
       "SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = @w", new { w = stragglerWork });
     await Assert.That(remaining).IsEqualTo(0L)
       .Because("the dropped straggler's work is retired, so no claim finds it again");
-    var cursor = await conn.QuerySingleAsync<(Guid LastEventId, short Status)>(
+    var (LastEventId, Status) = await conn.QuerySingleAsync<(Guid LastEventId, short Status)>(
       "SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
       new { s = streamId, p = perspective });
-    await Assert.That(cursor.LastEventId).IsEqualTo(frontier)
+    await Assert.That(LastEventId).IsEqualTo(frontier)
       .Because("the cursor is never moved backward to the dropped event");
-    await Assert.That(cursor.Status & 32).IsEqualTo(0)
+    await Assert.That(Status & 32).IsEqualTo(0)
       .Because("with nothing left pending the rewind flag clears");
   }
 }

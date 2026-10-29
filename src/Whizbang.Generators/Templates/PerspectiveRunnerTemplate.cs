@@ -1413,6 +1413,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     __MODEL_TYPE_NAME__? snapshotModel = null;
     var hasSnapshot = false;
     var startedAt = DateTimeOffset.UtcNow;
+    // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
+    // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
+    var replaysWithoutAFloor = !_isEphemeralPerspective;
 
     if (_snapshotStore is not null) {
       // The snapshot has to sit before the triggering event IN THE STREAM, because the rewind restores
@@ -1437,17 +1440,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           _logger.LogWarning(
               "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
               perspectiveName, streamId, snapshot.Value.SnapshotEventId, snapshot.Value.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
-        } else {
+        } else if (replaysWithoutAFloor) {
           _logger.LogWarning(
               "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
               perspectiveName, streamId, triggeringEventId);
         }
-      } else {
+      } else if (replaysWithoutAFloor) {
         _logger.LogWarning(
             "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
             perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
       }
-    } else {
+    } else if (replaysWithoutAFloor) {
       _logger.LogWarning(
           "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
           perspectiveName, streamId, triggeringEventId);
@@ -1485,11 +1488,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // bodies and silently corrupt the authoritative model. The reorder window (grace + snapshot
       // floor) was exceeded, so the accepted loss is that this straggler does not rewind: keep the
       // current out-of-order-but-present model and do NOT move the cursor. LastEventId = Guid.Empty
-      // is the "nothing replayed" completion — ReportPerspectiveCompletionAsync skips the checkpoint
+      // is the "nothing replayed" completion: ReportPerspectiveCompletionAsync skips the checkpoint
       // write on it, so the cursor stays where it is (never rewound backward to the straggler).
+      // DroppedStragglers names the straggler so the worker retires its work once; reporting only
+      // "nothing replayed" left it pending, and every claim dropped it again, without end (#1862).
       // <docs>fundamentals/events/ephemeral-events</docs>
       _logger.LogWarning(
-          "Skipping ephemeral rewind for {PerspectiveName} stream {StreamId}: late event {TriggeringEventId} has no surviving snapshot floor and this stream's ephemeral bodies are reaped; a full replay would corrupt the authoritative model. Straggler dropped — out-of-order rewind window exceeded.",
+          "Skipping ephemeral rewind for {PerspectiveName} stream {StreamId}: late event {TriggeringEventId} has no readable snapshot floor and this stream's ephemeral bodies are reaped; a full replay would corrupt the authoritative model. Straggler dropped: out-of-order rewind window exceeded. Its work is retired and the cursor is not moved.",
           perspectiveName, streamId, triggeringEventId);
       result = new PerspectiveCursorCompletion {
         StreamId = streamId,
@@ -1499,6 +1504,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         Status = PerspectiveProcessingStatus.None,
         EventsProcessed = 0,
         RowChanged = false,  // the rewind was skipped, so nothing was written
+        DroppedStragglers = [triggeringEventId],
       };
     } else {
       result = await RunFromModelAsync(
