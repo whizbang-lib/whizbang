@@ -104,10 +104,12 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     await _emitOutboxAsync(conn, _t0, _event(a, EVENT_TYPE), _event(b, EVENT_TYPE));
 
     await using var tx = await conn.BeginTransactionAsync();
+    var start = await _ledgerTransactionCountsAsync(conn);
     var batch = Enumerable.Range(0, 5).SelectMany(_ => new[] { _event(a, LATER_TYPE), _event(b, LATER_TYPE) }).ToArray();
     await _emitOutboxAsync(conn, _t0.AddMinutes(5), batch);
-    var (inserted, updated, _) = await _ledgerTransactionCountsAsync(conn);
+    var end = await _ledgerTransactionCountsAsync(conn);
     await tx.RollbackAsync();
+    var (inserted, updated) = (end.Inserted - start.Inserted, end.Updated - start.Updated);
 
     await Assert.That(inserted).IsEqualTo(0L);
     await Assert.That(updated).IsEqualTo(2L)
@@ -123,13 +125,16 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     await _emitOutboxAsync(conn, _t0, _event(stream, EVENT_TYPE));
 
     await using var tx = await conn.BeginTransactionAsync();
+    var start = await _ledgerTransactionCountsAsync(conn);
     await _emitOutboxAsync(conn, _t0.AddMinutes(20), _event(stream, LATER_TYPE));
-    var (_, updated, hot) = await _ledgerTransactionCountsAsync(conn);
+    var afterAppend = await _ledgerTransactionCountsAsync(conn);
 
     // Control: the same harness sees an update that changes an indexed column as not heap-only.
     await _executeAsync(conn, "UPDATE wh_stream_lifecycle SET state = 'Sealed' WHERE stream_id = @s", ("s", stream));
-    var (_, updatedAfterControl, hotAfterControl) = await _ledgerTransactionCountsAsync(conn);
+    var afterControl = await _ledgerTransactionCountsAsync(conn);
     await tx.RollbackAsync();
+    var (updated, hot) = (afterAppend.Updated - start.Updated, afterAppend.Hot - start.Hot);
+    var (updatedAfterControl, hotAfterControl) = (afterControl.Updated - start.Updated, afterControl.Hot - start.Hot);
 
     await Assert.That(updated).IsEqualTo(1L);
     await Assert.That(hot).IsEqualTo(1L)
@@ -524,7 +529,10 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
       FROM wh_event_store es JOIN wh_event_body b ON b.event_id = es.event_id WHERE es.stream_id = @s
       """, ("s", stream));
 
-  /// <summary>This transaction's own row counts on the ledger: pg_stat_xact_user_tables reports them with no delay.</summary>
+  /// <summary>
+  /// The backend's not-yet-reported row counts on the ledger (pg_stat_xact_user_tables, no reporting delay). They can still
+  /// hold an earlier transaction's counts that have not been flushed, so callers take the difference across their window.
+  /// </summary>
   private static async Task<(long Inserted, long Updated, long Hot)> _ledgerTransactionCountsAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
