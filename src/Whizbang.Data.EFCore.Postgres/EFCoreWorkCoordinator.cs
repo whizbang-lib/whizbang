@@ -4897,8 +4897,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
 
-    // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
-    // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.
+    // Restore the stored scope from the scope column so the replayed lifecycle stages run under it.
     var hops = _buildHopsFromScope(row.Scope);
 
     return new MessageEnvelope<JsonElement> {
@@ -4912,39 +4911,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  // The whole stored scope, as the event store restores it (#1855): a lifecycle receptor re-run here sees the
+  // extensions, allowed principals and markers the original dispatch carried, not the tenant and user alone.
   private List<MessageHop> _buildHopsFromScope(string? scopeJson) {
-    if (string.IsNullOrEmpty(scopeJson)) {
-      return [];
-    }
-
+    var hops = new List<MessageHop>();
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
-      var scopeElement = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(scopeJson, typeInfo)!);
-
-      string? tenantId = null;
-      string? userId = null;
-
-      if (scopeElement.TryGetProperty("t", out var t) && t.ValueKind == JsonValueKind.String) {
-        tenantId = t.GetString();
-      }
-      if (scopeElement.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String) {
-        userId = u.GetString();
-      }
-
-      if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-        return [new MessageHop {
-          Type = HopType.Current,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
-        }];
-      }
+      StoredScope.RestoreInto(hops, StoredScope.Read(scopeJson, _jsonOptions));
     } catch (Exception ex) {
       // Scope parsing is best-effort for reconciliation, but a parse failure silently drops the
-      // tenant/user security context so the replayed lifecycle event runs unscoped — always log it.
+      // stored scope so the replayed lifecycle event runs unscoped: always log it.
       EFCoreWorkCoordinatorLog.ReconcileScopeParseFailed(_logger ?? NullLogger<EFCoreWorkCoordinator<TDbContext>>.Instance, ex);
     }
-
-    return [];
+    return hops;
   }
 
   /// <summary>
@@ -5976,7 +5954,7 @@ internal static class VacuumedWorkTables {
 internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(
     Level = LogLevel.Warning,
-    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.")]
+    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without its stored scope.")]
   public static partial void ReconcileScopeParseFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 74, Level = LogLevel.Warning,

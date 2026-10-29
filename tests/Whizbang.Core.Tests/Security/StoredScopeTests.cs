@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
@@ -166,7 +167,9 @@ public class StoredScopeTests {
     await Assert.That(hops[0].Type).IsEqualTo(HopType.Current);
     await Assert.That(hops[0].ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
     var envelope = new MessageEnvelope<string> {
-      MessageId = MessageId.New(), Payload = "p", Hops = hops,
+      MessageId = MessageId.New(),
+      Payload = "p",
+      Hops = hops,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     };
     await Assert.That(_json(envelope.GetCurrentScope()!.Scope)).IsEqualTo(_json(stored));

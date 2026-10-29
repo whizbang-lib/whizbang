@@ -453,7 +453,7 @@ public class DapperPostgresEventStore(
     var eventData = _deserializeEventData(jsonb, concreteType);
 
     var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
-    _restoreScopeFromJson(jsonb.ScopeJson, hops);
+    StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
 
     var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
     envelope.LocalStreamVersion = row.Version;
@@ -539,51 +539,5 @@ public class DapperPostgresEventStore(
     }
 
     return (messageId, hops);
-  }
-
-  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson) || (hops.Count > 0 && hops[0].Scope != null)) {
-      return;
-    }
-
-    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
-    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
-    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
-    // any perspective requiring a security context rejected the event on every retry until it
-    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
-    // scope still yields none, because the emptiness check above returns first.
-    if (hops.Count == 0) {
-      hops.Add(new MessageHop {
-        Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
-        ServiceInstance = ServiceInstanceInfo.Unknown,
-      });
-    }
-
-    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
-    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
-      return;
-    }
-
-    var tenantId = _extractScopeValue(scopeDict, "t") ?? _extractScopeValue(scopeDict, "tenant_id");
-    var userId = _extractScopeValue(scopeDict, "u") ?? _extractScopeValue(scopeDict, "user_id");
-    var customerId = _extractScopeValue(scopeDict, "c");
-    var organizationId = _extractScopeValue(scopeDict, "o");
-
-    if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
-      var scope = new PerspectiveScope {
-        TenantId = tenantId,
-        UserId = userId,
-        CustomerId = customerId,
-        OrganizationId = organizationId
-      };
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-    }
-  }
-
-  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
-    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
-      ? elem.Value.GetString()
-      : null;
   }
 }

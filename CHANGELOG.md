@@ -798,6 +798,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shares the one flush the first stop started, so the buffered batches are still stored while the provider is alive,
   and a stop that arrives after the container disposed the flush service resolves nothing (the container already
   disposed, and so flushed, the batchers it owned).
+- **A stored event read back without hops keeps its whole scope on every driver path.** The Dapper typed read (through
+  the event envelope adapter) rebuilt a hopless event's scope from the tenant and user alone, the Dapper polymorphic and
+  checkpoint-range reads from the four id fields, and EF Core reconciliation from the tenant and user, so allowed
+  principals, scope extensions and the system and declared-unscoped markers were dropped and a receptor or perspective
+  reading them after a replay, rebuild, redelivery or reconciliation saw less than the original dispatch did. Every
+  read-back path now restores the stored scope through one reader (`StoredScope`), field for field as the EF Core event
+  store does; a first hop that recorded its own scope still keeps it, and a row stored without a scope still reads back
+  unscoped. The hop-scope source guard now allows no tenant-and-user-only hop scope anywhere (Fixes #1855)
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

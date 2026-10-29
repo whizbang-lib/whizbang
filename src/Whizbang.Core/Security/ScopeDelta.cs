@@ -140,9 +140,7 @@ public sealed class ScopeDelta {
     // An all-empty scope is neither an authority nor a statement of intent, so it stays
     // indistinguishable from nothing. A system marker IS a statement of intent, and collapsing it
     // to null here would restore the very ambiguity the marker exists to remove.
-    if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
-        && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
-        && scope.Extensions.Count == 0 && !scope.IsSystem && !scope.IsDeclaredUnscoped) {
+    if (NamesNothing(scope)) {
       return null;
     }
 
@@ -152,6 +150,15 @@ public sealed class ScopeDelta {
       }
     };
   }
+
+  /// <summary>
+  /// True when <paramref name="scope"/> names no id, extension or marker: a scope indistinguishable from none,
+  /// which <see cref="FromPerspectiveScope"/> turns into no delta.
+  /// </summary>
+  internal static bool NamesNothing(PerspectiveScope scope) =>
+    string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
+    && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
+    && scope.Extensions.Count == 0 && !scope.IsSystem && !scope.IsDeclaredUnscoped;
 
   /// <summary>
   /// The well-known scope for messages that carry NO user authority by design — control-plane
