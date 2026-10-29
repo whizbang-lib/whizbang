@@ -1203,7 +1203,7 @@ public partial class PerspectiveWorker(
       claimWindowReservations);
 
     _recordBatchMetrics(batchActivity, workBatch, groupedWork, [], []);
-    _logBatchComposition(workBatch, groupedWork);
+    LogBatchComposition(_logger, workBatch, groupedWork);
     _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0 || workBatch.PerspectiveStreamIds.Count > 0);
 
     var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
@@ -3419,18 +3419,24 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Logs diagnostic information about the batch composition.
   /// </summary>
-  private void _logBatchComposition(
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
+  internal static void LogBatchComposition(
+      ILogger logger,
       WorkBatch workBatch,
       List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork) {
+    // Runs on every batch with a line per group; with debug off it must not box a value per group (#1756)
+    if (!logger.IsEnabled(LogLevel.Debug)) {
+      return;
+    }
 
 #pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
-    _logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+    logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
       workBatch.PerspectiveWork.Count, groupedWork.Count);
     foreach (var g in groupedWork) {
-      _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
+      logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
     }
     if (workBatch.PerspectiveWork.Count == 0) {
-      _logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_cursors");
+      logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_cursors");
     }
 #pragma warning restore CA1848, CA1873
   }
