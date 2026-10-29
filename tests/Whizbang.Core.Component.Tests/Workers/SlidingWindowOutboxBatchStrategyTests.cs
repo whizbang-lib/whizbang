@@ -457,9 +457,9 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync(CancellationToken cancellationToken) {
-    // A failed bulk flush must not tear down the batcher: the dispatcher re-emits, and
-    // killing the strategy would take every other stream's buffer down with it.
+  public async Task FlushThrows_IsReportedAndTheStrategyKeepsRunningAsync(CancellationToken cancellationToken) {
+    // A failed bulk flush must not tear down the batcher: killing the strategy would take every other
+    // stream's buffer down with it. The failed batch is reported, not dropped (#1871).
     // Signalling before the throw would release the test while the failure had not happened yet,
     // let alone been handled -- so the assertions below would run against a strategy that had not
     // been asked to survive anything, and would pass just as well if it tore down. Count the
@@ -493,8 +493,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
     await clock.CloseWindowsUntilAsync(secondAttempt.Task, cancellationToken);
 
     await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1)
-      .Because("a failed bulk flush must not tear the batcher down: the dispatcher re-emits, and "
-             + "killing the strategy would take every other stream's buffer with it");
+      .Because("a failed bulk flush must not tear the batcher down: killing the strategy would take "
+             + "every other stream's buffer with it");
   }
 
   [Test]

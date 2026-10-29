@@ -208,6 +208,16 @@ public enum MessageFailureReason {
   MixedStreamRefused = 22,
 
   /// <summary>
+  /// The outbox message was accepted by the producer-side batcher (an event a receptor returned, or one it published)
+  /// and could not be stored in the outbox: the store kept failing with a transient database failure until its
+  /// attempts ran out, failed with an error a retry cannot fix, or was abandoned by a stop past its deadline. The dead
+  /// letter holds the whole message, and recovery stores it through the outbox store as if it had just been sent
+  /// (#1871). The recorded error text is the store's last failure.
+  /// </summary>
+  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  OutboxStoreFailed = 23,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

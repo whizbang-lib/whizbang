@@ -558,8 +558,11 @@ Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
 Whizbang:Workers:Maintenance:TableRewrite:PgRepack:ClientPath
 Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode
 Whizbang:Workers:Maintenance:TableRewriteStrategy
+Whizbang:Workers:OutboxBatch:FlushRetryBackoff
+Whizbang:Workers:OutboxBatch:FlushRetryMaxBackoff
 Whizbang:Workers:OutboxBatch:IdleEvictionWindow
 Whizbang:Workers:OutboxBatch:IdleSweepInterval
+Whizbang:Workers:OutboxBatch:MaxFlushAttempts
 Whizbang:Workers:OutboxBatch:MaxSize
 Whizbang:Workers:OutboxBatch:MaxWait
 Whizbang:Workers:OutboxBatch:SlidingWindow

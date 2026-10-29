@@ -15,6 +15,21 @@ public sealed class WorkCoordinatorMetrics {
 #pragma warning disable CA1707
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>
   public const string METER_NAME = "Whizbang.WorkCoordinator";
+
+  /// <summary>Tag on <see cref="OutboxFlushRetries"/>: the kind of transient database failure retried.</summary>
+  public const string REASON_TAG = "reason";
+
+  /// <summary>Tag on <see cref="OutboxFlushFailedMessages"/>: why the messages were not stored (<see cref="Whizbang.Core.Messaging.OutboxFlushFailureCause"/>).</summary>
+  public const string CAUSE_TAG = "cause";
+
+  /// <summary>Tag on <see cref="OutboxFlushFailedMessages"/>: where the messages went, <see cref="OUTCOME_DEAD_LETTERED"/> or <see cref="OUTCOME_NOT_RECORDED"/>.</summary>
+  public const string OUTCOME_TAG = "outcome";
+
+  /// <summary>The messages were written to the dead-letter table, from where recovery stores them again.</summary>
+  public const string OUTCOME_DEAD_LETTERED = "dead_lettered";
+
+  /// <summary>The messages could not be written to the dead-letter table either; their ids are in the error log only.</summary>
+  public const string OUTCOME_NOT_RECORDED = "not_recorded";
 #pragma warning restore CA1707
 
 
@@ -50,6 +65,24 @@ public sealed class WorkCoordinatorMetrics {
 
   /// <summary>Flushes that found nothing queued, tagged <c>strategy</c>. Every strategy counts them.</summary>
   public PassiveCounter<long> EmptyFlushCalls { get; }
+
+  /// <summary>
+  /// Retries of a stream's outbox batch after a transient database failure (a lost connection, an exhausted pool, a
+  /// command timeout, the server out of connection slots), tagged <c>reason</c> (#1871). A steady rate is a database
+  /// or pool that cannot keep up with the concurrent per-stream flushes.
+  /// </summary>
+  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsOnceForSomeStreams_EveryAcceptedMessageIsStoredAsync</tests>
+  public PassiveCounter<long> OutboxFlushRetries { get; }
+
+  /// <summary>
+  /// Outbox messages the batcher accepted and could not store, tagged <c>cause</c> (retries exhausted, not
+  /// retryable, abandoned at shutdown) and <c>outcome</c> (<c>dead_lettered</c>, or <c>not_recorded</c> when the
+  /// dead-letter write failed too) (#1871). Any <c>not_recorded</c> count is messages that exist only in the error log.
+  /// </summary>
+  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
+  public PassiveCounter<long> OutboxFlushFailedMessages { get; }
 
   // Publisher worker
 
@@ -112,6 +145,14 @@ public sealed class WorkCoordinatorMetrics {
       description: "Outbox rows skipped because the same message id was already stored: republishes a retry would have produced; tagged by message_type");
     FlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
     EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes that found nothing queued; tagged by strategy");
+
+    OutboxFlushRetries = meter.CreatePassiveCounter<long>(
+      "whizbang.work_coordinator.outbox_flush.retries",
+      description: "Retries of a stream's outbox batch after a transient database failure; tagged by reason");
+    OutboxFlushFailedMessages = meter.CreatePassiveCounter<long>(
+      "whizbang.work_coordinator.outbox_flush.failed_messages",
+      description: "Outbox messages the batcher accepted and could not store; tagged by cause and outcome (dead_lettered or not_recorded)");
+    OutboxFlushFailedMessages.Touch(OUTCOME_TAG, [OUTCOME_DEAD_LETTERED, OUTCOME_NOT_RECORDED]);
 
     PublisherLeaseRenewals = meter.CreatePassiveCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
     PublisherBufferedMessages = meter.CreatePassiveCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");

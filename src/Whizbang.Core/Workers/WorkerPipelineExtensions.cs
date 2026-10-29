@@ -1036,11 +1036,24 @@ public static class WorkerPipelineExtensions {
     // batcher; override via the AddWhizbangOutboxStrategy generic extension — see
     // ImmediateOutboxBatchStrategy for the no-batching alternative.
     services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
+    // A batch the batcher cannot store is written to the dead-letter table, counted and reported to every
+    // IOutboxFlushFailureObserver, never dropped (#1871).
+    services.TryAddSingleton<OutboxFlushFailureCallback>(sp => sp.GetRequiredService<OutboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton(sp => new OutboxFlushFailureRecorder(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetService<WorkCoordinatorGate>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<IGenerationProvider>(),
+      sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
+      sp.GetServices<IOutboxFlushFailureObserver>(),
+      sp.GetRequiredService<ILogger<OutboxFlushFailureRecorder>>()));
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowOutboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>()));
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
@@ -1123,6 +1136,10 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
+  // The caller names the batch flushes record on the gate's hold-duration metric and its saturation warning.
+  private const string OUTBOX_BATCH_FLUSH_CALLER = "OutboxBatchFlush";
+  private const string INBOX_BATCH_FLUSH_CALLER = "InboxBatchFlush";
+
   private static OutboxBulkFlushCallback _buildOutboxFlushCallback(IServiceProvider sp) {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
@@ -1133,6 +1150,7 @@ public static class WorkerPipelineExtensions {
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
     var detachedWork = sp.GetService<DetachedLifecycleWork>();
+    var gate = sp.GetService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1175,7 +1193,11 @@ public static class WorkerPipelineExtensions {
 #pragma warning restore CA1848
       }
 
-      await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      // Each stream's batch flushes on its own worker, so a burst over many streams would otherwise open as many
+      // connections at once and overflow the pool; the store takes a slot of the process-wide gate (#1871).
+      using (gate is null ? default : await gate.AcquireAsync(ct, OUTBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+        await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      }
 
       try {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
@@ -1195,11 +1217,16 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    var gate = sp.GetService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      // The same cap as the outbox batches: concurrent per-stream flushes cannot open more connections than the
+      // gate allows (#1871).
+      using (gate is null ? default : await gate.AcquireAsync(ct, INBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+        await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      }
     };
   }
 

@@ -2,28 +2,35 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// #1871: a per-stream flush of <see cref="SlidingWindowOutboxBatchStrategy"/> that fails is dropped. The drain worker
-/// logs "Dispatcher re-emission will recover" and moves on, but nothing re-emits a message the batcher accepted, so the
-/// message is gone with no row, no dead letter and no failure seen by the code that appended it.
+/// #1871: a per-stream flush of <see cref="SlidingWindowOutboxBatchStrategy"/> that failed was dropped. The drain
+/// worker logged "Dispatcher re-emission will recover", but nothing re-emits a message the batcher accepted, so the
+/// message was gone with no row, no dead letter and no failure seen by the code that appended it. A transient failure
+/// is now retried with backoff on the stream's own worker; a batch that still cannot be stored, fails with an error a
+/// retry cannot fix, or is abandoned by a stop past its deadline is handed to the failure callback (which dead-letters
+/// it), counted, and logged with every message id.
 /// </summary>
 /// <remarks>
 /// The reported shape: one message on each of 126 streams, appended together, so 126 drain workers flush at once
 /// against a remote database. Each flush takes a connection for its own scope; the ones that cannot get one fail
-/// (pool exhausted, or the server out of connection slots) and a random-looking tenth of the messages never lands.
+/// (pool exhausted, or the server out of connection slots) and a random-looking tenth of the messages never landed.
+/// Every wait the strategy schedules runs on a <see cref="TimerAdvancingClock"/>, advanced by the test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowOutboxBatchStrategy.cs</code-under-test>
 public class SlidingWindowOutboxFlushFailureTests {
@@ -32,10 +39,13 @@ public class SlidingWindowOutboxFlushFailureTests {
   // Npgsql's default Max Pool Size: the flushes beyond it are the ones that cannot get a connection.
   private const int POOL_SIZE = 100;
 
+  private static readonly TimeSpan _idleSweep = TimeSpan.FromMinutes(5);
+
   /// <summary>
   /// 126 streams flush at once through a pool of 100 connections. Every flush that gets a connection holds it until
-  /// all 126 have tried, so exactly 26 find the pool exhausted on their first try; the failure is transient, a
-  /// second try finds a free connection. Every message the batcher accepted has to be stored.
+  /// all 126 have tried, so exactly 26 find the pool exhausted on their first try, the way Npgsql reports it (a
+  /// database exception over a timeout). The retries run only once every holder has given its connection back, so
+  /// each finds a free one. Every message the batcher accepted has to be stored.
   /// </summary>
   [Test]
   [Timeout(60000)]
@@ -46,7 +56,10 @@ public class SlidingWindowOutboxFlushFailureTests {
     var stored = new ConcurrentDictionary<Guid, byte>();
     var firstAttempts = 0;
     var rejected = 0;
+    var released = 0;
     var everyStreamTried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var everyHolderReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new TimerAdvancingClock(_idleSweep);
 
     void countFirstAttempt() {
       if (Interlocked.Increment(ref firstAttempts) == STREAMS) {
@@ -63,8 +76,7 @@ public class SlidingWindowOutboxFlushFailureTests {
           if (first) {
             countFirstAttempt();
           }
-          throw new TimeoutException(
-            "The connection pool has been exhausted, either raise 'Max Pool Size' (currently 100) or 'Timeout' in your connection string.");
+          throw _poolExhausted();
         }
         try {
           if (first) {
@@ -77,11 +89,16 @@ public class SlidingWindowOutboxFlushFailureTests {
           }
         } finally {
           pool.Release();
+          if (first && Interlocked.Increment(ref released) == POOL_SIZE) {
+            everyHolderReleased.TrySetResult();
+          }
         }
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: _flushEveryMessageAtOnce(),
-      timeProvider: new FakeTimeProvider());
+      timeProvider: clock,
+      onFlushFailed: null,
+      metrics: null);
 
     var appended = new List<Guid>(STREAMS);
     for (var i = 0; i < STREAMS; i++) {
@@ -90,21 +107,23 @@ public class SlidingWindowOutboxFlushFailureTests {
       await sut.AppendAsync(message, cancellationToken);
     }
 
-    await everyStreamTried.Task.WaitAsync(cancellationToken);
-    // The stop a host makes: every buffer completed and every drain worker awaited.
-    await sut.FlushAndStopAsync(CancellationToken.None).WaitAsync(cancellationToken);
+    // No retry is let through before every holder has given its connection back, so none can find the pool full.
+    await everyHolderReleased.Task.WaitAsync(cancellationToken);
+    // The stop a host makes: every buffer completed and every drain worker awaited, its retries' waits let elapse.
+    await clock.AdvanceTimersUntilAsync(sut.FlushAndStopAsync(CancellationToken.None), cancellationToken);
 
-    await Assert.That(rejected).IsGreaterThanOrEqualTo(STREAMS - POOL_SIZE)
+    await Assert.That(rejected).IsEqualTo(STREAMS - POOL_SIZE)
       .Because("the arrangement has to really exhaust the pool, or the assertion below would hold vacuously");
     var missing = appended.Where(id => !stored.ContainsKey(id)).ToList();
     await Assert.That(missing).IsEmpty()
       .Because($"{missing.Count} of {STREAMS} accepted messages were never stored: a flush that failed on a transient "
-             + "pool exhaustion was dropped with a promise of re-emission that nothing keeps (#1871)");
+             + "pool exhaustion has to be retried, not dropped (#1871)");
   }
 
   /// <summary>
-  /// The same loss without concurrency: the 10th, 20th, ... stream's first flush fails once (12 of 126, inside the
-  /// reported 7-13%), a second try would succeed. Every message the batcher accepted has to be stored.
+  /// The same loss without concurrency: the 10th, 20th, ... stream's first flush fails once with the server out of
+  /// connection slots (SQLSTATE 53300; 12 of 126, inside the reported 7-13%), and a second try succeeds. Every message
+  /// the batcher accepted has to be stored, and each retry counted under its reason.
   /// </summary>
   [Test]
   [Timeout(60000)]
@@ -112,13 +131,16 @@ public class SlidingWindowOutboxFlushFailureTests {
     var failOnce = new ConcurrentDictionary<Guid, byte>();
     var stored = new ConcurrentDictionary<Guid, byte>();
     var failures = 0;
+    var clock = new TimerAdvancingClock(_idleSweep);
+    var (metrics, meter) = _metrics();
+    using var recorded = new MetricAssertionHelper(meter);
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (messages, flushToken) => {
         var stream = messages[0].StreamId!.Value;
         if (failOnce.TryRemove(stream, out _)) {
           Interlocked.Increment(ref failures);
-          return Task.FromException(new TimeoutException("Timeout during reading attempt"));
+          return Task.FromException(FakeDbException.WithSqlState("53300", message: "too many clients already"));
         }
         foreach (var message in messages) {
           stored.TryAdd(message.MessageId, 0);
@@ -127,7 +149,9 @@ public class SlidingWindowOutboxFlushFailureTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: _flushEveryMessageAtOnce(),
-      timeProvider: new FakeTimeProvider());
+      timeProvider: clock,
+      onFlushFailed: null,
+      metrics: metrics);
 
     var appended = new List<Guid>(STREAMS);
     for (var i = 1; i <= STREAMS; i++) {
@@ -140,22 +164,292 @@ public class SlidingWindowOutboxFlushFailureTests {
       await sut.AppendAsync(message, cancellationToken);
     }
 
-    await sut.FlushAndStopAsync(CancellationToken.None).WaitAsync(cancellationToken);
+    await clock.AdvanceTimersUntilAsync(sut.FlushAndStopAsync(CancellationToken.None), cancellationToken);
 
     await Assert.That(failures).IsEqualTo(STREAMS / 10)
       .Because("every chosen stream's first flush has to really fail, or the assertion below would hold vacuously");
     var missing = appended.Where(id => !stored.ContainsKey(id)).ToList();
     await Assert.That(missing).IsEmpty()
       .Because($"{missing.Count} of {STREAMS} accepted messages were never stored and no caller saw a failure (#1871)");
+    var retries = recorded.GetByName("whizbang.work_coordinator.outbox_flush.retries").Where(m => m.Tags.ContainsKey(WorkCoordinatorMetrics.REASON_TAG)).ToList();
+    await Assert.That(retries.Sum(m => m.Value)).IsEqualTo((double)failures);
+    await Assert.That(retries.All(m => m.Tags[WorkCoordinatorMetrics.REASON_TAG] == TransientDatabaseFailure.INSUFFICIENT_RESOURCES)).IsTrue()
+      .Because("each retry is counted under the kind of transient failure it retried");
+  }
+
+  /// <summary>
+  /// A store that fails transiently on every attempt is tried <see cref="SlidingWindowOutboxOptions.MaxFlushAttempts"/>
+  /// times and then handed to the failure callback, once, with the whole batch and its last error; the messages it
+  /// dead-lettered are counted as such, and the error log names every message id and how to recover them.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync(
+      CancellationToken cancellationToken) {
+    var attempts = 0;
+    var failures = new ConcurrentQueue<OutboxFlushFailure>();
+    var clock = new TimerAdvancingClock(_idleSweep);
+    var log = new CapturingLog();
+    var (metrics, meter) = _metrics();
+    using var recorded = new MetricAssertionHelper(meter);
+    var stream = (Guid)TrackedGuid.New();
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => {
+        Interlocked.Increment(ref attempts);
+        return Task.FromException(_poolExhausted());
+      },
+      logger: log,
+      options: _flushEveryMessageAtOnce() with { MaxFlushAttempts = 3 },
+      timeProvider: clock,
+      onFlushFailed: (failure, _) => {
+        failures.Enqueue(failure);
+        return Task.FromResult(true);
+      },
+      metrics: metrics);
+
+    var message = _make(stream);
+    await sut.AppendAsync(message, cancellationToken);
+    await clock.AdvanceTimersUntilAsync(sut.FlushAndStopAsync(CancellationToken.None), cancellationToken);
+
+    await Assert.That(attempts).IsEqualTo(3);
+    await Assert.That(failures).Count().IsEqualTo(1);
+    var reported = failures.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.RetriesExhausted);
+    await Assert.That(reported.Attempts).IsEqualTo(3);
+    await Assert.That(reported.StreamId).IsEqualTo(stream);
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
+    await Assert.That(reported.Error).IsTypeOf<FakeDbException>();
+    var failed = recorded.GetByName("whizbang.work_coordinator.outbox_flush.failed_messages").Where(m => m.Tags.ContainsKey(WorkCoordinatorMetrics.CAUSE_TAG)).ToList();
+    await Assert.That(failed).Count().IsEqualTo(1);
+    await Assert.That(failed[0].Value).IsEqualTo(1);
+    await Assert.That(failed[0].Tags[WorkCoordinatorMetrics.CAUSE_TAG]).IsEqualTo(nameof(OutboxFlushFailureCause.RetriesExhausted));
+    await Assert.That(failed[0].Tags[WorkCoordinatorMetrics.OUTCOME_TAG]).IsEqualTo(WorkCoordinatorMetrics.OUTCOME_DEAD_LETTERED);
+    var error = log.Errors.Single();
+    await Assert.That(error).Contains(message.MessageId.ToString())
+      .Because("the error log names every message the batch held");
+    await Assert.That(error).Contains("wh_dead_letters").And.Contains("recover")
+      .Because("it says where the messages went and how to get them back");
+    await Assert.That(log.Warnings).Count().IsEqualTo(2)
+      .Because("each retry is logged once: attempts one and two, before the third gave the batch up");
+  }
+
+  /// <summary>
+  /// An error a retry cannot fix is not retried: the batch goes to the failure callback after one attempt. A callback
+  /// that could not dead-letter it leaves the messages counted as not recorded and logged as lost, with their ids.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task FlushFailsWithANonTransientError_IsReportedAtOnceAndLoggedAsLostWhenNotDeadLetteredAsync(
+      CancellationToken cancellationToken) {
+    var attempts = 0;
+    var failures = new ConcurrentQueue<OutboxFlushFailure>();
+    var log = new CapturingLog();
+    var (metrics, meter) = _metrics();
+    using var recorded = new MetricAssertionHelper(meter);
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => {
+        Interlocked.Increment(ref attempts);
+        return Task.FromException(new InvalidOperationException("the stream id is empty"));
+      },
+      logger: log,
+      options: _flushEveryMessageAtOnce(),
+      timeProvider: new TimerAdvancingClock(_idleSweep),
+      onFlushFailed: (failure, _) => {
+        failures.Enqueue(failure);
+        return Task.FromResult(false);
+      },
+      metrics: metrics);
+
+    var message = _make((Guid)TrackedGuid.New());
+    await sut.AppendAsync(message, cancellationToken);
+    await sut.FlushAndStopAsync(CancellationToken.None).WaitAsync(cancellationToken);
+
+    await Assert.That(attempts).IsEqualTo(1).Because("a failure a retry cannot fix is not retried");
+    var reported = failures.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.NotRetryable);
+    await Assert.That(reported.Attempts).IsEqualTo(1);
+    var failed = recorded.GetByName("whizbang.work_coordinator.outbox_flush.failed_messages").Single(m => m.Tags.ContainsKey(WorkCoordinatorMetrics.CAUSE_TAG));
+    await Assert.That(failed.Tags[WorkCoordinatorMetrics.OUTCOME_TAG]).IsEqualTo(WorkCoordinatorMetrics.OUTCOME_NOT_RECORDED);
+    var error = log.Errors.Single();
+    await Assert.That(error).Contains(message.MessageId.ToString());
+    await Assert.That(error).Contains("lost");
+  }
+
+  /// <summary>
+  /// A failure callback that throws does not end the stream's worker: the failure to record is logged, the batch is
+  /// logged as lost with its ids, and the stream's next batch is still stored.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task FailureCallbackThrows_TheBatchIsLoggedAsLostAndTheStreamKeepsFlushingAsync(
+      CancellationToken cancellationToken) {
+    var stored = new ConcurrentQueue<Guid>();
+    var log = new CapturingLog();
+    var stream = (Guid)TrackedGuid.New();
+    var first = _make(stream);
+    var second = _make(stream);
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (messages, _) => {
+        if (messages[0].MessageId == first.MessageId) {
+          return Task.FromException(new InvalidOperationException("refused"));
+        }
+        stored.Enqueue(messages[0].MessageId);
+        return Task.CompletedTask;
+      },
+      logger: log,
+      options: _flushEveryMessageAtOnce(),
+      timeProvider: new TimerAdvancingClock(_idleSweep),
+      onFlushFailed: (_, _) => Task.FromException<bool>(new ObjectDisposedException("IServiceProvider")),
+      metrics: null);
+
+    await sut.AppendAsync(first, cancellationToken);
+    await sut.AppendAsync(second, cancellationToken);
+    await sut.FlushAndStopAsync(CancellationToken.None).WaitAsync(cancellationToken);
+
+    await Assert.That(stored).IsEquivalentTo([second.MessageId]);
+    await Assert.That(log.Errors).Count().IsEqualTo(2);
+    await Assert.That(log.Errors.Any(e => e.Contains("Recording", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(log.Errors.Any(e => e.Contains(first.MessageId.ToString(), StringComparison.Ordinal) && e.Contains("lost", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// A stop past its deadline abandons the batch being stored and the stream's batches still buffered behind it, and
+  /// reports them all, once, as abandoned at shutdown: no attempt counted against them, no error of their own.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task CanceledStop_AbandonsTheBatchInFlightAndTheOnesBufferedBehindIt_ReportsThemOnceAsync(
+      CancellationToken cancellationToken) {
+    var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var failures = new ConcurrentQueue<OutboxFlushFailure>();
+    var abandonedReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var stream = (Guid)TrackedGuid.New();
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: async (_, ct) => {
+        flushEntered.TrySetResult();
+        // Completes only when the stop cancels the strategy's own token: no competing path, no race.
+        await Task.Delay(Timeout.Infinite, ct);
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: _flushEveryMessageAtOnce(),
+      timeProvider: new TimerAdvancingClock(_idleSweep),
+      onFlushFailed: (failure, _) => {
+        failures.Enqueue(failure);
+        abandonedReported.TrySetResult();
+        return Task.FromResult(true);
+      },
+      metrics: null);
+
+    var inFlight = _make(stream);
+    var buffered = _make(stream);
+    await sut.AppendAsync(inFlight, cancellationToken);
+    await flushEntered.Task.WaitAsync(cancellationToken);
+    await sut.AppendAsync(buffered, cancellationToken);
+
+    using var deadline = new CancellationTokenSource();
+    await deadline.CancelAsync();
+    // The stop returns at once; the worker reports what it abandoned on its own, and the test waits for that report.
+    await sut.FlushAndStopAsync(deadline.Token).WaitAsync(cancellationToken);
+    await abandonedReported.Task.WaitAsync(cancellationToken);
+
+    var reported = failures.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.AbandonedAtShutdown);
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([inFlight.MessageId, buffered.MessageId]);
+    await Assert.That(reported.Attempts).IsEqualTo(0);
+    await Assert.That(reported.Error).IsNull();
+  }
+
+  /// <summary>
+  /// A stop past its deadline that lands while a batch waits to be retried abandons it and reports it.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task CanceledStop_DuringRetryBackoff_AbandonsAndReportsTheBatchAsync(CancellationToken cancellationToken) {
+    var failures = new ConcurrentQueue<OutboxFlushFailure>();
+    var abandonedReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new TimerAdvancingClock(_idleSweep);
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.FromException(_poolExhausted()),
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: _flushEveryMessageAtOnce(),
+      timeProvider: clock,
+      onFlushFailed: (failure, _) => {
+        failures.Enqueue(failure);
+        abandonedReported.TrySetResult();
+        return Task.FromResult(true);
+      },
+      metrics: null);
+
+    var message = _make((Guid)TrackedGuid.New());
+    await sut.AppendAsync(message, cancellationToken);
+    // The retry's wait exists: the first attempt failed and the worker is waiting to try again.
+    await clock.Created(1).WaitAsync(cancellationToken);
+
+    using var deadline = new CancellationTokenSource();
+    await deadline.CancelAsync();
+    // The stop returns at once; the worker reports what it abandoned on its own, and the test waits for that report.
+    await sut.FlushAndStopAsync(deadline.Token).WaitAsync(cancellationToken);
+    await abandonedReported.Task.WaitAsync(cancellationToken);
+
+    var reported = failures.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.AbandonedAtShutdown);
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
+  }
+
+  /// <summary>The backoff doubles from <see cref="SlidingWindowOutboxOptions.FlushRetryBackoff"/> and stops at the maximum.</summary>
+  [Test]
+  public async Task FlushRetryBackoff_DoublesUpToTheMaximumAsync() {
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: new SlidingWindowOutboxOptions {
+        FlushRetryBackoff = TimeSpan.FromMilliseconds(100),
+        FlushRetryMaxBackoff = TimeSpan.FromMilliseconds(350),
+      },
+      timeProvider: new TimerAdvancingClock(_idleSweep));
+
+    await Assert.That(sut.RetryBackoff(1)).IsEqualTo(TimeSpan.FromMilliseconds(100));
+    await Assert.That(sut.RetryBackoff(2)).IsEqualTo(TimeSpan.FromMilliseconds(200));
+    await Assert.That(sut.RetryBackoff(3)).IsEqualTo(TimeSpan.FromMilliseconds(350));
+    await Assert.That(sut.RetryBackoff(60)).IsEqualTo(TimeSpan.FromMilliseconds(350));
+  }
+
+  /// <summary>Fewer than one attempt would store nothing, so it is refused when the strategy is built.</summary>
+  [Test]
+  public async Task Constructor_MaxFlushAttemptsBelowOne_ThrowsAsync() {
+    await Assert.That(() => {
+      _ = new SlidingWindowOutboxBatchStrategy(
+        flush: (_, _) => Task.CompletedTask,
+        logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+        options: new SlidingWindowOutboxOptions { MaxFlushAttempts = 0 },
+        timeProvider: new TimerAdvancingClock(_idleSweep));
+    }).Throws<ArgumentOutOfRangeException>();
+  }
+
+  // Npgsql's shape for an exhausted pool: a database exception whose inner exception is the timeout.
+  private static FakeDbException _poolExhausted() =>
+    FakeDbException.WithSqlState(null,
+      message: "The connection pool has been exhausted, either raise 'Max Pool Size' (currently 100) or 'Timeout' in your connection string.",
+      inner: new TimeoutException());
+
+  private static (WorkCoordinatorMetrics Metrics, Meter Meter) _metrics() {
+    var factory = new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: factory));
+    return (metrics, factory.Create(WorkCoordinatorMetrics.METER_NAME));
   }
 
   private static SlidingWindowOutboxOptions _flushEveryMessageAtOnce() => new() {
     // One message per batch: each drain worker yields on the size bound without consulting the clock, so all 126
-    // flushes start as soon as their message is appended, with no fake-timer choreography.
+    // flushes start as soon as their message is appended, with no window timers.
     MaxSize = 1,
     SlidingWindow = TimeSpan.FromMilliseconds(50),
     MaxWait = TimeSpan.FromSeconds(1),
-    IdleSweepInterval = TimeSpan.FromMinutes(5),
+    IdleSweepInterval = _idleSweep,
     IdleEvictionWindow = TimeSpan.FromSeconds(30),
   };
 
@@ -171,5 +465,21 @@ public class SlidingWindowOutboxFlushFailureTests {
       IsEvent = true,
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },
     };
+  }
+
+  /// <summary>Keeps the strategy's warnings and errors, formatted.</summary>
+  private sealed class CapturingLog : ILogger<SlidingWindowOutboxBatchStrategy> {
+    private readonly ConcurrentQueue<(LogLevel Level, string Text)> _entries = new();
+
+    public IReadOnlyList<string> Errors => [.. _entries.Where(e => e.Level == LogLevel.Error).Select(e => e.Text)];
+
+    public IReadOnlyList<string> Warnings => [.. _entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Text)];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      _entries.Enqueue((logLevel, formatter(state, exception)));
   }
 }
