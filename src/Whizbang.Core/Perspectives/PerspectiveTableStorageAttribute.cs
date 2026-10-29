@@ -10,15 +10,20 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Applied by the schema pass on every start, and only where the table differs, so a restart changes
-/// nothing. The compression settings affect rows written from then on; rows already stored keep their layout
-/// until they are rewritten. A setting removed from the attribute stays on the table until it is reset by hand.
+/// Applied by the schema pass, and only where the table differs, so a restart changes nothing. The compression
+/// settings affect rows written from then on; rows already stored keep their layout until they are rewritten.
+/// </para>
+/// <para>
+/// The model is the authority for <see cref="FillFactor"/> and the six autovacuum settings: one it no longer declares
+/// (removed, set back to negative, or the whole attribute removed) is reset to the server's value, including a value
+/// set on the table by hand, since nothing records who set it. <see cref="ToastTupleTarget"/> and
+/// <see cref="DataCompression"/> stay on the table when removed, until reset by hand.
 /// </para>
 /// <para>
 /// The autovacuum settings matter on a large table that is updated or deleted from often. The server's default
 /// trigger is a fraction of the table, so a table of millions of rows waits for hundreds of thousands of dead
 /// rows before it is vacuumed, and grows meanwhile. A scale factor of 0 with a fixed threshold vacuums it after
-/// the same number of changes at any size. Each autovacuum setting is negative by default, which keeps the
+/// the same number of changes at any size. Each autovacuum setting is negative by default, which means the
 /// server's value.
 /// </para>
 /// <para>
@@ -37,6 +42,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
+/// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class PerspectiveTableStorageAttribute : Attribute {
   /// <summary>The compression method for the <c>data</c> column.</summary>

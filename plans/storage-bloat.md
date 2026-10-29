@@ -179,8 +179,7 @@ Each slice is one red-then-green increment and its own commit.
    documented).
    **Status (2026-10-24):** done. #1584, closed by PR #1585. A value out of PostgreSQL's range (a scale factor
    above 100) fails the schema pass with the server's error; slice 8's range diagnostic covers these properties
-   too. Decision 3 (#1671), a `RESET` when an attribute property is removed, is not built: the generators emit
-   no `RESET`.
+   too. Decision 3 (#1671), a `RESET` when an attribute property is removed, is built by #1747.
 
 ### C3: fillfactor and event-store churn
 
@@ -195,8 +194,8 @@ Each slice is one red-then-green increment and its own commit.
    `PerspectiveTableStorageAnalyzer`), covering `FillFactor`, `ToastTupleTarget` and the three scale factors;
    the generators leave an out-of-range value out. The rewrite is queued only when the value changes on a table
    that has pages. `wh_tables_needing_rewrite` still offers a requested table only once it crosses the bloat
-   threshold, so a queued request is a hint, not a forced rewrite (#1594). The decision 3 `RESET` gap noted on
-   slice 7 applies to `FillFactor` too.
+   threshold, so a queued request is a hint, not a forced rewrite (#1594). The decision 3 `RESET` (#1747) covers
+   `FillFactor` too.
 9. **Defect 7 investigation: what updates `wh_event_store`.** Code search found these writers:
 
    | Writer | Columns | When |
@@ -317,5 +316,11 @@ All decided on 2026-10-22 in #1671 (the owner accepted the recommendations).
    every ordered read.
 3. **Removed storage attributes.** The schema pass resets (`RESET`) an autovacuum or fillfactor
    setting when the attribute property that set it is removed, so the database matches the code.
+   **Status (2026-10-29):** built (#1747). `ColumnStorageSql.ForTable` emits one guarded `RESET` for the governed
+   parameters the model does not declare (fillfactor and the six autovacuum ones, `toast.` included), from both
+   generators; it alters only what `reloptions` holds, and a reset fillfactor on a table with rows queues a rewrite.
+   Nothing records who set a parameter, so a value of those seven set by hand is reset too (design choice, documented
+   on the physical-fields page `#removed-storage-settings`); other parameters are never touched; `toast_tuple_target`
+   and compression are not reset. No migration.
 4. **pg_squeeze privileges** on managed servers (superuser or REPLICATION) is an investigation, not a
    decision. It moves into C1.3 as a prerequisite to verify.

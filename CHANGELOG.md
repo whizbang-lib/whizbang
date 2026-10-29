@@ -56,7 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sample read no rows of is not reported. Types are ranked and folded under `other` by every part together.
   Breaking (pre-1.0): `EventTypeBytes` is now one `EventPartBytes` (sampled rows, mean bytes, extrapolated total) per
   part (`Data`, `Metadata`, `PointerRow`, `OutboxMetadata`), and `EventStoreBytesParts` names the tag values.
-
+- **A removed autovacuum or fillfactor setting on `[PerspectiveTableStorage]` is reset (#1747).** When a model stops
+  declaring `FillFactor` or one of the six autovacuum properties (removed, set back to its negative default, or the
+  whole attribute removed), the schema pass of both drivers resets the parameter with one `ALTER TABLE … RESET (…)`,
+  only when the table (or, for a `toast.` parameter, its TOAST relation) holds it, so the table matches the code. A
+  reset fillfactor on a table holding rows queues a rewrite request, as a changed one does. The catalog does not
+  record who set a parameter, so a value of one of those seven parameters set by hand on a perspective table is
+  reset too, the next time the table's schema is applied, including the first start on this release; a parameter the
+  attribute cannot set (`autovacuum_analyze_threshold`, `autovacuum_enabled`, …) is never touched, and
+  `toast_tuple_target` and compression are not reset. New API: `ColumnStorageSql.ResetStorageParameters`.
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
   the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate
