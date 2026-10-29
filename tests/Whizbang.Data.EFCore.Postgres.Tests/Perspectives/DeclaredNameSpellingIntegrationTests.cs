@@ -10,6 +10,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
@@ -27,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Each test starts the generated context once to create its tables, writes rows the way the earlier release did
 /// (straight into the table, C# names), and starts it again: what an upgrade does.
 /// </remarks>
-/// <docs>operations/upgrading/declared-json-names</docs>
+/// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingPass.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/DeclaredKeyShapes.cs</code-under-test>
 [Category("Integration")]
@@ -39,7 +40,7 @@ public class DeclaredNameSpellingIntegrationTests {
   private const string EMPTY = "{}";
 
   private const string OLD_PICTURE =
-    """{"Id":"__ID__","Title":"sketch","Objects":[{"Color":"red","Points":[{"X":327,"Y":362},{"X":330.7060738825059,"Y":362}]},{"Color":"blue","Points":[{"X":1.5,"Y":-2}]}]}""";
+    """{"Id":"__ID__","Title":"sketch","Objects":[{"Color":"red","Points":[{"X":327,"Y":362},{"X":330.7060738825059,"Y":362}]},{"Color":"blue","Points":[{"X":1.5,"Y":-2}]}],"Origin":{"X":5,"Y":6}}""";
 
   private string _databaseName = null!;
   private string _connectionString = null!;
@@ -72,7 +73,7 @@ public class DeclaredNameSpellingIntegrationTests {
 
     await _startAsync(log);
 
-    var stored = JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM {PICTURE} WHERE id = '{id}'")).RootElement;
+    var stored = JsonElement.Parse(await _scalarAsync($"SELECT data::text FROM {PICTURE} WHERE id = '{id}'"));
     await Assert.That(stored.TryGetProperty("title", out _)).IsTrue();
     await Assert.That(stored.TryGetProperty("Title", out _)).IsFalse();
     var point = stored.GetProperty("Objects")[0].GetProperty("Points")[1];
@@ -90,12 +91,13 @@ public class DeclaredNameSpellingIntegrationTests {
       .Because("the mapped reader matches the declared name exactly, and the row now carries it");
     await Assert.That(read.Objects[0].Points[0].Y).IsEqualTo(362d);
     await Assert.That(read.Objects[1].Points[0].Y).IsEqualTo(-2d);
+    await Assert.That(read.Origin.X).IsEqualTo(5d).Because("a single nested object is walked like a collection's element");
 
-    var line = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning
+    var (Level, Message) = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning
       && e.Message.Contains("declared spelling", StringComparison.Ordinal) && e.Message.Contains(PICTURE, StringComparison.Ordinal));
-    await Assert.That(line.Message).IsNotNull()
+    await Assert.That(Message).IsNotNull()
       .Because("a rewrite of stored data says what it changed, once per table");
-    await Assert.That(line.Message).Contains("1 row(s)")
+    await Assert.That(Message).Contains("1 row(s)")
       .And.Contains("$.Objects[*].Points[*]: X -> x")
       .And.Contains("$.Objects[*]: Color -> color")
       .And.Contains("$: Title -> title");
@@ -136,8 +138,8 @@ public class DeclaredNameSpellingIntegrationTests {
       .And.Contains("$.Objects[0].Points[1]")
       .And.Contains("\"X\"")
       .And.Contains("\"x\"");
-    await Assert.That(JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM {PICTURE} WHERE id = '{conflicting}'"))
-        .RootElement.GetProperty("Objects")[0].GetProperty("Points")[1].GetProperty("X").GetDouble())
+    await Assert.That(JsonElement.Parse(await _scalarAsync($"SELECT data::text FROM {PICTURE} WHERE id = '{conflicting}'"))
+        .GetProperty("Objects")[0].GetProperty("Points")[1].GetProperty("X").GetDouble())
       .IsEqualTo(6d).Because("a row that cannot be rewritten is not touched");
     await Assert.That(await _scalarAsync($"SELECT data #>> '{{Objects,0,Points,0,x}}' FROM {PICTURE} WHERE id = '{plain}'"))
       .IsEqualTo("327").Because("one row that cannot be rewritten does not hold back the rows that can");
@@ -208,9 +210,9 @@ public class DeclaredNameSpellingIntegrationTests {
 
     await _startAsync(log);
 
-    var error = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal));
-    await Assert.That(error.Message).IsNotNull();
-    await Assert.That(error.Message).Contains("$.Objects[*].Points[*].y").And.Contains("1 row(s)");
+    var (Level, Message) = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal));
+    await Assert.That(Message).IsNotNull();
+    await Assert.That(Message).Contains("$.Objects[*].Points[*].y").And.Contains("1 row(s)");
     await Assert.That(await _journalAsync(PICTURE)).IsEqualTo("open");
   }
 

@@ -72,6 +72,9 @@ public class MessageJsonContextRequiredMemberTests {
     await Assert.That(_marksRequired(code, "Rank")).IsFalse();
     await Assert.That(_marksRequired(code, "Optional")).IsFalse();
     await Assert.That(_marksRequired(code, "Plain")).IsFalse();
+    await Assert.That(code).Contains("throw new global::System.InvalidOperationException(\"X is set through its constructor parameter.\")")
+      .Because("System.Text.Json refuses a required property without a setter, even one its constructor parameter fills");
+    await Assert.That(code).DoesNotContain("\"Plain is set through its constructor parameter.\"");
   }
 
   [Test]

@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Custom;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -48,6 +49,9 @@ public static class DeclaredPicture {
 
     /// <summary>The strokes.</summary>
     public List<DeclaredStroke> Objects { get; set; } = [];
+
+    /// <summary>A single nested object, which the mapped path stores as a nested document rather than a collection.</summary>
+    public DeclaredPoint Origin { get; set; } = new() { X = 0, Y = 0 };
   }
 }
 

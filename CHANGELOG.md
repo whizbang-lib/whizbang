@@ -826,6 +826,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buffered. The outbox and inbox batch flushes take a slot of the `WorkCoordinatorGate`, so concurrent per-stream
   flushes cannot open more connections than the gate allows. `LocalInvokeAsync` still does not wait for the write.
   `IWorkCoordinator` gains `StoreOutboxDeadLettersAsync`, implemented by both Postgres drivers.
+- **Stored keys that differ from a declared JSON name only in case are rewritten at startup and read back, not
+  defaulted (Fixes #1874).** Releases before the message JSON context honored `[JsonPropertyName]` (#920) stored a
+  property under its C# name. Where that differs from the declared name only in case (`"X"` for
+  `[JsonPropertyName("x")] X`), Entity Framework's mapped reader matched the declared name exactly, found no key, and
+  read the member's default with no error: a row loaded "successfully" with every such value zeroed. The stored-form
+  rewrite phase (EF Core) and the schema pass (Dapper) now find stored keys that match a declared name only
+  case-insensitively, at any depth and inside collections of records, and move them to the declared name
+  (`DeclaredKeySpellingPass`). The declared names come from what reads each document: Entity Framework's model for a
+  mapped document, the serializer's metadata otherwise; the Dapper driver learns each table's model type from a
+  `typeof` the generated schema registers at load (`PerspectiveDocumentModels`), with no reflection. The scan walks
+  each table in primary-key order in bounded chunks, returns only the rows its predicate finds, and conditions each
+  update on the row version it read. Each table rewritten is logged at Warning with the member paths and row counts
+  (`Rewrote stored keys to their declared spelling in public.wh_per_picture: 56 row(s) updated; data
+  $.Objects[*].Points[*]: X -> x in 56 row(s); ...`). Both spellings with the same value merge; with different values,
+  or a key matching two declared names, the row is left as it was and startup stops naming the table, column, row and
+  path (`StoredFormConversionBlockedException`). Each table checked is recorded in `wh_stored_form_migrations` as
+  `declared-names:<table>:<hash of its declarations>`, settled by the first pass that changes nothing and finds nothing
+  missing, after which it is skipped with one lookup until its declarations change. A `required` member (or
+  `[JsonRequired]`) is now marked required by the generated message JSON context, as System.Text.Json's own generator
+  marks it, so a document missing it fails the read with a `JsonException` instead of defaulting; a required member
+  whose type admits null is not, because the framework omits a null when writing. Entity Framework's mapped reader
+  cannot refuse a missing key, so the startup pass reports stored rows missing a required member at Error, naming the
+  path, the row count and sample rows. Events are history and are not rewritten: the combined serializer options now
+  read property names case-insensitively, so an event stored under the C# name replays with its values; writing still
+  uses the declared name. **Upgrade:** the first start rewrites affected rows; deploy without a mixed fleet, or let a
+  second start catch rows an older instance wrote meanwhile (a pass that changed rows is not settled). A row holding
+  both spellings with different values stops startup until one key is removed. A `required` non-nullable member
+  missing from a stored event or document now fails its read; fill old documents with
+  `[StoredForm(DefaultWhenMissing = ...)]`, upcast old events, or drop the `required` modifier. A type with two
+  members whose JSON names differ only in case now fails at first use with System.Text.Json's name-conflict error,
+  because names are matched case-insensitively; rename one with `[JsonPropertyName]`. A stored key that differs from
+  its declared name by more than case (a C# name `Points` declared `pts`) is not moved; declare it with
+  `[StoredForm(PreviousName = "Points")]`.
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

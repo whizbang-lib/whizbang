@@ -124,6 +124,13 @@ public sealed class PostgresSchemaInitializer {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstanceAsync</tests>
   public IServiceInstanceProvider? Instance { get; init; }
 
+  /// <summary>
+  /// The perspective tables whose stored keys are brought to their declared spelling once the tables exist (#1874):
+  /// what each table's model declares, read from the serializer's metadata. Null or empty checks nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperDeclaredNameSpellingTests.cs</tests>
+  public IReadOnlyList<Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable>? DeclaredKeyTables { get; init; }
+
   /// <summary>Told when another session holds the schema lock, before this initialization waits for it.</summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync</tests>
   public IReadOnlyList<ISchemaInitializationObserver> Observers { get; init; } = [];
@@ -221,6 +228,15 @@ public sealed class PostgresSchemaInitializer {
 
     // The registry rows for those tables, once the tables exist (the EF Core driver's step 6).
     await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
+
+    // Stored keys an earlier release wrote under a C# name that differs from the declared [JsonPropertyName] only in
+    // case are moved to the declared name, and a required member still missing is reported (#1874). A row holding
+    // both spellings with different values stops startup.
+    if (DeclaredKeyTables is { } declaredKeyTables) {
+      await Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.ApplyAsync(
+        () => new NpgsqlConnection(_connectionString), schema, declaredKeyTables,
+        SchemaCommandTimeout.Resolve(_connectionString), Logger, cancellationToken);
+    }
 
     // And the objects that refer to a perspective's table, which can only be created now that the
     // tables are there.

@@ -30,7 +30,7 @@ public class DeclaredKeyShapesTests {
 
   [Test]
   public async Task AMappedDocument_IsDescribedByTheModel_WithRequiredMembersFromTheSerializerAsync() {
-    using var context = _context();
+    await using var context = _context();
 
     var table = DeclaredKeyShapes.ForModel(context.Model, PerspectiveDocumentSerialization.Options)
       .Single(t => t.Table == "wh_per_declared_picture");
@@ -45,13 +45,13 @@ public class DeclaredKeyShapesTests {
 
   [Test]
   public async Task AnOpaqueDocument_IsDescribedByTheSerializerAsync() {
-    using var context = _context();
+    await using var context = _context();
 
     var table = DeclaredKeyShapes.ForModel(context.Model, PerspectiveDocumentSerialization.Options)
       .Single(t => t.Table == "wh_per_declared_sketch");
 
     await Assert.That(table.Columns.Single(c => c.Column == "data").Shape.Describe())
-      .Contains($"\"Points\":[{POINT}]").And.Contains("\"title\"");
+      .Contains("\"Points\":[{").And.Contains("\"x\"!").And.Contains("\"y\"!").And.Contains("\"title\"");
   }
 
   [Test]
@@ -64,6 +64,21 @@ public class DeclaredKeyShapesTests {
       .Because("a number has no keys");
     await Assert.That(DeclaredKeyShape.FromSerializer(PerspectiveDocumentSerialization.Options, typeof(Dictionary<string, DeclaredPoint>))).IsNull()
       .Because("a dictionary's keys are data, not declared names");
+  }
+
+  [Test]
+  public async Task APromotedJsonbColumn_IsADocument_UnlessItIsADictionaryAsync() {
+    await using var context = new JsonbColumnsDbContext(new DbContextOptionsBuilder<JsonbColumnsDbContext>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p")
+      .Options);
+
+    var table = DeclaredKeyShapes.ForModel(context.Model, PerspectiveDocumentSerialization.Options)
+      .Single(t => t.Table == "wh_per_jsonb_extracted_item");
+
+    await Assert.That(table.Columns.Select(c => c.Column)).Contains("labels").And.Contains("place")
+      .Because("a column holding objects is read by the serializer, so its keys are declared ones");
+    await Assert.That(table.Columns.Select(c => c.Column)).DoesNotContain("grid_filter")
+      .Because("a dictionary's keys are data");
   }
 
   [Test]

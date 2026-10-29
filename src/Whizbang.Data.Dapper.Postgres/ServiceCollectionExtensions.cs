@@ -126,6 +126,9 @@ public static class ServiceCollectionExtensions {
       new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
         // The registry rows row retention enrolls from, for every perspective the host's assemblies declared (#1548).
         PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
+        // What each table's model declares, read with the options the stores read with (#1874).
+        DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
+          Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         ManagedObjects = managedObjects is null
           ? null
           : ManagedSchemaHostPass.Declared(ManagedSchemaObjectSet.FromDeclarations(managedObjects), sp),
@@ -294,6 +297,8 @@ public static class ServiceCollectionExtensions {
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql) {
         PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
+        DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
+          Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });

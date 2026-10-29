@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -27,7 +27,7 @@ public class DeclaredKeySpellingDocumentTests {
       new DeclaredMember("color"),
       new DeclaredMember("Points", Shape: DeclaredKeyShape.ForArray(_point))))));
 
-  private static string _canonical(string json) => JsonSerializer.Serialize(JsonDocument.Parse(json).RootElement);
+  private static bool _same(string actual, string expected) => JsonNode.DeepEquals(JsonNode.Parse(actual), JsonNode.Parse(expected));
 
   [Test]
   public async Task KeysInAnotherCase_MoveToTheDeclaredName_AtEveryDepthAsync() {
@@ -36,8 +36,8 @@ public class DeclaredKeySpellingDocumentTests {
       _picture);
 
     await Assert.That(result.Conflicts).IsEmpty();
-    await Assert.That(_canonical(result.Json!)).IsEqualTo(_canonical(
-      """{"title":"t","Objects":[{"color":"red","Points":[{"x":327,"y":362},{"x":1.25,"y":2}]},{"color":"b","Points":[]}]}"""));
+    await Assert.That(_same(result.Json!,
+      """{"title":"t","Objects":[{"color":"red","Points":[{"x":327,"y":362},{"x":1.25,"y":2}]},{"color":"b","Points":[]}]}""")).IsTrue();
     await Assert.That(result.Renames.Select(r => $"{r.Path}: {r.From} -> {r.To}").Distinct().Order(StringComparer.Ordinal))
       .IsEquivalentTo(["$.Objects[*].Points[*]: X -> x", "$.Objects[*].Points[*]: Y -> y", "$.Objects[*]: Color -> color", "$: Title -> title"]);
   }
@@ -72,7 +72,7 @@ public class DeclaredKeySpellingDocumentTests {
       DeclaredKeyShape.ForObject(new DeclaredMember("x"), new DeclaredMember("y")));
 
     await Assert.That(result.Conflicts).IsEmpty();
-    await Assert.That(_canonical(result.Json!)).IsEqualTo(_canonical("""{"x":{"a":[1,2]},"y":3}"""));
+    await Assert.That(_same(result.Json!, """{"x":{"a":[1,2]},"y":3}""")).IsTrue();
   }
 
   [Test]
@@ -110,7 +110,7 @@ public class DeclaredKeySpellingDocumentTests {
   public async Task ValuesKeepTheirExactTextAsync() {
     var result = DeclaredKeySpellingDocument.Rewrite("""{"X":330.7060738825059,"Y":1E+2}""", _point);
 
-    await Assert.That(result.Json!).Contains("330.7060738825059").And.Contains("1E+2")
+    await Assert.That(result.Json).Contains("330.7060738825059").And.Contains("1E+2")
       .Because("a number is moved as written, never re-rendered through a double");
   }
 

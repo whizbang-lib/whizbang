@@ -210,6 +210,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }
         }
 
+        // Stored keys first: a key an earlier release wrote under its C# name, differing from the declared
+        // [JsonPropertyName] only in case, is moved to the declared name, so everything after it addresses the key the
+        // model reads (#1874). A row holding both spellings with different values stops startup here.
+        var declaredKeys = await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.RewriteAsync(
+          rewriteConnectionFactory, "__SCHEMA__",
+          Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(
+            dbContext.Model, Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options),
+          _schemaCommandTimeoutSeconds, logger, cancellationToken);
+
         // The app's stored-form migrations first, so a value a rename moves is converted to the canonical temporal
         // form in the same pass; then the temporal rewrites derived from the model; then the generated
         // physical-column rewrites (an enum column an earlier release stored as text is converted to the number it
@@ -231,6 +240,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
         await global::Whizbang.Data.Postgres.StoredFormIndexRebuild.ApplyAsync(
           rewriteConnectionFactory, storedFormMigrations, _schemaCommandTimeoutSeconds, logger, cancellationToken);
+        // Last, once a [StoredForm(DefaultWhenMissing)] has filled what it fills: a required member still missing from
+        // stored rows is reported, and each table checked is recorded, settled when nothing changed or is missing.
+        await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.SettleAsync(
+          rewriteConnectionFactory, "__SCHEMA__", declaredKeys, _schemaCommandTimeoutSeconds, logger, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the

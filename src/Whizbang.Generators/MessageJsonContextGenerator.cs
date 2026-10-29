@@ -137,7 +137,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
       CanWrite: p.SetMethod != null,
       JsonName: _jsonPropertyName(p),
-      IgnoreCondition: _jsonIgnoreCondition(p));
+      IgnoreCondition: _jsonIgnoreCondition(p),
+      IsRequired: _isRequiredMember(p));
+
+  private const string JSON_REQUIRED_ATTRIBUTE = "System.Text.Json.Serialization.JsonRequiredAttribute";
+
+  /// <summary>
+  /// Whether a document missing the property is refused rather than read as the property's default: a
+  /// <see langword="required"/> member or one carrying <c>[JsonRequired]</c>, as System.Text.Json's own generator
+  /// marks them, unless the property's type admits null (#1874).
+  /// </summary>
+  /// <remarks>
+  /// The framework's options omit a null when writing (<c>JsonIgnoreCondition.WhenWritingNull</c>), so a member
+  /// that may hold null may legitimately be absent from a document the framework wrote; refusing its absence would
+  /// refuse a value read back from its own write. A value type that is not <see cref="Nullable{T}"/> and a reference
+  /// annotated as non-nullable are always written.
+  /// </remarks>
+  private static bool _isRequiredMember(IPropertySymbol property) =>
+    (property.IsRequired || property.GetAttributes().Any(static a => $"{a.AttributeClass}" == JSON_REQUIRED_ATTRIBUTE))
+    && !_admitsNull(property.Type);
+
+  private static bool _admitsNull(ITypeSymbol type) =>
+    type.IsValueType
+      ? type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+      : type.NullableAnnotation != NullableAnnotation.NotAnnotated;
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -1850,7 +1873,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     for (int i = 0; i < message.Properties.Length; i++) {
       var prop = message.Properties[i];
       var setter = !prop.CanWrite || prop.IsInitOnly
-          ? "null"
+          ? _boundThroughConstructorSetter(prop)
           : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
       var propertyCode = propertyCreationSnippet
@@ -1865,12 +1888,26 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       if (_ignoreConditionStatement(prop, i) is { } ignoreCondition) {
         sb.AppendLine(ignoreCondition);
       }
+      if (prop.IsRequired) {
+        sb.AppendLine($"  properties[{i}].IsRequired = true;");
+      }
       sb.AppendLine();
     }
     sb.AppendLine("  return properties;");
     sb.AppendLine("}");
     sb.AppendLine();
   }
+
+  /// <summary>
+  /// The setter of a property set only through its constructor parameter (an init-only or positional member):
+  /// none, unless the property is required. System.Text.Json refuses a required property with no setter even when a
+  /// constructor parameter fills it, and never calls the setter of a property a parameter fills, so a required one gets
+  /// a setter that says so if it is ever reached (#1874).
+  /// </summary>
+  private static string _boundThroughConstructorSetter(PropertyInfo prop) =>
+    prop.IsRequired
+      ? $"static (_, _) => throw new global::System.InvalidOperationException(\"{prop.Name} is set through its constructor parameter.\")"
+      : "null";
 
   /// <summary>
   /// Generates the deferred constructor params creation method for a message type.

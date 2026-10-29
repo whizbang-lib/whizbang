@@ -50,8 +50,10 @@ internal sealed record JsonMessageTypeInfo(
 /// <param name="CanWrite">True if property has a setter (init or regular). False for computed/read-only properties.</param>
 /// <param name="JsonName">The name from the property's <c>[JsonPropertyName]</c>, or <see langword="null"/> when it has none and is serialized under <paramref name="Name"/>.</param>
 /// <param name="IgnoreCondition">The <c>JsonIgnoreCondition</c> member name from a conditional <c>[JsonIgnore]</c> (for example <c>WhenWritingNull</c>), or <see langword="null"/> when the property is always written.</param>
+/// <param name="IsRequired">True when a document missing the property is refused: a <c>required</c> or <c>[JsonRequired]</c> member whose type does not admit null.</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPropertyNameTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
 internal sealed record PropertyInfo(
     string Name,
     string Type,
@@ -59,7 +61,8 @@ internal sealed record PropertyInfo(
     bool IsInitOnly,
     bool CanWrite,
     string? JsonName = null,
-    string? IgnoreCondition = null
+    string? IgnoreCondition = null,
+    bool IsRequired = false
 ) {
   /// <summary>The name the property is written and read under: its <c>[JsonPropertyName]</c> when present, its C# name otherwise.</summary>
   public string WireName => JsonName ?? Name;

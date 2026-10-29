@@ -11,6 +11,8 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Data;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -31,7 +33,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// stops startup; a start that finds nothing to change updates no row; a required member missing from a stored row
 /// fails the read rather than reading as zero; and an event stored under the C# names replays with its values.
 /// </summary>
-/// <docs>operations/upgrading/declared-json-names</docs>
+/// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingPass.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/PostgresSchemaInitializer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs</code-under-test>
@@ -60,12 +62,15 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
   public async Task TheGeneratedSchema_RegistersTheModelItsTableStoresAsync() {
     await Assert.That(PerspectiveDocumentModels.Registered.Any(m => m.Table == TABLE && m.Model == typeof(DapperDeclaredPicture)))
       .IsTrue().Because("the driver needs the model's type to know which names it declares, and reflection is not an option");
+    await Assert.That(_tables().Single().Columns.Single(c => c.Column == "data").Shape.Describe()).Contains("\"x\"!")
+      .Because("the model's declared names come from the serializer's metadata for the registered type");
   }
 
   /// <summary>Through the registration a host makes: the table the generated schema creates, rewritten at the next start.</summary>
   [Test]
   public async Task RowsStoredWithCSharpNames_AreRewrittenAtHostStart_AndReadBackAsync() {
     await _hostStartAsync();
+    await _asAnEarlierReleaseLeftItAsync();
     var id = Guid.CreateVersion7();
     await _insertAsync(id, OLD_PICTURE.Replace("__ID__", id.ToString(), StringComparison.Ordinal));
 
@@ -85,6 +90,7 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
   [Test]
   public async Task ARowHoldingBothSpellings_StopsStartup_NamingItAsync() {
     await _startAsync();
+    await _asAnEarlierReleaseLeftItAsync();
     var id = Guid.CreateVersion7();
     await _insertAsync(id, """{"title":"t","Objects":[{"color":"red","Points":[{"x":5,"X":6,"y":7}]}]}""");
 
@@ -97,11 +103,14 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
   [Test]
   public async Task ASecondStart_ChangesNoRowAsync() {
     await _startAsync();
+    await _asAnEarlierReleaseLeftItAsync();
     var id = Guid.CreateVersion7();
     await _insertAsync(id, OLD_PICTURE.Replace("__ID__", id.ToString(), StringComparison.Ordinal));
     var log = new ListLogger();
     await _startAsync(log);
     var afterRewrite = await _scalarAsync($"SELECT xmin::text FROM {TABLE} WHERE id = '{id}'");
+    await Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning && !e.Message.StartsWith("Rewrote", StringComparison.Ordinal)))
+      .IsEmpty();
     await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains("declared spelling", StringComparison.Ordinal)
         && e.Message.Contains("$.Objects[*].Points[*]: X -> x", StringComparison.Ordinal))).IsTrue();
 
@@ -116,6 +125,7 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
   [Test]
   public async Task ARequiredMemberMissing_FailsTheRead_AndIsReportedAtStartupAsync() {
     await _startAsync();
+    await _asAnEarlierReleaseLeftItAsync();
     var id = Guid.CreateVersion7();
     await _insertAsync(id, """{"title":"t","Objects":[{"color":"red","Points":[{"x":3}]}]}""");
     var log = new ListLogger();
@@ -171,6 +181,13 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
     await provider.GetServices<IHostedService>().OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// The first start created the table empty and settled it; a release before this one had no such record, and its
+  /// rows were already there.
+  /// </summary>
+  private Task _asAnEarlierReleaseLeftItAsync() =>
+    _execAsync($"DELETE FROM wh_stored_form_migrations WHERE name LIKE 'declared-names:{TABLE}:%'");
+
   private Task _insertAsync(Guid id, string data) => _execAsync($"""
     INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
     VALUES ('{id}', '{data}', '{EMPTY}', '{EMPTY}', now(), now(), 1)
@@ -190,9 +207,9 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       lock (Entries) {
-        Entries.Add((logLevel, formatter(state, exception)));
+        Entries.Add((logLevel, exception is null ? formatter(state, exception) : $"{formatter(state, exception)} | {exception.Message}"));
       }
     }
   }
