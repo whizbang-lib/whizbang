@@ -4218,6 +4218,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, logger: _logger, cancellationToken: cancellationToken));
   }
 
+  /// <inheritdoc />
+  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreOutboxDeadLettersAsync(
+    OutboxMessage[] messages,
+    OutboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    var json = _serializeNewOutboxMessages(messages);
+    var deadLetterIds = new Guid[messages.Length];
+    for (var i = 0; i < deadLetterIds.Length; i++) {
+      deadLetterIds[i] = (Guid)TrackedGuid.New();
+    }
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_store_outbox_dead_letters");
+
+    var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+    await using var connectionScope = await CoordinatorConnectionScope.AcquireForEfCoreAsync(connection, cancellationToken);
+    await using var cmd = connectionScope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Transaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction;
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {functionName}(@p_messages::jsonb, @p_dead_letter_ids, @p_failure_reason, @p_error_text, @p_attempts, @p_instance_id, @p_generation)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_messages", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = json });
+    cmd.Parameters.Add(new NpgsqlParameter("p_dead_letter_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterIds });
+    cmd.Parameters.Add(new NpgsqlParameter("p_failure_reason", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)request.FailureReason });
+    cmd.Parameters.Add(new NpgsqlParameter("p_error_text", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.ErrorText ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_attempts", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.Attempts });
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = request.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_generation", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.Generation });
+    await cmd.ExecuteScalarAsync(cancellationToken);
+    return true;
+  }
+
   /// <summary>
   /// An outbox row was skipped because its message id already existed: a retry re-emitted a message whose
   /// first emission had already committed. Debug because the metric is the operator's signal; the log

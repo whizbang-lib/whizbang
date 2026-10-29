@@ -230,6 +230,42 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperOutboxDeadLetterTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreOutboxDeadLettersAsync(
+    OutboxMessage[] messages,
+    OutboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    var json = _serializeNewOutboxMessages(messages);
+    var deadLetterIds = new Guid[messages.Length];
+    for (var i = 0; i < deadLetterIds.Length; i++) {
+      deadLetterIds[i] = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    await connection.ExecuteScalarAsync<int>(
+      $"SELECT {prefix}wh_store_outbox_dead_letters(@messages::jsonb, @deadLetterIds, @failureReason, @errorText, @attempts, @instanceId, @generation)",
+      new {
+        messages = json,
+        deadLetterIds,
+        failureReason = (int)request.FailureReason,
+        errorText = request.ErrorText,
+        attempts = request.Attempts,
+        instanceId = request.InstanceId,
+        generation = request.Generation
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    return true;
+  }
+
+  /// <inheritdoc />
   public async Task<int> CleanupCompletedStreamsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) {
