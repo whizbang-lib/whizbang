@@ -378,6 +378,8 @@ public sealed class DeadLetterRecoveryOptions {
     // connections for longer than the batcher's own retries. Recovery stores it through the outbox store, so re-drive
     // it soon and often, and hold it for review once the budget is spent so a store that keeps refusing is visible.
     [MessageFailureReason.OutboxStoreFailed] = new("AggressiveRetry", 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
+    // #1885: the same for a message the inbox batcher could not store; recovery stores it through the inbox store.
+    [MessageFailureReason.InboxStoreFailed] = new("AggressiveRetry", 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
   };
 }
 

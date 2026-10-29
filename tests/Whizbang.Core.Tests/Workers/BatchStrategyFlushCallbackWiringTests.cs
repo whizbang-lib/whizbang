@@ -163,4 +163,72 @@ public class BatchStrategyFlushCallbackWiringTests {
     await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(1);
     await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1);
   }
+
+  /// <summary>
+  /// #1885: the registered inbox batcher hands a batch it could not store to the registered failure recorder, which
+  /// writes it to the dead-letter table through the coordinator resolved from a fresh scope.
+  /// </summary>
+  [Test]
+  public async Task SlidingWindowInboxBatchStrategy_ABatchItCannotStore_IsDeadLetteredThroughTheRegisteredRecorderAsync() {
+    var coordinator = new RefusingInboxCoordinator();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.Configure<SlidingWindowInboxOptions>(opts => opts.MaxSize = 1);
+    services.AddWhizbangWorkers();
+
+    await using var sp = services.BuildServiceProvider();
+    sp.GetRequiredService<ISchemaReadyGate>().MarkReady();
+    var strategy = sp.GetRequiredService<IInboxBatchStrategy>();
+    var msgId = (Guid)TrackedGuid.New();
+    await strategy.AppendAsync(new InboxMessage {
+      MessageId = msgId,
+      HandlerName = "TestHandler",
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(msgId), JsonElement.Parse("{}"), []),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      StreamId = (Guid)TrackedGuid.New(),
+    });
+    await strategy.FlushAndStopAsync();
+
+    await Assert.That(strategy).IsTypeOf<SlidingWindowInboxBatchStrategy>();
+    var (messages, request) = coordinator.DeadLettered.Single();
+    await Assert.That(messages.Select(m => m.MessageId)).IsEquivalentTo([msgId]);
+    await Assert.That(request.FailureReason).IsEqualTo(MessageFailureReason.InboxStoreFailed);
+    await Assert.That(request.Attempts).IsEqualTo(1)
+      .Because("a store refused with an error a retry cannot fix is given up after its first attempt");
+  }
+
+  /// <summary>Refuses every inbox store with an error a retry cannot fix, and keeps what it is asked to dead-letter.</summary>
+  private sealed class RefusingInboxCoordinator : IWorkCoordinator {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(InboxMessage[] Messages, InboxDeadLetterRequest Request)> _deadLettered = new();
+
+    public IReadOnlyList<(InboxMessage[] Messages, InboxDeadLetterRequest Request)> DeadLettered => [.. _deadLettered];
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.FromException(new InvalidOperationException("the inbox store refused the batch"));
+
+    public Task<bool> StoreInboxDeadLettersAsync(InboxMessage[] messages, InboxDeadLetterRequest request, CancellationToken cancellationToken = default) {
+      _deadLettered.Enqueue((messages, request));
+      return Task.FromResult(true);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
 }

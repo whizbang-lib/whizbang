@@ -1064,11 +1064,24 @@ public static class WorkerPipelineExtensions {
     // override via the AddWhizbangInboxStrategy generic extension for the immediate
     // passthrough or a custom implementation.
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
+    // A batch the inbox batcher cannot store is written to the dead-letter table, counted and reported to every
+    // IInboxFlushFailureObserver, never dropped (#1885).
+    services.TryAddSingleton<InboxFlushFailureCallback>(sp => sp.GetRequiredService<InboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton(sp => new InboxFlushFailureRecorder(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetService<WorkCoordinatorGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<IGenerationProvider>(),
+      sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
+      sp.GetServices<IInboxFlushFailureObserver>(),
+      sp.GetRequiredService<ILogger<InboxFlushFailureRecorder>>()));
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowInboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>()));
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<InboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());

@@ -84,6 +84,23 @@ public sealed class WorkCoordinatorMetrics {
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public PassiveCounter<long> OutboxFlushFailedMessages { get; }
 
+  /// <summary>
+  /// Retries of a stream's inbox batch after a transient database failure, tagged <c>reason</c> (#1885). A steady
+  /// rate is a database or pool that cannot keep up with the concurrent per-stream inbox flushes.
+  /// </summary>
+  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushFailsOnceForSomeStreams_EveryAcceptedMessageIsStoredAsync</tests>
+  public PassiveCounter<long> InboxFlushRetries { get; }
+
+  /// <summary>
+  /// Inbox messages the inbox batcher accepted and could not store, tagged <c>cause</c> (retries exhausted, not
+  /// retryable, abandoned at shutdown) and <c>outcome</c> (<c>dead_lettered</c>, or <c>not_recorded</c> when the
+  /// dead-letter write failed too) (#1885). Any <c>not_recorded</c> count is messages that exist only in the error log.
+  /// </summary>
+  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
+  public PassiveCounter<long> InboxFlushFailedMessages { get; }
+
   // Publisher worker
 
   /// <summary>Lease renewals due to transport not ready.</summary>
@@ -153,6 +170,14 @@ public sealed class WorkCoordinatorMetrics {
       "whizbang.work_coordinator.outbox_flush.failed_messages",
       description: "Outbox messages the batcher accepted and could not store; tagged by cause and outcome (dead_lettered or not_recorded)");
     OutboxFlushFailedMessages.Touch(OUTCOME_TAG, [OUTCOME_DEAD_LETTERED, OUTCOME_NOT_RECORDED]);
+
+    InboxFlushRetries = meter.CreatePassiveCounter<long>(
+      "whizbang.work_coordinator.inbox_flush.retries",
+      description: "Retries of a stream's inbox batch after a transient database failure; tagged by reason");
+    InboxFlushFailedMessages = meter.CreatePassiveCounter<long>(
+      "whizbang.work_coordinator.inbox_flush.failed_messages",
+      description: "Inbox messages the inbox batcher accepted and could not store; tagged by cause and outcome (dead_lettered or not_recorded)");
+    InboxFlushFailedMessages.Touch(OUTCOME_TAG, [OUTCOME_DEAD_LETTERED, OUTCOME_NOT_RECORDED]);
 
     PublisherLeaseRenewals = meter.CreatePassiveCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
     PublisherBufferedMessages = meter.CreatePassiveCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");

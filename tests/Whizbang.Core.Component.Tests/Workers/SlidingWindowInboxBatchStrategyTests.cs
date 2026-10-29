@@ -502,9 +502,8 @@ public class SlidingWindowInboxBatchStrategyTests {
   [Test]
   [Timeout(30000)]
   public async Task AppendAsync_AFailedFlushIsReportedAsync(CancellationToken testToken) {
-    // The batch is dropped on failure and recovered only by transport redelivery, so the log
-    // line is the sole record that it happened. Without it a silent drop looks like a message
-    // that was never sent.
+    // A batch whose store fails with an error a retry cannot fix is reported at once: handed to the
+    // failure callback and logged with its message ids, so it never vanishes silently (#1885).
     var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new RecordingLogger();
     var clock = new BatchWindowClock(_window);
@@ -530,9 +529,8 @@ public class SlidingWindowInboxBatchStrategyTests {
     // a 150ms sleep passed on a quiet machine and failed under CI load. A missing log now fails by the test's timeout.
     await logger.ErrorLogged.WaitAsync(testToken);
 
-    await Assert.That(logger.Errors.Any(e => e.Contains("bulk flush", StringComparison.Ordinal))).IsTrue()
-      .Because("the batch is dropped and only transport redelivery recovers it — the log line is "
-             + "the only record that it happened");
+    await Assert.That(logger.Errors.Any(e => e.Contains("were not stored", StringComparison.Ordinal))).IsTrue()
+      .Because("with no failure callback the log line is the only record of the batch, so it has to say so");
   }
 
   [Test]

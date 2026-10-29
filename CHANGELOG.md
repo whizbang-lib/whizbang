@@ -866,6 +866,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`PinnedConnectionContext.Current`) after the caller released it, or while the caller was still using it, and its
   scope, tenant and activity, carried into flushes of other callers' messages. Drain workers now start with the flow
   suppressed, so a flush sees no ambient state from whoever appended first.
+- **An inbox message the inbox batcher accepted is never dropped when its store fails (Fixes #1885).** The default
+  `IInboxBatchStrategy`, `SlidingWindowInboxBatchStrategy`, logged a failed per-stream store and dropped the batch,
+  counting on transport redelivery. But `AppendAsync` returns once the message is buffered, so the code that appended
+  it may already have settled it with its broker, and the batcher holds no acknowledgement it could withhold. (The
+  transports' own receive paths do not use this batcher: they store each delivery before settling it, so a failed
+  store there already leaves the delivery for the broker to re-deliver.) The inbox batcher now does what the outbox
+  batcher does since #1871: a transient database failure is retried on the stream's own worker with backoff, keeping
+  the stream's order (`Whizbang:Workers:InboxBatch:MaxFlushAttempts`, default 5; `FlushRetryBackoff`, default 100 ms;
+  `FlushRetryMaxBackoff`, default 5 s). A batch that still cannot be stored, fails with an error a retry cannot fix, or
+  is abandoned by a stop past its deadline is written to `wh_dead_letters` as `wh_inbox` dead letters with the new
+  reason `InboxStoreFailed` (24), through `wh_store_inbox_dead_letters` (migration 257), which also logs each message
+  in `wh_log`; a message whose store had committed is skipped. Dead-letter recovery re-enters it through the inbox
+  store like any inbox dead letter (default policy: five recoveries a minute apart, then held for review). It is
+  counted (`whizbang.work_coordinator.inbox_flush.failed_messages`, tagged `cause` and `outcome`; retries in
+  `whizbang.work_coordinator.inbox_flush.retries`), reported to every registered `IInboxFlushFailureObserver`, and
+  logged at Error with every message id. `IWorkCoordinator` gains `StoreInboxDeadLettersAsync`, implemented by both
+  Postgres drivers.
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

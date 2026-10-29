@@ -218,6 +218,16 @@ public enum MessageFailureReason {
   OutboxStoreFailed = 23,
 
   /// <summary>
+  /// The inbox message was accepted by the inbox batcher and could not be stored in the inbox: the store kept failing
+  /// with a transient database failure until its attempts ran out, failed with an error a retry cannot fix, or was
+  /// abandoned by a stop past its deadline. The batcher had already accepted it, so its broker may never deliver it
+  /// again. The dead letter holds the message's envelope, and recovery stores it through the inbox store as a delivery
+  /// of the same envelope is stored (#1885). The recorded error text is the store's last failure.
+  /// </summary>
+  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  InboxStoreFailed = 24,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

@@ -473,8 +473,11 @@ Whizbang:Workers:Heartbeat:Enabled
 Whizbang:Workers:Heartbeat:IntervalSeconds
 Whizbang:Workers:Heartbeat:LivenessSourceMode
 Whizbang:Workers:Heartbeat:SlowIntervalSeconds
+Whizbang:Workers:InboxBatch:FlushRetryBackoff
+Whizbang:Workers:InboxBatch:FlushRetryMaxBackoff
 Whizbang:Workers:InboxBatch:IdleEvictionWindow
 Whizbang:Workers:InboxBatch:IdleSweepInterval
+Whizbang:Workers:InboxBatch:MaxFlushAttempts
 Whizbang:Workers:InboxBatch:MaxSize
 Whizbang:Workers:InboxBatch:MaxWait
 Whizbang:Workers:InboxBatch:SlidingWindow

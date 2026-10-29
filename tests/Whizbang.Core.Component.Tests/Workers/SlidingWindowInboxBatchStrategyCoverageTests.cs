@@ -69,23 +69,23 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   /// Covers the hard-shutdown pairing: when the caller's <c>FlushAndStopAsync</c> token fires
   /// while a per-stream buffer's flush is still hung, the strategy must force-cancel its
   /// internal token to unstick the drain task rather than waiting for it forever, AND the drain
-  /// task's own OperationCanceledException-during-shutdown catch must return quietly instead of
-  /// falling into the generic exception handler.
+  /// task must report the batch the stop interrupted as abandoned at shutdown, once, never as a
+  /// failed store (#1885).
   /// </summary>
   /// <remarks>
   /// If the force-cancel regressed, a hard-shutdown deadline would leave a hung drain task
   /// running forever with nothing left to unstick it — <c>FlushAndStopAsync</c> would still
   /// return (its own wait already threw), but the leaked task's eventual outcome is lost and the
-  /// process cannot exit cleanly while it survives. If the drain loop's own cooperative return
-  /// regressed instead, that same forced cancellation would be logged as a flush FAILURE —
-  /// turning an intentional, already-handled shutdown into false-positive error-log noise that
-  /// pages an operator for nothing.
+  /// process cannot exit cleanly while it survives. The interrupted batch was accepted and never
+  /// stored, so it is reported as abandoned at shutdown rather than dropped; reporting the forced
+  /// cancellation as a failed store instead would misstate why it was not stored.
   /// </remarks>
   [Test]
   [Timeout(30000)]
-  public async Task FlushAndStopAsync_CallerTokenFiresWhileFlushIsHung_ForceCancelsWithoutLoggingFailureAsync(
+  public async Task FlushAndStopAsync_CallerTokenFiresWhileFlushIsHung_ForceCancelsAndReportsTheBatchAbandonedAsync(
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var abandoned = new System.Collections.Concurrent.ConcurrentQueue<InboxFlushFailure>();
     var logger = new RecordingLogger();
     var window = TimeSpan.FromMilliseconds(10);
     var clock = new BatchWindowClock(window);
@@ -103,9 +103,15 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
       },
-      timeProvider: clock);
+      timeProvider: clock,
+      onFlushFailed: (failure, _) => {
+        abandoned.Enqueue(failure);
+        return Task.FromResult(true);
+      },
+      metrics: null);
 
-    await sut.AppendAsync(_makeMessage(), testToken);
+    var message = _makeMessage();
+    await sut.AppendAsync(message, testToken);
     await clock.Armed(1).WaitAsync(testToken);
     clock.Advance(window);
     await flushStarted.Task.WaitAsync(testToken);
@@ -118,12 +124,15 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     // strategy's own hard-cancel — rather than this call ever throwing out to us.
     await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(testToken);
 
-    // Wait for the drain worker itself to finish: its exception handler, unblocked by the forced cancellation,
-    // either returns quietly or, if regressed, logs a spurious failure, and both happen before the worker ends.
+    // Wait for the drain worker itself to finish: it reports what the forced cancellation abandoned before it ends.
     await sut.WhenWorkersStoppedForTests().WaitAsync(testToken);
 
-    await Assert.That(logger.Errors).IsEmpty()
-      .Because("a shutdown-forced cancellation of an in-flight flush is not a flush failure and must never be logged as one");
+    var reported = abandoned.Single();
+    await Assert.That(reported.Cause).IsEqualTo(InboxFlushFailureCause.AbandonedAtShutdown)
+      .Because("a shutdown-forced cancellation of an in-flight flush is not a failed store and must never be reported as one");
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
+    await Assert.That(logger.Errors).Count().IsEqualTo(1)
+      .Because("the abandoned batch is logged once, with its message ids, and nothing else is");
   }
 
   // Target: SlidingWindowInboxBatchStrategy.cs:170 — the `_disposed` guard at the top of
