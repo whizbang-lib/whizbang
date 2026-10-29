@@ -190,8 +190,10 @@ first. Migration `262_ArchiveStoreKeepsATombstone.sql`; `IArchiveStore`, `Archiv
 `ArchiveLocator` (`{store}://{address}?codec={codec}&format={format}`, codec recorded per archive), and
 `PostgresTableArchiveStore` (codec `none`: the rows stay `jsonb`), registered by both drivers and used by the prefix
 truncate's archive path. A whole-stream archive parks cursors in `wh_event_archive_cursors`, keeps snapshots and leaves
-the tombstone; a statement trigger on `wh_event_store` refuses version reuse (`WHA01`) and is installed once
-`wh_stream_lifecycle` exists. `RestoreAsync` (restores exact positions) and `DeleteAsync` are implemented here, so S9
+the tombstone (built from the events by 260's rules when the stream has no ledger row yet); a statement trigger on
+`wh_event_store` refuses version reuse (`WHA01`). The archive keeps `approx_bytes` measuring the hot store (a prefix
+subtracts what it moved, a whole stream counts 0, a restore adds back), and `wh_purge_streams` (copied from 260) also
+removes the parked cursors. `RestoreAsync` (restores exact positions) and `DeleteAsync` are implemented here, so S9
 only consumes them. Open for S9: the per-type append-to-archived policy on the write paths (today the trigger raises,
 which fails the whole emit-chain batch). Docs: `v1.0.0/fundamentals/events/archive-store.md` (docs branch `docs/1736`).
 

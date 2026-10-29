@@ -35,8 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   epochs and cursors; `DeleteAsync` drops the copy and keeps the tombstone. The archive locator
   (`{store}://{address}?codec={codec}&format={format}`) records each archive's codec (`none` for the table store; Brotli
   first for byte-stream stores). Both Postgres drivers register `PostgresTableArchiveStore`, and the prefix truncate's
-  archive path writes through it, so an archiving truncate now also works on the Dapper driver. Migration 262 (needs the
-  stream lifecycle ledger, migration 260). New API: `IArchiveStore`, `ArchiveBatch`, `ArchiveLocator`,
+  archive path writes through it, so an archiving truncate now also works on the Dapper driver. The archive keeps the
+  stream's ledger row honest (built from the events when the backfill has not reached the stream, `approx_bytes` reduced
+  on archive and restored on restore), and a purge removes the parked cursors. Migration 262 (after the stream lifecycle
+  ledger, migration 260). New API: `IArchiveStore`, `ArchiveBatch`, `ArchiveLocator`,
   `ArchiveCompression`, `ArchiveStatus`, `ArchiveWriteResult`, `ArchiveRestoreResult`, `PostgresTableArchiveStore`, and
   the scope, aggregate, created-at and flags properties of `ArchivedEvent`.
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
