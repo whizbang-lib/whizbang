@@ -91,6 +91,16 @@ public partial class MigrationTransactionBoundaryGuardTests {
       + "refused to restore; wh_inbox supplies only stream_id, scope and message_type, none of which moved",
   };
 
+  /// <summary>
+  /// Functions that name <c>wh_inbox</c> only by columns the cutover kept, while a moved column's name appears in
+  /// the body for another table: each entry says which.
+  /// </summary>
+  private static readonly Dictionary<string, string> NAMES_THE_INBOX_ONLY_BY_KEPT_COLUMNS = new(StringComparer.Ordinal) {
+    ["wh_store_inbox_dead_letters"] =
+      "257 (#1885): reads wh_inbox only by message_id (kept) to skip a message already stored; failure_reason, "
+      + "attempts and error are the wh_dead_letters columns it writes",
+  };
+
   private const string CUTOVER_MIGRATION = "162_InboxWorkStateSideTable";
 
   /// <summary>
@@ -222,7 +232,8 @@ public partial class MigrationTransactionBoundaryGuardTests {
     }
 
     foreach (var (function, (_, sql)) in latest) {
-      if (enumerated.Contains(function) || READS_THE_MOVED_COLUMN_FROM_THE_SIDE_TABLE.ContainsKey(function)) {
+      if (enumerated.Contains(function) || READS_THE_MOVED_COLUMN_FROM_THE_SIDE_TABLE.ContainsKey(function)
+          || NAMES_THE_INBOX_ONLY_BY_KEPT_COLUMNS.ContainsKey(function)) {
         continue;
       }
       var body = _bodyOf(sql, function);

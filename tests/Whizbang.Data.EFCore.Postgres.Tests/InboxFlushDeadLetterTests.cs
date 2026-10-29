@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/257_UnstoredInboxMessagesAreDeadLettered.sql</code-under-test>
+[Category("Shard5")]
 public class InboxFlushDeadLetterTests : EFCoreTestBase {
   private const int PARTITION_COUNT = 10000;
 
