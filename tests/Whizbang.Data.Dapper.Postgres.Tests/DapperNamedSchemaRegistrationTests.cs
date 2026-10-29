@@ -78,4 +78,21 @@ public class DapperNamedSchemaRegistrationTests {
       $"SELECT count(*) FROM {SCHEMA}.wh_service_instances WHERE instance_id = @instanceId", new { instanceId })).IsEqualTo(1L)
       .Because("the registered coordinator runs against the schema the migrations installed");
   }
+
+  [Test]
+  [Timeout(120_000)]
+  public async Task TheStreamLifecycleBackfillStep_SearchPathNamesASchema_SeedsTheLedgerThereAsync(CancellationToken cancellationToken) {
+    await (await _startAsync()).DisposeAsync();
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await db.ExecuteAsync($"""
+      INSERT INTO {SCHEMA}.wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at, flags)
+      VALUES (@id, @stream, @stream, 'Agg.Named', 'Agg.Named, Tests', 1, @at, 0);
+      UPDATE {SCHEMA}.wh_settings SET setting_value = '0' WHERE setting_key = 'stream_lifecycle_backfill_version';
+      """, new { id = Guid.CreateVersion7(), stream = Guid.CreateVersion7(), at = new DateTimeOffset(2026, 4, 1, 9, 0, 0, TimeSpan.Zero) });
+
+    await new DapperStreamLifecycleBackfillMaintenanceStep(_named).RunAsync(new ServiceCollection().BuildServiceProvider(), cancellationToken);
+
+    await Assert.That(await db.ExecuteScalarAsync<long>($"SELECT count(*) FROM {SCHEMA}.wh_stream_lifecycle")).IsEqualTo(1L)
+      .Because("the step runs against the schema the connection string's Search Path names, as the coordinator does");
+  }
 }
