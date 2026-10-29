@@ -36,4 +36,39 @@
     <Right>lib/net10.0/Whizbang.Core.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.BatchFlusher`1.#ctor(System.Func{System.Collections.Generic.IReadOnlyList{`0},System.Threading.CancellationToken,System.Threading.Tasks.Task},Whizbang.Core.Workers.BatchFlusherOptions,Microsoft.Extensions.Logging.ILogger)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.FailureFlushWorker.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Whizbang.Core.Workers.ISchemaReadyGate,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.FailureFlushWorkerOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Workers.FailureFlushWorker},Whizbang.Core.Workers.IPinnedConnectionPool)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.OutboxCompletionFlushWorker.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Whizbang.Core.Workers.ISchemaReadyGate,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.OutboxCompletionFlushWorkerOptions},Microsoft.Extensions.Options.IOptions{Whizbang.Core.Messaging.WorkCoordinatorOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Workers.OutboxCompletionFlushWorker},Whizbang.Core.Workers.IPinnedConnectionPool)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.PerspectiveCompletionFlushWorker.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Whizbang.Core.Workers.ISchemaReadyGate,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.PerspectiveCompletionFlushWorkerOptions},Microsoft.Extensions.Options.IOptions{Whizbang.Core.Messaging.WorkCoordinatorOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Workers.PerspectiveCompletionFlushWorker},Whizbang.Core.Workers.IPinnedConnectionPool)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.TransportBatchCollector`1.#ctor(Whizbang.Core.Workers.TransportBatchOptions,System.Func{System.Collections.Generic.IReadOnlyList{`0},System.Threading.Tasks.Task})</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
 </Suppressions>
