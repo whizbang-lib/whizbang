@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -90,6 +91,12 @@ public static class JsonContextRegistry {
   /// This allows cross-assembly type resolution without reflection.
   /// </summary>
   private static readonly ConcurrentDictionary<string, (Type type, IJsonTypeInfoResolver resolver)> _typeNameMappings = new();
+
+  // What GetTypeInfoByName reads on every deserialization: a frozen copy of _typeNameMappings, about three times
+  // faster to look up. Registration stays open (a module initializer runs when its assembly first loads), so every
+  // registration drops the copy under _typeNameGate and the next lookup rebuilds it (#1756).
+  private static FrozenDictionary<string, (Type type, IJsonTypeInfoResolver resolver)>? _typeNameSnapshot;
+  private static readonly Lock _typeNameGate = new();
 
   /// <summary>
   /// Registers a JsonSerializerContext resolver.
@@ -438,7 +445,19 @@ public static class JsonContextRegistry {
 
     // Use centralized type name normalization from EventTypeMatchingHelper
     var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
-    _typeNameMappings[normalizedName] = (type, resolver);
+    lock (_typeNameGate) {
+      _typeNameMappings[normalizedName] = (type, resolver);
+      Volatile.Write(ref _typeNameSnapshot, null);
+    }
+  }
+
+  // Rebuilt under the gate so it holds every registration completed before it; one completed after it drops it again
+  private static FrozenDictionary<string, (Type type, IJsonTypeInfoResolver resolver)> _freezeTypeNames() {
+    lock (_typeNameGate) {
+      var snapshot = _typeNameMappings.ToFrozenDictionary();
+      Volatile.Write(ref _typeNameSnapshot, snapshot);
+      return snapshot;
+    }
   }
 
   /// <summary>
@@ -461,7 +480,8 @@ public static class JsonContextRegistry {
     // Use centralized type name normalization from EventTypeMatchingHelper
     var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
 
-    if (_typeNameMappings.TryGetValue(normalizedName, out var entry)) {
+    var mappings = Volatile.Read(ref _typeNameSnapshot) ?? _freezeTypeNames();
+    if (mappings.TryGetValue(normalizedName, out var entry)) {
       return entry.resolver.GetTypeInfo(entry.type, options);
     }
 

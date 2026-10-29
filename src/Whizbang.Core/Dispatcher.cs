@@ -1005,7 +1005,7 @@ public abstract partial class Dispatcher(
     }
 
     // Process tags after successful receptor completion
-    await _processTagsIfEnabledAsync(message, eventType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(message, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     await _startLocalRunDetachedHooksAsync(message, eventType, registered, sourceEnvelope: null, copyId);
   }
@@ -1525,7 +1525,7 @@ public abstract partial class Dispatcher(
 
     // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
     await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
-    await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(message, messageType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, messageType, envelope, sourceEnvelope: null, storedId, cancellationToken);
     await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
   }
@@ -2081,7 +2081,7 @@ public abstract partial class Dispatcher(
       }
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2129,7 +2129,7 @@ public abstract partial class Dispatcher(
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2317,7 +2317,7 @@ public abstract partial class Dispatcher(
         var result = await _invokeAndCascadeAsync(invoker, actualMessage, messageType, envelope, CancellationToken.None);
 
         // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(actualMessage, messageType);
+        await ProcessTagsIfEnabledAsync(actualMessage, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
@@ -2388,7 +2388,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate - zero reflection, strongly typed
         await invoker(message);
-        await _processTagsIfEnabledAsync(message, messageType);
+        await ProcessTagsIfEnabledAsync(message, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2440,7 +2440,7 @@ public abstract partial class Dispatcher(
         _envelopeRegistry!.Unregister(message);
       }
     }
-    await _processTagsIfEnabledAsync(message, messageType);
+    await ProcessTagsIfEnabledAsync(message, messageType);
 
     // Invoke PostLifecycle and ImmediateDetached lifecycle receptors after business receptor completes
     // Create a minimal envelope for lifecycle invocation
@@ -2489,7 +2489,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
         await invoker(actualMessage);
-        await _processTagsIfEnabledAsync(actualMessage, messageType);
+        await ProcessTagsIfEnabledAsync(actualMessage, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
@@ -2665,7 +2665,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
       await asyncInvoker(message);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
     }
   }
 
@@ -2692,7 +2692,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
     syncInvoker(message);
-    await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+    await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
   }
 
   /// <summary>
@@ -2745,7 +2745,7 @@ public abstract partial class Dispatcher(
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -2796,7 +2796,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -2961,7 +2961,7 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -3021,7 +3021,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -3607,7 +3607,7 @@ public abstract partial class Dispatcher(
       await _publishToForeignLookupsAsync(message, messageType, localEnvelope, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       // Tags after the handlers, as on a publish (#1410 follow-up)
-      await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+      await ProcessTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       await _invokeLocalRunPostLifecycleAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId, cancellationToken)
         .ConfigureAwait(false);
       await _startLocalRunDetachedHooksAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId).ConfigureAwait(false);
@@ -3662,39 +3662,50 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/messages/message-tags#processing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
-  /// <summary>
-  /// Invokes lifecycle receptors at the specified stages via a scoped IReceptorInvoker.
-  /// Creates a scope per invocation to ensure proper scoped dependency resolution,
-  /// full security context propagation, and event cascading.
-  /// </summary>
-  private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
-#pragma warning disable CA1848, CA1873 // Diagnostic logging using lazy-resolved logger
-    DispatcherLogger.LogDebug("_processTagsIfEnabledAsync called for {MessageType}", messageType.Name);
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorCompletingLater_IsAwaitedBeforeTheStepCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorFaulted_ReachesTheCallerAsync</tests>
+  internal ValueTask ProcessTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
+    // Runs after every dispatch, so it allocates nothing while debug is off (#1756): the log calls are
+    // source-generated and check the level before building anything, and the step completes synchronously unless
+    // the processor does not, so no async state machine is created on the common paths
+    var logger = DispatcherLogger;
+    Log.TagProcessingEntered(logger, messageType.Name);
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
-      DispatcherLogger.LogDebug("Tag processing is DISABLED - returning early");
-      return;
+      Log.TagProcessingDisabled(logger);
+      return ValueTask.CompletedTask;
     }
 
     // Skip immediate processing if using lifecycle stage mode
     if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
-      DispatcherLogger.LogDebug("TagProcessingMode is {TagProcessingMode}, not AfterReceptorCompletion - returning early", _coreOptions.TagProcessingMode);
-      return;
+      Log.TagProcessingModeSkipped(logger, _coreOptions.TagProcessingMode);
+      return ValueTask.CompletedTask;
     }
 
     // Skip if no processor is registered
     if (_messageTagProcessor is null) {
-      DispatcherLogger.LogDebug("No IMessageTagProcessor registered - returning early");
-      return;
+      Log.NoTagProcessorRegistered(logger);
+      return ValueTask.CompletedTask;
     }
 
-    DispatcherLogger.LogDebug("Calling ProcessTagsAsync at AfterReceptorCompletion...");
+    Log.TagProcessingCalling(logger);
     // Use static AsyncLocal accessor - designed for singleton services like Dispatcher
     var scope = ScopeContextAccessor.CurrentContext;
-    await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
-    DispatcherLogger.LogDebug("ProcessTagsAsync completed");
-#pragma warning restore CA1848, CA1873
+    var processing = _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
+    if (!processing.IsCompletedSuccessfully) {
+      return _awaitTagProcessingAsync(processing, logger);
+    }
+    processing.GetAwaiter().GetResult();
+    Log.TagProcessingCompleted(logger);
+    return ValueTask.CompletedTask;
+  }
+
+  // A processor that has not finished (or has failed) is awaited here, so its exception reaches the caller unchanged
+  private static async ValueTask _awaitTagProcessingAsync(ValueTask processing, ILogger logger) {
+    await processing;
+    Log.TagProcessingCompleted(logger);
   }
 
   /// <summary>
@@ -5505,7 +5516,7 @@ public abstract partial class Dispatcher(
         _envelopeRegistry!.Unregister(eventData);
       }
     }
-    await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(eventData, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(eventData, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     await _startLocalRunDetachedHooksAsync(eventData, eventType, registered, sourceEnvelope: null, copyId);
     return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
@@ -6526,5 +6537,24 @@ public abstract partial class Dispatcher(
       Level = LogLevel.Error,
       Message = "A {Stage} receptor failed for message {MessageId}. The stage is detached, so the dispatch was not failed.")]
     public static partial void DetachedStageFailed(ILogger logger, Exception exception, LifecycleStage stage, Guid messageId);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Debug, Message = "ProcessTagsIfEnabledAsync called for {MessageType}")]
+    public static partial void TagProcessingEntered(ILogger logger, string messageType);
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Debug, Message = "Tag processing is DISABLED - returning early")]
+    public static partial void TagProcessingDisabled(ILogger logger);
+
+    [LoggerMessage(EventId = 11, Level = LogLevel.Debug,
+      Message = "TagProcessingMode is {TagProcessingMode}, not AfterReceptorCompletion - returning early")]
+    public static partial void TagProcessingModeSkipped(ILogger logger, TagProcessingMode tagProcessingMode);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Debug, Message = "No IMessageTagProcessor registered - returning early")]
+    public static partial void NoTagProcessorRegistered(ILogger logger);
+
+    [LoggerMessage(EventId = 13, Level = LogLevel.Debug, Message = "Calling ProcessTagsAsync at AfterReceptorCompletion...")]
+    public static partial void TagProcessingCalling(ILogger logger);
+
+    [LoggerMessage(EventId = 14, Level = LogLevel.Debug, Message = "ProcessTagsAsync completed")]
+    public static partial void TagProcessingCompleted(ILogger logger);
   }
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 
 namespace Whizbang.Core.Messaging;
 
@@ -31,6 +32,11 @@ namespace Whizbang.Core.Messaging;
 public static class ControlPlaneTypeRegistry {
   private static readonly ConcurrentDictionary<string, bool> _names = new(StringComparer.Ordinal);
 
+  // What IsControlPlane reads on every received row: a frozen copy of the names, about three times faster to look up.
+  // Every registration drops it under _gate and the next lookup rebuilds it (#1756).
+  private static FrozenSet<string>? _snapshot;
+  private static readonly Lock _gate = new();
+
   // Explicit static constructor (not [ModuleInitializer], which is not for libraries): it removes
   // beforefieldinit, so the framework's own types are guaranteed registered before any read.
   static ControlPlaneTypeRegistry() {
@@ -54,7 +60,11 @@ public static class ControlPlaneTypeRegistry {
   /// <param name="messageTypeName">Wire form ("Type, Assembly") or a fully assembly-qualified name.</param>
   public static void Register(string messageTypeName) {
     ArgumentException.ThrowIfNullOrEmpty(messageTypeName);
-    _names[EventTypeMatchingHelper.NormalizeTypeName(messageTypeName)] = true;
+    var normalized = EventTypeMatchingHelper.NormalizeTypeName(messageTypeName);
+    lock (_gate) {
+      _names[normalized] = true;
+      Volatile.Write(ref _snapshot, null);
+    }
   }
 
   /// <summary>Registers a control-plane message type. Idempotent.</summary>
@@ -68,13 +78,26 @@ public static class ControlPlaneTypeRegistry {
   /// Whether <paramref name="messageTypeName"/> names a control-plane message. An empty or unknown
   /// name is NOT control-plane — an unreadable type fails safe by keeping the row.
   /// </summary>
-  public static bool IsControlPlane(string messageTypeName) =>
-    !string.IsNullOrEmpty(messageTypeName)
-      && (_names.ContainsKey(EventTypeMatchingHelper.NormalizeTypeName(messageTypeName))
-          // #664 wrapper-awareness: control plane arrives WRAPPED (MessageEnvelope`1[[Inner]])
-          // and a check keyed on the wrapper type waves it through — the exact blindness
-          // behind the disabled-subsystem livelock. Judge the inner payload too.
-          || _names.ContainsKey(EventTypeMatchingHelper.NormalizeTypeName(
-               EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageTypeName))));
+  public static bool IsControlPlane(string messageTypeName) {
+    if (string.IsNullOrEmpty(messageTypeName)) {
+      return false;
+    }
+    var names = Volatile.Read(ref _snapshot) ?? _freeze();
+    return names.Contains(EventTypeMatchingHelper.NormalizeTypeName(messageTypeName))
+      // #664 wrapper-awareness: control plane arrives WRAPPED (MessageEnvelope`1[[Inner]])
+      // and a check keyed on the wrapper type waves it through: the exact blindness
+      // behind the disabled-subsystem livelock. Judge the inner payload too.
+      || names.Contains(EventTypeMatchingHelper.NormalizeTypeName(
+           EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageTypeName)));
+  }
+
+  // Rebuilt under the gate so it holds every registration completed before it; one completed after it drops it again
+  private static FrozenSet<string> _freeze() {
+    lock (_gate) {
+      var snapshot = _names.Keys.ToFrozenSet(StringComparer.Ordinal);
+      Volatile.Write(ref _snapshot, snapshot);
+      return snapshot;
+    }
+  }
 
 }

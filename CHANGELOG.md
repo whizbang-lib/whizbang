@@ -431,6 +431,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Per-message debug logging and by-name type lookups no longer allocate (#1756).** With debug logging off, the
+  dispatcher's tag-processing step and the perspective worker's per-batch description cost nothing (tag processing
+  30-41 ns and 32-88 B down to 3-5 ns and 0 B; a 16-group batch description 414 ns and 1,752 B down to 1.2 ns and 0 B).
+  A by-name type lookup of the stored "Type, Assembly" form no longer copies the name, and the JSON wire-name map and
+  control-plane name set read a frozen snapshot (one lookup 93-98 ns and 384 B down to 11-12 ns and 0 B). Shared
+  counters were measured under contention and left as they are. Numbers in `benchmarks/results/1756.md`.
+
 - **pg_repack in process is budgeted per maintenance cycle, as pg_squeeze is (#1808).** With
   `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgRepack` and `TableRewrite:PgRepack:Mode = InProcess`, the
   boot-time `Rewrite` step no longer runs pg_repack over every queued table at once; it skips and says the maintenance
