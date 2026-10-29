@@ -128,7 +128,7 @@ public class SubscribeBatchTests {
   [Test]
   [Timeout(30000)]
   public async Task SubscribeBatchAsync_SlideWindowFlushesPartialBatchAsync(CancellationToken cancellationToken) {
-    // Arrange — the subscription's collector runs on the transport's clock (#1868), so the sliding window closes
+    // Arrange: the subscription's collector runs on the transport's clock (#1868), so the sliding window closes
     // only when the test moves that clock
     var clock = new ArmingClock();
     var transport = new InProcessTransport(clock);
@@ -148,7 +148,7 @@ public class SubscribeBatchTests {
       cancellationToken
     );
 
-    // Act — publish fewer than batchSize, then let the slide window pass with no further publish
+    // Act: publish fewer than batchSize, then let the slide window pass with no further publish
     await transport.PublishAsync(_createTestEnvelope(), destination, "Type1", cancellationToken: cancellationToken);
     await transport.PublishAsync(_createTestEnvelope(), destination, "Type2", cancellationToken: cancellationToken);
     clock.Advance(TimeSpan.FromMilliseconds(50));
@@ -246,14 +246,14 @@ public class SubscribeBatchTests {
       cancellationToken
     );
 
-    // Act — the failed batch is re-queued behind a re-armed sliding window on the transport's clock
+    // Act: the failed batch is re-queued behind a re-armed sliding window on the transport's clock
     await transport.PublishAsync(_createTestEnvelope(), destination, "Type1", cancellationToken: cancellationToken);
     await clock.WaitForArmedAsync(slide, cancellationToken);
     clock.Advance(slide);
 
     await secondCallReceived.Task.WaitAsync(cancellationToken);
 
-    // Assert — handler was called twice (initial + retry)
+    // Assert: handler was called twice (initial + retry)
     await Assert.That(Volatile.Read(ref callCount)).IsEqualTo(2)
       .Because("Failed batch should be re-queued and retried");
 

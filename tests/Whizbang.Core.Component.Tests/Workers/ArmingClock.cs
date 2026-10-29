@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <remarks>
 /// <para>
 /// A timer from <see cref="FakeTimeProvider"/> runs its callback on the thread that advances the clock, in that thread's
-/// context. <see cref="TimeProvider.System"/> does not: its timers capture the <see cref="ExecutionContext"/> of the code
+/// context. The system clock does not: its timers capture the <see cref="ExecutionContext"/> of the code
 /// that created them and run every callback in it. A clock built with <c>flowsExecutionContext: true</c> does the same,
 /// so a test can see what a timer created inside a caller's ambient context would carry into its ticks.
 /// </para>

@@ -51,7 +51,7 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, new ArmingClock());
 
-    // Act — enqueue exactly batchSize items; the clock never moves, so only the size can flush
+    // Act: enqueue exactly batchSize items; the clock never moves, so only the size can flush
     collector.Enqueue(1);
     collector.Enqueue(2);
     collector.Enqueue(3);
@@ -79,14 +79,14 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, clock);
 
-    // Act — enqueue fewer than batchSize and move the clock to one tick short of the sliding window
+    // Act: enqueue fewer than batchSize and move the clock to one tick short of the sliding window
     collector.Enqueue(1);
     collector.Enqueue(2);
     clock.Advance(TimeSpan.FromMilliseconds(SLIDE_MS - 1));
     // Any flush a trigger started is tracked; once the record is empty, none is still on its way
     await collector.InFlightFlushes.DrainAsync(cancellationToken);
 
-    // Assert — no flush: below the batch size, and neither window has closed
+    // Assert: no flush: below the batch size, and neither window has closed
     await Assert.That(Volatile.Read(ref flushCount)).IsEqualTo(0);
   }
 
@@ -109,7 +109,7 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, clock);
 
-    // Act — enqueue a few items, then let the sliding window pass with no further arrival
+    // Act: enqueue a few items, then let the sliding window pass with no further arrival
     collector.Enqueue(1);
     collector.Enqueue(2);
     clock.Advance(TimeSpan.FromMilliseconds(SLIDE_MS));
@@ -136,7 +136,7 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, clock);
 
-    // Act — each item arrives one tick before the window the previous one opened would close. Together the gaps
+    // Act: each item arrives one tick before the window the previous one opened would close. Together the gaps
     // exceed the window, so a window that did not restart on each arrival would have flushed the first item alone.
     var almostTheWindow = TimeSpan.FromMilliseconds(SLIDE_MS - 1);
     collector.Enqueue(1);
@@ -177,7 +177,7 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, clock);
 
-    // Act — enqueue one item; the hard max closes at 100ms, long before the sliding window would
+    // Act: enqueue one item; the hard max closes at 100ms, long before the sliding window would
     collector.Enqueue(1);
     clock.Advance(TimeSpan.FromMilliseconds(100));
 
@@ -267,7 +267,7 @@ public class TransportBatchCollectorTests {
       return Task.CompletedTask;
     }, new ArmingClock());
 
-    // Act — enqueue items but don't trigger any flush (the clock never moves)
+    // Act: enqueue items but don't trigger any flush (the clock never moves)
     collector.Enqueue(1);
     collector.Enqueue(2);
     collector.Enqueue(3);
