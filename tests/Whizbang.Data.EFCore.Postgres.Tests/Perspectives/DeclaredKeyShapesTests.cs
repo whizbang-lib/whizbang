@@ -1,16 +1,34 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
+
+/// <summary>A stroke only an event carries, so its required member is read tolerantly.</summary>
+public sealed record DeclaredHistoryStroke {
+  /// <summary>Declared <c>w</c>.</summary>
+  [JsonPropertyName("w")]
+  public required double Width { get; init; }
+
+  /// <summary>Optional.</summary>
+  public int Layer { get; init; }
+}
+
+/// <summary>The event that carries the stroke.</summary>
+/// <param name="Id">The stream.</param>
+/// <param name="Strokes">The strokes.</param>
+public sealed record DeclaredHistoryStrokesDrawn([property: StreamId] Guid Id, List<DeclaredHistoryStroke> Strokes) : IEvent;
 
 /// <summary>
 /// Where the declared names come from (#1874): what reads a document says what it is called. A document Entity
@@ -110,5 +128,18 @@ public class DeclaredKeyShapesTests {
     await Assert.That(a.JournalName).IsNotEqualTo(b.JournalName)
       .Because("a model that declares something new is checked again, once");
     await Assert.That(a.JournalName).IsEqualTo(c.JournalName);
+  }
+
+  [Test]
+  public async Task AMemberDeclaredRequired_ThatTheReaderTolerates_IsStillRequiredInTheShapeAsync() {
+    var before = DeclaredKeyShape.FromSerializer(PerspectiveDocumentSerialization.Options, typeof(DeclaredHistoryStroke))!.Describe();
+    DeclaredRequiredMembers.Register(typeof(DeclaredHistoryStroke), "w");
+
+    var after = DeclaredKeyShape.FromSerializer(PerspectiveDocumentSerialization.Options, typeof(DeclaredHistoryStroke))!.Describe();
+
+    await Assert.That(before).IsEqualTo("{\"w\",\"Layer\"}")
+      .Because("a type an event carries is read tolerantly, so the serializer's metadata does not mark the member");
+    await Assert.That(after).IsEqualTo("{\"w\"!,\"Layer\"}")
+      .Because("a type a row shares with an event is declared to the startup check, which reports rows missing it");
   }
 }

@@ -31,7 +31,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// <c>[JsonPropertyName]</c> only in case are rewritten to the declared spelling at startup, at any depth and inside
 /// collections of records, and read back with their real values; a row holding both spellings with different values
 /// stops startup; a start that finds nothing to change updates no row; a required member missing from a stored row
-/// fails the read rather than reading as zero; and an event stored under the C# names replays with its values.
+/// is reported at startup, and fails the read when only perspective rows carry its type; and an event stored under
+/// the C# names, or without a member that later became required, replays with its values.
 /// </summary>
 /// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingPass.cs</code-under-test>
@@ -123,7 +124,27 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ARequiredMemberMissing_FailsTheRead_AndIsReportedAtStartupAsync() {
+  public async Task ARequiredMemberMissingFromATypeOnlyTheRowCarries_FailsTheRead_AndIsReportedAtStartupAsync() {
+    await _startAsync();
+    await _asAnEarlierReleaseLeftItAsync();
+    var id = Guid.CreateVersion7();
+    await _insertAsync(id, """{"title":"t","Objects":[{"Points":[{"x":3,"y":4}]}]}""");
+    var log = new ListLogger();
+
+    await _startAsync(log);
+
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("$.Objects[*].color", StringComparison.Ordinal)))
+      .IsTrue();
+    await Assert.That(async () => await _store().GetByStreamIdAsync(id)).Throws<JsonException>()
+      .Because("a missing required member of a perspective row is refused, not read as an empty string");
+  }
+
+  /// <summary>
+  /// A type the row shares with an event is read tolerantly, because one JsonTypeInfo serves both and the event's
+  /// history must replay; the startup check still reports the row at Error.
+  /// </summary>
+  [Test]
+  public async Task ARequiredMemberMissingFromATypeAnEventAlsoCarries_IsReportedAtStartup_AndReadsAsItsDefaultAsync() {
     await _startAsync();
     await _asAnEarlierReleaseLeftItAsync();
     var id = Guid.CreateVersion7();
@@ -134,29 +155,17 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
 
     await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("$.Objects[*].Points[*].y", StringComparison.Ordinal)))
       .IsTrue();
-    await Assert.That(async () => await _store().GetByStreamIdAsync(id)).Throws<JsonException>()
-      .Because("a missing required member is refused, not read as zero");
+    var read = await _store().GetByStreamIdAsync(id);
+    await Assert.That(read!.Objects[0].Points[0].X).IsEqualTo(3d);
+    await Assert.That(read.Objects[0].Points[0].Y).IsEqualTo(0d);
   }
 
   /// <summary>Events are history and are never rewritten; an event stored under the C# names still replays with its values.</summary>
   [Test]
   public async Task AnEventStoredWithCSharpNames_ReplaysWithItsValuesAsync() {
-    var store = new DapperPostgresEventStore(
-      ConnectionFactory, Executor, _options, new EventEnvelopeJsonbAdapter(_options),
-      new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance), new PolicyEngine(), null,
-      NullLogger<DapperPostgresEventStore>.Instance);
+    var store = _eventStore();
     var streamId = Guid.CreateVersion7();
-    var envelope = new MessageEnvelope<DapperDeclaredPointsDrawn> {
-      MessageId = MessageId.New(),
-      Payload = new DapperDeclaredPointsDrawn(streamId, [new DapperDeclaredPoint { X = 1, Y = 2 }]),
-      Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
-    };
-    envelope.AddHop(new MessageHop {
-      Type = HopType.Current,
-      ServiceInstance = new ServiceInstanceInfo { ServiceName = "declared-names", InstanceId = Guid.NewGuid(), HostName = "host", ProcessId = 1 },
-    });
-    await store.AppendAsync(streamId, envelope);
+    await store.AppendAsync(streamId, _drawn(streamId));
     await _execAsync($$"""
       UPDATE wh_event_body SET event_data = '{"Id":"{{streamId}}","Points":[{"X":327,"Y":362}]}'
       WHERE event_id IN (SELECT event_id FROM wh_event_store WHERE stream_id = '{{streamId}}')
@@ -170,6 +179,47 @@ public class DapperDeclaredNameSpellingTests : PostgresTestBase {
     await Assert.That(replayed.Count).IsEqualTo(1);
     await Assert.That(replayed[0].Points[0].X).IsEqualTo(327d);
     await Assert.That(replayed[0].Points[0].Y).IsEqualTo(362d);
+  }
+
+  /// <summary>An event stored before a member became required replays with the member's default.</summary>
+  [Test]
+  public async Task AnEventStoredWithoutARequiredMember_ReplaysWithItsDefaultAsync() {
+    var store = _eventStore();
+    var streamId = Guid.CreateVersion7();
+    await store.AppendAsync(streamId, _drawn(streamId));
+    await _execAsync($$"""
+      UPDATE wh_event_body SET event_data = '{"Id":"{{streamId}}","Points":[{"x":327}]}'
+      WHERE event_id IN (SELECT event_id FROM wh_event_store WHERE stream_id = '{{streamId}}')
+      """);
+
+    var replayed = new List<DapperDeclaredPointsDrawn>();
+    await foreach (var read in store.ReadAsync<DapperDeclaredPointsDrawn>(streamId, 0)) {
+      replayed.Add(read.Payload);
+    }
+
+    await Assert.That(replayed.Count).IsEqualTo(1)
+      .Because("events are history: a later change that adds required never stops a replay");
+    await Assert.That(replayed[0].Points[0].X).IsEqualTo(327d);
+    await Assert.That(replayed[0].Points[0].Y).IsEqualTo(0d);
+  }
+
+  private DapperPostgresEventStore _eventStore() => new(
+    ConnectionFactory, Executor, _options, new EventEnvelopeJsonbAdapter(_options),
+    new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance), new PolicyEngine(), null,
+    NullLogger<DapperPostgresEventStore>.Instance);
+
+  private static MessageEnvelope<DapperDeclaredPointsDrawn> _drawn(Guid streamId) {
+    var envelope = new MessageEnvelope<DapperDeclaredPointsDrawn> {
+      MessageId = MessageId.New(),
+      Payload = new DapperDeclaredPointsDrawn(streamId, [new DapperDeclaredPoint { X = 1, Y = 2 }]),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo { ServiceName = "declared-names", InstanceId = Guid.NewGuid(), HostName = "host", ProcessId = 1 },
+    });
+    return envelope;
   }
 
   private async Task _hostStartAsync() {

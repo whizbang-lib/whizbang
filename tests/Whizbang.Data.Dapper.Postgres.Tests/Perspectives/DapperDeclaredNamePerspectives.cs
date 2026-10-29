@@ -11,7 +11,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 // and inside collections, so the generated Dapper schema and the registered document model are the shipped ones.
 // See DapperDeclaredNameSpellingTests (#1874).
 
-/// <summary>A point whose coordinates are declared in lower case.</summary>
+/// <summary>A point whose coordinates are declared in lower case. The picture row and an event both carry it.</summary>
 public sealed record DapperDeclaredPoint {
   /// <summary>Declared <c>x</c>; a release that ignored the attribute stored <c>X</c>.</summary>
   [JsonPropertyName("x")]
@@ -22,11 +22,11 @@ public sealed record DapperDeclaredPoint {
   public required double Y { get; init; }
 }
 
-/// <summary>A stroke: a color and its points.</summary>
+/// <summary>A stroke: a color and its points. Only the picture row carries it.</summary>
 public sealed record DapperDeclaredStroke {
-  /// <summary>Declared <c>color</c>.</summary>
+  /// <summary>Declared <c>color</c>, required: a row missing it is refused.</summary>
   [JsonPropertyName("color")]
-  public string Color { get; init; } = "";
+  public required string Color { get; init; }
 
   /// <summary>The points.</summary>
   public List<DapperDeclaredPoint> Points { get; init; } = [];
