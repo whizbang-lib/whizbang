@@ -126,10 +126,7 @@ public class TableStatisticsCollectorTests {
   #region Test Fakes
 
   private sealed class AlwaysDisposedScopeFactory : IServiceScopeFactory {
-    public IServiceScope CreateScope() {
-      ObjectDisposedException.ThrowIf(true, nameof(IServiceProvider));
-      return null!; // unreachable
-    }
+    public IServiceScope CreateScope() => throw new ObjectDisposedException(nameof(IServiceProvider));
   }
 
   #endregion
