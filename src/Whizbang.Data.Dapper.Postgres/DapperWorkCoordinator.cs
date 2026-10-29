@@ -242,8 +242,41 @@ public partial class DapperWorkCoordinator(
       return true;
     }
 
-    var json = _serializeNewOutboxMessages(messages);
-    var deadLetterIds = new Guid[messages.Length];
+    await _storeUnstoredDeadLettersAsync(new UnstoredDeadLetters(
+      _serializeNewOutboxMessages(messages), messages.Length, "wh_store_outbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation), cancellationToken);
+    return true;
+  }
+
+  /// <inheritdoc />
+  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperInboxDeadLetterTests.cs:StoreInboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreInboxDeadLettersAsync(
+    InboxMessage[] messages,
+    InboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    await _storeUnstoredDeadLettersAsync(new UnstoredDeadLetters(
+      _serializeNewInboxMessages(messages), messages.Length, "wh_store_inbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation), cancellationToken);
+    return true;
+  }
+
+  /// <summary>The arguments of <c>wh_store_outbox_dead_letters</c> (256) and <c>wh_store_inbox_dead_letters</c> (257).</summary>
+  private sealed record UnstoredDeadLetters(
+    string MessagesJson, int Count, string Function, int FailureReason, string? ErrorText, int Attempts, Guid InstanceId, string Generation);
+
+  /// <summary>
+  /// Writes messages a batcher accepted and never stored to the dead-letter table through the given function, one
+  /// dead letter id per message (#1871, #1885).
+  /// </summary>
+  private async Task _storeUnstoredDeadLettersAsync(UnstoredDeadLetters call, CancellationToken cancellationToken) {
+    var deadLetterIds = new Guid[call.Count];
     for (var i = 0; i < deadLetterIds.Length; i++) {
       deadLetterIds[i] = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     }
@@ -251,18 +284,17 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var prefix = await _prefixAsync(connection, cancellationToken);
     await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}wh_store_outbox_dead_letters(@messages::jsonb, @deadLetterIds, @failureReason, @errorText, @attempts, @instanceId, @generation)",
+      $"SELECT {prefix}{call.Function}(@messages::jsonb, @deadLetterIds, @failureReason, @errorText, @attempts, @instanceId, @generation)",
       new {
-        messages = json,
+        messages = call.MessagesJson,
         deadLetterIds,
-        failureReason = (int)request.FailureReason,
-        errorText = request.ErrorText,
-        attempts = request.Attempts,
-        instanceId = request.InstanceId,
-        generation = request.Generation
+        failureReason = call.FailureReason,
+        errorText = call.ErrorText,
+        attempts = call.Attempts,
+        instanceId = call.InstanceId,
+        generation = call.Generation
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
-    return true;
   }
 
   /// <inheritdoc />
