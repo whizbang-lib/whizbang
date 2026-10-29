@@ -381,6 +381,49 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_TerminalEvent_StampsTheEntryAndRegistersTheTypeAsync() {
+    // A terminal event seals its stream (WS-3 S4). The flag is stamped from the generated registration on the dispatch
+    // path and from the catalog entry on the receive path, so the attribute must reach both at compile time, including
+    // through a base type, and only for events.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [TerminalEvent]
+      public record AccountClosed : IEvent;
+
+      public record AccountClosedForFraud : AccountClosed;
+
+      [TerminalEvent]
+      public record CloseAccount : ICommand;
+
+      public record AccountOpened : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+
+    await Assert.That(entry("AccountClosed")).Contains("IsTerminal = true");
+    await Assert.That(entry("AccountClosedForFraud")).Contains("IsTerminal = true")
+      .Because("the attribute is inherited, so an event derived from a terminal event is terminal too");
+    await Assert.That(entry("CloseAccount").Contains("IsTerminal")).IsFalse()
+      .Because("a command is never stored on a stream, so it cannot end one");
+    await Assert.That(entry("AccountOpened").Contains("IsTerminal")).IsFalse();
+    await Assert.That(generated).Contains(
+      "global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof(global::MyApp.AccountClosed));");
+    await Assert.That(generated).Contains(
+      "global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof(global::MyApp.AccountClosedForFraud));");
+    await Assert.That(generated.Contains("TerminalEvents.Register(typeof(global::MyApp.CloseAccount)")).IsFalse();
+    await Assert.That(generated.Contains("TerminalEvents.Register(typeof(global::MyApp.AccountOpened)")).IsFalse();
+  }
+
+  [Test]
   public async Task Generator_CombinedDefaultRoutingFlags_RenderAsACastAsync() {
     const string source = """
 
