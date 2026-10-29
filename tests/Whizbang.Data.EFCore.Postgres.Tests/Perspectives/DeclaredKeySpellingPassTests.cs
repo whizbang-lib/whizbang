@@ -87,6 +87,21 @@ public class DeclaredKeySpellingPassTests {
   }
 
   [Test]
+  public async Task AColumnThatDeclaresNoMembers_IsNeverACandidate_AndTheOtherColumnsStillRewriteAsync() {
+    var undeclared = _table with {
+      Columns = [_table.Columns[0], new DeclaredKeyColumn("metadata", DeclaredKeyShape.ForObject())],
+    };
+    var id = Guid.CreateVersion7();
+    await _insertAsync(id, """{"pts":[{"X":1}]}""", """{"Tag":"a"}""");
+
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [undeclared], TIMEOUT_SECONDS);
+
+    await Assert.That(await _scalarAsync($"SELECT data::text FROM {TABLE} WHERE id = '{id}'")).IsEqualTo("{\"pts\": [{\"x\": 1}]}");
+    await Assert.That(await _scalarAsync($"SELECT metadata::text FROM {TABLE} WHERE id = '{id}'")).IsEqualTo("{\"Tag\": \"a\"}")
+      .Because("a column that declares no names has no spelling to move its keys to");
+  }
+
+  [Test]
   public async Task WithoutAJournal_TheRowsAreStillRewritten_AndNothingIsRecordedAsync() {
     var id = Guid.CreateVersion7();
     await _insertAsync(id, """{"pts":[{"X":1}]}""", metadata: null);
