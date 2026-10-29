@@ -94,6 +94,9 @@ public sealed record TableStorageInfo(
 public static class ColumnStorageSql {
   private const string DO_BEGIN = "DO $$ BEGIN\n";
   private const string FILLFACTOR = "fillfactor";
+
+  /// <summary>Stub (RED, #1747).</summary>
+  public const string STORAGE_MARKER = "";
   private const string END_IF = "  END IF;\n";
   private const string DO_END = "END $$;";
 
