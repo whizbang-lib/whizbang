@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingDocument.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeyShape.cs</code-under-test>
+[Category("Shard1")]
 public class DeclaredKeySpellingDocumentTests {
   private static readonly DeclaredKeyShape _point = DeclaredKeyShape.ForObject(
     new DeclaredMember("x", IsRequired: true), new DeclaredMember("y", IsRequired: true));

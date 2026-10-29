@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/DeclaredKeyShapes.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeyShape.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeyTable.cs</code-under-test>
+[Category("Shard1")]
 public class DeclaredKeyShapesTests {
   private const string POINT = "{\"x\"!,\"y\"!}";
 

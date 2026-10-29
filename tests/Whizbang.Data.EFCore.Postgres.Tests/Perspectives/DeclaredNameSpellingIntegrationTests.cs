@@ -93,11 +93,11 @@ public class DeclaredNameSpellingIntegrationTests {
     await Assert.That(read.Objects[1].Points[0].Y).IsEqualTo(-2d);
     await Assert.That(read.Origin.X).IsEqualTo(5d).Because("a single nested object is walked like a collection's element");
 
-    var (Level, Message) = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning
-      && e.Message.Contains("declared spelling", StringComparison.Ordinal) && e.Message.Contains(PICTURE, StringComparison.Ordinal));
-    await Assert.That(Message).IsNotNull()
+    var line = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning
+      && e.Message.Contains("declared spelling", StringComparison.Ordinal) && e.Message.Contains(PICTURE, StringComparison.Ordinal)).Message;
+    await Assert.That(line).IsNotNull()
       .Because("a rewrite of stored data says what it changed, once per table");
-    await Assert.That(Message).Contains("1 row(s)")
+    await Assert.That(line).Contains("1 row(s)")
       .And.Contains("$.Objects[*].Points[*]: X -> x")
       .And.Contains("$.Objects[*]: Color -> color")
       .And.Contains("$: Title -> title");
@@ -210,9 +210,9 @@ public class DeclaredNameSpellingIntegrationTests {
 
     await _startAsync(log);
 
-    var (Level, Message) = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal));
-    await Assert.That(Message).IsNotNull();
-    await Assert.That(Message).Contains("$.Objects[*].Points[*].y").And.Contains("1 row(s)");
+    var error = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal)).Message;
+    await Assert.That(error).IsNotNull();
+    await Assert.That(error).Contains("$.Objects[*].Points[*].y").And.Contains("1 row(s)");
     await Assert.That(await _journalAsync(PICTURE)).IsEqualTo("open");
   }
 
