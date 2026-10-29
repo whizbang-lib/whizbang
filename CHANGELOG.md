@@ -814,6 +814,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Truncating a stream prefix leaves digest-exempt audit records out, exactly as every digest fold does.**
+  `wh_truncate_stream_prefix` read the audit record types (`EventAudited`, `CommandAudited`), which no fold ever adds to
+  a digest, into the per-lane ranges it refolds and into its digest subtraction. A prefix holding only audit records
+  therefore refolded sealed epochs and advanced the origin generation, telling every consumer that folded history had
+  changed so they reset their seals and re-verified, when nothing folded had been removed; and a digest bucket an
+  earlier release had folded for an audit record was subtracted from instead of being left to the verification sweep.
+  Both reads now carry the same exemption predicate the folds use (migration 263), so the truncate subtracts, refolds
+  and reports exactly what was folded (Fixes #1891)
 - **A derived message type's own `[StreamId]` is no longer shadowed by its base type's.** The generated stream id
   extractors dispatch through a chain of `if (message is T)` checks, and emitted them in discovery order, which follows
   file and namespace order. When a base type with a `[StreamId]` was discovered before a derived type declaring its
