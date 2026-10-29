@@ -55,6 +55,9 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   private readonly ISagaItemRepository? _itemRepository;
   private readonly ISagaItemTerminalReader? _terminalReader;
   private readonly SagaOptions _options;
+  // Per-item stream ids are derived under this service's host's namespace when it was given that host's options, so
+  // the watchdog reads the streams its host writes however many hosts the process builds (#1888).
+  private readonly ISagaItemStreamIdDeriver _itemStreams;
   private readonly ILogger _logger;
 
   // ── Framework-owned completion tracking (in-memory fast path) ────────
@@ -105,7 +108,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <summary>
   /// Constructor that wires the per-item aggregate primitives.
   /// <c>TryRecoverViaWatchdogAsync</c>'s slow path consults
-  /// <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync"/> over
+  /// <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync(Guid, int, SagaItemAggregate, Func{CancellationToken, Task{IReadOnlyList{SagaItemModel}}}, ISagaItemTerminalReader, ISagaItemStreamIdDeriver, CancellationToken)"/> over
   /// <paramref name="itemRepository"/> + <paramref name="terminalReader"/> to derive
   /// authoritative completion counts — required when the consumer's saga projection
   /// doesn't see per-item terminal events on its <c>Apply</c> chain (the
@@ -126,6 +129,14 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <c>TryRecoverViaWatchdogTickAsync</c>). Pass <c>null</c> to fall back to
   /// framework defaults.
   /// </summary>
+  /// <remarks>
+  /// Given the <see cref="SagaOptions"/> its host's <c>AddWhizbangSagas</c> registered (as the container injects them),
+  /// the service derives per-item stream ids under that host's namespace, so the watchdog and the stranded-item
+  /// resolution read the streams this host writes however many hosts share the process (#1888). Given options it built
+  /// itself, or none, it derives under the process-wide namespace (<see cref="SagaItemStreams.AppDefaultNamespace"/>).
+  /// </remarks>
+  /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaItemStreamNamespacePerHostTests.cs:TwoHostsWithDifferentNamespaces_EachHostsWatchdogReadsItsOwnItemsAsTerminalAsync</tests>
   protected BaseSagaService(
       string sagaName,
       ISagaEventEmitter emitter,
@@ -140,6 +151,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     _itemRepository = itemRepository;
     _terminalReader = terminalReader;
     _options = options ?? new SagaOptions();
+    _itemStreams = SagaItemStreamIdDeriver.For(options);
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
   }
@@ -434,7 +446,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       var reconciled = await SagaItemCompletionReconciler.ResolveCompletionCountsAsync(
           ctx.SagaId, saga.TotalItems, agg,
           ct => _itemRepository.GetItemsAsync(ctx.SagaId, ct),
-          _terminalReader, cancellationToken).ConfigureAwait(false);
+          _terminalReader, _itemStreams, cancellationToken).ConfigureAwait(false);
       if (reconciled is not { } counts) {
         return WatchdogRecoveryResult.NotYet;
       }
@@ -690,7 +702,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var completed = items.Count(i => i.State == SagaItemState.Completed);
     if (_terminalReader is not null) {
       foreach (var item in items.Where(i => !i.IsTerminal)) {
-        var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+        var stored = await _terminalReader.CheckAsync(_itemStreams.StreamIdOf(ctx.SagaId, item.ItemIdentifier), cancellationToken)
           .ConfigureAwait(false);
         if (stored == SagaItemTerminalOutcome.Completed) {
           completed++;
@@ -948,7 +960,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   private async Task<int> _resolveItemAsync(
       SagaContext ctx, SagaItemModel item, string message, string details, CancellationToken cancellationToken) {
     if (_terminalReader is not null) {
-      var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+      var stored = await _terminalReader.CheckAsync(_itemStreams.StreamIdOf(ctx.SagaId, item.ItemIdentifier), cancellationToken)
         .ConfigureAwait(false);
       if (stored != SagaItemTerminalOutcome.NotTerminal) {
         return 0;

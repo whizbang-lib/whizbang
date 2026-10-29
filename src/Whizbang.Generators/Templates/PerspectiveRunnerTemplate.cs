@@ -1411,6 +1411,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     Guid? replayFromEventId = null;
     __MODEL_TYPE_NAME__? snapshotModel = null;
+    JsonDocument? snapshotData = null;
     var hasSnapshot = false;
     var startedAt = DateTimeOffset.UtcNow;
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
@@ -1436,6 +1437,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
         if (snapshotModel is not null) {
           replayFromEventId = snapshot.Value.SnapshotEventId;
+          snapshotData = snapshot.Value.SnapshotData;
           hasSnapshot = true;
           _logger.LogWarning(
               "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
@@ -1507,8 +1509,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         DroppedStragglers = [triggeringEventId],
       };
     } else {
-      result = await RunFromModelAsync(
-          streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
+      result = await _replayCheckedAsync(
+          streamId, perspectiveName, snapshotModel, snapshotData, replayFromEventId, cancellationToken);
     }
 
     // Fire PerspectiveRewindCompleted system event
@@ -1528,6 +1530,53 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
+  /// The rewind's replay, retried when its write is refused because the row moved (#1863). The replay writes against the
+  /// row version it read before it read any event, as a live apply writes against the version it read (#928). A writer
+  /// that folds a newer event into the row while the rewind replays moves that version, and the store refuses the
+  /// rewind's write with <see cref="global::Whizbang.Core.Perspectives.PerspectiveRowConflictException"/>: the replay runs
+  /// again from the same restore point, now reading the newer event too, so the row ends with the rewind's correction
+  /// and the newer event. Bounded like the live apply's retry; a row that moves under every replay fails the rewind,
+  /// which the worker counts and retries.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:ARowThatMovesWhileARewindReplays_EndsWithTheCorrectionAndTheNewerEventAsync</tests>
+  private async Task<PerspectiveCursorCompletion> _replayCheckedAsync(
+      Guid streamId,
+      string perspectiveName,
+      __MODEL_TYPE_NAME__? snapshotModel,
+      JsonDocument? snapshotData,
+      Guid? replayFromEventId,
+      CancellationToken cancellationToken) {
+    for (var attempt = 1; ; attempt++) {
+      // A replay that is refused restarts from the same snapshot, read again from its stored form so nothing the
+      // refused replay folded carries into the next one.
+      var initialModel = attempt == 1 || snapshotData is null ? snapshotModel : FromSnapshotJson(snapshotData);
+      try {
+        return await RunFromModelAsync(streamId, perspectiveName, initialModel, replayFromEventId, cancellationToken);
+      } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) when (attempt < MAX_ROW_CONFLICT_ATTEMPTS) {
+        _logger.LogDebug(
+            conflict,
+            "Row for {PerspectiveName} stream {StreamId} changed while a rewind replayed it (replay {Attempt} of {MaxAttempts}); replaying again onto the moved row",
+            perspectiveName,
+            streamId,
+            attempt,
+            MAX_ROW_CONFLICT_ATTEMPTS
+        );
+      } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) {
+        _logger.LogWarning(
+            conflict,
+            "Row for {PerspectiveName} stream {StreamId} changed under each of {MaxAttempts} rewind replays; the rewind fails and is retried. Nothing stale was written",
+            perspectiveName,
+            streamId,
+            MAX_ROW_CONFLICT_ATTEMPTS
+        );
+        throw;
+      }
+    }
+  }
+
+  /// <summary>
   /// Replays events in-memory starting from a provided model (or empty model if null).
   /// Does NOT call GetByStreamIdAsync — uses the provided model directly.
   /// No intermediate DB writes — single atomic UpsertAsync at the end.
@@ -1542,6 +1591,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CancellationToken cancellationToken) {
 
     // Use provided model or create empty one (full replay from event zero)
+    // The row version this replay writes against, read before any event is (#1863): a writer that commits after this
+    // read moves the version and the write below is refused, and one that committed before it stored its event first,
+    // so the replay reads that event. A store that tracks no versions returns Unchecked and writes as it always did.
+    var rowVersion = (await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken)).Version;
+
     var currentModel = initialModel ?? CreateEmptyModel(streamId);
     // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
     // input. A replay whose every event the perspective declines writes nothing, exactly as the live drain does,
@@ -1801,9 +1855,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
             // its scope (Always fields catch up on the next live apply).
             global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope: null).Scope);
+                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope: null).Scope,
+            forceUpdateScope: false,
+            expectedVersion: rowVersion);
         if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
+        }
+        // The row did not move while the replay ran (a moved row is refused above, and replayed again), yet its
+        // ordering guard refused the write: the row is stamped past everything this replay read. The replay's
+        // correction is not in the row, and a rewind that wrote nothing is not one that applied (#1863).
+        if (!rowChanged) {
+          _logger.LogWarning(
+              "[diag.rewind.write.refused] {PerspectiveName} stream {StreamId}: the row is stamped past the rewind's frontier at event {EventId}, so the replay was not written and the row keeps what it holds",
+              perspectiveName,
+              streamId,
+              checkpointEventId);
         }
       }
       _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);

@@ -88,6 +88,17 @@ public sealed class PerspectiveMetrics {
   /// <summary>Updates the cached pending events count for the observable gauge.</summary>
   public void SetPendingEvents(long count) => Interlocked.Exchange(ref _pendingEventsValue, count);
 
+  /// <summary>
+  /// Refreshes of <c>whizbang.perspective.pending_events</c> whose statistics query failed (#1865).
+  /// </summary>
+  /// <remarks>
+  /// The gauge keeps the last value it read while its query fails, so a frozen number reads as real lag or real
+  /// health. This rising while the gauge holds still says the gauge is stale; the worker's warning names the cause.
+  /// </remarks>
+  /// <docs>operations/observability/metrics#perspectives</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+  public PassiveCounter<long> PendingEventsRefreshFailures { get; }
+
   // Rewind
 
   /// <summary>
@@ -180,6 +191,8 @@ public sealed class PerspectiveMetrics {
     meter.CreateObservableGauge("whizbang.perspective.pending_events",
       observeValue: () => Interlocked.Read(ref _pendingEventsValue),
       description: "Pending perspective events awaiting processing");
+    PendingEventsRefreshFailures = meter.CreatePassiveCounter<long>("whizbang.perspective.pending_events_refresh_failures",
+      description: "Refreshes of the pending events gauge whose statistics query failed, leaving the gauge at its last value");
 
     Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
     RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");

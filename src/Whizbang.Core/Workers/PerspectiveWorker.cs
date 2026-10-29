@@ -963,23 +963,26 @@ public partial class PerspectiveWorker(
   }
 
   private int _statsGaugeCounter;
+  private PendingEventsStatisticsRefresh? _pendingEventsRefresh;
 
-  private async Task _periodicGatherStatisticsAsync(CancellationToken ct) {
+  private Task _periodicGatherStatisticsAsync(CancellationToken ct) {
     // Gather expensive stats every 60 ticks (~60 seconds)
     // These are COUNT(*) queries that we don't want on the hot path
     if (++_statsGaugeCounter % 60 != 0) {
-      return;
+      return Task.CompletedTask;
     }
 
-    try {
-      await using var scope = _scopeFactory.CreateAsyncScope();
-      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      var stats = await workCoordinator.GatherStatisticsAsync(ct);
-      _metrics?.SetPendingEvents(stats.PendingPerspectiveEvents);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Don't let gauge failure interrupt the main loop
-      // Swallow — periodic stats gathering is non-critical
-    }
+    // A failed query never interrupts the loop, and is never silent either: the refresh warns once per failure streak,
+    // naming the query and the stale gauge, and counts every failure (#1865).
+    _pendingEventsRefresh ??= new PendingEventsStatisticsRefresh(_queryPendingEventsAsync, _metrics, _logger);
+    return _pendingEventsRefresh.RefreshAsync(ct);
+  }
+
+  private async Task<long> _queryPendingEventsAsync(CancellationToken ct) {
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var stats = await workCoordinator.GatherStatisticsAsync(ct).ConfigureAwait(false);
+    return stats.PendingPerspectiveEvents;
   }
 
   private void _periodicStaleTrackingCleanup() {

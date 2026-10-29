@@ -52,15 +52,27 @@ public static class SagaItemStreams {
 
   /// <summary>
   /// The namespace UUID currently in effect for the
-  /// <see cref="Of(Guid, string)"/> no-override path. Settable once at
-  /// app startup via <c>SagaOptions.PerItemStreamNamespace</c>; defaults
-  /// to <see cref="DefaultNamespace"/> if never set.
+  /// <see cref="Of(Guid, string)"/> no-override path. Set at app startup
+  /// from <c>SagaOptions.PerItemStreamNamespace</c> by every
+  /// <c>AddWhizbangSagas</c> call; defaults to <see cref="DefaultNamespace"/>
+  /// if never set.
   /// </summary>
   /// <remarks>
+  /// <para>
+  /// <strong>Process-wide.</strong> One value for the whole process, so with
+  /// several hosts in one process (integration tests, a test server per
+  /// service) the last <c>AddWhizbangSagas</c> call decides it for every
+  /// host. The framework's own readers do not use it: they derive from
+  /// their host's options through <see cref="ISagaItemStreamIdDeriver"/>,
+  /// which code running in a host should inject as well.
+  /// </para>
+  /// <para>
   /// <strong>Configure before any saga operation runs.</strong> Changing
   /// this value at runtime re-derives every per-item stream id and
   /// orphans existing projection rows.
+  /// </para>
   /// </remarks>
+  /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
   public static Guid AppDefaultNamespace { get; internal set; } = DefaultNamespace;
 
   /// <summary>
@@ -69,6 +81,14 @@ public static class SagaItemStreams {
   /// (which equals <see cref="DefaultNamespace"/> unless overridden via
   /// <c>AddWhizbangSagas(opts =&gt; opts.PerItemStreamNamespace = …)</c>).
   /// </summary>
+  /// <remarks>
+  /// For application code with no container. The namespace is process-wide,
+  /// so in a process with several hosts it is whichever the last
+  /// <c>AddWhizbangSagas</c> call set; code running in a host injects
+  /// <see cref="ISagaItemStreamIdDeriver"/>, which derives under that host's
+  /// own namespace.
+  /// </remarks>
+  /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
   public static Guid Of(Guid sagaId, string itemIdentifier) =>
     Of(AppDefaultNamespace, sagaId, itemIdentifier);
 

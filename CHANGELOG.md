@@ -814,6 +814,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A failed pending-events statistics query is reported instead of swallowed.** The perspective worker refreshes
+  `whizbang.perspective.pending_events` about once a minute and discarded every failure of the query behind it
+  (`IWorkCoordinator.GatherStatisticsAsync`: a timeout, a missing permission, a function a partial migration never
+  created), so the gauge kept its last value with nothing to explain it, and a frozen number read as real lag or real
+  health. The worker still keeps running, and now logs the first failure of a streak at Warning with the exception,
+  naming the query and the stale gauge, logs further failures in the streak at Debug, logs at Information when a refresh
+  succeeds again and how many it missed, and counts every failed refresh on the new counter
+  `whizbang.perspective.pending_events_refresh_failures` (`PerspectiveMetrics.PendingEventsRefreshFailures`)
+  (Fixes #1865)
+- **A rewind's write is checked against the row version it read, and a refused rewind is reported.** A rewind replays a
+  stream in memory and writes the row once at the end, without a row version, so the store's ordering guard was the
+  only check on it: when another writer folded a newer event into the row while the rewind replayed (after a lease
+  expiry or an orphan sweep, for example), the rewind's frontier sorted below the row's stamp, the guard refused the
+  write, and the rewind reported itself complete with its correction lost and nothing logged. The generated runner now
+  reads the row version before the rewind reads any event and writes against it, as a live apply does (#928). A row
+  that moved refuses the write with `PerspectiveRowConflictException`, and the replay runs again from the same restore
+  point, now including the newer event, so the row ends with both; a row that moves under every one of five replays
+  fails the rewind, which the worker counts on `whizbang.perspective.rewinds_failed` and retries. A rewind write the
+  guard refuses on a row that did not move is logged at Warning as `[diag.rewind.write.refused]` with the frontier event,
+  instead of passing as applied. Stores that track no row versions write exactly as before (Fixes #1863)
+- **Each host derives saga per-item stream ids from its own namespace.** `SagaItemStreams.AppDefaultNamespace` is one
+  process-wide value that every `AddWhizbangSagas` call overwrites, and the framework's per-item readers derived from
+  it at call time, so in a process with several hosts (integration tests, a test server per service) the last
+  registration decided the namespace for all of them. A host registered without the setting reset it to the default,
+  and another host's stranded-item watchdog then derived ids for streams it never writes, read items whose terminal
+  events were stored as not terminal, and failed them, with nothing logged. `AddWhizbangSagas` now registers an
+  `ISagaItemStreamIdDeriver` (`SagaItemStreamIdDeriver`) built from that container's own `SagaOptions`, and a saga
+  service given the options its host registered (as the container injects them) derives under that host's namespace in
+  its watchdog, stranded-item resolution and reconciliation. `SagaItemCompletionReconciler.ResolveCompletionCountsAsync`
+  and `ReconcileTerminalCountsAsync` gain overloads that take the deriver. `SagaItemStreams.Of(sagaId, item)`, the
+  existing reconciler overloads, and a service given options it built itself or none keep the process-wide namespace,
+  now documented as such; code running in a host should inject the deriver (Fixes #1888)
 - **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
   whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
   failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate
