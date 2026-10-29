@@ -1989,7 +1989,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     private readonly List<ParkedPoll> _parked = [];
     private TaskCompletionSource _pollArmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public PollFiringClock() : base(DateTimeOffset.UtcNow) {
+    public PollFiringClock() : base(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero)) {
     }
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
