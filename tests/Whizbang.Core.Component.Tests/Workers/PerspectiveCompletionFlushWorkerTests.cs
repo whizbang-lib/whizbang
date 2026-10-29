@@ -78,7 +78,8 @@ public class PerspectiveCompletionFlushWorkerTests {
 
   private static PerspectiveCompletionFlushWorker _worker(
       RecordingCoordinator coordinator, bool enabled = true, bool debugMode = false,
-      ILogger<PerspectiveCompletionFlushWorker>? logger = null) {
+      ILogger<PerspectiveCompletionFlushWorker>? logger = null,
+      BatchFlusherOptions? flusher = null, TimeProvider? timeProvider = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
@@ -90,7 +91,7 @@ public class PerspectiveCompletionFlushWorkerTests {
       schemaReadyGate: gate,
       options: Options.Create(new PerspectiveCompletionFlushWorkerOptions {
         Enabled = enabled,
-        Flusher = new BatchFlusherOptions {
+        Flusher = flusher ?? new BatchFlusherOptions {
           MaxBatchSize = 100,
           CoalesceWindowMs = 5,
           ImmediateFlushThreshold = 1,
@@ -99,7 +100,8 @@ public class PerspectiveCompletionFlushWorkerTests {
       }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions { DebugMode = debugMode }),
       logger: logger ?? NullLogger<PerspectiveCompletionFlushWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      timeProvider: timeProvider);
   }
 
   private static PerspectiveCursorCompletion _cursor(Guid? streamId = null) => new() {
@@ -276,20 +278,25 @@ public class PerspectiveCompletionFlushWorkerTests {
   public async Task AFullBatchIsWrittenInOneCallAsync(CancellationToken testToken) {
     // Batching is the reason this worker exists: every processed perspective event produces a
     // completion, so one round trip each would put a database call on the hot path per event.
+    // The flusher's window runs on a fake clock that never moves (#1868), so only the threshold of twenty can end
+    // the batch: the twenty completions are written together, whatever the scheduling.
     var coordinator = new RecordingCoordinator();
-    var worker = _worker(coordinator);
+    var worker = _worker(
+      coordinator,
+      flusher: new BatchFlusherOptions { MaxBatchSize = 100, CoalesceWindowMs = 5, ImmediateFlushThreshold = 20, ChannelCapacity = 1000 },
+      timeProvider: new ArmingClock());
     await worker.StartAsync(testToken);
 
     var ids = Enumerable.Range(0, 20).Select(_ => (Guid)TrackedGuid.New()).ToList();
     foreach (var id in ids) {
       await worker.EnqueueEventWorkIdAsync(id, testToken);
     }
-    await coordinator.Flushed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await coordinator.Flushed.Task.WaitAsync(testToken);
     await worker.StopAsync(CancellationToken.None);
 
     var written = coordinator.Completions.SelectMany(c => c.WorkIds).ToList();
-    await Assert.That(written).IsNotEmpty();
-    await Assert.That(coordinator.Completions.Count).IsLessThan(ids.Count)
+    await Assert.That(written).IsEquivalentTo(ids);
+    await Assert.That(coordinator.Completions.Count).IsEqualTo(1)
       .Because("twenty completions must not cost twenty round trips");
   }
 

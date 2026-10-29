@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 
@@ -165,6 +166,33 @@ public class AzureServiceBusTransportBatchPipelineTests {
     await Assert.That(batches[0][0].Envelope.MessageId.Value).IsEqualTo(envelope.MessageId.Value);
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(receiver.Abandoned).IsEmpty();
+  }
+
+  /// <summary>
+  /// #1868: a partial batch is flushed by the collector's sliding window, which runs on the transport's clock. The
+  /// window is far longer than the test may run, so only moving that clock can close it.
+  /// </summary>
+  [Test]
+  public async Task NonSessionBatch_PartialBatch_FlushesWhenTheTransportsClockClosesTheWindowAsync() {
+    var clock = new ArmingClock();
+    var (transport, client) = _createTransport(enableSessions: false, timeProvider: clock);
+    var batches = new List<IReadOnlyList<TransportMessage>>();
+    var slide = TimeSpan.FromMinutes(10);
+    await transport.SubscribeBatchAsync(
+      (batch, _) => { batches.Add(batch); return Task.CompletedTask; },
+      _destination(),
+      new TransportBatchOptions { BatchSize = 50, SlideMs = (int)slide.TotalMilliseconds, MaxWaitMs = 2 * (int)slide.TotalMilliseconds });
+    var receiver = new RecordingTransportReceiver();
+    var envelope = AsbTransportTestData.CreateEnvelope();
+
+    await client.LastProcessor!.RaiseMessageAsync(
+      AsbTransportTestData.MessageArgs(AsbTransportTestData.EnvelopeMessage(envelope), receiver));
+    clock.Advance(slide);
+    await receiver.CompletedSignal.Task;
+
+    await Assert.That(batches).Count().IsEqualTo(1);
+    await Assert.That(batches[0][0].Envelope.MessageId.Value).IsEqualTo(envelope.MessageId.Value);
+    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
   }
 
   /// <summary>
@@ -371,7 +399,8 @@ public class AzureServiceBusTransportBatchPipelineTests {
     bool enableSessions,
     RecordingTransportLogger? logger = null,
     int maxDeliveryAttempts = 10,
-    IRawReceptor? rawReceptor = null) {
+    IRawReceptor? rawReceptor = null,
+    TimeProvider? timeProvider = null) {
     var client = new RaisableServiceBusClient();
     var options = new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
@@ -384,7 +413,8 @@ public class AzureServiceBusTransportBatchPipelineTests {
       options,
       (ILogger<AzureServiceBusTransport>?)logger ?? NullLogger<AzureServiceBusTransport>.Instance,
       rawReceptorRegistry: rawReceptor is null ? null : new SingleRawReceptorRegistry(rawReceptor),
-      typeBinder: new MissTypeBinder());
+      typeBinder: new MissTypeBinder(),
+      timeProvider: timeProvider);
     return (transport, client);
   }
 

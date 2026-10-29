@@ -38,4 +38,9 @@
     <Compile Include="../Whizbang.Transports.AzureServiceBus.Tests/TestJsonContext.cs" Link="Shared/TestJsonContext.cs" />
   </ItemGroup>
 
+  <!-- The fake clock that reports each timer it arms, shared with the core component tests (#1868). -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Core.Component.Tests/Workers/ArmingClock.cs" Link="Shared/ArmingClock.cs" />
+  </ItemGroup>
+
 </Project>
