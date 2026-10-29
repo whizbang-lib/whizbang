@@ -21,7 +21,8 @@ public class ArchiveObjectCorruptedExceptionTests {
     await Assert.That(ex.ExpectedSha256).IsEqualTo("aa");
     await Assert.That(ex.ActualSha256).IsEqualTo("bb");
     await Assert.That(ex.Message).Contains("recorded 10 bytes with SHA-256 aa").And.Contains("returned 9 bytes with SHA-256 bb");
-    await Assert.That(ex).IsAssignableTo<InvalidDataException>();
+    await Assert.That(ex).IsNotAssignableTo<Azure.RequestFailedException>()
+      .Because("a corrupted object is a data fault, not a storage error a retry policy would retry");
   }
 
   [Test]

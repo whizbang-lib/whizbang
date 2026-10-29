@@ -202,13 +202,17 @@ public class AzureBlobArchiveRegistrationTests {
   }
 
   [Test]
-  public async Task LocatorFor_NamesTheStoreTheContainerAndTheStream_WithBrotliAndFormat1Async() {
+  [Arguments("svc")]
+  [Arguments(null)]
+  public async Task LocatorFor_NamesTheStoreTheContainerAndTheStream_WithBrotliAndFormat1Async(string? schema) {
     var stream = Guid.Parse("0199a1b2-0000-7000-8000-000000000001");
 
-    var locator = new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions()).LocatorFor(stream);
+    var locator = new AzureBlobArchiveStore(_database with { Schema = schema }, _container(), new AzureBlobArchiveOptions())
+      .LocatorFor(stream);
 
     await Assert.That(locator.ToString())
-      .IsEqualTo("azure-blob://whizbang-archive/0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1");
+      .IsEqualTo("azure-blob://whizbang-archive/0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
+      .Because("the locator names the container, never the database schema the manifest lives in");
   }
 
   private static Azure.Storage.Blobs.BlobContainerClient _container() =>

@@ -102,10 +102,13 @@ public class AzureBlobArchiveStoreTests {
     return (stream, ids);
   }
 
+  // Awaits a call for its exception only, so an assertion can take it as a plain task.
+  private static async Task _completedAsync<T>(Task<T> call) => _ = await call;
+
   private static async Task _executeAsync(NpgsqlConnection connection, string sql, string? p = null) {
     await using var command = new NpgsqlCommand(sql, connection);
     if (p is not null) {
-      command.Parameters.AddWithValue("p", p);
+      command.Parameters.AddWithValue(nameof(p), p);
     }
     _ = await command.ExecuteNonQueryAsync();
   }
@@ -151,7 +154,7 @@ public class AzureBlobArchiveStoreTests {
     "es.aggregate_id, es.aggregate_type, es.flags) " +
     "FROM wh_event_store es JOIN wh_event_body eb ON eb.event_id = es.event_id WHERE es.stream_id = @s ORDER BY es.version", stream);
 
-  private static async Task<List<string>> _readAllAsync(IArchiveStore store, Guid stream, long fromVersion = 0) {
+  private static async Task<List<string>> _readAllAsync(AzureBlobArchiveStore store, Guid stream, long fromVersion = 0) {
     var read = new List<string>();
     await foreach (var e in store.ReadAsync(stream, fromVersion)) {
       read.Add(_read(e));
@@ -201,8 +204,8 @@ public class AzureBlobArchiveStoreTests {
     var objects = await _objectsAsync();
     await Assert.That(manifest.Select(m => string.Join('|', m.Split('|')[..3]))).IsEquivalentTo(["1|2|2", "3|4|2", "5|5|1"],
       TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("at most MaxEventsPerChunk events per object, in version order");
-    await Assert.That(manifest).All().Satisfy(m => m.Contains($"azure-blob://{_containerName}/{stream:D}/", StringComparison.Ordinal)
-      && m.Contains("?codec=brotli&format=1", StringComparison.Ordinal)).Because("each object records its own codec and format");
+    await Assert.That(manifest.All(m => m.Contains($"azure-blob://{_containerName}/{stream:D}/", StringComparison.Ordinal)
+      && m.Contains("?codec=brotli&format=1", StringComparison.Ordinal))).IsTrue().Because("each object records its own codec and format");
     await Assert.That(objects).Count().IsEqualTo(3);
     foreach (var name in objects) {
       var bytes = (await _container().GetBlobClient(name).DownloadContentAsync()).Value.Content.ToArray();
@@ -260,7 +263,7 @@ public class AzureBlobArchiveStoreTests {
     var generation = await _generationAsync();
     var fault = new FaultObjectWrites(afterSending: false);
 
-    await Assert.That(() => _store(fault: fault).WriteAsync(ArchiveBatch.WholeStream(stream))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(_store(fault: fault).WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
 
     await Assert.That(fault.Faulted).IsEqualTo(1).Because("the failure must come from the upload, after the database moved the events");
     await Assert.That(await _hotAsync(stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -279,7 +282,7 @@ public class AzureBlobArchiveStoreTests {
     var fault = new FaultObjectWrites(afterSending: true);
     var store = _store(maxEventsPerChunk: 10, fault: fault);
 
-    await Assert.That(() => store.WriteAsync(ArchiveBatch.WholeStream(stream))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
     var orphaned = await _objectsAsync();
     await Assert.That(orphaned).Count().IsEqualTo(1).Because("the object reached the store; only the client never heard");
     await Assert.That(await _manifestAsync(stream)).IsEmpty().Because("an object no manifest row names is not part of any archive");
@@ -309,10 +312,10 @@ public class AzureBlobArchiveStoreTests {
     flipped[^1] ^= 0xFF;
 
     _ = await blob.UploadAsync(BinaryData.FromBytes(flipped), overwrite: true);
-    var sameLength = await Assert.That(() => _readAllAsync(store, stream)).Throws<ArchiveObjectCorruptedException>();
+    var sameLength = await Assert.That(() => _completedAsync(_readAllAsync(store, stream))).Throws<ArchiveObjectCorruptedException>();
     _ = await blob.UploadAsync(BinaryData.FromBytes(bytes[..^1]), overwrite: true);
-    var truncated = await Assert.That(() => _readAllAsync(store, stream)).Throws<ArchiveObjectCorruptedException>();
-    var restore = await Assert.That(() => store.RestoreAsync(stream)).Throws<ArchiveObjectCorruptedException>();
+    var truncated = await Assert.That(() => _completedAsync(_readAllAsync(store, stream))).Throws<ArchiveObjectCorruptedException>();
+    var restore = await Assert.That(() => _completedAsync(store.RestoreAsync(stream))).Throws<ArchiveObjectCorruptedException>();
 
     await Assert.That(sameLength!.ExpectedSha256).IsEqualTo(ArchiveChunk.Sha256(bytes));
     await Assert.That(sameLength.ActualSha256).IsEqualTo(ArchiveChunk.Sha256(flipped)).Because("a changed byte is caught by the hash");
@@ -334,7 +337,7 @@ public class AzureBlobArchiveStoreTests {
         $"WHERE stream_id = '{stream}'");
     }
 
-    await Assert.That(() => _readAllAsync(store, stream)).Throws<InvalidDataException>()
+    await Assert.That(() => _completedAsync(_readAllAsync(store, stream))).Throws<InvalidDataException>()
       .Because("a locator another store wrote is never read as one of this store's objects");
   }
 
@@ -373,6 +376,45 @@ public class AzureBlobArchiveStoreTests {
       .Because("this store's next write moves the table store's rows into its object, so the archive ends in objects");
     await Assert.That(both).IsEquivalentTo(hot[..5], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("rows the table store archived since sit above every object, so objects then rows is version order");
+  }
+
+  [Test]
+  public async Task Write_ARowArchivedBeforeTheStoreKeptEveryColumn_MovesIntoAnObject_WithItsNullsAsync() {
+    // A row with only the columns migration 085's copy required (no body, no flags, no position), naming an origin lane,
+    // so every nullable column is seen both empty (this row) and set (the hot events) on its way into an object.
+    var (stream, _) = await _seedAsync(3);
+    var lane = Guid.CreateVersion7();
+    await using (var connection = await _openAsync()) {
+      await _executeAsync(connection,
+        "INSERT INTO wh_event_archive (event_id, stream_id, event_type, version, origin_service_id, origin_commit_sequence) " +
+        $"VALUES ('{Guid.CreateVersion7()}', '{stream}', 'Old.Type', 0, '{lane}', 7)");
+    }
+    var store = _store(maxEventsPerChunk: 10);
+
+    _ = await store.WriteAsync(ArchiveBatch.Prefix(stream, 1));
+    var read = new List<ArchivedEvent>();
+    await foreach (var e in store.ReadAsync(stream)) {
+      read.Add(e);
+    }
+    var stored = ArchiveChunk.Decode(
+      (await _container().GetBlobClient((await _objectsAsync()).Single()).DownloadContentAsync()).Value.Content.ToArray(),
+      Whizbang.Core.Archival.ArchiveCompression.Brotli);
+
+    await Assert.That(read.Select(e => e.Version)).IsEquivalentTo([0L, 1L], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the table store's row moved into the object with the prefix, under it in version order");
+    await Assert.That(read[0].EventDataJson).IsNull();
+    await Assert.That(read[0].MetadataJson).IsNull();
+    await Assert.That(read[0].ScopeJson).IsNull();
+    await Assert.That(read[0].AggregateId).IsNull();
+    await Assert.That(read[0].AggregateType).IsNull();
+    await Assert.That(read[0].CreatedAt).IsNull();
+    await Assert.That(read[0].Flags).IsNull().Because("a missing column reads as null, never as a default");
+    await Assert.That(read[1].EventDataJson).IsNotNull();
+    await Assert.That((stored[0].OriginServiceId, stored[0].OriginCommitSequence, stored[0].CommitSequence, stored[0].InsertOrder))
+      .IsEqualTo(((Guid?)lane, (long?)7L, (long?)null, (long?)null))
+      .Because("the object keeps every column a restore needs, set or not");
+    await Assert.That(stored[1].CommitSequence.HasValue).IsTrue();
+    await Assert.That(stored[1].OriginServiceId).IsNull();
   }
 
   // ── Restore and delete ─────────────────────────────────────────────────────────────────────────────
