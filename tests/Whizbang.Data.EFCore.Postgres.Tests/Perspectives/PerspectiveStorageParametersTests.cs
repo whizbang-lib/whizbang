@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <see cref="JsonbColumnStorageIntegrationTests"/>.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+[Category("Shard5")]
 public class PerspectiveStorageParametersTests {
   private static TableStorageDeclaration _declared(string table, params (string Name, string Value)[] parameters) =>
     new(table, parameters.ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal));
