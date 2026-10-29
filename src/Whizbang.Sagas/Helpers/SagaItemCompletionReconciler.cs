@@ -49,14 +49,40 @@ public static class SagaItemCompletionReconciler {
   /// <c>null</c> without touching the event store. Slow path: when
   /// every item has a projection row but some are non-terminal, the
   /// non-terminal rows are reconciled via
-  /// <see cref="ReconcileTerminalCountsAsync"/>.
+  /// <see cref="ReconcileTerminalCountsAsync(Guid, IReadOnlyList{SagaItemModel}, ISagaItemTerminalReader, ISagaItemStreamIdDeriver, CancellationToken)"/>.
+  /// This overload derives per-item stream ids under the process-wide namespace (<see cref="SagaItemStreams.Of(Guid, string)"/>).
+  /// Code running in a host passes its <see cref="ISagaItemStreamIdDeriver"/> to the overload that takes one.
   /// </remarks>
+  public static Task<(int Completed, int Failed)?> ResolveCompletionCountsAsync(
+      Guid sagaId,
+      int totalItems,
+      SagaItemAggregate agg,
+      Func<CancellationToken, Task<IReadOnlyList<SagaItemModel>>> getItems,
+      ISagaItemTerminalReader terminalReader,
+      CancellationToken cancellationToken) =>
+    ResolveCompletionCountsAsync(sagaId, totalItems, agg, getItems, terminalReader, SagaItemStreamIdDeriver.ProcessWide, cancellationToken);
+
+  /// <summary>
+  /// <see cref="ResolveCompletionCountsAsync(Guid, int, SagaItemAggregate, Func{CancellationToken, Task{IReadOnlyList{SagaItemModel}}}, ISagaItemTerminalReader, CancellationToken)"/>,
+  /// deriving each per-item stream id with <paramref name="itemStreams"/>, so a host reads the streams it writes (#1888).
+  /// </summary>
+  /// <param name="sagaId">The saga.</param>
+  /// <param name="totalItems">The saga's expected item count.</param>
+  /// <param name="agg">The per-item projection's aggregate for the saga.</param>
+  /// <param name="getItems">Reads the saga's per-item projection rows.</param>
+  /// <param name="terminalReader">Reads a per-item stream's terminal event from the durable store.</param>
+  /// <param name="itemStreams">Derives per-item stream ids under the host's namespace.</param>
+  /// <param name="cancellationToken">Cancels the reads.</param>
+  /// <returns>The <c>(completed, failed)</c> counts when the saga is done; otherwise <see langword="null"/>.</returns>
+  /// <docs>fundamentals/sagas/whizbang-sagas#stranded-row-reconciliation</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:Reconciler_WithADeriver_ChecksTheStreamsItDerivesAsync</tests>
   public static async Task<(int Completed, int Failed)?> ResolveCompletionCountsAsync(
       Guid sagaId,
       int totalItems,
       SagaItemAggregate agg,
       Func<CancellationToken, Task<IReadOnlyList<SagaItemModel>>> getItems,
       ISagaItemTerminalReader terminalReader,
+      ISagaItemStreamIdDeriver itemStreams,
       CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(agg);
     ArgumentNullException.ThrowIfNull(getItems);
@@ -69,7 +95,7 @@ public static class SagaItemCompletionReconciler {
       return null;   // still dispatching / processing — not every item has a row yet
     }
     var items = await getItems(cancellationToken).ConfigureAwait(false);
-    var reconciled = await ReconcileTerminalCountsAsync(sagaId, items, terminalReader, cancellationToken).ConfigureAwait(false);
+    var reconciled = await ReconcileTerminalCountsAsync(sagaId, items, terminalReader, itemStreams, cancellationToken).ConfigureAwait(false);
     if (reconciled is null || reconciled.Value.Completed + reconciled.Value.Failed < totalItems) {
       return null;
     }
@@ -84,13 +110,39 @@ public static class SagaItemCompletionReconciler {
   /// in the store (genuinely in progress) — the caller must then NOT
   /// complete.
   /// </summary>
+  /// <remarks>
+  /// Derives per-item stream ids under the process-wide namespace (<see cref="SagaItemStreams.Of(Guid, string)"/>).
+  /// Code running in a host passes its <see cref="ISagaItemStreamIdDeriver"/> to the overload that takes one.
+  /// </remarks>
+  public static Task<(int Completed, int Failed)?> ReconcileTerminalCountsAsync(
+      Guid sagaId,
+      IReadOnlyList<SagaItemModel> items,
+      ISagaItemTerminalReader terminalReader,
+      CancellationToken cancellationToken) =>
+    ReconcileTerminalCountsAsync(sagaId, items, terminalReader, SagaItemStreamIdDeriver.ProcessWide, cancellationToken);
+
+  /// <summary>
+  /// <see cref="ReconcileTerminalCountsAsync(Guid, IReadOnlyList{SagaItemModel}, ISagaItemTerminalReader, CancellationToken)"/>,
+  /// deriving each per-item stream id with <paramref name="itemStreams"/>, so a host reads the streams it writes (#1888).
+  /// </summary>
+  /// <param name="sagaId">The saga.</param>
+  /// <param name="items">The saga's per-item projection rows.</param>
+  /// <param name="terminalReader">Reads a per-item stream's terminal event from the durable store.</param>
+  /// <param name="itemStreams">Derives per-item stream ids under the host's namespace.</param>
+  /// <param name="cancellationToken">Cancels the reads.</param>
+  /// <returns>The store's <c>(completed, failed)</c> counts, or <see langword="null"/> while any item is in progress.</returns>
+  /// <docs>fundamentals/sagas/whizbang-sagas#stranded-row-reconciliation</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:Reconciler_WithADeriver_ChecksTheStreamsItDerivesAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:Reconciler_WithoutADeriver_ThrowsAsync</tests>
   public static async Task<(int Completed, int Failed)?> ReconcileTerminalCountsAsync(
       Guid sagaId,
       IReadOnlyList<SagaItemModel> items,
       ISagaItemTerminalReader terminalReader,
+      ISagaItemStreamIdDeriver itemStreams,
       CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(items);
     ArgumentNullException.ThrowIfNull(terminalReader);
+    ArgumentNullException.ThrowIfNull(itemStreams);
 
     var completed = items.Count(i => i.State == SagaItemState.Completed);
     var failed = items.Count(i => i.State == SagaItemState.Failed);
@@ -100,7 +152,7 @@ public static class SagaItemCompletionReconciler {
         continue;
       }
 
-      var streamId = SagaItemStreams.Of(sagaId, item.ItemIdentifier);
+      var streamId = itemStreams.StreamIdOf(sagaId, item.ItemIdentifier);
       var outcome = await terminalReader.CheckAsync(streamId, cancellationToken).ConfigureAwait(false);
 
       switch (outcome) {

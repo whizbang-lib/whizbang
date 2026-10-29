@@ -798,6 +798,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Each host derives saga per-item stream ids from its own namespace.** `SagaItemStreams.AppDefaultNamespace` is one
+  process-wide value that every `AddWhizbangSagas` call overwrites, and the framework's per-item readers derived from
+  it at call time, so in a process with several hosts (integration tests, a test server per service) the last
+  registration decided the namespace for all of them. A host registered without the setting reset it to the default,
+  and another host's stranded-item watchdog then derived ids for streams it never writes, read items whose terminal
+  events were stored as not terminal, and failed them, with nothing logged. `AddWhizbangSagas` now registers an
+  `ISagaItemStreamIdDeriver` (`SagaItemStreamIdDeriver`) built from that container's own `SagaOptions`, and a saga
+  service given the options its host registered (as the container injects them) derives under that host's namespace in
+  its watchdog, stranded-item resolution and reconciliation. `SagaItemCompletionReconciler.ResolveCompletionCountsAsync`
+  and `ReconcileTerminalCountsAsync` gain overloads that take the deriver. `SagaItemStreams.Of(sagaId, item)`, the
+  existing reconciler overloads, and a service given options it built itself or none keep the process-wide namespace,
+  now documented as such; code running in a host should inject the deriver (Fixes #1888)
 - **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
   whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
   failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate

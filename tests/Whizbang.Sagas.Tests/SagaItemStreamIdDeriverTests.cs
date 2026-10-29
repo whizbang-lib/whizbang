@@ -24,8 +24,8 @@ public class SagaItemStreamIdDeriverTests {
   public async Task Of_DerivesUnderTheOptionsNamespaceAsync() {
     var deriver = new SagaItemStreamIdDeriver(new SagaOptions { PerItemStreamNamespace = _namespace });
 
-    await Assert.That(deriver.Namespace).IsEqualTo(_namespace);
-    await Assert.That(deriver.Of(_sagaId, "item-1")).IsEqualTo(SagaItemStreams.Of(_namespace, _sagaId, "item-1"));
+    await Assert.That(deriver.NamespaceId).IsEqualTo(_namespace);
+    await Assert.That(deriver.StreamIdOf(_sagaId, "item-1")).IsEqualTo(SagaItemStreams.Of(_namespace, _sagaId, "item-1"));
   }
 
   [Test]
@@ -41,10 +41,10 @@ public class SagaItemStreamIdDeriverTests {
     var configuredDeriver = configured.GetRequiredService<ISagaItemStreamIdDeriver>();
     var defaultDeriver = byDefault.GetRequiredService<ISagaItemStreamIdDeriver>();
 
-    await Assert.That(configuredDeriver.Namespace).IsEqualTo(_namespace)
+    await Assert.That(configuredDeriver.NamespaceId).IsEqualTo(_namespace)
       .Because("the container registered first keeps its own namespace after another registers without one");
-    await Assert.That(defaultDeriver.Namespace).IsEqualTo(SagaItemStreams.DefaultNamespace);
-    await Assert.That(configuredDeriver.Of(_sagaId, "item-1")).IsEqualTo(SagaItemStreams.Of(_namespace, _sagaId, "item-1"));
+    await Assert.That(defaultDeriver.NamespaceId).IsEqualTo(SagaItemStreams.DefaultNamespace);
+    await Assert.That(configuredDeriver.StreamIdOf(_sagaId, "item-1")).IsEqualTo(SagaItemStreams.Of(_namespace, _sagaId, "item-1"));
   }
 
   [Test]
@@ -53,7 +53,7 @@ public class SagaItemStreamIdDeriverTests {
 
     var deriver = SagaItemStreamIdDeriver.For(provider.GetRequiredService<SagaOptions>());
 
-    await Assert.That(deriver.Namespace).IsEqualTo(_namespace)
+    await Assert.That(deriver.NamespaceId).IsEqualTo(_namespace)
       .Because("a saga service given its host's options derives under that host's namespace");
   }
 
@@ -80,10 +80,10 @@ public class SagaItemStreamIdDeriverTests {
   public async Task ProcessWide_DerivesUnderTheNamespaceItReportsAsync() {
     var deriver = SagaItemStreamIdDeriver.ProcessWide;
 
-    var namespaceId = deriver.Namespace;
-    var derived = deriver.Of(_sagaId, "item-1");
+    var namespaceId = deriver.NamespaceId;
+    var derived = deriver.StreamIdOf(_sagaId, "item-1");
 
-    await Assert.That(derived == SagaItemStreams.Of(namespaceId, _sagaId, "item-1") || deriver.Namespace != namespaceId).IsTrue();
+    await Assert.That(derived == SagaItemStreams.Of(namespaceId, _sagaId, "item-1") || deriver.NamespaceId != namespaceId).IsTrue();
   }
 
   [Test]

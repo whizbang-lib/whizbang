@@ -33,7 +33,7 @@ namespace Whizbang.Sagas.Tests.Services;
 ///
 /// <para>The fix wires <see cref="ISagaItemRepository"/> + <see cref="ISagaItemTerminalReader"/>
 /// via the constructor; <c>TryRecoverViaWatchdogAsync</c>'s slow path then
-/// calls <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync"/>
+/// calls <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync(Guid, int, SagaItemAggregate, Func{CancellationToken, Task{IReadOnlyList{SagaItemModel}}}, ISagaItemTerminalReader, ISagaItemStreamIdDeriver, CancellationToken)"/>
 /// to compute authoritative counts and emits <c>SagaCompletedEvent</c> via
 /// <c>PublishOnceAsync</c>.</para>
 ///
