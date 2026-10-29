@@ -1840,15 +1840,16 @@ public interface IWorkCoordinator {
   /// sequence in <paramref name="commitSequences"/> fills an empty origin commit sequence, its integrity digest
   /// moves from the local lane to the origin's lane, and the sealed epochs it touched are refolded. An event that
   /// already carries a different origin is never changed. Events the store does not hold are not reported; the
-  /// bundle stores them as usual.
+  /// bundle stores them as usual, unless the store refused to restore one past deduplication because its stream's
+  /// earlier history was truncated here, which is counted as <see cref="RedeliveredBucketPresence.Refused"/> (#1843).
   /// </summary>
   /// <param name="originServiceId">The origin the bundle names.</param>
   /// <param name="eventIds">The bundle's event ids.</param>
   /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
   /// null when the origin had not stamped it.</param>
   /// <param name="cancellationToken">Cancellation.</param>
-  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held and how many of
-  /// those adopted the origin identity; null = unsupported.</returns>
+  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held, how many of those
+  /// adopted the origin identity, and how many the store refused to restore; null = unsupported.</returns>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs</tests>
   Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(

@@ -732,6 +732,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
+  whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
+  failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate
+  on every redelivery, so its bucket never healed and repair asked for it on the terminal cadence forever. The children
+  of a redelivery bundle now carry `InboxMessage.RestoreIfMissing`, and for them `store_inbox_messages` (migration 252)
+  checks deduplication against the event store: a child neither the event store nor the inbox holds is stored again,
+  as state only, so it is projected without running trigger receptors a second time. A duplicate of a stored event is
+  still dropped, ordinary traffic keeps trusting deduplication, and ephemeral and at-most-once events are never
+  restored. A child on a stream whose earlier history was truncated here is refused, because it cannot be told from
+  an event the truncation removed on purpose: it is stored settled with the reason, the reconciliation reads it
+  (`wh_reconcile_redelivered_bundle`, `RedeliveredBucketPresence.Refused`, `RedeliveryReconciliation.Refused`), and
+  the bucket is marked as one repair cannot change and reported once (Fixes #1843)
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

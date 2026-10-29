@@ -1074,7 +1074,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var qualified = BuildSchemaQualifiedName(schema, "wh_adopt_redelivered_origin");
+    // 252 (#1843): the 249 adoption plus, per bucket, the children the store refused to restore past deduplication.
+    var qualified = BuildSchemaQualifiedName(schema, "wh_reconcile_redelivered_bundle");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
@@ -1086,14 +1087,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = commitSequences.ToArray()
     });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences)";
+    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count, refused_count FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences)";
 #pragma warning restore S2077
     var buckets = new List<RedeliveredBucketPresence>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var tenant = reader.GetString(1);
       buckets.Add(new RedeliveredBucketPresence(
-        reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4)));
+        reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4),
+        reader.GetInt32(5)));
     }
     return buckets;
   }

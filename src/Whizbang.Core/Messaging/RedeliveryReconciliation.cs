@@ -100,30 +100,36 @@ public static partial class RedeliveryReconciler {
       }
       var present = buckets.Sum(b => b.Present);
       var adopted = buckets.Sum(b => b.Adopted);
+      var refused = buckets.Sum(b => b.Refused);
       var metrics = services.GetService<StreamIntegrityMetrics>();
       if (adopted > 0) {
         metrics?.OriginsAdopted.Add(adopted);
         LogOriginsAdopted(logger, adopted, children.Count, origin);
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0);
       }
-      // An event the store did not hold is stored by this bundle: the repair is working, nothing to conclude.
-      if (present < children.Count) {
-        return new RedeliveryReconciliation(children.Count, present, 0, 0);
+      // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
+      // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
+      // bundle that stored nothing and adopted nothing marks the buckets of the events it found present.
+      List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.Refused > 0)];
+      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refused >= children.Count
+        ? [.. buckets.Where(b => b.Refused == 0)]
+        : [];
+      if (refusedBuckets.Count + unchanged.Count == 0) {
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refused);
       }
       var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
       if (ledger is null) {
-        return new RedeliveryReconciliation(children.Count, present, 0, 0);
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refused);
       }
-      var marked = await ledger.MarkUnhealableBatchAsync(
-        [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
-        now, cancellationToken).ConfigureAwait(false);
-      foreach (var key in marked) {
-        LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin);
+      var marked = await _markAsync(ledger, origin, refusedBuckets, now,
+          key => LogRepairRefusedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        .ConfigureAwait(false);
+      marked += await _markAsync(ledger, origin, unchanged, now,
+          key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        .ConfigureAwait(false);
+      if (marked > 0) {
+        metrics?.RepairsUnhealable.Add(marked);
       }
-      if (marked.Count > 0) {
-        metrics?.RepairsUnhealable.Add(marked.Count);
-      }
-      return new RedeliveryReconciliation(children.Count, present, 0, marked.Count);
+      return new RedeliveryReconciliation(children.Count, present, adopted, marked, refused);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -131,6 +137,31 @@ public static partial class RedeliveryReconciler {
       return RedeliveryReconciliation.None;
     }
   }
+
+  /// <summary>Marks the buckets as ones repair cannot change and reports each newly marked one once.</summary>
+  private static async Task<int> _markAsync(
+      IIntegrityRepairLedger ledger, Guid origin, List<RedeliveredBucketPresence> buckets, DateTimeOffset now,
+      Action<IntegrityRepairLedger.DivergenceKey> report, CancellationToken cancellationToken) {
+    if (buckets.Count == 0) {
+      return 0;
+    }
+    var marked = await ledger.MarkUnhealableBatchAsync(
+      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
+      now, cancellationToken).ConfigureAwait(false);
+    foreach (var key in marked) {
+      report(key);
+    }
+    return marked.Count;
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Repair cannot restore {EventType} (tenant {TenantScope}) on stream {StreamId} from origin {OriginServiceId}: "
+            + "a redelivered event that inbox deduplication remembers is missing from the event store, but the stream's "
+            + "earlier history was truncated here, so it could be an event the truncation removed on purpose and is not "
+            + "stored again. The bucket stops being requested and is reported again only if either side's digest changes. "
+            + "Compare the stream on both sides")]
+  private static partial void LogRepairRefusedBucket(
+    ILogger logger, string eventType, string? tenantScope, Guid streamId, Guid originServiceId);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Redelivery from origin {OriginServiceId} filled the origin identity of {Adopted} of its {Children} event(s) "

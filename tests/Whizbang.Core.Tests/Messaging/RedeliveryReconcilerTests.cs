@@ -337,6 +337,7 @@ public class RedeliveryReconcilerTests {
     var bundle = _bundle(origin, stream, 1);
 
     _ = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, new CapturingLogger(), _now);
+    listener.RecordObservableInstruments();
 
     await Assert.That(readings).IsEquivalentTo([1L]);
   }
