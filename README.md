@@ -156,6 +156,14 @@ Move large message bodies out of the broker and database (claim check).
 | [Whizbang.Offloads.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | Azure Blob Storage IMessageBodyStore provider for Whizbang offloads (claim-check pattern). |
 | [Whizbang.Offloads.InMemory](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.InMemory.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | In-memory IMessageBodyStore provider for Whizbang offloads. |
 
+#### Event archive
+
+Keep archived event streams outside the database, readable and restorable.
+
+| Package | Version | What it is for |
+|---|---|---|
+| [Whizbang.Archive.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Archive.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | Azure Blob Storage IArchiveStore for Whizbang: archived event streams leave the database as Brotli-compressed chunks, with a manifest in the service's Postgres database. |
+
 #### Observability
 
 OpenTelemetry integration for tagged messages.
