@@ -16,7 +16,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <typeparam name="T">Item type the channel carries.</typeparam>
-/// <docs>operations/configuration/configuration-reference</docs>
+/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherRetryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherTests.cs</tests>
 public sealed partial class BatchFlusher<T> : IAsyncDisposable {
@@ -246,7 +246,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
 }
 
 /// <summary>Configuration for <see cref="BatchFlusher{T}"/>.</summary>
-/// <docs>operations/configuration/configuration-reference</docs>
+/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed class BatchFlusherOptions {
   /// <summary>Bounded channel capacity (back-pressure when full). Default 10 000.</summary>
   public int ChannelCapacity { get; set; } = 10_000;
