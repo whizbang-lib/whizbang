@@ -2917,7 +2917,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT {functionName}(@p_category, @p_instance_id, @p_ids, @p_lease)";
     cmd.Parameters.Add(new NpgsqlParameter("p_category", NpgsqlTypes.NpgsqlDbType.Text) { Value = category.ToSqlCategory() });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
     cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = leaseSeconds });
     // The function returns an empty array, never NULL, so the result is always a uuid[].
@@ -4249,7 +4249,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_failure_reason", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)request.FailureReason });
     cmd.Parameters.Add(new NpgsqlParameter("p_error_text", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.ErrorText ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("p_attempts", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.Attempts });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = request.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = request.InstanceId });
     cmd.Parameters.Add(new NpgsqlParameter("p_generation", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.Generation });
     await cmd.ExecuteScalarAsync(cancellationToken);
     return true;
@@ -5013,7 +5013,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_delivery_count", NpgsqlTypes.NpgsqlDbType.Integer) {
         Value = (object?)import.DeliveryCount ?? DBNull.Value
       });
-      cmd.Parameters.AddWithValue("p_instance_id", _instanceId());
+      cmd.Parameters.AddWithValue(PARAM_INSTANCE_ID, _instanceId());
       cmd.Parameters.AddWithValue("p_generation", new Whizbang.Core.Messaging.DefaultGenerationProvider().GetGeneration());
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}(@p_dead_letter_id,@p_message_id,@p_stream_id,@p_message_type,@p_destination,@p_envelope_json,@p_broker_reason,@p_broker_description,@p_enqueued_at,@p_delivery_count,@p_instance_id,@p_generation)";

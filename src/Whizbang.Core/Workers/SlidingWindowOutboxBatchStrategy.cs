@@ -256,7 +256,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
         }
         var delay = RetryBackoff(attempt);
         _metrics?.OutboxFlushRetries.Add(1, new KeyValuePair<string, object?>(WorkCoordinatorMetrics.REASON_TAG, transient.Reason));
-        LogFlushRetrying(_logger, ex, batch.Length, streamKey, transient.Reason, attempt, _options.MaxFlushAttempts, delay);
+        LogFlushRetrying(ex, batch.Length, streamKey, transient.Reason, attempt, _options.MaxFlushAttempts, delay);
         try {
           await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
@@ -333,7 +333,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Storing {BatchSize} outbox message(s) for stream {StreamKey} failed with a transient {Reason}; attempt {Attempt} of {MaxAttempts}, retrying in {Delay}")]
-  private static partial void LogFlushRetrying(ILogger logger, Exception exception, int batchSize, Guid streamKey, string reason, int attempt, int maxAttempts, TimeSpan delay);
+  private partial void LogFlushRetrying(Exception exception, int batchSize, Guid streamKey, string reason, int attempt, int maxAttempts, TimeSpan delay);
 
   [LoggerMessage(Level = LogLevel.Error,
     Message = "{BatchSize} outbox message(s) for stream {StreamKey} were not stored ({Cause}, {Attempts} attempt(s)) and were written to wh_dead_letters with reason OutboxStoreFailed. Dead-letter recovery stores them again; to do it now, recover the dead letters whose source_id is one of these message ids: {MessageIds}")]
