@@ -814,6 +814,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Every Dapper maintenance step acts on the schema the host names.** The partition maintenance step and the physical
+  column fill step wrote `public` into every statement, and the managed-schema reconcile step asked the server for
+  `current_schema()`, while the Dapper work coordinator takes its schema from the connection string's `Search Path`
+  and asks the server only when that names none. On a host whose framework tables live in another schema the first two
+  found no tables (or another service's), and the reconcile step claimed and reconciled in whatever schema the session
+  resolved first, such as the session user's own schema ahead of a `Search Path` of `"$user", svc`. All three now
+  resolve the schema the way the coordinator does, the claim of the fill and reconcile steps is taken and keyed in that
+  schema, and a schema named only in `Search Path` is honored even on a pooled connection that does not carry the
+  session's `search_path` (Fixes #1894)
 - **Truncating a stream prefix leaves digest-exempt audit records out, exactly as every digest fold does.**
   `wh_truncate_stream_prefix` read the audit record types (`EventAudited`, `CommandAudited`), which no fold ever adds to
   a digest, into the per-lane ranges it refolds and into its digest subtraction. A prefix holding only audit records
