@@ -217,7 +217,7 @@ public class DispatcherTagProcessingLoggingTests {
 
   /// <summary>Returns a processing task the test completes, so the step's asynchronous path runs deterministically.</summary>
   private sealed class DeferredTagProcessor : IMessageTagProcessor {
-    private readonly TaskCompletionSource _processing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _processing = new();
 
     public void Finish() => _processing.SetResult();
 
