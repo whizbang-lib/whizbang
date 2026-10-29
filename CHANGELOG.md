@@ -798,6 +798,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A rewind's write is checked against the row version it read, and a refused rewind is reported.** A rewind replays a
+  stream in memory and writes the row once at the end, without a row version, so the store's ordering guard was the
+  only check on it: when another writer folded a newer event into the row while the rewind replayed (after a lease
+  expiry or an orphan sweep, for example), the rewind's frontier sorted below the row's stamp, the guard refused the
+  write, and the rewind reported itself complete with its correction lost and nothing logged. The generated runner now
+  reads the row version before the rewind reads any event and writes against it, as a live apply does (#928). A row
+  that moved refuses the write with `PerspectiveRowConflictException`, and the replay runs again from the same restore
+  point, now including the newer event, so the row ends with both; a row that moves under every one of five replays
+  fails the rewind, which the worker counts on `whizbang.perspective.rewinds_failed` and retries. A rewind write the
+  guard refuses on a row that did not move is logged at Warning as `[diag.rewind.write.refused]` with the frontier event,
+  instead of passing as applied. Stores that track no row versions write exactly as before (Fixes #1863)
 - **Each host derives saga per-item stream ids from its own namespace.** `SagaItemStreams.AppDefaultNamespace` is one
   process-wide value that every `AddWhizbangSagas` call overwrites, and the framework's per-item readers derived from
   it at call time, so in a process with several hosts (integration tests, a test server per service) the last

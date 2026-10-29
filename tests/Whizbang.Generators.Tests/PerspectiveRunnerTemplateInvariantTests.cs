@@ -112,7 +112,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // fall through to the full replay-from-zero (RunFromModelAsync with a null model / null anchor) —
     // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
     // guards the fallback with `_isEphemeralPerspective && !hasSnapshot`; the guard must remain, and it
-    // must sit between the snapshot lookup and the RunFromModelAsync call so it can short-circuit it.
+    // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs RunFromModelAsync) so it can short-circuit it.
     var template = _loadTemplate();
 
     await Assert.That(template).Contains("_isEphemeralPerspective && !hasSnapshot")
@@ -124,7 +124,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     await Assert.That(rewindIdx).IsGreaterThan(0);
     var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
-    var replayCallIdx = template.IndexOf("result = await RunFromModelAsync(", rewindIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", rewindIdx, StringComparison.Ordinal);
     await Assert.That(guardIdx).IsGreaterThan(rewindIdx)
       .Because("the guard must live inside RewindAndRunAsync");
     await Assert.That(replayCallIdx).IsGreaterThan(guardIdx)
@@ -141,7 +141,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
-    var replayCallIdx = template.IndexOf("result = await RunFromModelAsync(", guardIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", guardIdx, StringComparison.Ordinal);
     var namedIdx = template.IndexOf("DroppedStragglers = [triggeringEventId]", guardIdx, StringComparison.Ordinal);
     await Assert.That(namedIdx).IsGreaterThan(guardIdx)
       .Because("the skipped rewind's completion names the dropped straggler");
