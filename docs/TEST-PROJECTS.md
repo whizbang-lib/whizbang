@@ -116,9 +116,9 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (35)
+### Unit (36)
 
-`tests/`: `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
+`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
@@ -156,7 +156,7 @@ despite the name, a unit project),
 | `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
-### Integration (14)
+### Integration (15)
 
 | Project | Tags | Suite |
 |---------|------|-------|
@@ -169,6 +169,7 @@ despite the name, a unit project),
 | `ECommerce.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging;ECommerce | Service Bus |
 | `ECommerce.InMemory.Integration.Tests` | Docker;ECommerce;InMemory | InMemory |
 | `Whizbang.Offloads.AzureBlob.Integration.Tests` | AzureBlob;Docker;Offloads | Azure Blob |
+| `Whizbang.Archive.AzureBlob.Integration.Tests` | AzureBlob;Docker;Archive | Azure Blob |
 | `Whizbang.Core.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |

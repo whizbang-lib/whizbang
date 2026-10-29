@@ -795,6 +795,16 @@
           "System.IO.Hashing": "8.0.0"
         }
       },
+      "SoftwareExtravaganza.Whizbang.Archive.AzureBlob": {
+        "type": "Project",
+        "dependencies": {
+          "Azure.Storage.Blobs": "[12.30.1, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
+          "SoftwareExtravaganza.Whizbang.Data.Postgres": "[0.100.0-local.111, )"
+        }
+      },
       "SoftwareExtravaganza.Whizbang.Core": {
         "type": "Project",
         "dependencies": {

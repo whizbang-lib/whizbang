@@ -7,6 +7,11 @@ ConnectionPool:MinPoolSize
 ConnectionPool:Timeout
 ConnectionStrings:*
 ServiceName
+Whizbang:Archive:AzureBlob:CompressionLevel
+Whizbang:Archive:AzureBlob:ConnectionString
+Whizbang:Archive:AzureBlob:ContainerName
+Whizbang:Archive:AzureBlob:MaxEventsPerChunk
+Whizbang:Archive:AzureBlob:ServiceUri
 Whizbang:AspNet:Availability:Enabled
 Whizbang:AspNet:Availability:ExemptPaths:*
 Whizbang:AspNet:Availability:Mode
