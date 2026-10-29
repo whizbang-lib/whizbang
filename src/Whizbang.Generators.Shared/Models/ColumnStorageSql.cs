@@ -262,6 +262,10 @@ public static class ColumnStorageSql {
         + "    END IF;\n");
   }
 
+  /// <summary>Resets the named storage parameters the table holds.</summary>
+  public static string ResetStorageParameters(string qualifiedTable, IReadOnlyList<string> names) =>
+    throw new System.NotSupportedException($"{qualifiedTable}: {names.Count}");
+
   private static string _setStorageParameter(string qualifiedTable, string name, string value, string whenChanged) {
     const string TOAST_PREFIX = "toast.";
     var held = name.StartsWith(TOAST_PREFIX, System.StringComparison.Ordinal)

@@ -108,8 +108,9 @@ public class ColumnStorageSqlTests {
     await Assert.That(ColumnStorageSql.StorageName(null)).IsNull();
     await Assert.That(ColumnStorageSql.CompressionName(0)).IsNull();
     await Assert.That(ColumnStorageSql.CompressionName(9)).IsNull();
-    await Assert.That(ColumnStorageSql.ForTable("t", null)).IsEmpty();
-    await Assert.That(ColumnStorageSql.ForTable("t", new TableStorageInfo(null, null))).IsEmpty();
+    // A table declaring nothing sets nothing; its only statement is the reset of the governed parameters (#1747).
+    await Assert.That(ColumnStorageSql.ForTable("t", null).Single()).Contains("RESET (");
+    await Assert.That(ColumnStorageSql.ForTable("t", new TableStorageInfo(null, null)).Single()).Contains("RESET (");
     await Assert.That(ColumnStorageSql.ForColumn("t", "t", _field())).IsEmpty();
   }
 
@@ -196,10 +197,12 @@ public class ColumnStorageSqlTests {
 
     var statements = ColumnStorageSql.ForTable("t", storage).ToList();
 
-    await Assert.That(statements.Count).IsEqualTo(6);
+    await Assert.That(statements.Count).IsEqualTo(7);
     await Assert.That(statements[1]).Contains("SET (autovacuum_vacuum_scale_factor = 0.5);");
     await Assert.That(statements[5]).Contains("SET (toast.autovacuum_vacuum_scale_factor = 1E-05);")
       .Because("a scale factor is written in the invariant round-trip form, which PostgreSQL parses and stores as written.");
+    await Assert.That(statements[6]).Contains("p.name IN ('fillfactor')")
+      .Because("the undeclared fillfactor is reset after the declared parameters are set (#1747).");
   }
 
   /// <summary>
@@ -226,7 +229,7 @@ public class ColumnStorageSqlTests {
   }
 
   [Test]
-  public async Task FillFactor_NotDeclared_EmitsNothingAsync() {
+  public async Task FillFactor_NotDeclared_IsResetNotSetAsync() {
     var source = MODEL.Replace(
       "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
       "[PerspectiveTableStorage(FillFactor = -1, AutovacuumVacuumThreshold = 500)]", StringComparison.Ordinal);
@@ -236,7 +239,8 @@ public class ColumnStorageSqlTests {
     await Assert.That(sql).Contains("SET (autovacuum_vacuum_threshold = 500);");
     await Assert.That(sql).DoesNotContain(".wh_per_filter SET (fillfactor")
       .Because("the embedded framework migrations set a fillfactor on their own tables only.");
-    await Assert.That(sql).DoesNotContain("wh_request_table_rewrite('wh_per_filter')");
+    await Assert.That(sql).Contains("IF 'fillfactor' = ANY (v_reset) AND pg_relation_size(")
+      .Because("an undeclared fillfactor is reset, and its rewrite request sits only in the branch that reset it (#1747).");
   }
 
   /// <summary>
@@ -268,9 +272,111 @@ public class ColumnStorageSqlTests {
   public async Task ForTable_EmitsTheFillFactorAfterTheToastTargetAsync() {
     var statements = ColumnStorageSql.ForTable("t", new TableStorageInfo(null, 512, FillFactor: 80)).ToList();
 
-    await Assert.That(statements.Count).IsEqualTo(2);
+    await Assert.That(statements.Count).IsEqualTo(3);
     await Assert.That(statements[0]).Contains("SET (toast_tuple_target = 512);");
     await Assert.That(statements[1]).Contains("SET (fillfactor = 80);");
+    await Assert.That(statements[2]).Contains("RESET (").And.DoesNotContain("'fillfactor'")
+      .Because("the six undeclared autovacuum parameters are reset; the declared fillfactor is not (#1747).");
+  }
+
+  private const string GOVERNED_LIST =
+    "'fillfactor', 'autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor', 'autovacuum_vacuum_insert_threshold', "
+    + "'autovacuum_vacuum_insert_scale_factor', 'toast.autovacuum_vacuum_threshold', 'toast.autovacuum_vacuum_scale_factor'";
+
+  /// <summary>
+  /// Issue #1747 (WS-4 decision 3): a model that stops declaring an autovacuum or fillfactor setting gets it reset,
+  /// so the table matches the code. Both schema generators emit the reset, naming every governed parameter the
+  /// model no longer declares and none it still does.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ARemovedSetting_IsResetByBothSchemaGeneratorsAsync() {
+    var source = MODEL.Replace(
+      "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
+      "[PerspectiveTableStorage(AutovacuumVacuumThreshold = 500, ToastAutovacuumVacuumScaleFactor = 0.01)]",
+      StringComparison.Ordinal);
+    var registration = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var efSql = registration.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+    var schema = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source), "PerspectiveSchemas.g.sql.cs") ?? "";
+    const string UNDECLARED = "'fillfactor', 'autovacuum_vacuum_scale_factor', 'autovacuum_vacuum_insert_threshold', "
+      + "'autovacuum_vacuum_insert_scale_factor', 'toast.autovacuum_vacuum_threshold'";
+
+    foreach (var sql in new[] { efSql, schema }) {
+      await Assert.That(sql).Contains($"p.name IN ({UNDECLARED})")
+        .Because("each governed parameter the model no longer declares is reset, and the two it declares are not.");
+      await Assert.That(sql).Contains("wh_per_filter RESET (' || array_to_string(v_reset, ', ') || ')';");
+      await Assert.That(sql).Contains("SET (autovacuum_vacuum_threshold = 500);")
+        .Because("the declared settings are still set as before.");
+    }
+  }
+
+  /// <summary>A model without the attribute declares none of the governed parameters, so every one is reset.</summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task ATableWithoutTheAttribute_ResetsEveryGovernedParameterAsync() {
+    var statements = ColumnStorageSql.ForTable("t", null).ToList();
+
+    await Assert.That(statements.Count).IsEqualTo(1);
+    await Assert.That(statements[0]).Contains($"p.name IN ({GOVERNED_LIST})");
+    await Assert.That(statements[0]).Contains("PERFORM wh_request_table_rewrite('t');")
+      .Because("a fillfactor reset, like a fillfactor set, applies only to the pages written from then on.");
+  }
+
+  /// <summary>
+  /// The governed parameters are the ones decision 3 names, autovacuum and fillfactor. <c>toast_tuple_target</c> and
+  /// any parameter the attribute cannot set (an operator's <c>autovacuum_analyze_threshold</c>, say) are never reset.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task TheReset_NamesOnlyTheGovernedParametersAsync() {
+    var reset = ColumnStorageSql.ForTable("t", null).Single();
+
+    await Assert.That(reset).DoesNotContain("toast_tuple_target");
+    await Assert.That(reset).DoesNotContain("autovacuum_analyze");
+    await Assert.That(reset).DoesNotContain("autovacuum_enabled");
+  }
+
+  /// <summary>A model declaring every governed parameter has nothing to reset, so no reset is emitted.</summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task EveryGovernedParameterDeclared_EmitsNoResetAsync() {
+    var storage = new TableStorageInfo(null, null, AutovacuumVacuumThreshold: 1, AutovacuumVacuumScaleFactor: 0.5,
+      AutovacuumInsertThreshold: 2, AutovacuumInsertScaleFactor: 0, ToastAutovacuumVacuumThreshold: 3,
+      ToastAutovacuumVacuumScaleFactor: 0.1, FillFactor: 90);
+
+    var statements = ColumnStorageSql.ForTable("t", storage).ToList();
+
+    await Assert.That(statements.Count).IsEqualTo(7);
+    await Assert.That(statements.Any(s => s.Contains("RESET", StringComparison.Ordinal))).IsFalse();
+  }
+
+  /// <summary>
+  /// The reset compares the catalog first: it alters the table only when it holds one of the named parameters, on the
+  /// table or on its TOAST relation, and queues a rewrite only when the fillfactor was among them on a table with pages.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task ResetStorageParameters_AltersOnlyWhatTheCatalogHoldsAsync() {
+    var sql = ColumnStorageSql.ResetStorageParameters("\"svc\".wh_per_order", ["fillfactor", "toast.autovacuum_vacuum_threshold"]);
+
+    await Assert.That(sql).Contains("unnest(c.reloptions)");
+    await Assert.That(sql).Contains("JOIN pg_class toast ON toast.oid = c.reltoastrelid")
+      .Because("PostgreSQL keeps a toast.* parameter on the TOAST relation, without the prefix.");
+    await Assert.That(sql).Contains("p.name IN ('fillfactor', 'toast.autovacuum_vacuum_threshold')");
+    await Assert.That(sql).Contains("IF v_reset IS NOT NULL THEN");
+    await Assert.That(sql).Contains("IF 'fillfactor' = ANY (v_reset) AND pg_relation_size('\"svc\".wh_per_order'::regclass) > 0 THEN");
+    await Assert.That(sql).Contains("PERFORM \"svc\".wh_request_table_rewrite('wh_per_order');");
+  }
+
+  /// <summary>Without the fillfactor among the reset parameters, no rewrite is ever queued: an autovacuum reset changes no pages.</summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task ResetStorageParameters_WithoutTheFillFactor_QueuesNoRewriteAsync() {
+    var sql = ColumnStorageSql.ResetStorageParameters("t", ["autovacuum_vacuum_threshold"]);
+
+    await Assert.That(sql).Contains("p.name IN ('autovacuum_vacuum_threshold')");
+    await Assert.That(sql).DoesNotContain("wh_request_table_rewrite");
   }
 
   private static PhysicalFieldInfo _field() =>

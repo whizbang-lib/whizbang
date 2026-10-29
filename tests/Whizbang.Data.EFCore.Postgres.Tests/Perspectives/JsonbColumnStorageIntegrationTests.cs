@@ -131,6 +131,97 @@ public class JsonbColumnStorageIntegrationTests {
       .Because("the fillfactor is already 90, so the steady-state pass changes nothing and queues nothing.");
   }
 
+  /// <summary>
+  /// Issue #1747 (WS-4 decision 3): through the generated schema pass, a governed parameter the model does not declare
+  /// is reset on the table and on its TOAST relation, while the declared ones keep their values and a parameter the
+  /// attribute cannot set is left as an operator set it.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task AnUndeclaredSetting_IsReset_AndTheRestAreLeftAloneAsync() {
+    await _execAsync($"""
+      ALTER TABLE {TABLE} SET (autovacuum_vacuum_insert_threshold = 1234, autovacuum_vacuum_insert_scale_factor = 0.2,
+        autovacuum_analyze_threshold = 77, toast.autovacuum_vacuum_scale_factor = 0.3, toast.autovacuum_vacuum_cost_delay = 5);
+      DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{TABLE}';
+      """);
+    await Assert.That(await _reloptionsAsync()).Contains("autovacuum_vacuum_insert_threshold=1234")
+      .Because("the control: the harness sees the parameter before the pass, so its absence after is the reset.");
+
+    await _initializeAsync();
+
+    var table = await _reloptionsAsync();
+    var toast = await _toastReloptionsAsync();
+    await Assert.That(table).DoesNotContain("autovacuum_vacuum_insert_threshold")
+      .And.DoesNotContain("autovacuum_vacuum_insert_scale_factor");
+    await Assert.That(toast).DoesNotContain("autovacuum_vacuum_scale_factor")
+      .Because("a toast.* parameter the model does not declare is reset on the TOAST relation.");
+    await Assert.That(table).Contains("autovacuum_vacuum_threshold=500").And.Contains("autovacuum_vacuum_scale_factor=0")
+      .And.Contains("fillfactor=90").And.Contains("toast_tuple_target=512");
+    await Assert.That(toast).Contains("autovacuum_vacuum_threshold=300");
+    await Assert.That(table).Contains("autovacuum_analyze_threshold=77")
+      .Because("a parameter the attribute cannot set is never reset.");
+    await Assert.That(toast).Contains("vacuum_cost_delay=5");
+  }
+
+  /// <summary>
+  /// Issue #1747: a fillfactor the model stops declaring is reset with one <c>ALTER TABLE</c>, and on a table holding
+  /// rows a rewrite is queued, as for a changed fillfactor; the same statements run again alter nothing and queue nothing.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task ARemovedFillFactor_IsResetOnce_AndQueuesARewriteForATableWithRowsAsync() {
+    var id = Guid.Parse("01890000-0000-7000-8000-000000001747");
+    var model = new JsonbExtractedItem.Model { Id = id, GridFilter = new() { ["region"] = ["south"] } };
+    await using (var context = PhysicalJsonbContainmentIntegrationTests.Context(_connectionString)) {
+      await new EFCorePostgresPerspectiveStore<JsonbExtractedItem.Model>(context, TABLE)
+        .UpsertWithPhysicalFieldsAsync(id, model, new Dictionary<string, object?> { ["grid_filter"] = model.GridFilter });
+    }
+    await _watchDdlAsync();
+    var statements = string.Join('\n', ColumnStorageSql.ForTable(TABLE, _withoutFillFactor()));
+
+    await _execAsync(statements);
+
+    await Assert.That(await _reloptionsAsync()).DoesNotContain("fillfactor");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM ddl_seen WHERE tag = 'ALTER TABLE'")).IsEqualTo("1")
+      .Because("only the reset alters the table: the parameters still declared already hold their values.");
+    await Assert.That(await _pendingRewritesAsync()).Contains(TABLE)
+      .Because("the rows already stored sit in pages packed to the old fillfactor until the table is rewritten.");
+
+    await _execAsync("UPDATE wh_settings SET setting_value = '' WHERE setting_key = 'pending_table_rewrites'; TRUNCATE ddl_seen;");
+    await _execAsync(statements);
+
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM ddl_seen")).IsEqualTo("0");
+    await Assert.That(await _pendingRewritesAsync()).DoesNotContain(TABLE);
+  }
+
+  /// <summary>A fillfactor reset on a table with no pages queues no rewrite: there is nothing packed to rewrite.</summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task ARemovedFillFactor_OnAnEmptyTable_QueuesNothingAsync() {
+    await _execAsync(string.Join('\n', ColumnStorageSql.ForTable(TABLE, _withoutFillFactor())));
+
+    await Assert.That(await _reloptionsAsync()).DoesNotContain("fillfactor");
+    await Assert.That(await _pendingRewritesAsync()).DoesNotContain(TABLE);
+  }
+
+  private static TableStorageInfo _withoutFillFactor() => new("lz4", 512,
+    AutovacuumVacuumThreshold: 500, AutovacuumVacuumScaleFactor: 0, ToastAutovacuumVacuumThreshold: 300);
+
+  private Task _watchDdlAsync() => _execAsync("""
+    CREATE TABLE ddl_seen (tag text, identity text);
+    CREATE FUNCTION ddl_record() RETURNS event_trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO ddl_seen SELECT command_tag, object_identity FROM pg_event_trigger_ddl_commands();
+    END $$;
+    CREATE EVENT TRIGGER ddl_watch ON ddl_command_end EXECUTE FUNCTION ddl_record();
+    """);
+
+  private Task<string> _reloptionsAsync() =>
+    _scalarAsync($"SELECT coalesce(array_to_string(reloptions, ','), '') FROM pg_class WHERE oid = '{TABLE}'::regclass");
+
+  private Task<string> _toastReloptionsAsync() => _scalarAsync(
+    $"SELECT coalesce(array_to_string(t.reloptions, ','), '') FROM pg_class c JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = '{TABLE}'::regclass");
+
   /// <summary>A budget declared with a different size replaces the constraint the earlier declaration left.</summary>
   [Test]
   public async Task AChangedBudget_ReplacesTheConstraintAsync() {
