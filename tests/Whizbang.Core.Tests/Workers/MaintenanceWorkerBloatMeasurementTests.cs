@@ -88,11 +88,15 @@ public class MaintenanceWorkerBloatMeasurementTests {
   private sealed record Run(MeasuringCoordinator Coordinator, FakeLogger<MaintenanceWorker> Logger, TableStatisticsMetrics Metrics);
 
   private static async Task<Run> _runAsync(
-      MeasuringCoordinator coordinator, CapabilityState? pgstattuple, CancellationToken cancellationToken = default) {
+      MeasuringCoordinator coordinator, CapabilityState? pgstattuple, CancellationToken cancellationToken = default) =>
+    await _runAsync(coordinator, pgstattuple is { } state ? await _pgstattupleAsync(state) : null, cycles: 1, cancellationToken);
+
+  private static async Task<Run> _runAsync(
+      MeasuringCoordinator coordinator, ICapabilityRegistry? registry, int cycles, CancellationToken cancellationToken = default) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    if (pgstattuple is { } state) {
-      services.AddSingleton<ICapabilityRegistry>(await _pgstattupleAsync(state));
+    if (registry is not null) {
+      services.AddSingleton(registry);
     }
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics(new TestMeterFactory()));
     services.AddSingleton(metrics);
@@ -105,7 +109,9 @@ public class MaintenanceWorkerBloatMeasurementTests {
       gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       logger);
-    await worker.RunMaintenanceOnceAsync(cancellationToken);
+    for (var cycle = 0; cycle < cycles; cycle++) {
+      await worker.RunMaintenanceOnceAsync(cancellationToken);
+    }
     return new Run(coordinator, logger, metrics);
   }
 
@@ -114,6 +120,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
 
   // --- Without pgstattuple: unchanged ---------------------------------------------------------
 
+  /// <summary>Locks Ready as Ready on every probed database; anything else works from the estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-pgstattuple-ready</docs>
   [Test]
   public async Task WithoutACapabilityRegistry_TheEstimateIsRecorded_AndNothingIsMeasuredAsync() {
     var run = await _runAsync(new MeasuringCoordinator { Candidates = { _candidate("wh_outbox", 4.2) } }, pgstattuple: null);
@@ -125,6 +133,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
     await Assert.That(run.Coordinator.MeasuredRequests).IsEmpty();
   }
 
+  /// <summary>Locks Ready as Ready on every probed database; anything else works from the estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-pgstattuple-ready</docs>
   [Test]
   [Arguments(CapabilityState.NotPermitted)]
   [Arguments(CapabilityState.NoPrivilege)]
@@ -139,6 +149,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
 
   // --- pgstattuple Ready: estimate shortlists, approx confirms --------------------------------
 
+  /// <summary>Locks the exact pgstattuple scan never running.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-exact-never-runs</docs>
   [Test]
   public async Task WhenReady_ACandidateIsMeasuredWithApprox_AndQueuedWithTheMeasuredRatioAsync() {
     var run = await _runAsync(new MeasuringCoordinator {
@@ -155,6 +167,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
       .Because("the table is queued once, with its measurement, not also from its estimate");
   }
 
+  /// <summary>Locks a rejected estimate being measured again on the next cycle.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-rejected-remeasured</docs>
   [Test]
   public async Task WhenReady_AFalsePositiveEstimate_IsNotQueued_AndTheLogGivesBothFiguresAsync() {
     var run = await _runAsync(new MeasuringCoordinator {
@@ -169,6 +183,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
       "Table wh_inbox was estimated at 4.2x but measures 1.3x by approx, under the rewrite threshold of 3x; it is not queued");
   }
 
+  /// <summary>Locks the 25% disagreement tolerance.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-disagreement-tolerance</docs>
   [Test]
   public async Task WhenReady_AMeasurementThatDisagreesWithItsEstimate_IsLoggedWithBothFiguresAsync() {
     var run = await _runAsync(new MeasuringCoordinator {
@@ -182,6 +198,8 @@ public class MaintenanceWorkerBloatMeasurementTests {
     ]).Because("50% apart is reported with both figures; 12.5% apart is within the tolerance and is not");
   }
 
+  /// <summary>Locks tables already queued (a migration's requests among them) not being measured again.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-requested-tables</docs>
   [Test]
   public async Task WhenReady_ATableAlreadyQueued_IsNotMeasuredAgainAsync() {
     var run = await _runAsync(new MeasuringCoordinator {
@@ -192,8 +210,12 @@ public class MaintenanceWorkerBloatMeasurementTests {
     await Assert.That(run.Coordinator.Measured).IsEmpty()
       .Because("a table enters the queue measured once; the rewrite's own re-measure is what follows it");
     await Assert.That(run.Coordinator.MeasuredRequests).IsEmpty();
+    await Assert.That(run.Metrics.GetMeasuredBloatForTest("wh_event_store")).IsNull()
+      .Because("a table a migration requested stays on its estimate: nothing measured it, so nothing reports it as measured");
   }
 
+  /// <summary>Locks a failed measurement: a warning, and the estimate stands in.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-measurement-failure</docs>
   [Test]
   public async Task WhenReady_AMeasurementThatFails_FallsBackToTheEstimate_AndSaysWhyAsync() {
     var run = await _runAsync(new MeasuringCoordinator {
@@ -258,5 +280,63 @@ public class MaintenanceWorkerBloatMeasurementTests {
     var run = await _runAsync(new MeasuringCoordinator { Candidates = { _candidate("wh_outbox", 4.2) } }, pgstattuple: null);
 
     await Assert.That(run.Metrics.GetMeasuredBloatForTest("wh_outbox")).IsNull();
+  }
+
+  // --- Design decisions, each locked (#1807) ---------------------------------------------------
+
+  /// <summary>Locks the 25% disagreement tolerance.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-disagreement-tolerance</docs>
+  [Test]
+  [Arguments(4.99, false)]
+  [Arguments(5.0, false)]
+  [Arguments(5.01, true)]
+  [Arguments(3.01, false)]
+  [Arguments(2.99, true)]
+  public async Task TheDisagreementTolerance_IsAQuarterOfTheEstimate_EitherWayAsync(double measured, bool logged) {
+    var run = await _runAsync(new MeasuringCoordinator {
+      Candidates = { _candidate("wh_outbox", 4.0) },
+      Approx = { ["wh_outbox"] = measured },
+    }, CapabilityState.Ready);
+
+    var disagreed = _messages(run.Logger).Any(m => m.Contains("disagree", StringComparison.Ordinal));
+    await Assert.That(disagreed).IsEqualTo(logged)
+      .Because("a measurement more than 25% from its estimate is logged with both figures, and one within 25% is not");
+  }
+
+  /// <summary>Locks Ready as Ready on every probed database; anything else works from the estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-pgstattuple-ready</docs>
+  [Test]
+  public async Task WhenPgstattupleIsReadyOnOneDatabaseButNotAnother_NothingIsMeasuredAsync() {
+    var provider = new FakeCapabilityProvider("postgres", ["db-0", "db-1"], FakeCapabilityProvider.Describe("postgres", "pgstattuple"));
+    var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    registry.Record([.. registry.Statuses.Select(status =>
+      status.Scope == "db-1" ? status with { State = CapabilityState.NotPermitted } : status)]);
+
+    var run = await _runAsync(
+      new MeasuringCoordinator { Candidates = { _candidate("wh_outbox", 4.2) }, Approx = { ["wh_outbox"] = 1.0 } },
+      registry, cycles: 1);
+
+    await Assert.That(run.Coordinator.Measured).IsEmpty()
+      .Because("Ready means Ready on every database the registry probed: the coordinator may be on the one without it");
+    await Assert.That(run.Coordinator.Requested).IsEquivalentTo(["wh_outbox"])
+      .Because("without a measurement the estimate queues the table, exactly as without pgstattuple");
+  }
+
+  /// <summary>Locks a rejected estimate being measured again on the next cycle.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-rejected-remeasured</docs>
+  [Test]
+  public async Task ARejectedFalsePositive_IsMeasuredAgainOnTheNextCycle_AndStillNotQueuedAsync() {
+    var run = await _runAsync(
+      new MeasuringCoordinator { Candidates = { _candidate("wh_inbox", 4.2) }, Approx = { ["wh_inbox"] = 1.3 } },
+      await _pgstattupleAsync(CapabilityState.Ready), cycles: 2);
+
+    await Assert.That(run.Coordinator.Measured).IsEquivalentTo([
+      ("wh_inbox", BloatMeasurementMethod.Approx),
+      ("wh_inbox", BloatMeasurementMethod.Approx),
+    ]).Because("a rejection is not remembered: while the estimate still shortlists the table, each cycle measures it again, "
+             + "so a table that really does bloat later is queued");
+    await Assert.That(run.Coordinator.Requested).IsEmpty();
+    await Assert.That(run.Coordinator.MeasuredRequests).IsEmpty();
   }
 }

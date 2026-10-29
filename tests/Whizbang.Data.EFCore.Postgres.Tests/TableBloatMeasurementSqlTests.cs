@@ -81,6 +81,8 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Because("the heap holds the space of every deleted row, which reading the table confirms");
   }
 
+  /// <summary>Locks the measured ratio on the estimate's scale, so dropped-column bytes read as bloat.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-measured-ratio-scale</docs>
   [Test]
   [Timeout(120000)]
   public async Task Approx_OnAStaleEstimate_MeasuresTheTableLeanAsync(CancellationToken cancellationToken) {
@@ -118,6 +120,39 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Because("both divide the heap by live rows times the expected width; only how the rows are counted differs");
   }
 
+  /// <summary>Locks the measured ratio on the estimate's scale, so dropped-column bytes read as bloat.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-measured-ratio-scale</docs>
+  [Test]
+  [Timeout(120000)]
+  public async Task Approx_OnATableCarryingDroppedColumnBytes_ReadsBloated_AndItsRewriteReadsAsAnImprovementAsync(
+      CancellationToken cancellationToken) {
+    // Every row keeps the dropped column's 400 bytes until the table is rewritten. A ratio over the live tuples' own
+    // bytes would count them as live and call the table lean; heap over live rows times the expected width does not.
+    await _createPgstattupleAsync(cancellationToken);
+    await _executeAsync("""
+      CREATE TABLE wh_dropped_probe (id INT PRIMARY KEY, payload TEXT, filler TEXT);
+      ALTER TABLE wh_dropped_probe SET (autovacuum_enabled = false);
+      INSERT INTO wh_dropped_probe SELECT g, 'p', repeat('x', 400) FROM generate_series(1, 20000) g;
+      ALTER TABLE wh_dropped_probe DROP COLUMN filler;
+      ANALYZE wh_dropped_probe;
+      """, cancellationToken);
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    var before = await coordinator.MeasureTableBloatAsync("wh_dropped_probe", BloatMeasurementMethod.Approx, cancellationToken);
+    await _executeAsync("VACUUM FULL wh_dropped_probe", cancellationToken);
+    await _executeAsync("ANALYZE wh_dropped_probe", cancellationToken);
+    var after = await coordinator.MeasureTableBloatAsync("wh_dropped_probe", BloatMeasurementMethod.Approx, cancellationToken);
+
+    await Assert.That(before.HasValue && after.HasValue).IsTrue();
+    await Assert.That(before!.Value).IsGreaterThanOrEqualTo(3.0)
+      .Because("the dropped column's bytes are space the table holds but cannot use, so the measurement must call it bloated");
+    await Assert.That(after!.Value).IsLessThan(before.Value)
+      .Because("the rewrite removes those bytes, and the re-measure has to see that or the request is never cleared");
+  }
+
+  /// <summary>Locks a failed measurement: a warning, and the estimate stands in.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-measurement-failure</docs>
   [Test]
   public async Task Approx_WithoutTheExtension_FailsRatherThanAnsweringAsync(CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -139,6 +174,8 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Because("a table that is not in this schema has nothing to measure, which confirms nothing and rejects nothing");
   }
 
+  /// <summary>Locks the exact pgstattuple scan never running.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-exact-never-runs</docs>
   [Test]
   public async Task Exact_IsNeverRunAsync(CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -158,6 +195,8 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Throws<ArgumentException>();
   }
 
+  /// <summary>Locks the queue measurement row: a queued table without one reads as the estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-queue-measurements</docs>
   [Test]
   [Timeout(120000)]
   public async Task AMeasuredRequest_IsQueuedWithItsRatioAndMethod_AndTheQueueOrdersByTheMeasuredRatioAsync(
@@ -204,6 +243,8 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Because("a cleared request takes its measurement with it, so a later request is never ordered by a stale one");
   }
 
+  /// <summary>Locks the queue measurement row: a queued table without one reads as the estimate.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#bloat-queue-measurements</docs>
   [Test]
   public async Task AQueueRowWithoutAMethod_IsTheEstimate_AndAnUnknownMethodIsRefusedAsync(CancellationToken cancellationToken) {
     await _executeAsync("INSERT INTO wh_table_rewrite_measurements (table_name, bloat_ratio) VALUES ('wh_outbox', 4.2)", cancellationToken);
