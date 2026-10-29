@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Npgsql;
 using Whizbang.Core.Messaging;
 
@@ -23,13 +24,52 @@ internal static class StreamSealedRefusal {
   /// <summary>The SQLSTATE <c>wh_append_event</c> raises for a sealed stream (migration 266).</summary>
   internal const string SQL_STATE = "WHS01";
 
-  /// <summary>Runs a store, rethrowing the sealed-stream refusal as <see cref="StreamSealedException"/>.</summary>
+  private const string STREAM_MARKER = "Stream ";
+  private const string SEALED_AT_MARKER = " was sealed at ";
+  private const string REASON_MARKER = " and refuses appends. Reason: ";
+  private const string SEALED_AT_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'";
+  private const int GUID_LENGTH = 36;
+
+  /// <summary>
+  /// Runs a store, rethrowing the sealed-stream refusal as <see cref="StreamSealedException"/>. Every other failure
+  /// propagates unchanged.
+  /// </summary>
   /// <param name="store">The store call.</param>
   /// <returns>A task that completes when the store does.</returns>
-  internal static Task RunAsync(Func<Task> store) => throw new NotImplementedException();
+  /// <exception cref="StreamSealedException">The store refused an append to a sealed stream.</exception>
+  internal static async Task RunAsync(Func<Task> store) {
+    try {
+      await store().ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == SQL_STATE) {
+      throw ToException(ex);
+    }
+  }
 
   /// <summary>Builds the typed exception from the store's refusal.</summary>
   /// <param name="refusal">The refusal the store raised.</param>
-  /// <returns>The exception.</returns>
-  internal static StreamSealedException ToException(PostgresException refusal) => throw new NotImplementedException();
+  /// <returns>The exception, carrying the store's message and the refusal as its inner exception.</returns>
+  internal static StreamSealedException ToException(PostgresException refusal) {
+    var text = refusal.MessageText;
+    var sealedAtStart = text.IndexOf(SEALED_AT_MARKER, StringComparison.Ordinal);
+    var reasonStart = sealedAtStart < 0 ? -1 : text.IndexOf(REASON_MARKER, sealedAtStart, StringComparison.Ordinal);
+    if (reasonStart < 0) {
+      // A store older or newer than this reader: the message is kept, the fields it does not carry are left empty.
+      return new StreamSealedException(text, Guid.Empty, sealedAt: null, reason: null, refusal);
+    }
+    var sealedAtText = text[(sealedAtStart + SEALED_AT_MARKER.Length)..reasonStart];
+    return new StreamSealedException(
+      text,
+      _streamId(text),
+      DateTimeOffset.TryParseExact(sealedAtText, SEALED_AT_FORMAT, CultureInfo.InvariantCulture,
+        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var sealedAt) ? sealedAt : null,
+      text[(reasonStart + REASON_MARKER.Length)..],
+      refusal);
+  }
+
+  private static Guid _streamId(string text) =>
+    // Called only for a message that holds both later markers, so it is long enough for an id after the first.
+    text.StartsWith(STREAM_MARKER, StringComparison.Ordinal)
+      && Guid.TryParse(text.AsSpan(STREAM_MARKER.Length, GUID_LENGTH), out var id)
+      ? id
+      : Guid.Empty;
 }

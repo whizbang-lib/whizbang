@@ -375,6 +375,8 @@ public sealed class DeadLetterRecoveryOptions {
     // WHIZ133 (#1546): the same event on the same stream is refused every time it is re-driven. The fix is in the
     // producer (publish the ephemeral events on their own stream), so hold it.
     [MessageFailureReason.MixedStreamRefused] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    // WS-3 S4: a sealed stream refuses the same event every time it is re-driven; the stream has ended, so hold it.
+    [MessageFailureReason.StreamSealed] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     // #1871: a message the batcher could not store, nearly always because the database was unreachable or out of
     // connections for longer than the batcher's own retries. Recovery stores it through the outbox store, so re-drive
     // it soon and often, and hold it for review once the budget is spent so a store that keeps refusing is visible.

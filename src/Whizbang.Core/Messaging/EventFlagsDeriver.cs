@@ -36,8 +36,8 @@ public static class EventFlagsDeriver {
   }
 
   /// <summary>
-  /// The flags a typed payload declares through its marker interfaces (composite, collective) and its
-  /// ephemeral mode, with no catalog lookup: what a payload in hand says about itself.
+  /// The flags a typed payload declares through its marker interfaces (composite, collective), its ephemeral mode and
+  /// whether its type is terminal (<see cref="Lifecycle.TerminalEvents"/>): what a payload in hand says about itself.
   /// </summary>
   /// <param name="payload">The payload, possibly null.</param>
   /// <param name="ephemeralModeResolver">Resolves the ephemeral mode, when one is registered.</param>
@@ -46,7 +46,9 @@ public static class EventFlagsDeriver {
   internal static EventFlags FromPayload(object? payload, IEphemeralModeResolver? ephemeralModeResolver) =>
     (payload is ICompositeEvent ? EventFlags.Composite : EventFlags.None)
     | (payload is ICollectiveEvent ? EventFlags.Collective : EventFlags.None)
-    | EphemeralFlagDeriver.Derive(payload, ephemeralModeResolver);
+    | EphemeralFlagDeriver.Derive(payload, ephemeralModeResolver)
+    // WS-3 S4: [TerminalEvent], registered by the generated catalog, so no reflection is needed to read it.
+    | (payload is not null && Lifecycle.TerminalEvents.IsTerminal(payload.GetType()) ? EventFlags.Terminal : EventFlags.None);
 
   /// <summary>
   /// Reduces an assembly-qualified wire type name ("Ns.Outer+Nested, Asm, Version=…") to the
