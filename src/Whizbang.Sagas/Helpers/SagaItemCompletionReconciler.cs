@@ -114,6 +114,7 @@ public static class SagaItemCompletionReconciler {
   /// Derives per-item stream ids under the process-wide namespace (<see cref="SagaItemStreams.Of(Guid, string)"/>).
   /// Code running in a host passes its <see cref="ISagaItemStreamIdDeriver"/> to the overload that takes one.
   /// </remarks>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:Reconciler_WithoutADeriverArgument_StillReconcilesThroughTheProcessWideNamespaceAsync</tests>
   public static Task<(int Completed, int Failed)?> ReconcileTerminalCountsAsync(
       Guid sagaId,
       IReadOnlyList<SagaItemModel> items,

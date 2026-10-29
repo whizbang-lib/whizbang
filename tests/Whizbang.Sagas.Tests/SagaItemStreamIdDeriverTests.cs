@@ -102,10 +102,32 @@ public class SagaItemStreamIdDeriverTests {
   }
 
   [Test]
+  public async Task Reconciler_WithoutADeriverArgument_StillReconcilesThroughTheProcessWideNamespaceAsync() {
+    // The process-wide namespace is shared with tests that register sagas, so the stream id it derives is not
+    // asserted here (the ProcessWide tests above cover it); this pins that the older overload still reconciles.
+    var reader = new CountingCompletedReader();
+    IReadOnlyList<SagaItemModel> items = [new SagaItemModel { SagaId = _sagaId, SagaName = "s", ItemIdentifier = "a", State = SagaItemState.Running }];
+
+    var reconciled = await SagaItemCompletionReconciler.ReconcileTerminalCountsAsync(_sagaId, items, reader, CancellationToken.None);
+
+    await Assert.That(reconciled).IsEqualTo((1, 0));
+    await Assert.That(reader.Calls).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task Reconciler_WithoutADeriver_ThrowsAsync() {
     IReadOnlyList<SagaItemModel> items = [];
     await Assert.That(async () => await SagaItemCompletionReconciler.ReconcileTerminalCountsAsync(
       _sagaId, items, new KeyedReader(Guid.Empty), null!, CancellationToken.None)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class CountingCompletedReader : ISagaItemTerminalReader {
+    public int Calls { get; private set; }
+
+    public Task<SagaItemTerminalOutcome> CheckAsync(Guid perItemStreamId, CancellationToken cancellationToken) {
+      Calls++;
+      return Task.FromResult(SagaItemTerminalOutcome.Completed);
+    }
   }
 
   private sealed class KeyedReader(Guid completed) : ISagaItemTerminalReader {
