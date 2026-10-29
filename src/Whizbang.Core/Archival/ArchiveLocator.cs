@@ -46,6 +46,9 @@ public sealed record ArchiveLocator {
   /// <summary>The layout of the archived events this release writes and reads.</summary>
   public const int CURRENT_FORMAT = 1;
 
+  private const string SCHEME_SEPARATOR = "://";
+  private const string CODEC_KEY = "codec=";
+  private const string FORMAT_KEY = "format=";
 
   /// <summary>Creates a locator.</summary>
   /// <param name="store">The store's name: lowercase letters, digits and hyphens (for example <c>postgres-table</c>).</param>
@@ -55,12 +58,19 @@ public sealed record ArchiveLocator {
   /// <exception cref="ArgumentException">The store or the address cannot be written in the text form.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The codec is not a defined value, or the format is below 1.</exception>
   public ArchiveLocator(string store, string address, ArchiveCompression compression, int format = CURRENT_FORMAT) {
+    if (!_isStoreName(store)) {
+      throw new ArgumentException($"'{store}' is not a store name (lowercase letters, digits and hyphens).", nameof(store));
+    }
+    if (string.IsNullOrEmpty(address) || address.Contains('?', StringComparison.Ordinal)) {
+      throw new ArgumentException("An address is not empty and has no '?'.", nameof(address));
+    }
+    ArgumentOutOfRangeException.ThrowIfLessThan(format, 1);
+    _ = _codecName(compression);
     Store = store;
     Address = address;
     Compression = compression;
     Format = format;
   }
-
 
   /// <summary>The store that wrote the archive.</summary>
   public string Store { get; }
@@ -76,11 +86,57 @@ public sealed record ArchiveLocator {
 
   /// <summary>The text written on the tombstone.</summary>
   /// <returns><c>{store}://{address}?codec={codec}&amp;format={format}</c>.</returns>
-  public override string ToString() => throw new NotImplementedException();
+  public override string ToString() =>
+    string.Create(CultureInfo.InvariantCulture,
+      $"{Store}{SCHEME_SEPARATOR}{Address}?{CODEC_KEY}{_codecName(Compression)}&{FORMAT_KEY}{Format}");
 
   /// <summary>Reads a locator's text form.</summary>
   /// <param name="text">The text, as <see cref="ToString"/> wrote it.</param>
   /// <param name="locator">The locator, when the text is one.</param>
   /// <returns>True when the text is a locator this release can read: a known codec and a format of 1 or more.</returns>
-  public static bool TryParse(string? text, [NotNullWhen(true)] out ArchiveLocator? locator) => throw new NotImplementedException();
+  public static bool TryParse(string? text, [NotNullWhen(true)] out ArchiveLocator? locator) {
+    locator = null;
+    var schemeEnd = text?.IndexOf(SCHEME_SEPARATOR, StringComparison.Ordinal) ?? -1;
+    var queryStart = text?.LastIndexOf('?') ?? -1;
+    if (schemeEnd <= 0 || queryStart <= schemeEnd + SCHEME_SEPARATOR.Length) {
+      return false;
+    }
+    var store = text![..schemeEnd];
+    var address = text[(schemeEnd + SCHEME_SEPARATOR.Length)..queryStart];
+    var query = text[(queryStart + 1)..].Split('&');
+    if (query.Length != 2
+        || !query[0].StartsWith(CODEC_KEY, StringComparison.Ordinal)
+        || !query[1].StartsWith(FORMAT_KEY, StringComparison.Ordinal)
+        || !_tryCodec(query[0][CODEC_KEY.Length..], out var compression)
+        || !int.TryParse(query[1][FORMAT_KEY.Length..], NumberStyles.None, CultureInfo.InvariantCulture, out var format)
+        || format < 1
+        || !_isStoreName(store)) {
+      return false;
+    }
+    locator = new ArchiveLocator(store, address, compression, format);
+    return true;
+  }
+
+  private static bool _isStoreName(string? store) =>
+    !string.IsNullOrEmpty(store) && store.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-');
+
+  private static string _codecName(ArchiveCompression compression) => compression switch {
+    ArchiveCompression.None => "none",
+    ArchiveCompression.Brotli => "brotli",
+    _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, "Not a defined archive codec."),
+  };
+
+  private static bool _tryCodec(string name, out ArchiveCompression compression) {
+    switch (name) {
+      case "none":
+        compression = ArchiveCompression.None;
+        return true;
+      case "brotli":
+        compression = ArchiveCompression.Brotli;
+        return true;
+      default:
+        compression = default;
+        return false;
+    }
+  }
 }

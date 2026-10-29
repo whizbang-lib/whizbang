@@ -109,8 +109,9 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // watermarks exist.
     _ = await _coordinator.FoldStreamApplyPathsAsync([streamId], cancellationToken).ConfigureAwait(false);
 
-    _ = _archiveStore;
-    var result = await _coordinator.TruncateStreamPrefixAsync(streamId, throughVersion, archive, cancellationToken).ConfigureAwait(false);
+    var result = archive && _archiveStore is not null
+      ? await _archiveThroughStoreAsync(_archiveStore, streamId, throughVersion, cancellationToken).ConfigureAwait(false)
+      : await _coordinator.TruncateStreamPrefixAsync(streamId, throughVersion, archive, cancellationToken).ConfigureAwait(false);
 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual truncate (not a gate-blocked / no-carry-forward / debug-skipped outcome).
@@ -131,6 +132,20 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
       }
     }
     return result;
+  }
+
+  /// <summary>
+  /// An archiving truncate through the registered <see cref="IArchiveStore"/> (WS-3 S7): a prefix batch, so the
+  /// truncate's guards apply unchanged, reported in the truncate's own vocabulary (<c>archived</c> reads as
+  /// <c>truncated</c>; a refusal keeps its name).
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#the-prefix-truncate-archives-through-the-store</docs>
+  private static async Task<StreamTruncateResult> _archiveThroughStoreAsync(
+      IArchiveStore store, Guid streamId, long throughVersion, CancellationToken cancellationToken) {
+    var written = await store.WriteAsync(ArchiveBatch.Prefix(streamId, throughVersion), cancellationToken).ConfigureAwait(false);
+    return written.Archived
+      ? new StreamTruncateResult("truncated", written.EventsArchived)
+      : new StreamTruncateResult(written.Status, 0);
   }
 
   /// <summary>

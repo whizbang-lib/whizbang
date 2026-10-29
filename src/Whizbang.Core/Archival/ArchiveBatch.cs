@@ -17,6 +17,11 @@ namespace Whizbang.Core.Archival;
 /// <docs>fundamentals/events/archive-store#batches</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveBatchTests.cs</tests>
 public sealed record ArchiveBatch {
+  private ArchiveBatch(Guid streamId, long? throughVersion) {
+    StreamId = streamId;
+    ThroughVersion = throughVersion;
+  }
+
   /// <summary>The stream to archive.</summary>
   public Guid StreamId { get; }
 
@@ -37,8 +42,10 @@ public sealed record ArchiveBatch {
   /// <returns>The batch.</returns>
   /// <exception cref="ArgumentException"><paramref name="streamId"/> is the empty id.</exception>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="throughVersion"/> is negative.</exception>
-  public static ArchiveBatch Prefix(Guid streamId, long throughVersion) => throw new NotImplementedException();
-
+  public static ArchiveBatch Prefix(Guid streamId, long throughVersion) {
+    ArgumentOutOfRangeException.ThrowIfNegative(throughVersion);
+    return new ArchiveBatch(_notEmpty(streamId), throughVersion);
+  }
 
   /// <summary>
   /// Every event of the stream. The stream keeps a tombstone (state <c>Archived</c>, its last version and the
@@ -47,5 +54,9 @@ public sealed record ArchiveBatch {
   /// <param name="streamId">The stream.</param>
   /// <returns>The batch.</returns>
   /// <exception cref="ArgumentException"><paramref name="streamId"/> is the empty id.</exception>
-  public static ArchiveBatch WholeStream(Guid streamId) => throw new NotImplementedException();
+  public static ArchiveBatch WholeStream(Guid streamId) => new(_notEmpty(streamId), throughVersion: null);
+
+  // The empty id is the store's "no stream" row (commands, unstreamed events); archiving it would sweep unrelated rows.
+  private static Guid _notEmpty(Guid streamId) =>
+    streamId == Guid.Empty ? throw new ArgumentException("The empty stream id names no stream.", nameof(streamId)) : streamId;
 }

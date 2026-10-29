@@ -49,7 +49,7 @@ public static class ArchiveStatus {
 public sealed record ArchiveWriteResult(
   string Status, long EventsArchived, long? LastVersion, ArchiveLocator? Locator, long OriginGeneration) {
   /// <summary>True when the batch moved.</summary>
-  public bool Archived => string.Equals(Status, "red-stub", StringComparison.Ordinal);
+  public bool Archived => string.Equals(Status, ArchiveStatus.ARCHIVED, StringComparison.Ordinal);
 }
 
 /// <summary>The outcome of <see cref="IArchiveStore.RestoreAsync"/>.</summary>
