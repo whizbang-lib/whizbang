@@ -199,7 +199,7 @@ public static partial class PerspectiveStorageParameters {
         if (Plan(declaration, options) is not { } change) {
           continue;
         }
-        if (await _applyAsync(connection, quotedSchema, change, hasPages, lockTimeout ?? DefaultLockTimeout, logger, schema, cancellationToken)
+        if (await _applyAsync(connection, schema, change, hasPages, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
             .ConfigureAwait(false)) {
           applied.Add(change);
         } else {
@@ -258,8 +258,9 @@ public static partial class PerspectiveStorageParameters {
 
   // One table's change, in a transaction of its own under the lock timeout; false when the database refused it.
   private static async Task<bool> _applyAsync(
-      NpgsqlConnection connection, string quotedSchema, TableStorageChange change, bool hasPages, TimeSpan lockTimeout,
-      ILogger logger, string schema, CancellationToken cancellationToken) {
+      NpgsqlConnection connection, string schema, TableStorageChange change, bool hasPages, TimeSpan lockTimeout,
+      ILogger logger, CancellationToken cancellationToken) {
+    var quotedSchema = PgIdentifier.Quote(schema);
     var statements = new List<string> {
       $"SET LOCAL lock_timeout = '{((long)lockTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)}ms'",
       AlterStatement($"{quotedSchema}.{PgIdentifier.Quote(change.Table)}", change),
