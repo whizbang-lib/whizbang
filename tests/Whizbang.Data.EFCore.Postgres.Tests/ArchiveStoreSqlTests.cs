@@ -555,9 +555,11 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await _manifestRowAsync(connection, purged, 1);
     await _manifestRowAsync(connection, kept, 1);
 
-    _ = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+    var report = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
       new StreamPurgeRequest { StreamIds = [purged], RequestedBy = "operator-1", Reason = "archived by mistake" });
 
+    await Assert.That(report.Totals.ContainsKey("wh_archive_manifest")).IsFalse()
+      .Because("the rows go by the cascade from the lifecycle row, which the purge report does not count");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", purged))
       .IsEqualTo(0L).Because("a purged stream must never be restored from an object its manifest still names");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", kept))

@@ -505,7 +505,7 @@ public class AzureBlobArchiveStoreTests {
   [Test]
   public async Task Purge_AStreamArchivedToBlob_TakesItsManifestRowsAsync() {
     var (stream, _) = await _seedAsync(3);
-    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await _store(maxEventsPerChunk: 10).WriteAsync(ArchiveBatch.WholeStream(stream));
 
     _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
       new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
@@ -513,6 +513,8 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _manifestAsync(stream)).IsEmpty()
       .Because("a purged stream must never be restored from an object a manifest row still names");
     await Assert.That(await _readAllAsync(_store(), stream)).IsEmpty();
+    await Assert.That(await _objectsAsync()).Count().IsEqualTo(1)
+      .Because("the purge runs in the database and cannot reach blob storage; the object is unreachable, not removed");
   }
 
   // ── The production caller ──────────────────────────────────────────────────────────────────────────
