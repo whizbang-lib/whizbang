@@ -410,7 +410,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task WithStreamAffinityGate_ContendedWithoutASubscriber_WaitsForTheHolderAsync() {
+  [Timeout(30000)]
+  public async Task WithStreamAffinityGate_ContendedWithoutASubscriber_WaitsForTheHolderAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.ContendedPerspective";
     var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
@@ -431,14 +432,15 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(contender.IsCompleted).IsFalse()
       .Because("the gate is held, so the second apply parks even when nobody listens for contention");
     release.TrySetResult();
-    await Task.WhenAll(holder, contender).WaitAsync(TimeSpan.FromSeconds(10));
+    await Task.WhenAll(holder, contender).WaitAsync(cancellationToken);
 
     await Assert.That(string.Join("|", order)).IsEqualTo("first entered|first left|second entered")
       .Because("one applier per stream at a time: the contender runs only after the holder left");
   }
 
   [Test]
-  public async Task WithStreamAffinityGate_ContendedWithASubscriber_ReportsTheContendedKeyOnceAndStillWaitsAsync() {
+  [Timeout(30000)]
+  public async Task WithStreamAffinityGate_ContendedWithASubscriber_ReportsTheContendedKeyOnceAndStillWaitsAsync(CancellationToken cancellationToken) {
     // The non-null side of the contention notification. Integration tests take it too, but coverage is
     // compared per test project, so this project has to take both sides itself.
     var streamId = Guid.CreateVersion7();
@@ -467,7 +469,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       .Because("reporting contention does not let the contender past the holder");
 
     release.TrySetResult();
-    await Task.WhenAll(holder, contender).WaitAsync(TimeSpan.FromSeconds(10));
+    await Task.WhenAll(holder, contender).WaitAsync(cancellationToken);
 
     await Assert.That(secondEntered).IsTrue();
     await Assert.That(contended.Count).IsEqualTo(1)
@@ -475,7 +477,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task WithStreamAffinityGate_BodyHandsOverAnApplyStillRunning_HoldsTheGateUntilThatApplyEndsAsync() {
+  [Timeout(30000)]
+  public async Task WithStreamAffinityGate_BodyHandsOverAnApplyStillRunning_HoldsTheGateUntilThatApplyEndsAsync(CancellationToken cancellationToken) {
     // The drain body stops waiting for an apply whose lease ran out, but the apply keeps running. The gate
     // belongs to the apply, not to the consumer: it stays held after the body returns, until the apply ends.
     var streamId = Guid.CreateVersion7();
@@ -507,7 +510,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(secondEntered).IsFalse();
 
     apply.TrySetResult();
-    await contender.WaitAsync(TimeSpan.FromSeconds(10));
+    await contender.WaitAsync(cancellationToken);
 
     await Assert.That(secondEntered).IsTrue()
       .Because("the gate is released the moment the handed-over apply ends");
@@ -559,7 +562,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task WithStreamAffinityGate_HandedOverApplyFails_StillReleasesTheGateAsync() {
+  [Timeout(30000)]
+  public async Task WithStreamAffinityGate_HandedOverApplyFails_StillReleasesTheGateAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.AbandonedFailingApplyPerspective";
     var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
@@ -573,7 +577,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => Task.CompletedTask, CancellationToken.None);
 
     apply.TrySetException(new InvalidOperationException("the abandoned apply failed"));
-    await contender.WaitAsync(TimeSpan.FromSeconds(10));
+    await contender.WaitAsync(cancellationToken);
 
     await Assert.That(contender.IsCompletedSuccessfully).IsTrue()
       .Because("an abandoned apply that fails has ended all the same, so its gate goes free");
@@ -596,7 +600,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task OnCursorCacheStreamsEvicted_GateHeldByARunningApply_StaysAndKeepsSerializingAsync() {
+  [Timeout(30000)]
+  public async Task OnCursorCacheStreamsEvicted_GateHeldByARunningApply_StaysAndKeepsSerializingAsync(CancellationToken cancellationToken) {
     // The cursor cache evicts a stream after its cursor has been idle for a while, which a long or hung
     // apply can outlast. Dropping the held gate let the next applier take a fresh one and run concurrently.
     var streamId = Guid.CreateVersion7();
@@ -619,7 +624,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       .Because("the next applier still parks behind the running apply");
 
     release.TrySetResult();
-    await Task.WhenAll(holder, contender).WaitAsync(TimeSpan.FromSeconds(10));
+    await Task.WhenAll(holder, contender).WaitAsync(cancellationToken);
     await Assert.That(secondEntered).IsTrue();
   }
 
@@ -758,7 +763,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   // ------------------------------------------------------------------
 
   [Test]
-  public async Task FireDetachedStageStatic_NoInvokerRegistered_CompletesWithoutInvokingOrLoggingAsync() {
+  [Timeout(30000)]
+  public async Task FireDetachedStageStatic_NoInvokerRegistered_CompletesWithoutInvokingOrLoggingAsync(CancellationToken cancellationToken) {
     var logger = new FakeLogger<PerspectiveWorker>();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -775,7 +781,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         MessageSource = MessageSource.Local,
         AttemptNumber = 1
       });
-    await stage.WaitAsync(TimeSpan.FromSeconds(10));
+    await stage.WaitAsync(cancellationToken);
 
     await Assert.That(stage.IsCompletedSuccessfully).IsTrue();
     await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Level == LogLevel.Error)).IsFalse()
@@ -833,7 +839,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   // ------------------------------------------------------------------
 
   [Test]
-  public async Task StartLockKeepalive_TokenCanceledDuringARenewal_StopsAfterThatRenewalAsync() {
+  [Timeout(30000)]
+  public async Task StartLockKeepalive_TokenCanceledDuringARenewal_StopsAfterThatRenewalAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.KeepalivePerspective";
     var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
@@ -845,14 +852,15 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     using var cts = new CancellationTokenSource();
     locker.OnRenew = cts.Cancel;
 
-    await worker.StartLockKeepaliveAsync(streamId, perspectiveName, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StartLockKeepaliveAsync(streamId, perspectiveName, cts.Token).WaitAsync(cancellationToken);
 
     await Assert.That(locker.RenewCount).IsEqualTo(1)
       .Because("once the keepalive's token is canceled it stops, even when the renewal itself returned normally");
   }
 
   [Test]
-  public async Task Worker_IdleTicksWithMetrics_CountEveryEmptyPollAsync() {
+  [Timeout(30000)]
+  public async Task Worker_IdleTicksWithMetrics_CountEveryEmptyPollAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.IdlePerspective";
     var coordinator = new RecordingWorkCoordinator();
@@ -861,9 +869,13 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
     using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
     var workerOptions = new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 20, MaxConcurrentDrainConsumers = 1 };
+    // The idle poll waits on this clock, so the test, not elapsed real time, decides when each empty
+    // poll comes round.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
     var (worker, harness, _) = _buildBranchWorker(coordinator, registry, new BranchSetup {
       Metrics = metrics,
-      WorkerOptions = workerOptions
+      WorkerOptions = workerOptions,
+      TimeProvider = clock
     });
     var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnWorkProcessingIdle += () => idle.TrySetResult();
@@ -871,9 +883,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_branchWork(streamId, perspectiveName), cts.Token);
-    await idle.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await FakeClockPump.StepUntilAsync(clock, idle.Task.WaitAsync(cancellationToken), TimeSpan.FromMilliseconds(20));
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(_branchSum(meters, "whizbang.perspective.empty_batches")).IsGreaterThanOrEqualTo(workerOptions.IdleThresholdPolls)
@@ -897,6 +909,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public PerspectiveStreamLockOptions? StreamLockOptions { get; init; }
     public Action<IServiceCollection>? Services { get; init; }
     public PerspectiveWorkerOptions? WorkerOptions { get; init; }
+    public TimeProvider? TimeProvider { get; init; }
   }
 
   private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness, ServiceProvider Provider) _buildBranchWorker(
@@ -949,6 +962,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor(options),
       metrics: setup.Metrics,
+      timeProvider: setup.TimeProvider,
       coordinatorMetrics: setup.CoordinatorMetrics,
       completionMeter: setup.CompletionMeter);
     return (worker, harness, serviceProvider);

@@ -112,7 +112,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_TransientDatabaseFailureInAChannelBatch_IsReportedOnceAndTheLoopTakesTheNextBatchAsync() {
+  [Timeout(30000)]
+  public async Task Worker_TransientDatabaseFailureInAChannelBatch_IsReportedOnceAndTheLoopTakesTheNextBatchAsync(CancellationToken cancellationToken) {
     // Arrange — the cursor read of the first batch deadlocks; every later read succeeds.
     var deadlockedStreamId = Guid.CreateVersion7();
     var nextStreamId = Guid.CreateVersion7();
@@ -131,7 +132,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     }, cts.Token);
-    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, TimeSpan.FromSeconds(10));
+    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, cancellationToken);
 
     // Assert — the loop is alive, waiting out its backoff on the injected clock.
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
@@ -160,12 +161,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     }, cts.Token);
-    await FakeClockPump.StepUntilAsync(time, coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10)));
+    await FakeClockPump.StepUntilAsync(time, coordinator.WaitForCompletionsAsync(1, cancellationToken));
 
     // Assert — processed as if nothing had happened, and still exactly one report.
     await Assert.That(runner.RunCallCount).IsEqualTo(1);
     await Assert.That(logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)).Count().IsEqualTo(1);
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -177,7 +178,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// cancellation escaping as the worker's outcome.
   /// </summary>
   [Test]
-  public async Task Worker_StoppedWhileBackingOffAfterAFailedBatch_EndsTheLoopCleanlyAsync() {
+  [Timeout(30000)]
+  public async Task Worker_StoppedWhileBackingOffAfterAFailedBatch_EndsTheLoopCleanlyAsync(CancellationToken cancellationToken) {
     var failedStreamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.StoppedInBackoffPerspective";
     var (worker, harness, _, runner, logger, _) = _createDeadlockingBatchWorker(perspectiveName);
@@ -193,13 +195,13 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }, cts.Token);
     // The report is written as the backoff begins, and the fake clock is never stepped, so from here
     // the loop can only leave the wait by being stopped.
-    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, TimeSpan.FromSeconds(10));
+    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, cancellationToken);
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
       .Because("the loop is waiting out its backoff, not stopped");
 
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion)
       .Because("a stop during the backoff ends the loop the way any other stop does; a canceled or "
              + "faulted outcome would read to the host as the worker having failed");
     await Assert.That(logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)).Count().IsEqualTo(1)

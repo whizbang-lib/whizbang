@@ -31,16 +31,16 @@ internal sealed class PerspectiveWorkerTestHarness {
 
   /// <summary>Wait for any cursor completion to land on the completion channel.
   /// Signal-based (SemaphoreSlim released on enqueue) — no polling.</summary>
-  public async Task<PerspectiveCursorCompletion> WaitForCompletionAsync(TimeSpan timeout) {
-    await CompletionCapture.WaitForAnyCursorAsync(timeout);
+  public async Task<PerspectiveCursorCompletion> WaitForCompletionAsync(CancellationToken cancellationToken) {
+    await CompletionCapture.WaitForAnyCursorAsync(cancellationToken);
     CompletionCapture.Cursors.TryPeek(out var first);
     return first!;
   }
 
   /// <summary>Wait for any event-work-id deletion to land on the completion channel.
   /// Signal-based (SemaphoreSlim released on enqueue) — no polling.</summary>
-  public async Task<Guid> WaitForEventWorkIdAsync(TimeSpan timeout) {
-    await CompletionCapture.WaitForAnyEventWorkIdAsync(timeout);
+  public async Task<Guid> WaitForEventWorkIdAsync(CancellationToken cancellationToken) {
+    await CompletionCapture.WaitForAnyEventWorkIdAsync(cancellationToken);
     CompletionCapture.EventWorkIds.TryPeek(out var first);
     return first;
   }
@@ -64,24 +64,20 @@ internal sealed class CapturingPerspectiveCompletionChannel : IPerspectiveComple
 
   /// <summary>Completes when at least one cursor completion has been enqueued. Fast-paths when
   /// the queue is already non-empty so repeated waits keep the original peek semantics.</summary>
-  public async Task WaitForAnyCursorAsync(TimeSpan timeout) {
+  public async Task WaitForAnyCursorAsync(CancellationToken cancellationToken) {
     if (!Cursors.IsEmpty) {
       return;
     }
-    if (!await _cursorSignal.WaitAsync(timeout)) {
-      throw new TimeoutException($"No completion seen within {timeout}");
-    }
+    await _cursorSignal.WaitAsync(cancellationToken);
   }
 
   /// <summary>Completes when at least one event-work-id has been enqueued. Fast-paths when
   /// the queue is already non-empty so repeated waits keep the original peek semantics.</summary>
-  public async Task WaitForAnyEventWorkIdAsync(TimeSpan timeout) {
+  public async Task WaitForAnyEventWorkIdAsync(CancellationToken cancellationToken) {
     if (!EventWorkIds.IsEmpty) {
       return;
     }
-    if (!await _eventWorkIdSignal.WaitAsync(timeout)) {
-      throw new TimeoutException($"No event-work-id seen within {timeout}");
-    }
+    await _eventWorkIdSignal.WaitAsync(cancellationToken);
   }
 
   /// <summary>Completes once every one of <paramref name="eventWorkIds"/> has been enqueued, in any order.
@@ -114,14 +110,9 @@ internal sealed class CapturingFailureChannel : IFailureChannel, IDisposable {
 
   /// <summary>Completes when at least <paramref name="count"/> failures have been enqueued.
   /// Signal-based (SemaphoreSlim released on enqueue), no polling.</summary>
-  public async Task WaitForCountAsync(int count, TimeSpan timeout) {
-    using var deadline = new CancellationTokenSource(timeout);
+  public async Task WaitForCountAsync(int count, CancellationToken cancellationToken) {
     while (Items.Count < count) {
-      try {
-        await _signal.WaitAsync(deadline.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Only {Items.Count} of {count} failures seen within {timeout}");
-      }
+      await _signal.WaitAsync(cancellationToken);
     }
   }
 

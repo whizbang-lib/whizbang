@@ -26,12 +26,21 @@ internal sealed class EventIdSignalingLogger<TCategory> : ILogger<TCategory> {
   public List<LoggedLine> LinesWith(int eventId) => [.. _lines.Where(l => l.EventId == eventId)];
 
   /// <summary>Completes once a line with <paramref name="eventId"/> has been written.</summary>
-  public Task WhenLoggedAsync(int eventId, TimeSpan timeout) {
+  public Task WhenLoggedAsync(int eventId, TimeSpan timeout) => _whenLogged(eventId).WaitAsync(timeout);
+
+  /// <summary>
+  /// Completes once a line with <paramref name="eventId"/> has been written; bounded only by the caller's token, so a
+  /// test waits on the line itself and its own timeout ends a wait that never comes.
+  /// </summary>
+  public Task WhenLoggedAsync(int eventId, CancellationToken cancellationToken) =>
+    _whenLogged(eventId).WaitAsync(cancellationToken);
+
+  private Task _whenLogged(int eventId) {
     var waiter = _waiters.GetOrAdd(eventId, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
     if (_lines.Any(l => l.EventId == eventId)) {
       waiter.TrySetResult();
     }
-    return waiter.Task.WaitAsync(timeout);
+    return waiter.Task;
   }
 
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
