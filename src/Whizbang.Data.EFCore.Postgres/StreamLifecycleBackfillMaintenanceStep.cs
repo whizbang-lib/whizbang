@@ -41,8 +41,8 @@ public sealed class StreamLifecycleBackfillMaintenanceStep(
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     var context = (DbContext)services.GetRequiredService(_dbContextType);
-    var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var quotedSchema = PgIdentifier.Quote(string.IsNullOrWhiteSpace(schema) ? "public" : schema);
+    // The schema the work coordinator resolves for the same context, with its fallback for a model mapped without one.
+    var quotedSchema = PgIdentifier.Quote(EFCoreWorkCoordinator<DbContext>.ResolveSchema(context.Model, typeof(OutboxRecord), null));
 
     await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     try {
