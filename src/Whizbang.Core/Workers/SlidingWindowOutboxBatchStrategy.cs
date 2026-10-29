@@ -89,7 +89,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
   /// <param name="timeProvider">Time source for the windows and the retry backoff. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
   /// <param name="onFlushFailed">Records a batch that could not be stored; the registered one dead-letters it. Null only logs and counts it.</param>
   /// <param name="metrics">Counts retries and messages that were not stored; null counts nothing.</param>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3427:Method overloads with default parameter values should not overlap", Justification = "The four-parameter constructor is the published one and stays for binary compatibility; this one adds the failure handling and takes every parameter explicitly.")]
   public SlidingWindowOutboxBatchStrategy(

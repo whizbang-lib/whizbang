@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// usually fails too: the batch is then reported to the observers with <see cref="InboxFlushFailure.DeadLettered"/>
 /// false, and the strategy logs every message id it held.
 /// </remarks>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public sealed partial class InboxFlushFailureRecorder {
   private const string GATE_CALLER = "InboxFlushDeadLetter";
@@ -41,7 +41,7 @@ public sealed partial class InboxFlushFailureRecorder {
   /// <param name="deadLetterMetrics">Counts the dead letters written; null counts nothing.</param>
   /// <param name="observers">Told about every batch that was not stored.</param>
   /// <param name="logger">Logs a dead-letter write or an observer that failed.</param>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators; DI builds it.")]
   public InboxFlushFailureRecorder(
@@ -73,7 +73,7 @@ public sealed partial class InboxFlushFailureRecorder {
   /// <param name="failure">What was not stored, and why.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>True when the messages were written to the dead-letter table.</returns>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
   public async Task<bool> RecordAsync(InboxFlushFailure failure, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(failure);

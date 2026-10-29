@@ -7,7 +7,7 @@ namespace Whizbang.Core.Workers;
 /// Configuration for <see cref="SlidingWindowOutboxBatchStrategy"/>. Defaults match the
 /// pump-then-process plan: 50 ms debounce / 1 s hard cap / 100-message batch ceiling per stream.
 /// </summary>
-/// <docs>internals/outbox-batch-strategy</docs>
+/// <docs>extending/internals/outbox-batch-strategy</docs>
 public sealed record SlidingWindowOutboxOptions {
   /// <summary>
   /// Debounce window after the last append PER STREAM. Resets on each new arrival for the
@@ -46,7 +46,7 @@ public sealed record SlidingWindowOutboxOptions {
   /// on is written to the dead-letter table, from where dead-letter recovery stores it again (#1871). Default: 5.
   /// Must be at least 1.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public int MaxFlushAttempts { get; set; } = 5;
 
@@ -55,14 +55,14 @@ public sealed record SlidingWindowOutboxOptions {
   /// up to <see cref="FlushRetryMaxBackoff"/>. The stream's later batches wait behind it, so its order is kept.
   /// Measured on the strategy's <see cref="TimeProvider"/>. Default: 100 ms.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public TimeSpan FlushRetryBackoff { get; set; } = TimeSpan.FromMilliseconds(100);
 
   /// <summary>
   /// The longest wait between two attempts to store a stream's batch. Default: 5 s.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushRetryBackoff_DoublesUpToTheMaximumAsync</tests>
   public TimeSpan FlushRetryMaxBackoff { get; set; } = TimeSpan.FromSeconds(5);
 }

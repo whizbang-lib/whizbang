@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="Attempts">How many times the store was attempted.</param>
 /// <param name="InstanceId">The instance recording the dead letters.</param>
 /// <param name="Generation">The current generation tag, read by the recovery worker's generation replay.</param>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs</tests>
 public sealed record OutboxDeadLetterRequest(
     MessageFailureReason FailureReason,

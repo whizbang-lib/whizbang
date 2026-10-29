@@ -34,7 +34,7 @@ public interface IWorkCoordinatorStrategy {
   /// </summary>
   /// <param name="message">Pre-serialized outbox message to store.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>internals/outbox-batch-strategy</docs>
+  /// <docs>extending/internals/outbox-batch-strategy</docs>
   Task QueueOutboxMessageAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
     QueueOutboxMessage(message);
     return Task.CompletedTask;

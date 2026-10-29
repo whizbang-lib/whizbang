@@ -6,7 +6,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Why a batch of inbox messages the inbox batcher accepted was not stored (#1885).
 /// </summary>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs</tests>
 public enum InboxFlushFailureCause {
   /// <summary>Every attempt failed with a transient database failure, and the attempts allowed ran out.</summary>
@@ -31,7 +31,7 @@ public enum InboxFlushFailureCause {
 /// <param name="Cause">Why they were not stored.</param>
 /// <param name="Attempts">How many times the store was attempted; zero when the messages were abandoned before one.</param>
 /// <param name="Error">The last failure, or null when the messages were abandoned before a store failed.</param>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs</tests>
 public sealed record InboxFlushFailure(
     Guid StreamId,
@@ -53,7 +53,7 @@ public sealed record InboxFlushFailure(
 /// <param name="failure">What was not stored, and why.</param>
 /// <param name="cancellationToken">Cancellation.</param>
 /// <returns>True when the messages were written to the dead-letter table.</returns>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public delegate Task<bool> InboxFlushFailureCallback(InboxFlushFailure failure, CancellationToken cancellationToken);
 
@@ -62,7 +62,7 @@ public delegate Task<bool> InboxFlushFailureCallback(InboxFlushFailure failure, 
 /// them in the dead-letter table (<see cref="InboxFlushFailure.DeadLettered"/>). Register any number; each is called
 /// in turn and one that throws is logged and does not stop the others (#1885).
 /// </summary>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public interface IInboxFlushFailureObserver {
   /// <summary>Called once for each batch that could not be stored.</summary>
@@ -81,7 +81,7 @@ public interface IInboxFlushFailureObserver {
 /// <param name="Attempts">How many times the store was attempted.</param>
 /// <param name="InstanceId">The instance recording the dead letters.</param>
 /// <param name="Generation">The current generation tag, read by the recovery worker's generation replay.</param>
-/// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs</tests>
 public sealed record InboxDeadLetterRequest(
     MessageFailureReason FailureReason,

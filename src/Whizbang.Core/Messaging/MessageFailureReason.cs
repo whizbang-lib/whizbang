@@ -214,7 +214,7 @@ public enum MessageFailureReason {
   /// letter holds the whole message, and recovery stores it through the outbox store as if it had just been sent
   /// (#1871). The recorded error text is the store's last failure.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   OutboxStoreFailed = 23,
 
   /// <summary>
@@ -224,7 +224,7 @@ public enum MessageFailureReason {
   /// again. The dead letter holds the message's envelope, and recovery stores it through the inbox store as a delivery
   /// of the same envelope is stored (#1885). The recorded error text is the store's last failure.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   InboxStoreFailed = 24,
 
   /// <summary>

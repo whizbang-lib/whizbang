@@ -33,7 +33,7 @@ internal readonly record struct BatchStoreResult(BatchStoreOutcome Outcome, int 
 /// <param name="backoff">The wait before the first retry; each further retry waits twice as long as the one before.</param>
 /// <param name="maxBackoff">The longest wait between two attempts.</param>
 /// <param name="timeProvider">The clock the waits are measured on.</param>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs</tests>
 internal sealed class BatchStoreRetry(int maxAttempts, TimeSpan backoff, TimeSpan maxBackoff, TimeProvider timeProvider) {

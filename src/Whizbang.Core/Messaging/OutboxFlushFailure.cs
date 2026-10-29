@@ -6,7 +6,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Why a batch of outbox messages the batcher accepted was not stored (#1871).
 /// </summary>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs</tests>
 public enum OutboxFlushFailureCause {
   /// <summary>Every attempt failed with a transient database failure, and the attempts allowed ran out.</summary>
@@ -31,7 +31,7 @@ public enum OutboxFlushFailureCause {
 /// <param name="Cause">Why they were not stored.</param>
 /// <param name="Attempts">How many times the store was attempted; zero when the messages were abandoned before one.</param>
 /// <param name="Error">The last failure, or null when the messages were abandoned before a store failed.</param>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs</tests>
 public sealed record OutboxFlushFailure(
     Guid StreamId,
@@ -53,7 +53,7 @@ public sealed record OutboxFlushFailure(
 /// <param name="failure">What was not stored, and why.</param>
 /// <param name="cancellationToken">Cancellation.</param>
 /// <returns>True when the messages were written to the dead-letter table.</returns>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public delegate Task<bool> OutboxFlushFailureCallback(OutboxFlushFailure failure, CancellationToken cancellationToken);
 
@@ -66,7 +66,7 @@ public delegate Task<bool> OutboxFlushFailureCallback(OutboxFlushFailure failure
 /// The event an application answers when an event it returned or published could not be written: alert, keep the
 /// messages somewhere of its own when they were not dead-lettered, or re-send them once the database recovers.
 /// </remarks>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public interface IOutboxFlushFailureObserver {
   /// <summary>Called once for each batch that could not be stored.</summary>

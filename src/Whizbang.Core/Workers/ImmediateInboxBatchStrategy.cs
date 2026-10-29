@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// latency without batching benefit.
 /// </para>
 /// </remarks>
-/// <docs>internals/inbox-batch-strategy</docs>
+/// <docs>extending/internals/inbox-batch-strategy</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxBatchStrategyRegistrationTests.cs</tests>
 public sealed class ImmediateInboxBatchStrategy : IInboxBatchStrategy {
   private readonly InboxBulkFlushCallback _flush;

@@ -13,7 +13,7 @@ namespace Whizbang.Core.Workers;
 /// arriving across multiple transport messages for the same stream coalesce into one
 /// flush before downstream applies, eliminating cross-batch cursor inversions.
 /// </remarks>
-/// <docs>internals/inbox-batch-strategy</docs>
+/// <docs>extending/internals/inbox-batch-strategy</docs>
 // Never read (#1536): each transport's MessageProcessing section carried inbox batch settings nothing used.
 [Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSize", "Whizbang:Workers:InboxBatch:MaxSize")]
 [Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSlideMs", "Whizbang:Workers:InboxBatch:SlidingWindow")]
@@ -60,7 +60,7 @@ public sealed record SlidingWindowInboxOptions {
   /// on is written to the dead-letter table, from where dead-letter recovery stores it through the inbox store
   /// (#1885). Default: 5. Must be at least 1.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public int MaxFlushAttempts { get; set; } = 5;
 
@@ -69,14 +69,14 @@ public sealed record SlidingWindowInboxOptions {
   /// up to <see cref="FlushRetryMaxBackoff"/>. The stream's later batches wait behind it, so its order is kept.
   /// Measured on the strategy's <see cref="TimeProvider"/>. Default: 100 ms.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushRetryBackoff_DoublesUpToTheMaximumAsync</tests>
   public TimeSpan FlushRetryBackoff { get; set; } = TimeSpan.FromMilliseconds(100);
 
   /// <summary>
   /// The longest wait between two attempts to store a stream's batch. Default: 5 s.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushRetryBackoff_DoublesUpToTheMaximumAsync</tests>
   public TimeSpan FlushRetryMaxBackoff { get; set; } = TimeSpan.FromSeconds(5);
 }

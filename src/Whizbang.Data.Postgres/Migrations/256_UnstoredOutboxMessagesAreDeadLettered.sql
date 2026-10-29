@@ -34,7 +34,7 @@
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('wh_store_outbox_dead_letters');
 
--- <docs>internals/outbox-batch-strategy</docs>
+-- <docs>extending/internals/outbox-batch-strategy</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:StoreOutboxDeadLetters_SkipsAMessageAlreadyStoredOrAlreadyDeadLetteredAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:PerStreamFlushes_PoolExhausted_EveryAcceptedMessageReachesTheOutboxAsync</tests>

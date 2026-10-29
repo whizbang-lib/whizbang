@@ -71,7 +71,7 @@ public sealed class WorkCoordinatorMetrics {
   /// command timeout, the server out of connection slots), tagged <c>reason</c> (#1871). A steady rate is a database
   /// or pool that cannot keep up with the concurrent per-stream flushes.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsOnceForSomeStreams_EveryAcceptedMessageIsStoredAsync</tests>
   public PassiveCounter<long> OutboxFlushRetries { get; }
 
@@ -80,7 +80,7 @@ public sealed class WorkCoordinatorMetrics {
   /// retryable, abandoned at shutdown) and <c>outcome</c> (<c>dead_lettered</c>, or <c>not_recorded</c> when the
   /// dead-letter write failed too) (#1871). Any <c>not_recorded</c> count is messages that exist only in the error log.
   /// </summary>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public PassiveCounter<long> OutboxFlushFailedMessages { get; }
 
@@ -88,7 +88,7 @@ public sealed class WorkCoordinatorMetrics {
   /// Retries of a stream's inbox batch after a transient database failure, tagged <c>reason</c> (#1885). A steady
   /// rate is a database or pool that cannot keep up with the concurrent per-stream inbox flushes.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushFailsOnceForSomeStreams_EveryAcceptedMessageIsStoredAsync</tests>
   public PassiveCounter<long> InboxFlushRetries { get; }
 
@@ -97,7 +97,7 @@ public sealed class WorkCoordinatorMetrics {
   /// retryable, abandoned at shutdown) and <c>outcome</c> (<c>dead_lettered</c>, or <c>not_recorded</c> when the
   /// dead-letter write failed too) (#1885). Any <c>not_recorded</c> count is messages that exist only in the error log.
   /// </summary>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxFlushFailureTests.cs:FlushFailsTransientlyOnEveryAttempt_DeadLettersTheBatchAfterMaxFlushAttemptsAsync</tests>
   public PassiveCounter<long> InboxFlushFailedMessages { get; }
 

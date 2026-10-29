@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// usually fails too: the batch is then reported to the observers with <see cref="OutboxFlushFailure.DeadLettered"/>
 /// false, and the strategy logs every message id it held.
 /// </remarks>
-/// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+/// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public sealed partial class OutboxFlushFailureRecorder {
   private const string GATE_CALLER = "OutboxFlushDeadLetter";
@@ -41,7 +41,7 @@ public sealed partial class OutboxFlushFailureRecorder {
   /// <param name="deadLetterMetrics">Counts the dead letters written; null counts nothing.</param>
   /// <param name="observers">Told about every batch that was not stored.</param>
   /// <param name="logger">Logs a dead-letter write or an observer that failed.</param>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators; DI builds it.")]
   public OutboxFlushFailureRecorder(
@@ -73,7 +73,7 @@ public sealed partial class OutboxFlushFailureRecorder {
   /// <param name="failure">What was not stored, and why.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>True when the messages were written to the dead-letter table.</returns>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
   public async Task<bool> RecordAsync(OutboxFlushFailure failure, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(failure);

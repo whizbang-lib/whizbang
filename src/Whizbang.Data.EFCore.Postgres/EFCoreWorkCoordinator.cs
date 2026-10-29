@@ -4219,7 +4219,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
   public async Task<bool> StoreOutboxDeadLettersAsync(
     OutboxMessage[] messages,
@@ -4239,7 +4239,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs:StoreInboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
   public async Task<bool> StoreInboxDeadLettersAsync(
     InboxMessage[] messages,

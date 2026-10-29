@@ -658,7 +658,7 @@ public interface IWorkCoordinator {
   /// <param name="request">Why, how many attempts were made, and who is recording it.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True when the messages are recorded; false from a coordinator with no dead-letter table (the default).</returns>
-  /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs</tests>
   Task<bool> StoreOutboxDeadLettersAsync(
     OutboxMessage[] messages,
@@ -677,7 +677,7 @@ public interface IWorkCoordinator {
   /// <param name="request">Why, how many attempts were made, and who is recording it.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True when the messages are recorded; false from a coordinator with no dead-letter table (the default).</returns>
-  /// <docs>internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs</tests>
   Task<bool> StoreInboxDeadLettersAsync(
     InboxMessage[] messages,

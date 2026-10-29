@@ -35,7 +35,7 @@
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('wh_store_inbox_dead_letters');
 
--- <docs>internals/inbox-batch-strategy</docs>
+-- <docs>extending/internals/inbox-batch-strategy</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs:StoreInboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs:StoreInboxDeadLetters_SkipsAMessageAlreadyStoredOrAlreadyDeadLetteredAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_store_inbox_dead_letters(
