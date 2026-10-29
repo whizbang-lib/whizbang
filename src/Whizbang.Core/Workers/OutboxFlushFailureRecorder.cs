@@ -24,12 +24,11 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public sealed partial class OutboxFlushFailureRecorder {
   private const string GATE_CALLER = "OutboxFlushDeadLetter";
-  private const string UNKNOWN_GENERATION = "unknown";
 
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly WorkCoordinatorGate? _gate;
-  private readonly IServiceInstanceProvider? _instanceProvider;
-  private readonly IGenerationProvider? _generationProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly IGenerationProvider _generationProvider;
   private readonly DeadLetterMetrics? _deadLetterMetrics;
   private readonly IOutboxFlushFailureObserver[] _observers;
   private readonly ILogger _logger;
@@ -37,23 +36,25 @@ public sealed partial class OutboxFlushFailureRecorder {
   /// <summary>Creates the recorder.</summary>
   /// <param name="scopeFactory">Opens the scope the coordinator is resolved from.</param>
   /// <param name="gate">The process-wide cap on coordinator calls; null when none is registered.</param>
-  /// <param name="instanceProvider">Names the instance the dead letters record; null records an empty id.</param>
-  /// <param name="generationProvider">The generation the dead letters carry; null records <c>unknown</c>.</param>
+  /// <param name="instanceProvider">Names the instance the dead letters record.</param>
+  /// <param name="generationProvider">The generation the dead letters carry, read by the recovery worker's generation replay.</param>
   /// <param name="deadLetterMetrics">Counts the dead letters written; null counts nothing.</param>
   /// <param name="observers">Told about every batch that was not stored.</param>
   /// <param name="logger">Logs a dead-letter write or an observer that failed.</param>
   /// <docs>internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators, each optional where the container may not hold one; DI builds it.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators; DI builds it.")]
   public OutboxFlushFailureRecorder(
       IServiceScopeFactory scopeFactory,
       WorkCoordinatorGate? gate,
-      IServiceInstanceProvider? instanceProvider,
-      IGenerationProvider? generationProvider,
+      IServiceInstanceProvider instanceProvider,
+      IGenerationProvider generationProvider,
       DeadLetterMetrics? deadLetterMetrics,
       IEnumerable<IOutboxFlushFailureObserver> observers,
       ILogger<OutboxFlushFailureRecorder> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    ArgumentNullException.ThrowIfNull(generationProvider);
     ArgumentNullException.ThrowIfNull(observers);
     ArgumentNullException.ThrowIfNull(logger);
     _scopeFactory = scopeFactory;
@@ -107,8 +108,8 @@ public sealed partial class OutboxFlushFailureRecorder {
       MessageFailureReason.OutboxStoreFailed,
       errorText,
       failure.Attempts,
-      _instanceProvider?.InstanceId ?? Guid.Empty,
-      _generationProvider?.GetGeneration() ?? UNKNOWN_GENERATION);
+      _instanceProvider.InstanceId,
+      _generationProvider.GetGeneration());
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     using (_gate is null ? default : await _gate.AcquireAsync(cancellationToken, GATE_CALLER).ConfigureAwait(false)) {

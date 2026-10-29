@@ -1042,8 +1042,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp => new OutboxFlushFailureRecorder(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetService<WorkCoordinatorGate>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-      sp.GetService<IGenerationProvider>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<IGenerationProvider>(),
       sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
       sp.GetServices<IOutboxFlushFailureObserver>(),
       sp.GetRequiredService<ILogger<OutboxFlushFailureRecorder>>()));

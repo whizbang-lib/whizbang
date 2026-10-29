@@ -61,7 +61,7 @@ public class OutboxFlushFailureCallbackTests {
   }
 
   [Test]
-  public async Task RecordAsync_AbandonedWithoutAnError_RecordsWhyAndDefaultsTheAuditColumnsAsync() {
+  public async Task RecordAsync_AbandonedWithoutAnError_RecordsWhyItWasNotStoredAsync() {
     var coordinator = new DeadLetteringCoordinator();
     var sut = _recorder(coordinator, []);
 
@@ -71,8 +71,6 @@ public class OutboxFlushFailureCallbackTests {
     var (_, request) = coordinator.Calls.Single();
     await Assert.That(request.ErrorText).Contains("abandoned at shutdown");
     await Assert.That(request.Attempts).IsEqualTo(0);
-    await Assert.That(request.InstanceId).IsEqualTo(Guid.Empty);
-    await Assert.That(request.Generation).IsEqualTo("unknown");
   }
 
   [Test]
@@ -123,8 +121,8 @@ public class OutboxFlushFailureCallbackTests {
     return new OutboxFlushFailureRecorder(
       services.GetRequiredService<IServiceScopeFactory>(),
       gate,
-      instanceProvider,
-      generationProvider,
+      instanceProvider ?? new ServiceInstanceProvider(Guid.Empty, "svc", "host", 1),
+      generationProvider ?? new FixedGeneration("gen-0"),
       deadLetterMetrics,
       observers,
       logger ?? NullLogger<OutboxFlushFailureRecorder>.Instance);
