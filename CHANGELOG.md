@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application role owns). EF Core driver. New API: `MaintenanceWorkerOptions.ReindexBloatThreshold`,
   `QueueIndexReindexStep`, `QueueIndexBloat`, `QueueIndexNames`, and `IWorkCoordinator.GetQueueIndexBloatAsync`,
   `DropInvalidQueueIndexAsync` and `ReindexQueueIndexAsync`.
+- **The event-type bytes sample reports the event-store pointer rows and the inline outbox metadata (#1749).** The
+  sample now reads three tables at the same share in one statement: `wh_event_body` for the payload and metadata,
+  `wh_event_store` for the pointer row every event keeps (its whole stored width), and `wh_outbox` for the metadata
+  outbox rows holding an event carry inline (commands are left out). Both `whizbang.event_store.sampled_bytes_per_event`
+  and `whizbang.event_store.estimated_type_bytes` carry a `part` tag (`data`, `metadata`, `pointer`,
+  `outbox_metadata`), so a sum by `event_type` is a type's whole footprint and a sum by `part` is where it sits; a part
+  the sample read no rows of is not reported. Types are ranked and folded under `other` by every part together.
+  Breaking (pre-1.0): `EventTypeBytes` is now one `EventPartBytes` (sampled rows, mean bytes, extrapolated total) per
+  part (`Data`, `Metadata`, `PointerRow`, `OutboxMetadata`), and `EventStoreBytesParts` names the tag values.
 
 - **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
   The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While

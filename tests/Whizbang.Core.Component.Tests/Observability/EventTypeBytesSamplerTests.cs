@@ -56,7 +56,8 @@ public class EventTypeBytesSamplerTests {
     await Assert.That(provider.Requests[0]).IsEqualTo(new EventTypeSampleRequest(
       "whizbang:event-type-bytes:" + window.ToString(CultureInfo.InvariantCulture), 2.5, 7))
       .Because("every instance names the window the same way, from the clock, so exactly one of them gets it");
-    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 1_080_000d, ORDER_PLACED));
+    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 360_000d, ORDER_PLACED));
+    await Assert.That(readings).Contains(("whizbang.event_store.estimated_type_bytes", 720_000d, ORDER_PLACED));
   }
 
   [Test]

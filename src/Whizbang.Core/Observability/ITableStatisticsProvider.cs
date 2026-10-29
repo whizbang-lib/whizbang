@@ -33,20 +33,20 @@ public interface ITableStatisticsProvider {
 
   /// <summary>
   /// Returns estimated disk size in bytes per table name.
-  /// Uses database catalog statistics — no table scans.
+  /// Uses database catalog statistics, with no table scans.
   /// </summary>
   Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default);
 
   /// <summary>
   /// Returns unprocessed message count per queue (inbox, outbox).
-  /// Uses partial index scans — cheap on indexed columns.
+  /// Uses partial index scans, cheap on indexed columns.
   /// </summary>
   Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default);
 
   /// <summary>
   /// Returns a per-table bloat ratio: heap bytes per live row divided by the expected row width.
   /// Roughly 1.0 means the heap is about the size its rows need; a large sustained multiple means
-  /// the table is carrying space it cannot use — dead tuples awaiting vacuum, or bytes from a
+  /// the table is carrying space it cannot use: dead tuples awaiting vacuum, or bytes from a
   /// dropped column, which Postgres keeps in every pre-existing row until the table is rewritten.
   /// </summary>
   /// <remarks>
@@ -92,7 +92,8 @@ public interface ITableStatisticsProvider {
   /// <remarks>
   /// <para>
   /// The table sizes say how large the event store is; this says which event types the bytes belong to,
-  /// and how much of each event is payload and how much is metadata. That is what decides whether a type
+  /// and where each event's bytes sit: payload and metadata, the event-store pointer row, and the outbox's inline
+  /// metadata (see <see cref="EventStoreBytesParts"/>). That is what decides whether a type
   /// should be excluded from audit, marked ephemeral or slimmed, a decision otherwise made with ad-hoc SQL.
   /// </para>
   /// <para>

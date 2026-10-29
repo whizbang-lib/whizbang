@@ -91,8 +91,9 @@ Each slice is one red-then-green increment and its own commit.
    two types with known sizes report the right means; `MaxEventTypes` folds the rest into `other`;
    an interval of zero never queries; a non-claimant instance never queries. Docs: metrics page,
    new section under `Whizbang.TableStatistics`.
-   **Status (2026-10-24):** done. #1590, closed by PR #1591. Decision 2 (#1675) is not built: the sample reads
-   only `wh_event_body`, not the `wh_event_store` pointer rows or the inline outbox metadata.
+   **Status (2026-10-29):** done. #1590, closed by PR #1591. Decision 2 (#1675) done in #1749: the sample also reads
+   the `wh_event_store` pointer rows and the inline `wh_outbox` metadata of event rows, and both event-type gauges carry
+   `part` = `data`, `metadata`, `pointer` or `outbox_metadata`.
 7. **Grafana dashboard.** New folder `dashboards/grafana/` with `whizbang-storage.json`: total and
    per-table bytes, component split, growth per day, bytes per row, bloat ratio with the rewrite
    threshold line, top event types by bytes, metadata share, extension states (from
@@ -136,6 +137,6 @@ Each slice is one red-then-green increment and its own commit.
 All decided on 2026-10-22 in #1675 (the owner accepted the recommendations).
 
 1. **A `database` tag** is added to the table gauges before 1.0, while the series are new. DONE (#1717): every gauge on the meter carries it.
-2. **The bytes sample** also covers `wh_event_store` pointer rows and the inline outbox metadata.
+2. **The bytes sample** also covers `wh_event_store` pointer rows and the inline outbox metadata. DONE (#1749).
 3. **The table cap** stays at 500 and becomes configurable. DONE (#1717): `Whizbang:TableStatistics:MaxTrackedTables`, validated at start, applied per database.
 4. **The dashboard** lives in this repository for 1.0.
