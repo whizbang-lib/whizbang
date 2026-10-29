@@ -39,6 +39,11 @@ public class EventFlagsDeriverTests {
       .Because("the generated catalog registers [TerminalEvent] types, and the dispatch path stamps the bit from that registration");
 
   [Test]
+  public async Task FromPayload_NoPayload_NoneAsync() =>
+    await Assert.That(EventFlagsDeriver.FromPayload(null, null)).IsEqualTo(EventFlags.None)
+      .Because("a received message whose type the catalog does not know reaches the typed fallback with no payload in hand");
+
+  [Test]
   public async Task Derive_ByWireName_ATerminalTypeTheCatalogKnows_CarriesTheTerminalBitAsync() {
     var resolver = new EventMarkerResolver(new TerminalCatalog());
 
