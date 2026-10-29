@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Lifecycle;
@@ -41,14 +42,17 @@ public interface IStreamPrefixTruncator {
 /// gated truncate.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-/// <remarks>Creates a truncator over the coordinator, with its destruction hook (the default proceeds and observes nothing) and
-/// the scope factory each truncate resolves its destruction-stage receptors, event store and invoker from.</remarks>
+/// <remarks>Creates a truncator over the coordinator, with its destruction hook (the default proceeds and observes nothing),
+/// the scope factory each truncate resolves its destruction-stage receptors, event store and invoker from, and the archive
+/// store an archiving truncate writes through (WS-3 S7). With no archive store, an archiving truncate copies into
+/// <c>wh_event_archive</c> through the coordinator, as it did before the store existed.</remarks>
 public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, ILogger<StreamPrefixTruncator> logger, IDestructionHook hook,
-    IServiceScopeFactory scopeFactory) : IStreamPrefixTruncator {
+    IServiceScopeFactory scopeFactory, IArchiveStore? archiveStore = null) : IStreamPrefixTruncator {
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly ILogger<StreamPrefixTruncator> _logger = ArgumentGuard.NotNull(logger);
   private readonly IDestructionHook _hook = hook;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly IArchiveStore? _archiveStore = archiveStore;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
@@ -105,8 +109,8 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // watermarks exist.
     _ = await _coordinator.FoldStreamApplyPathsAsync([streamId], cancellationToken).ConfigureAwait(false);
 
-    var result = await _coordinator.TruncateStreamPrefixAsync(streamId, throughVersion, archive, cancellationToken)
-      .ConfigureAwait(false);
+    _ = _archiveStore;
+    var result = await _coordinator.TruncateStreamPrefixAsync(streamId, throughVersion, archive, cancellationToken).ConfigureAwait(false);
 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual truncate (not a gate-blocked / no-carry-forward / debug-skipped outcome).

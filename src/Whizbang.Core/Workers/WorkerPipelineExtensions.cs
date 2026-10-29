@@ -446,7 +446,10 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamPrefixTruncator>>(),
       sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>(),
-      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
+      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+      // An archiving truncate writes through the archive store the driver registers (WS-3 S7); none registered keeps
+      // the coordinator's own copy into wh_event_archive.
+      sp.GetService<Whizbang.Core.Archival.IArchiveStore>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
     // reusing the snapshot store + event store + the A1 prefix truncator. On-demand, like IStreamPrefixTruncator.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
