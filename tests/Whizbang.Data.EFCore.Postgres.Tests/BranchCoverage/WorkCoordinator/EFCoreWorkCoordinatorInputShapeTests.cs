@@ -87,7 +87,7 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RenewLeases_ArrayAndListInputs_BothRenewTheirRowsAsync() {
+  public async Task RenewHeldLeases_ArrayAndListInputs_BothRenewTheirRowsAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
@@ -96,12 +96,12 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (second, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
     Guid[] input3 = [first];
-    var renewedFromArray = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, input3);
+    var notHeldFromArray = await coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, input3);
     List<Guid> input4 = [second];
-    var renewedFromList = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, input4);
+    var notHeldFromList = await coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, input4);
 
-    await Assert.That(renewedFromArray).IsEqualTo(1);
-    await Assert.That(renewedFromList).IsEqualTo(1);
+    await Assert.That(notHeldFromArray).IsEmpty();
+    await Assert.That(notHeldFromList).IsEmpty();
   }
 
   [Test]

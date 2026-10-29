@@ -83,6 +83,34 @@ public class OutboxDrainWorkerTransportReadinessTests {
   }
 
   [Test]
+  public async Task NotReady_ARowItsRenewalDidNotCover_IsNotReportedHeldAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var kept = (Guid)TrackedGuid.New();
+    var lost = (Guid)TrackedGuid.New();
+    var coordinator = new RecordingCoordinator();
+    coordinator.RowsByStream[streamId] = [_row(kept, streamId), _row(lost, streamId)];
+    coordinator.HeldElsewhere[lost] = true;
+    var harness = _build(coordinator, new ToggleReadyPublishStrategy(), Options.Create(new LeaseRenewalWorkerOptions()));
+    var held = new TaskCompletionSource<OutboxPublishHeldEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+    harness.Worker.OnOutboxPublishHeld += e => held.TrySetResult(e);
+
+    using var cts = new CancellationTokenSource();
+    try {
+      await harness.Worker.StartAsync(cts.Token);
+      await harness.Drain.WriteAsync(streamId);
+      var heldEvent = await held.Task.WaitAsync(_signal);
+
+      await Assert.That(coordinator.Renewals.Single().InstanceId).IsEqualTo(harness.InstanceId)
+        .Because("a renewal names the instance renewing, so it extends only the leases that instance holds (#1852)");
+      await Assert.That(heldEvent.HeldMessageIds).IsEquivalentTo([kept])
+        .Because("another instance re-claimed the row its renewal did not cover, so this instance does not hold it");
+    } finally {
+      await cts.CancelAsync();
+      await harness.Worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
   public async Task NotReady_WithDefaultRenewalOptions_RenewsForTheDefaultLeaseAsync() {
     var streamId = (Guid)TrackedGuid.New();
     var id = (Guid)TrackedGuid.New();
@@ -174,7 +202,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private sealed record Harness(
-      OutboxDrainWorker Worker, DrainChannel Drain, CompletionChannel Completions, FailureChannel Failures);
+      OutboxDrainWorker Worker, DrainChannel Drain, CompletionChannel Completions, FailureChannel Failures, Guid InstanceId);
 
   private static Harness _build(
       RecordingCoordinator coordinator, ToggleReadyPublishStrategy publish, IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
@@ -190,9 +218,10 @@ public class OutboxDrainWorkerTransportReadinessTests {
     var failures = new FailureChannel();
     // A page of one row per stream: the hold must still keep every row the stream has here.
     var options = new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 1 };
+    var instance = new ServiceInstanceProvider(Guid.CreateVersion7(), "readiness-svc", "readiness-host", 1);
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new ServiceInstanceProvider(Guid.CreateVersion7(), "readiness-svc", "readiness-host", 1),
+      instanceProvider: instance,
       drainChannel: drain,
       completionChannel: completions,
       failureChannel: failures,
@@ -208,7 +237,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor(options),
       leaseRenewalOptions: leaseRenewalOptions);
-    return new Harness(worker, drain, completions, failures);
+    return new Harness(worker, drain, completions, failures, instance.InstanceId);
   }
 
   private static readonly JsonSerializerOptions _jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -252,7 +281,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
     }
   }
 
-  private sealed record Renewal(WorkCategory Category, IReadOnlyList<Guid> Ids, int LeaseSeconds);
+  private sealed record Renewal(WorkCategory Category, Guid InstanceId, IReadOnlyList<Guid> Ids, int LeaseSeconds);
 
   /// <summary>
   /// Returns the unprocessed rows held on each stream (capped by the page asked for), as
@@ -285,10 +314,13 @@ public class OutboxDrainWorkerTransportReadinessTests {
       return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
     }
 
-    public Task<int> RenewLeasesAsync(
-        WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
-      Renewals.Enqueue(new Renewal(category, [.. ids], leaseSeconds));
-      return Task.FromResult(ids.Count);
+    /// <summary>Rows another instance has re-claimed: a renewal reports them instead of renewing them (#1852).</summary>
+    public ConcurrentDictionary<Guid, bool> HeldElsewhere { get; } = new();
+
+    public Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids,
+        int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+      Renewals.Enqueue(new Renewal(category, instanceId, [.. ids], leaseSeconds));
+      return Task.FromResult<IReadOnlyList<Guid>>([.. ids.Where(HeldElsewhere.ContainsKey)]);
     }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) => Task.FromResult(Guid.CreateVersion7());

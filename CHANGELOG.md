@@ -760,6 +760,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still folds there. Coverage-gap detection reported unstamped events, which the stamp fence holds back from
   perspectives, as never folded and asked for rebuilds; it now skips them, and its query walks streams one at a time
   and stops at the report cap instead of grouping the whole store first. (Fixes #1791)
+- **A lease renewal extends only the leases the renewing instance holds (Fixes #1852).** Renewal matched rows by id
+  alone, in every category, so an instance whose lease had lapsed, and whose row another instance had then claimed,
+  extended the new holder's row and stream leases on its next renewal; the row stayed away from the instance working
+  it and both treated it as theirs. Renewal now goes through `wh_renew_held_leases` (migration 255), which renews a row
+  only while the renewing instance holds it and returns the ids it did not renew (re-claimed, completed or gone).
+  `IWorkCoordinator.RenewLeasesAsync` is replaced by `RenewHeldLeasesAsync(category, instanceId, ids, leaseSeconds)`,
+  which returns those ids, on both Postgres drivers, and every caller stops holding them: the inbox dispatch keeper
+  drops them from its held rows without dispatching their queued copies or extending a running handler's deadline,
+  the outbox publisher's not-ready hold stops re-buffering them, the outbox drain's hold no longer reports them as
+  held, and the lease renewal worker (which now takes the instance provider) logs them. Each is logged at Warning.
+  `renew_leases` is left in place, unused, for instances still on the previous release during a rolling deployment.
 - **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
   A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
   with the message id, type and error before it is routed to the failure channel; one flush logs the first five and

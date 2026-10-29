@@ -43,10 +43,18 @@ public sealed class InboxDispatchWorkerLeaseKeeperTests {
 
     public void Dispose() => _renewed.Dispose();
 
-    public Task<int> RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+    /// <summary>The ids each renewal asked for, in order.</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<Guid[]> Renewed { get; } = new();
+
+    /// <summary>Rows another instance has re-claimed: a renewal reports them instead of renewing them (#1852).</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> HeldElsewhere { get; } = new();
+
+    public Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids,
+        int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+      Renewed.Enqueue([.. ids]);
       Interlocked.Increment(ref _renewals);
       _renewed.Release();
-      return Task.FromResult(ids.Count);
+      return Task.FromResult<IReadOnlyList<Guid>>([.. ids.Where(HeldElsewhere.ContainsKey)]);
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
@@ -146,6 +154,34 @@ public sealed class InboxDispatchWorkerLeaseKeeperTests {
 
     await Assert.That(coordinator.Renewals).IsEqualTo(2);
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
+  }
+
+  [Test]
+  public async Task Keeper_ARowItsRenewalDidNotCover_IsNoLongerHeld_OrRenewedAgainAsync() {
+    var time = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var writer = new InboxChannelWriter(time);
+    using var coordinator = new RenewSignalingCoordinator();
+    var lost = _heldRow();
+    var kept = _heldRow();
+    coordinator.HeldElsewhere[lost.MessageId] = true;
+    await writer.WriteAsync(lost);
+    await writer.WriteAsync(kept);
+    time.Advance(_halfLease);
+    var worker = _worker(writer, coordinator, time, renewalEnabled: true);
+
+    await worker.StartAsync(CancellationToken.None);
+    await coordinator.WaitForRenewalAsync();
+    // The keeper's passes run one after another, so the second renewal starts after the first pass acted on its result.
+    time.Advance(_halfLease);
+    await coordinator.WaitForRenewalAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    var renewals = coordinator.Renewed.ToArray();
+    await Assert.That(renewals[0]).IsEquivalentTo([lost.MessageId, kept.MessageId]);
+    await Assert.That(renewals[1]).IsEquivalentTo([kept.MessageId])
+      .Because("another instance re-claimed the row, so this instance stopped holding it and does not renew it again (#1852)");
+    await Assert.That(writer.IsInFlight(lost.MessageId)).IsFalse();
+    await Assert.That(writer.IsInFlight(kept.MessageId)).IsTrue();
   }
 
   [Test]

@@ -296,9 +296,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   /// <summary>
   /// One keeper pass over the rows this process holds (#1788). Rows whose lease is half spent are renewed in the store,
-  /// and a running row's in-process dispatch deadline is extended with it. Rows that have used every renewal they are
-  /// allowed in their state (<see cref="LeaseHandleOptions.MaxRenewalsPerWork"/>) stop being held and are logged; a
-  /// row that was never dispatched is handed back without charging the attempt its claim took.
+  /// and a running row's in-process dispatch deadline is extended with it. A row the renewal did not cover, because
+  /// another instance holds it now or it completed, stops being held and is logged (#1852). Rows that have used every
+  /// renewal they are allowed in their state (<see cref="LeaseHandleOptions.MaxRenewalsPerWork"/>) stop being held and
+  /// are logged; a row that was never dispatched is handed back without charging the attempt its claim took.
   /// </summary>
   /// <remarks>
   /// Failures are logged with their cost and never thrown: a renewal that does not happen lets the leases lapse,
@@ -318,22 +319,42 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   private async Task _renewHeldAsync(IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken ct) {
+    IReadOnlyList<Guid> notHeld;
     try {
       await using var scope = _scopeFactory.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      await coordinator.RenewLeasesAsync(WorkCategory.Inbox, ids, leaseSeconds, ct).ConfigureAwait(false);
+      notHeld = await coordinator.RenewHeldLeasesAsync(WorkCategory.Inbox, _instanceProvider.InstanceId, ids, leaseSeconds, ct)
+        .ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogHeldRenewalFailed(_logger, ids.Count, ex);
       return;
     }
+    _stopHolding(notHeld);
     if (_leaseRegistry is null) {
       return;
     }
     var deadline = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(leaseSeconds);
-    foreach (var id in ids) {
+    foreach (var id in ids.Except(notHeld)) {
       // Only a row being dispatched has a handle; a queued or committing row has none to extend.
       _ = _leaseRegistry.TryGet(WorkCategory.Inbox, id, out var handle);
       _ = handle?.TryExtendDeadline(deadline);
+    }
+  }
+
+  /// <summary>
+  /// Stops holding the rows a renewal did not cover (#1852): another instance holds them now (this one's lease lapsed
+  /// and a claim took them), or they completed. A queued copy is not dispatched here, since its dispatch ticket is gone,
+  /// and a running handler's deadline is not extended past the lease it lost.
+  /// </summary>
+  private void _stopHolding(IReadOnlyList<Guid> notHeld) {
+    for (var i = 0; i < notHeld.Count; i++) {
+      _inboxChannelWriter.RemoveInFlight(notHeld[i]);
+      if (i < MAX_LEASE_LAPSES_LOGGED_PER_SWEEP) {
+        LogHeldRowNoLongerHeld(_logger, notHeld[i]);
+      }
+    }
+    if (notHeld.Count > MAX_LEASE_LAPSES_LOGGED_PER_SWEEP) {
+      LogHeldRowsNoLongerHeldSummarized(_logger, notHeld.Count - MAX_LEASE_LAPSES_LOGGED_PER_SWEEP);
     }
   }
 
@@ -1412,6 +1433,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "InboxDispatchWorker could not release {Count} never-dispatched inbox row(s) whose renewals ran out; their leases lapse "
             + "and the next claim charges each an attempt it did not use")]
   static partial void LogLapsedReleaseFailed(ILogger logger, int count, Exception ex);
+
+  [LoggerMessage(EventId = 83, Level = LogLevel.Warning,
+    Message = "Inbox message {MessageId} is no longer held by this instance: its lease was not renewed because another instance "
+            + "has claimed it since this instance's lease lapsed, or it has completed. It is not dispatched here again")]
+  static partial void LogHeldRowNoLongerHeld(ILogger logger, Guid messageId);
+
+  [LoggerMessage(EventId = 84, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker: {Count} more held inbox row(s) were not renewed in this pass because this instance no longer "
+            + "holds them, and are not logged individually")]
+  static partial void LogHeldRowsNoLongerHeldSummarized(ILogger logger, int count);
 
   [LoggerMessage(EventId = 82, Level = LogLevel.Debug,
     Message = "InboxDispatchWorker skipped a copy of inbox message {MessageId}: the row is already dispatching, committing, or no longer held here")]

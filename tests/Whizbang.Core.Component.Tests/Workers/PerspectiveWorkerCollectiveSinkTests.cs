@@ -156,7 +156,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     // the LeaseRegistry — an enqueued id with no handle is silently skipped (Debug-level log). The
     // sink must therefore create + register a handle for each leased sink work row before
     // dispatching, as OutboxPublishWorker does for outbox work; otherwise a multi-batch collective
-    // apply enqueues renewals that never reach RenewLeasesAsync and the DB lease still expires.
+    // apply enqueues renewals that never reach RenewHeldLeasesAsync and the DB lease still expires.
     var streamId = TrackedGuid.New().Value;
     var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-real") };
@@ -179,6 +179,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       }),
       logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1),
       leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
@@ -198,7 +199,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       await Assert.That(Category).IsEqualTo(WorkCategory.PerspectiveEvent);
       await Assert.That(Ids).Contains(sinkWork.WorkId)
         .Because("an enqueued sink renewal must survive the registry filter and reach " +
-                 "IWorkCoordinator.RenewLeasesAsync — without a registered LeaseHandle the flush " +
+                 "IWorkCoordinator.RenewHeldLeasesAsync; without a registered LeaseHandle the flush " +
                  "silently drops it and the DB lease still expires mid-apply.");
     } finally {
       dispatcher.ReleaseDispatch.TrySetResult();
@@ -242,6 +243,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       }),
       logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1),
       leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
@@ -257,7 +259,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     try {
-      // Each batch is acked only after ITS renewal reached RenewLeasesAsync, so reaching the full
+      // Each batch is acked only after ITS renewal reached RenewHeldLeasesAsync, so reaching the full
       // count proves no renewal was dropped by the cap. Under the capped default, batch 7's
       // renewal never arrives and this wait times out — the RED signal.
       await renewCoordinator.WaitForRenewalCountAsync(sinkWork.WorkId, BATCHES).WaitAsync(TimeSpan.FromSeconds(15));
@@ -1669,7 +1671,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>Coordinator for the REAL LeaseRenewalWorker's flush scope — records what actually
-  /// reaches RenewLeasesAsync (i.e. what survived the LeaseRegistry handle filter).</summary>
+  /// reaches RenewHeldLeasesAsync (i.e. what survived the LeaseRegistry handle filter).</summary>
   private sealed class RenewCapturingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private readonly TaskCompletionSource<(WorkCategory Category, IReadOnlyList<Guid> Ids)> _first =
       new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1697,7 +1699,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       }
     }
 
-    public Task<int> RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+    public Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids,
+        int leaseSeconds = 300, CancellationToken cancellationToken = default) {
       _first.TrySetResult((category, [.. ids]));
       lock (_lock) {
         foreach (var id in ids) {
@@ -1711,7 +1714,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
           }
         }
       }
-      return Task.FromResult(ids.Count);
+      return Task.FromResult<IReadOnlyList<Guid>>([]);
     }
   }
 

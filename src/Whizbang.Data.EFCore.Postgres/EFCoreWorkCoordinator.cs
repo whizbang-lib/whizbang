@@ -2819,19 +2819,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<int> RenewLeasesAsync(
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFlusherMethodsTests.cs:RenewHeldLeasesAsync_ARowAnotherInstanceHolds_IsReportedAndLeftAloneAsync</tests>
+  public async Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(
     WorkCategory category,
+    Guid instanceId,
     IReadOnlyList<Guid> ids,
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
-      return 0;
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "renew_leases");
+    var functionName = BuildSchemaQualifiedName(schema, "wh_renew_held_leases");
 
     var idArray = AsArray(ids);
 
@@ -2839,12 +2841,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = $"SELECT {functionName}(@p_category, @p_ids, @p_lease)";
+    cmd.CommandText = $"SELECT {functionName}(@p_category, @p_instance_id, @p_ids, @p_lease)";
     cmd.Parameters.Add(new NpgsqlParameter("p_category", NpgsqlTypes.NpgsqlDbType.Text) { Value = category.ToSqlCategory() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
     cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = leaseSeconds });
-    var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    // The function returns an empty array, never NULL, so the result is always a uuid[].
+    return (Guid[])(await cmd.ExecuteScalarAsync(cancellationToken))!;
   }
 
   /// <summary>
