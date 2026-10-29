@@ -130,6 +130,56 @@ public class PerspectiveLateEventApplyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A rewind's write is checked against the row version the rewind read (#1863). The row lost its first Started, and
+  /// a rewind replays the stream to restore it; while the rewind replays, a second Started is stored and another worker
+  /// folds it into the row and commits. The rewind's frontier then sorts below the row's stamp, so an unchecked write
+  /// was refused by the ordering guard and the rewind reported itself complete with its correction lost.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task ARowThatMovesWhileARewindReplays_EndsWithTheCorrectionAndTheNewerEventAsync(bool stamped) {
+    var streamId = Guid.CreateVersion7();
+    var firstStart = _envelope(Guid.Parse("019f0000-0000-7aaa-8000-000000000002"), new ItemProgressStartedEvent { StreamId = streamId });
+    var completed = _envelope(Guid.Parse("019f0001-0000-7aaa-8000-000000000002"), new ItemProgressCompletedEvent { StreamId = streamId });
+    var secondStart = _envelope(Guid.Parse("019f0002-0000-7aaa-8000-000000000002"), new ItemProgressStartedEvent { StreamId = streamId });
+    var inner = new InMemoryEventStore();
+    await inner.AppendAsync(streamId, firstStart);
+    await inner.AppendAsync(streamId, completed);
+    var eventStore = new StampingEventStore(inner, new Dictionary<Guid, long?> {
+      [firstStart.MessageId.Value] = stamped ? 1000 : null,
+      [completed.MessageId.Value] = stamped ? 2000 : null,
+      [secondStart.MessageId.Value] = stamped ? 3000 : null,
+    });
+    // The row as a lost update left it: Completed applied, the first Started never folded.
+    await using (var seedContext = CreateDbContext()) {
+      await _runner(eventStore, new EFCorePostgresPerspectiveStore<ItemProgress>(seedContext, TABLE)).RunWithEventsAsync(
+        streamId, PERSPECTIVE, null, [_copy(completed, eventStore)], CancellationToken.None);
+    }
+
+    await using var rewindContext = CreateDbContext();
+    var rewindStore = new InterleavingStore(new EFCorePostgresPerspectiveStore<ItemProgress>(rewindContext, TABLE)) {
+      BeforeFirstWrite = async () => {
+        await inner.AppendAsync(streamId, secondStart);
+        await using var liveContext = CreateDbContext();
+        await _runner(eventStore, new EFCorePostgresPerspectiveStore<ItemProgress>(liveContext, TABLE)).RunWithEventsAsync(
+          streamId, PERSPECTIVE, completed.MessageId.Value, [_copy(secondStart, eventStore)], CancellationToken.None);
+      },
+    };
+    var result = await _runner(eventStore, rewindStore).RewindAndRunAsync(
+      streamId, PERSPECTIVE, firstStart.MessageId.Value, CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<ItemProgress>>().AsNoTracking().SingleAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Attempts).IsEqualTo(2)
+      .Because("the row must hold the rewind's correction (the first Started) and the newer event (the second)");
+    await Assert.That(row.Data.Started).IsTrue();
+    await Assert.That(row.Data.Completed).IsTrue();
+    await Assert.That(result.RowChanged).IsTrue()
+      .Because("the rewind's write landed, on the replay that followed the refused one");
+  }
+
+  /// <summary>
   /// One stream's two workers: the Started worker reads, the Completed worker runs to commit, then the Started
   /// worker writes.
   /// </summary>
