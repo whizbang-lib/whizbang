@@ -332,7 +332,7 @@ public class SlidingWindowOutboxFlushFailureTests {
       flush: async (_, ct) => {
         flushEntered.TrySetResult();
         // Completes only when the stop cancels the strategy's own token: no competing path, no race.
-        await Task.Delay(Timeout.Infinite, ct);
+        await new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: _flushEveryMessageAtOnce(),
