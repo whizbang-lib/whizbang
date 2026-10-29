@@ -97,7 +97,7 @@ public class StreamPrefixTruncatorTests {
   }
 
   private static StreamPrefixTruncator _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>
-    new(coord, NullLogger<StreamPrefixTruncator>.Instance, hook ?? NoOpDestructionHook.Instance, _noServices);
+    new(coord, NullLogger<StreamPrefixTruncator>.Instance, hook ?? NoOpDestructionHook.Instance, _noServices, archiveStore: null);
 
   [Test]
   public async Task Truncate_NoHook_PassesThroughToCoordinatorAsync() {
@@ -253,7 +253,7 @@ public class StreamPrefixTruncatorTests {
     var coord = new FakeCloseCoordinator(log);
     var logger = new CapturingTruncatorLogger();
     var closer = new StreamPrefixTruncator(
-      coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()), _noServices);
+      coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()), _noServices, archiveStore: null);
 
     await Assert.That(async () => await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10))
       .Throws<OperationCanceledException>()

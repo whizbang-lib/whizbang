@@ -123,7 +123,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
   [Test]
   public async Task ArchivingTruncate_WithNoStoreRegistered_KeepsTheCoordinatorsCopyAsync() {
     var coordinator = new CountingCoordinator();
-    var truncator = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices);
+    var truncator = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices, archiveStore: null);
 
     _ = await truncator.TruncateAsync(_stream, throughVersion: 9, archive: true);
 

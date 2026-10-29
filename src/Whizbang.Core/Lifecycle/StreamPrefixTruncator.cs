@@ -47,7 +47,7 @@ public interface IStreamPrefixTruncator {
 /// store an archiving truncate writes through (WS-3 S7). With no archive store, an archiving truncate copies into
 /// <c>wh_event_archive</c> through the coordinator, as it did before the store existed.</remarks>
 public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, ILogger<StreamPrefixTruncator> logger, IDestructionHook hook,
-    IServiceScopeFactory scopeFactory, IArchiveStore? archiveStore = null) : IStreamPrefixTruncator {
+    IServiceScopeFactory scopeFactory, IArchiveStore? archiveStore) : IStreamPrefixTruncator {
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly ILogger<StreamPrefixTruncator> _logger = ArgumentGuard.NotNull(logger);
   private readonly IDestructionHook _hook = hook;
