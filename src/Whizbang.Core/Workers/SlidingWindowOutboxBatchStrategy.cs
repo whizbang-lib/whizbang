@@ -57,6 +57,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly SlidingWindowOutboxOptions _options;
   private readonly TimeProvider _timeProvider;
+  private readonly BatchStoreRetry _retry;
   private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamBuffer> _streams = new();
@@ -105,6 +106,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
     _options = options ?? new SlidingWindowOutboxOptions();
     ArgumentOutOfRangeException.ThrowIfLessThan(_options.MaxFlushAttempts, 1);
     _timeProvider = timeProvider ?? TimeProvider.System;
+    _retry = new BatchStoreRetry(_options.MaxFlushAttempts, _options.FlushRetryBackoff, _options.FlushRetryMaxBackoff, _timeProvider);
     _logger = logger ?? (ILogger)NullLogger.Instance;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
@@ -235,46 +237,29 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
   /// rest of what the stop abandoned.
   /// </summary>
   private async Task<bool> _storeOrReportAsync(Guid streamKey, OutboxMessage[] batch) {
-    // Every attempt returns from its body or waits and tries again, so the loop needs no condition.
-    var attempt = 0;
-    while (true) {
-      attempt++;
-      try {
-        await _flush(batch, _stopCts.Token).ConfigureAwait(false);
-        return true;
-      } catch (OperationCanceledException) when (_stopCts.IsCancellationRequested) {
-        return false;
-      } catch (Exception ex) {
-        if (!TransientDatabaseFailure.TryClassify(ex, out var transient)) {
-          await _reportAsync(new OutboxFlushFailure(streamKey, batch, OutboxFlushFailureCause.NotRetryable, attempt, ex))
-            .ConfigureAwait(false);
-          return true;
-        }
-        if (attempt >= _options.MaxFlushAttempts) {
-          await _reportAsync(new OutboxFlushFailure(streamKey, batch, OutboxFlushFailureCause.RetriesExhausted, attempt, ex))
-            .ConfigureAwait(false);
-          return true;
-        }
-        var delay = RetryBackoff(attempt);
-        _metrics?.OutboxFlushRetries.Add(1, new KeyValuePair<string, object?>(WorkCoordinatorMetrics.REASON_TAG, transient.Reason));
-        LogFlushRetrying(ex, batch.Length, streamKey, transient.Reason, attempt, _options.MaxFlushAttempts, delay);
-        try {
-          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
-        } catch (OperationCanceledException) {
-          return false;
-        }
-      }
+    var result = await _retry.StoreAsync(
+      ct => _flush(batch, ct),
+      (ex, reason, attempt, delay) => {
+        _metrics?.OutboxFlushRetries.Add(1, new KeyValuePair<string, object?>(WorkCoordinatorMetrics.REASON_TAG, reason));
+        LogFlushRetrying(ex, batch.Length, streamKey, reason, attempt, _options.MaxFlushAttempts, delay);
+      },
+      _stopCts.Token).ConfigureAwait(false);
+    var cause = result.Outcome switch {
+      BatchStoreOutcome.NotRetryable => OutboxFlushFailureCause.NotRetryable,
+      BatchStoreOutcome.RetriesExhausted => OutboxFlushFailureCause.RetriesExhausted,
+      _ => (OutboxFlushFailureCause?)null,
+    };
+    if (cause is { } failed) {
+      await _reportAsync(new OutboxFlushFailure(streamKey, batch, failed, result.Attempts, result.Error)).ConfigureAwait(false);
     }
+    return result.Outcome != BatchStoreOutcome.Abandoned;
   }
 
   /// <summary>
   /// The wait after the given failed attempt: <see cref="SlidingWindowOutboxOptions.FlushRetryBackoff"/>, doubled for
   /// each attempt after the first, never more than <see cref="SlidingWindowOutboxOptions.FlushRetryMaxBackoff"/>.
   /// </summary>
-  internal TimeSpan RetryBackoff(int failedAttempt) {
-    var doubled = _options.FlushRetryBackoff.TotalMilliseconds * Math.Pow(2, failedAttempt - 1);
-    return TimeSpan.FromMilliseconds(Math.Min(doubled, _options.FlushRetryMaxBackoff.TotalMilliseconds));
-  }
+  internal TimeSpan RetryBackoff(int failedAttempt) => _retry.Backoff(failedAttempt);
 
   /// <summary>
   /// Hands a batch that was not stored to the failure callback (which dead-letters it), counts it, and logs it with
