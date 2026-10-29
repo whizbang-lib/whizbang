@@ -34,7 +34,8 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerNoPerspectivesParkTests {
 
   [Test]
-  public async Task NoRegistry_ParksCleanly_NoCoordinatorCalls_StartupScanCompletesAsync() {
+  [Timeout(30000)]
+  public async Task NoRegistry_ParksCleanly_NoCoordinatorCalls_StartupScanCompletesAsync(CancellationToken cancellationToken) {
     // ARRANGE — a scope provider that COUNTS IWorkCoordinator resolutions and has NO
     // IPerspectiveRunnerRegistry, mirroring a perspective-less host. Channels deliberately
     // unwired: a parked worker must return BEFORE the channel-requirement check, so their
@@ -80,10 +81,10 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
 
     // ACT
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
-    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
     // ASSERT — parked: the execute loop ended cleanly without ever touching the coordinator.
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()

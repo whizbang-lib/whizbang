@@ -37,37 +37,11 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel("PerspectiveWorkerDedup")]
 public class PerspectiveWorkerDedupTests {
 
-  /// <summary>
-  /// Liveness backstop for the completion signals in this file — NOT a pace assertion.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Every wait here is gated on a <c>TaskCompletionSource</c> that the runner/coordinator
-  /// completes, so a healthy worker satisfies it immediately regardless of this value. The bound
-  /// exists only so a genuinely broken worker fails instead of hanging the suite forever.
-  /// </para>
-  /// <para>
-  /// It was 5 seconds, which is long enough in isolation and not long enough under a full-suite
-  /// run: <c>Worker_DifferentWorkIds_BothProcessedAsync</c> failed at 5s 003ms in CI while the
-  /// invariant it asserts held perfectly. A backstop that trips on scheduler pressure reports
-  /// "the worker did not process the work" for what was really "the machine was busy", which is
-  /// worse than useless — it trains people to re-run red builds.
-  /// </para>
-  /// </remarks>
-  private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(60);
-
-  /// <summary>Upper bound on how long a cancelled worker body may take to unwind.</summary>
-  /// <remarks>
-  /// Not a pace assertion either: a healthy worker's <c>ExecuteTask</c> settles as soon as the
-  /// token trips. The bound only stops a worker that never observes cancellation from hanging
-  /// the suite.
-  /// </remarks>
-  private static readonly TimeSpan _bodyStopTimeout = TimeSpan.FromSeconds(30);
-
   // ==================== Core Dedup Tests ====================
 
   [Test]
-  public async Task Worker_SameWorkReturnedTwice_RunnerCalledOncePerGroupAsync() {
+  [Timeout(60000)]
+  public async Task Worker_SameWorkReturnedTwice_RunnerCalledOncePerGroupAsync(CancellationToken cancellationToken) {
     // Arrange — coordinator returns same work items on every cycle
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -95,17 +69,17 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
-    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await observer.WaitForDedupCallsAsync(1, cancellationToken);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
+    await observer.WaitForDedupCallsAsync(2, cancellationToken); // further redeliveries keep deduping
     await cts.CancelAsync();
     // Await the worker BODY. StartAsync's task is NOT the body -- .NET 10 hands back
     // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it settled nothing and
     // the assertions below read state the worker's finally blocks had not necessarily written.
     // SuppressThrowing because a body leaving through a cancellation catch settles
     // RanToCompletion OR Canceled depending on thread-pool timing, and either is a clean stop.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — once the WorkId is cached the runner stops being called (dedup reaches steady state),
@@ -117,7 +91,8 @@ public class PerspectiveWorkerDedupTests {
   }
 
   [Test]
-  public async Task Worker_DifferentWorkIds_BothProcessedAsync() {
+  [Timeout(60000)]
+  public async Task Worker_DifferentWorkIds_BothProcessedAsync(CancellationToken cancellationToken) {
     // Arrange — coordinator returns different work items on each cycle
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -155,12 +130,12 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await coordinator.PumpCycleAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
     await coordinator.PumpCycleAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, _signalTimeout);
+    await runner.WaitForRunCallsAsync(2, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — both should be processed (different WorkIds)
@@ -178,7 +153,8 @@ public class PerspectiveWorkerDedupTests {
   // pump to honor a TimeProvider-driven cadence.
 
   [Test]
-  public async Task Worker_MultipleStreams_IndependentDedupAsync() {
+  [Timeout(60000)]
+  public async Task Worker_MultipleStreams_IndependentDedupAsync(CancellationToken cancellationToken) {
     // Arrange — two different streams with different WorkIds
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -211,10 +187,10 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, _signalTimeout);
+    await runner.WaitForRunCallsAsync(2, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — both streams processed (different WorkIds = no dedup)
@@ -225,7 +201,8 @@ public class PerspectiveWorkerDedupTests {
   // ==================== Observer Tests ====================
 
   [Test]
-  public async Task Worker_Observer_OnEventsDeduped_FiresWithContextAsync() {
+  [Timeout(60000)]
+  public async Task Worker_Observer_OnEventsDeduped_FiresWithContextAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -249,11 +226,11 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
-    await observer.WaitForDedupCallsAsync(1, _signalTimeout); // deterministic dedup signal, not a cycle-count proxy
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await observer.WaitForDedupCallsAsync(1, cancellationToken); // deterministic dedup signal, not a cycle-count proxy
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -265,7 +242,8 @@ public class PerspectiveWorkerDedupTests {
   }
 
   [Test]
-  public async Task Worker_Observer_OnEventsMarkedInFlight_FiresAfterApplyAsync() {
+  [Timeout(60000)]
+  public async Task Worker_Observer_OnEventsMarkedInFlight_FiresAfterApplyAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -287,12 +265,12 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
     // Wait for next cycle to ensure in-flight marking is complete
-    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(2, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -302,7 +280,8 @@ public class PerspectiveWorkerDedupTests {
   }
 
   [Test]
-  public async Task Worker_BatchedStrategy_CompletionDeferral_NoDuplicateApplyAsync() {
+  [Timeout(60000)]
+  public async Task Worker_BatchedStrategy_CompletionDeferral_NoDuplicateApplyAsync(CancellationToken cancellationToken) {
     // Arrange — BatchedCompletionStrategy defers completion to next cycle
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -326,10 +305,10 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForClaimCallsAsync(3, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(3, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — runner should only be called once despite work being returned twice
@@ -338,7 +317,8 @@ public class PerspectiveWorkerDedupTests {
   }
 
   [Test]
-  public async Task Worker_InstantStrategy_NoDuplicateApplyAsync() {
+  [Timeout(60000)]
+  public async Task Worker_InstantStrategy_NoDuplicateApplyAsync(CancellationToken cancellationToken) {
     // Arrange — InstantCompletionStrategy reports immediately
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -362,13 +342,13 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
-    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await observer.WaitForDedupCallsAsync(1, cancellationToken);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
+    await observer.WaitForDedupCallsAsync(2, cancellationToken); // further redeliveries keep deduping
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -381,7 +361,8 @@ public class PerspectiveWorkerDedupTests {
   // ==================== PostLifecycle WhenAll RED/GREEN Test ====================
 
   [Test]
-  public async Task Worker_WithCoordinator_NoEventStore_PostLifecycleInline_DoesNotFire_Async() {
+  [Timeout(60000)]
+  public async Task Worker_WithCoordinator_NoEventStore_PostLifecycleInline_DoesNotFire_Async(CancellationToken cancellationToken) {
     // Without IEventStore, processedEvents is empty → batchProcessedEvents is empty →
     // Phase 5 doesn't run → PostLifecycle correctly doesn't fire (no events to process).
     // This verifies the correct behavior for services without event store.
@@ -449,16 +430,22 @@ public class PerspectiveWorkerDedupTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
-    // Act — run one cycle + wait for processing to complete
+    // Act: run one cycle and wait for processing to complete. The batch that ran the work is the only one
+    // that completes a cycle, and its PostLifecycle (if it scheduled one) is awaited before the assertion,
+    // so "did not fire" is read after the batch had every chance to fire it.
+    var batchDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBatchCycleComplete += () => batchDone.TrySetResult();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
-    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
-    await Task.Delay(200);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await batchDone.Task.WaitAsync(cancellationToken);
+    if (worker.PendingPostLifecycle is { } pending) {
+      await pending.WaitAsync(cancellationToken);
+    }
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — Without IEventStore, processedEvents is empty, so PostLifecycle correctly doesn't fire
@@ -468,7 +455,8 @@ public class PerspectiveWorkerDedupTests {
   }
 
   [Test]
-  public async Task Worker_WithCoordinator_WithEventStore_PostLifecycleInline_Fires_Async() {
+  [Timeout(60000)]
+  public async Task Worker_WithCoordinator_WithEventStore_PostLifecycleInline_Fires_Async(CancellationToken cancellationToken) {
     // Companion test: same scenario but WITH IEventStore — proves the fix works for both paths.
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
@@ -495,14 +483,14 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, _signalTimeout);
-    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await coordinator.WaitForClaimCallsAsync(2, cancellationToken);
     // The spy's own signal, not a grace delay: under CI load the inline stage can land after
     // any fixed pause, and asserting on a count that a delay races is exactly the flake.
-    await postLifecycleSpy.WaitForPostLifecycleInlineAsync(1, _signalTimeout);
+    await postLifecycleSpy.WaitForPostLifecycleInlineAsync(1, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
-    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
@@ -650,10 +638,9 @@ public class PerspectiveWorkerDedupTests {
     /// notifications have been observed. Tests await this instead of a "wait for N pump cycles"
     /// proxy, so assertions never race the observer callback (the source of the prior flakiness).
     /// </summary>
-    public async Task WaitForDedupCallsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForDedupCallsAsync(int count, CancellationToken cancellationToken) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _dedupWaiters.Length);
-      using var cts = new CancellationTokenSource(timeout);
-      await _dedupWaiters[count - 1].Task.WaitAsync(cts.Token);
+      await _dedupWaiters[count - 1].Task.WaitAsync(cancellationToken);
     }
 
     public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
@@ -688,10 +675,9 @@ public class PerspectiveWorkerDedupTests {
       }
     }
 
-    public async Task WaitForRunCallsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForRunCallsAsync(int count, CancellationToken cancellationToken) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _runWaiters.Length);
-      using var cts = new CancellationTokenSource(timeout);
-      await _runWaiters[count - 1].Task.WaitAsync(cts.Token);
+      await _runWaiters[count - 1].Task.WaitAsync(cancellationToken);
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
@@ -785,14 +771,9 @@ public class PerspectiveWorkerDedupTests {
       }
     }
 
-    public async Task WaitForClaimCallsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForClaimCallsAsync(int count, CancellationToken cancellationToken) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _waiters.Length);
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _waiters[count - 1].Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"ClaimWorkAsync was not called {count} times within {timeout}. Current count: {_callCount}");
-      }
+      await _waiters[count - 1].Task.WaitAsync(cancellationToken);
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
@@ -860,10 +841,9 @@ public class PerspectiveWorkerDedupTests {
       }
     }
 
-    public async Task WaitForPostLifecycleInlineAsync(int count, TimeSpan timeout) {
+    public async Task WaitForPostLifecycleInlineAsync(int count, CancellationToken cancellationToken) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _fireWaiters.Length);
-      using var cts = new CancellationTokenSource(timeout);
-      await _fireWaiters[count - 1].Task.WaitAsync(cts.Token);
+      await _fireWaiters[count - 1].Task.WaitAsync(cancellationToken);
     }
 
     public ValueTask InvokeAsync(

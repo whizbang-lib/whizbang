@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -34,7 +33,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// predecessor first.
   /// </summary>
   [Test]
-  public async Task CollectiveSink_Predecessor_LaterInTheRun_AppliesFirstAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_Predecessor_LaterInTheRun_AppliesFirstAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var second = _sinkWork(streamId);
     var first = _sinkWork(streamId);
@@ -55,10 +55,10 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(first.WorkId, second.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await dispatcher.AllDispatched.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.EventWorkIdsCaptured(first.WorkId, second.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Applied).IsEquivalentTo(["a", "b"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -72,10 +72,11 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   /// <param name="link">What the collective's link names.</param>
   [Test]
+  [Timeout(30000)]
   [Arguments("unhandled-type")]
   [Arguments("no-type")]
   [Arguments("already-applied")]
-  public async Task CollectiveSink_Predecessor_NothingToWaitFor_AppliesAtOnceAsync(string link) {
+  public async Task CollectiveSink_Predecessor_NothingToWaitFor_AppliesAtOnceAsync(string link, CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var work = _sinkWork(streamId);
     var eventId = Guid.CreateVersion7();
@@ -100,10 +101,10 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(work.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await dispatcher.AllDispatched.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.EventWorkIdsCaptured(work.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Applied).IsEquivalentTo(["b"]);
@@ -111,7 +112,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
   /// <summary>With the wait turned off, a collective applies at once even though its predecessor has not arrived.</summary>
   [Test]
-  public async Task CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var work = _sinkWork(streamId);
     var eventId = Guid.CreateVersion7();
@@ -130,9 +132,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await dispatcher.AllDispatched.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Applied).IsEquivalentTo(["b"]);
@@ -143,7 +145,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// the predecessor arrives the two apply in the order they were sent.
   /// </summary>
   [Test]
-  public async Task CollectiveSink_Predecessor_NotYetArrived_WaitsThenAppliesBothInOrderAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_Predecessor_NotYetArrived_WaitsThenAppliesBothInOrderAsync(CancellationToken cancellationToken) {
     var clock = new HoldClock();
     var streamId = TrackedGuid.New().Value;
     var unlinked = _sinkWork(streamId);
@@ -171,8 +174,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await clock.HoldArmed(1).WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(unlinked.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.HoldArmed(1).WaitAsync(cancellationToken);
+    await clock.PollUntilAsync(harness.CompletionCapture.EventWorkIdsCaptured(unlinked.WorkId), cancellationToken);
     List<string> appliedWhileWaiting;
     lock (dispatcher.Applied) {
       appliedWhileWaiting = [.. dispatcher.Applied];
@@ -189,11 +192,11 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       new CollectiveSinkQueueEntry(predecessor.WorkId, predecessorId, CommitSequence: 3),
     ];
     coordinator.OfferWork([predecessor]);
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId, predecessor.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.PollUntilAsync(dispatcher.AllDispatched, cancellationToken);
+    await clock.PollUntilAsync(harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId, predecessor.WorkId), cancellationToken);
     var wakesAfterBothApplied = worker.PendingCollectiveHoldWakes;
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
 
@@ -211,7 +214,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// rather than applying ahead of it.
   /// </summary>
   [Test]
-  public async Task CollectiveSink_Predecessor_QueuedButNotInThisRun_WaitsAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveSink_Predecessor_QueuedButNotInThisRun_WaitsAsync(CancellationToken cancellationToken) {
     var clock = new HoldClock();
     var streamId = TrackedGuid.New().Value;
     var waiting = _sinkWork(streamId);
@@ -233,9 +237,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await clock.HoldArmed(1).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.HoldArmed(1).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
 
@@ -252,9 +256,10 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   /// <param name="withMetrics">Whether the host registers the composite meters.</param>
   [Test]
+  [Timeout(30000)]
   [Arguments(true)]
   [Arguments(false)]
-  public async Task CollectiveSink_Predecessor_NeverArrives_AppliesWhenTheWaitRunsOutAsync(bool withMetrics) {
+  public async Task CollectiveSink_Predecessor_NeverArrives_AppliesWhenTheWaitRunsOutAsync(bool withMetrics, CancellationToken cancellationToken) {
     var clock = new HoldClock();
     var streamId = TrackedGuid.New().Value;
     var waiting = _sinkWork(streamId);
@@ -278,16 +283,16 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await clock.HoldArmed(1).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.HoldArmed(1).WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(10));
     coordinator.OfferWork([waiting]);
-    await clock.HoldArmed(2).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.PollUntilAsync(clock.HoldArmed(2), cancellationToken);
     var secondWait = clock.ArmedFor[1];
     clock.Advance(TimeSpan.FromSeconds(20));
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.PollUntilAsync(dispatcher.AllDispatched, cancellationToken);
+    await clock.PollUntilAsync(harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId), cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(secondWait).IsEqualTo(TimeSpan.FromSeconds(20))
@@ -305,8 +310,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// release now offers it. The worker is held inside the second arming, so the wake fires while the run is open.
   /// </summary>
   [Test]
-  public async Task CollectiveSink_Predecessor_WakeFiringBeforeTheRunReleasesTheRow_StillAppliesItAsync() {
-    var clock = new HoldClock { HoldWorkerAtArm = 2 };
+  [Timeout(30000)]
+  public async Task CollectiveSink_Predecessor_WakeFiringBeforeTheRunReleasesTheRow_StillAppliesItAsync(CancellationToken cancellationToken) {
+    var clock = new HoldClock { HoldWorkerAtArm = 2, HoldBound = cancellationToken };
     var streamId = TrackedGuid.New().Value;
     var waiting = _sinkWork(streamId);
     var waitingId = Guid.CreateVersion7();
@@ -326,17 +332,17 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await clock.HoldArmed(1).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.HoldArmed(1).WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(10));
     coordinator.OfferWork([waiting]);
-    await clock.HoldArmed(2).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.PollUntilAsync(clock.HoldArmed(2), cancellationToken);
     // The second run is held inside its arming, with the row still reserved, when the wake fires.
     clock.Advance(TimeSpan.FromSeconds(20));
     clock.ReleaseArm();
-    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await clock.PollUntilAsync(dispatcher.AllDispatched, cancellationToken);
+    await clock.PollUntilAsync(harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId), cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Applied).IsEquivalentTo(["b"]);
@@ -346,12 +352,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// A fake clock that reports each time a collective's predecessor wake is armed, and for how long: the deterministic
   /// signal that a sink run has decided to wait.
   /// </summary>
-  private sealed class HoldClock : FakeTimeProvider {
+  private sealed class HoldClock : PollFiringClock {
     private readonly Lock _lock = new();
     private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
-
-    public HoldClock() : base(DateTimeOffset.UtcNow) {
-    }
 
     /// <summary>The wait of every wake armed so far, in order.</summary>
     public List<TimeSpan> ArmedFor { get; } = [];
@@ -361,6 +364,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     /// <see cref="ReleaseArm"/>: so a test can fire the wake before that run has released its rows.
     /// </summary>
     public int HoldWorkerAtArm { get; init; }
+
+    /// <summary>Ends a hold the test never released: the test's own token, so a broken run fails the test.</summary>
+    public CancellationToken HoldBound { get; init; }
 
     private readonly TaskCompletionSource _armGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -399,7 +405,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         var changed = inner.Change(dueTime, period);
         if (dueTime != Timeout.InfiniteTimeSpan && clock._armed(dueTime) == clock.HoldWorkerAtArm) {
           // Blocks on purpose: the worker must stay inside the run that armed the wake.
-          clock._armGate.Task.Wait(TimeSpan.FromSeconds(30));
+          clock._armGate.Task.Wait(clock.HoldBound);
         }
         return changed;
       }

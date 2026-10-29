@@ -39,7 +39,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// every hook ran twice for one event.
   /// </summary>
   [Test]
-  public async Task CollectiveEvent_ReceivedThenApplied_FiresEachPostPerspectiveStageOnceInTheServiceAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveEvent_ReceivedThenApplied_FiresEachPostPerspectiveStageOnceInTheServiceAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
@@ -59,9 +60,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       receptorInvoker: invoker);
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await invoker.SinkFinished(eventId).WaitAsync(TimeSpan.FromSeconds(10));
+    await invoker.SinkFinished(eventId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     foreach (var stage in _postPerspectiveStagesOnce) {
@@ -75,7 +76,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// models, and the hook still fires once, because the sink dispatches the event once and the dispatcher fans it out.
   /// </summary>
   [Test]
-  public async Task CollectiveEvent_AppliedByTwoCollectiveHandlers_FiresEachPostPerspectiveStageOnceAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveEvent_AppliedByTwoCollectiveHandlers_FiresEachPostPerspectiveStageOnceAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
@@ -104,9 +106,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       receptorInvoker: invoker);
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await invoker.SinkFinished(eventId).WaitAsync(TimeSpan.FromSeconds(10));
+    await invoker.SinkFinished(eventId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(firstModel.Applied).IsEqualTo(1);
@@ -124,7 +126,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// re-apply the first batch, so it does not fire the first batch's stages again.
   /// </summary>
   [Test]
-  public async Task CollectiveEvents_InTwoBatchesOfOneRun_FireEachPostPerspectiveStageOncePerEventAsync() {
+  [Timeout(30000)]
+  public async Task CollectiveEvents_InTwoBatchesOfOneRun_FireEachPostPerspectiveStageOncePerEventAsync(CancellationToken cancellationToken) {
     var streamId = TrackedGuid.New().Value;
     var firstBatch = new[] { _sinkWork(streamId), _sinkWork(streamId) };
     var secondBatch = new[] { _sinkWork(streamId), _sinkWork(streamId) };
@@ -146,11 +149,11 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await Task.WhenAll(invoker.SinkFinished(eventIds[0]), invoker.SinkFinished(eventIds[1])).WaitAsync(TimeSpan.FromSeconds(10));
+    await Task.WhenAll(invoker.SinkFinished(eventIds[0]), invoker.SinkFinished(eventIds[1])).WaitAsync(cancellationToken);
     coordinator.OfferWork([.. secondBatch]);
-    await Task.WhenAll(invoker.SinkFinished(eventIds[2]), invoker.SinkFinished(eventIds[3])).WaitAsync(TimeSpan.FromSeconds(10));
+    await Task.WhenAll(invoker.SinkFinished(eventIds[2]), invoker.SinkFinished(eventIds[3])).WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     foreach (var eventId in eventIds) {

@@ -784,6 +784,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IWorkCoordinator.AdoptRedeliveredOriginAsync` takes the origin's service name, `RedeliveryReconciler.ReconcileAsync`
   accepts it, and `RedeliveryReconciler.OriginServiceNameOf` reads it from a bundle's envelope. The 249 function is
   kept for versions that still call it (Fixes #1844)
+- **The perspective worker's idle poll and its other waits run on the injected clock (Fixes #1861).** `PerspectiveWorker`
+  takes a `TimeProvider` but waited out its idle poll, the blocking startup rewind scan's re-poll and the stream lock
+  keepalive with `Task.Delay` on the machine's clock, and stamped affinity-gate activity and sent completions with
+  `DateTimeOffset.UtcNow`. Each now uses the worker's `TimeProvider`, so a host or test that supplies one decides when
+  the worker polls again, renews a lock, sweeps an idle gate or ages a sent completion, and the blocking scan's reported
+  duration is measured on that clock. With no provider supplied (`TimeProvider.System`) nothing changes.
+- **A host stopped twice at once no longer fails its stop-time batcher flush on a disposed service provider (Fixes
+  #1875).** A test host built from the application's entry point (`WebApplicationFactory<Program>`) is stopped by the
+  factory's dispose and, once `ApplicationStopping` fires, by the application's own `Run`, which disposes the host as
+  soon as its own stop returns. When that stop finished first, the factory's stop reached `BatchStrategyShutdownFlush`
+  with the container already disposed, and resolving the batchers threw `ObjectDisposedException`. Every stop now
+  shares the one flush the first stop started, so the buffered batches are still stored while the provider is alive,
+  and a stop that arrives after the container disposed the flush service resolves nothing (the container already
+  disposed, and so flushed, the batchers it owned).
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to
@@ -823,6 +837,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the outbox publisher's not-ready hold stops re-buffering them, the outbox drain's hold no longer reports them as
   held, and the lease renewal worker (which now takes the instance provider) logs them. Each is logged at Warning.
   `renew_leases` is left in place, unused, for instances still on the previous release during a rolling deployment.
+- **An ephemeral perspective drops a late event once, instead of on every claim (Fixes #1862).** When a late event
+  lands behind an ephemeral perspective's row and no readable snapshot floor precedes it, the rewind is skipped by
+  design (a replay would read reaped bodies) and the event is dropped. The skip reported only "nothing replayed", so
+  the event's work stayed pending: the drain loop and every later claim found it behind the cursor again, skipped the
+  same rewind and logged the same drop, without end and across restarts. The skipped rewind now names the dropped
+  event (`PerspectiveCursorCompletion.DroppedStragglers`), and the worker retires its work once (rows completed with
+  nothing applied, cooldown and rewind memory marked, lifecycle signaled) without moving the cursor, then applies the
+  rest of the batch; a second straggler in the batch is dropped the same way. On the work-item path the events after
+  the cursor take the normal path instead of being skipped with the rewind. Work an older build left pending is
+  retired at the first claim after upgrading, and the cursor's rewind flag clears once nothing is pending. Each drop
+  logs one Warning (the misleading "performing full replay" warnings no longer precede it for an ephemeral
+  perspective) and counts once on the new `whizbang.perspective.stragglers_dropped` counter (tag `perspective_name`).
+  No migration.
 - **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
   A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
   with the message id, type and error before it is routed to the failure channel; one flush logs the first five and

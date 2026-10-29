@@ -20,14 +20,26 @@ namespace Whizbang.Core.Workers;
 /// disposed provider too. Every entry point registers it (<c>TryAddWhizbangDefaults</c>), so a host without the worker
 /// pipeline still stops its work coordinator strategies and waits for the dispatcher's and the receptor invoker's
 /// detached work (#1721).
+/// <para>
+/// A host can be stopped twice at once: a test host built from the application's entry point is stopped by the
+/// factory's dispose and, once <c>ApplicationStopping</c> fires, by the application's own <c>Run</c>, which disposes the
+/// host as soon as its stop returns. Every stop shares the one flush the first to arrive started, and a stop that arrives
+/// after the container disposed this service has nothing left to flush (the container disposed, and so flushed, the
+/// batchers it owned), so the provider is never resolved from once it is disposed (#1875).
+/// </para>
 /// </remarks>
 /// <docs>messaging/outbox-pattern</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchStrategyShutdownFlushTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Shutdown/DetachedStagesShutdownTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Shutdown/StrategyFlushShutdownTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Shutdown/ConcurrentHostStopTests.cs</tests>
 public sealed partial class BatchStrategyShutdownFlush(
     IServiceProvider services,
-    ILogger<BatchStrategyShutdownFlush> logger) : IHostedLifecycleService {
+    ILogger<BatchStrategyShutdownFlush> logger) : IHostedLifecycleService, IDisposable {
+
+  private readonly Lock _gate = new();
+  private Task? _stopped;
+  private bool _disposed;
 
   /// <inheritdoc />
   public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -45,7 +57,27 @@ public sealed partial class BatchStrategyShutdownFlush(
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   /// <inheritdoc />
-  public async Task StoppedAsync(CancellationToken cancellationToken) {
+  /// <remarks>
+  /// Every stop of the host returns the flush the first one started. Once the container has disposed this service, the
+  /// stop resolves nothing from it and returns at once.
+  /// </remarks>
+  public Task StoppedAsync(CancellationToken cancellationToken) {
+    lock (_gate) {
+      return _stopped ??= _disposed ? Task.CompletedTask : _flushAllAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Called by the container as it disposes itself: from here on the service provider refuses every resolution, so a stop
+  /// that has not flushed yet must not try.
+  /// </summary>
+  public void Dispose() {
+    lock (_gate) {
+      _disposed = true;
+    }
+  }
+
+  private async Task _flushAllAsync(CancellationToken cancellationToken) {
     if (services.GetService<IInboxBatchStrategy>() is { } inbox) {
       await _flushAsync("inbox", inbox.FlushAndStopAsync, cancellationToken).ConfigureAwait(false);
     }

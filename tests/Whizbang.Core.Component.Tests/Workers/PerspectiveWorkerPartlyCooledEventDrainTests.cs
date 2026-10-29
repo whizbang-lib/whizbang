@@ -42,7 +42,8 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
   private sealed record ProbeEvent(string Data) : IEvent;
 
   [Test]
-  public async Task Drain_EventWithCooledRowForOnePerspectiveAndFreshRowForAnother_AppliesOnlyTheFreshOneAndLogsTheCooledRowAsync() {
+  [Timeout(30000)]
+  public async Task Drain_EventWithCooledRowForOnePerspectiveAndFreshRowForAnother_AppliesOnlyTheFreshOneAndLogsTheCooledRowAsync(CancellationToken cancellationToken) {
     var streamId = (Guid)TrackedGuid.New();
     var eventId = (Guid)TrackedGuid.New();
     var cooledWorkIdA = (Guid)TrackedGuid.New();
@@ -53,8 +54,8 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
       drainEnvelopes: [_envelope(eventId)],
       cooledWorkIds: [cooledWorkIdA]);
 
-    await f.Harness.EnqueueDrainStreamAsync(streamId);
-    await f.RunOneBatchAsync();
+    await f.Harness.EnqueueDrainStreamAsync(streamId, cancellationToken);
+    await f.RunOneBatchAsync(cancellationToken);
 
     await Assert.That(f.Registry.AppliedEventIds(streamId, PERSPECTIVE_B)).IsEquivalentTo([eventId])
       .Because("B's row is not in the cooldown cache, so B applies the event");
@@ -184,7 +185,7 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
     }
 
     /// <summary>Starts the worker, waits for the first batch that carried work, and stops it.</summary>
-    public async Task RunOneBatchAsync() {
+    public async Task RunOneBatchAsync(CancellationToken cancellationToken) {
       var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       var batches = 0;
       Worker.OnBatchCycleComplete += () => {
@@ -192,17 +193,17 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
           batchComplete.TrySetResult();
         }
       };
-      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+      using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       await Worker.StartAsync(cts.Token);
-      await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      await batchComplete.Task.WaitAsync(cancellationToken);
       if (Worker.PendingPostLifecycle is { } pending) {
-        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await pending.WaitAsync(cancellationToken);
       }
       await cts.CancelAsync();
       // Await the worker body, not the task StartAsync returned (flaky-tests.md, Pattern 7). A body leaving through a
       // cancellation catch settles RanToCompletion or Canceled depending on thread-pool timing; either is a clean stop.
       if (Worker.ExecuteTask is { } body) {
-        await body.WaitAsync(TimeSpan.FromSeconds(30))
+        await body.WaitAsync(cancellationToken)
           .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       }
     }

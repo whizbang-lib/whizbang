@@ -256,7 +256,7 @@ public partial class PerspectiveWorker(
   // Releases deferred to the end of an abandoned apply, until each has run; the worker's stop waits for them.
   private readonly ConcurrentDictionary<Task, byte> _abandonedApplyReleases = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
-  private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
+  private long _lastStreamAffinitySweepTicks = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcTicks;
   // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
   // subscription is established lazily on first use of the affinity gates so injection
   // ordering doesn't matter — _cursorCache is initialized as a field but the options
@@ -264,15 +264,16 @@ public partial class PerspectiveWorker(
   private int _cursorCacheEvictionSubscribed;
 
   /// <summary>
-  /// Per-stream semaphore plus a wall-clock activity timestamp so the
+  /// Per-stream semaphore plus an activity timestamp on the worker's clock so the
   /// activity-triggered sweep can identify idle entries. Class (not struct)
   /// so concurrent updates to <see cref="LastActivityTicks"/> land on the
   /// same instance retrieved from
   /// <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>.
   /// </summary>
-  private sealed class StreamAffinityGateEntry : IDisposable {
+  private sealed class StreamAffinityGateEntry(long createdUtcTicks) : IDisposable {
     public readonly SemaphoreSlim Semaphore = new(1, 1);
-    public long LastActivityTicks = DateTimeOffset.UtcNow.Ticks;
+    /// <summary>Worker-clock UTC ticks of the last acquire or release.</summary>
+    public long LastActivityTicks = createdUtcTicks;
     /// <summary>Worker-clock UTC ticks since the current holder took the gate; 0 while it is free.</summary>
     public long HeldSinceTicks;
     /// <summary>When the watchdog last named this hold; 0 until it has.</summary>
@@ -673,7 +674,9 @@ public partial class PerspectiveWorker(
       var pollMs = !_perspectiveNotificationListener.IsConfigured
         ? _options.PollingIntervalMilliseconds
         : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
-      var idleTimeout = Task.Delay(pollMs, stoppingToken);
+      // On the worker's clock, so the safety-net cadence is the injected TimeProvider's and a test that
+      // owns the clock decides when the next idle poll comes round.
+      var idleTimeout = Task.Delay(TimeSpan.FromMilliseconds(pollMs), _timeProvider, stoppingToken);
       // WaitAsync returns the SAME pending task while a wait is outstanding, so an iteration that
       // ends on a channel or the timeout leaves no extra waiter behind (#728). The signal is a level:
       // a Set() that lands while the loop is busy stays raised until the Consume() below, so the next
@@ -1099,19 +1102,20 @@ public partial class PerspectiveWorker(
       PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLog, streamCount, perspectiveCount);
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var scanStarted = _timeProvider.GetTimestamp();
         // Channel architecture: ClaimWorker drives claims in the background; our main loop
         // reads from the channel. Wait for ClaimWorker + the channel consumer to drain rewinds
         // by re-querying. The legacy _processWorkBatchAsync pump was removed.
         const int maxIterations = 100;
         for (var i = 0; i < maxIterations; i++) {
-          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), ct);
+          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), _timeProvider, ct);
           rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
           if (rewindCursors.Count == 0) {
             break;
           }
         }
-        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
+        var scanMs = (long)_timeProvider.GetElapsedTime(scanStarted).TotalMilliseconds;
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, scanMs);
       }
       // Background mode: normal channel-consumer loop will pick them up.
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
@@ -1284,8 +1288,7 @@ public partial class PerspectiveWorker(
         // the same-pod hole that caused a production strand race. See
         // plans/perspective-worker-stream-affinity.md.
         _ensureCursorCacheEvictionSubscribed();
-        var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
-        Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+        var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(gateEntry, "standard");
         try {
@@ -1528,6 +1531,18 @@ public partial class PerspectiveWorker(
     }
   }
 
+  /// <summary>
+  /// The affinity gate for one stream and perspective, created on first use, with its activity stamped now
+  /// on the worker's clock so the idle sweep ages it against the same clock it compares with.
+  /// </summary>
+  private StreamAffinityGateEntry _getStreamAffinityGate(Guid streamId, string perspectiveName) {
+    var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
+    var gateEntry = _streamAffinityGates.GetOrAdd(
+      (streamId, perspectiveName), static (_, ticks) => new StreamAffinityGateEntry(ticks), nowTicks);
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, nowTicks);
+    return gateEntry;
+  }
+
   /// <summary>Whether a gate is resident for (stream, perspective); read by tests of the eviction cascade.</summary>
   internal bool HasStreamAffinityGate(Guid streamId, string perspectiveName) =>
     _streamAffinityGates.ContainsKey((streamId, perspectiveName));
@@ -1559,8 +1574,7 @@ public partial class PerspectiveWorker(
   internal async Task WithStreamAffinityGateAsync(
       Guid streamId, string perspectiveName, Func<Action<Task>, Task> body, CancellationToken ct) {
     _ensureCursorCacheEvictionSubscribed();
-    var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
-    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
     // Fast path: take the gate synchronously when it's free (the common case — different streams, or
     // one applier per stream). Only when it's already HELD do we surface contention + park. A zero
     // timeout completes at once; it just reports whether the slot was free.
@@ -1609,7 +1623,7 @@ public partial class PerspectiveWorker(
   /// </remarks>
   private void _releaseStreamAffinityGate(
       Guid streamId, string perspectiveName, StreamAffinityGateEntry gateEntry, bool abandoned) {
-    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, _timeProvider.GetUtcNow().UtcTicks);
     _markAffinityReleased(gateEntry);
     try {
       _raiseStreamAffinityGateReleased(new AffinityGateRelease(streamId, perspectiveName, abandoned));
@@ -1783,7 +1797,7 @@ public partial class PerspectiveWorker(
   /// the racing path adds a fresh entry via <c>GetOrAdd</c> and proceeds.
   /// </remarks>
   private void _sweepIdleStreamAffinityGatesIfDue() {
-    var nowTicks = DateTimeOffset.UtcNow.Ticks;
+    var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
     var prevSweepTicks = Interlocked.Read(ref _lastStreamAffinitySweepTicks);
     var sweepIntervalTicks = _streamAffinityOptions.SweepInterval.Ticks;
     if (nowTicks - prevSweepTicks < sweepIntervalTicks) {
@@ -1856,7 +1870,7 @@ public partial class PerspectiveWorker(
       await _perspectiveCompletionChannel.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
     }
 
-    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
+    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, _timeProvider.GetUtcNow());
     return (pendingCompletions.Length, pendingFailures.Length);
   }
 
@@ -2618,6 +2632,15 @@ public partial class PerspectiveWorker(
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
         }
+        // #1862: an ephemeral runner with no snapshot floor drops a late event instead of rewinding for it. What it
+        // dropped is retired here, once, and the rest of the batch is handed back; otherwise the event's work stays
+        // pending and every lap and claim finds it, skips the same rewind and drops it again.
+        if (result.DroppedStragglers.Length > 0) {
+          (result, filteredEvents) = await _retireDroppedStragglersAsync(
+            runner, result, filteredEvents,
+            new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider),
+            batchContext, leaseCt);
+        }
         // The runner ran for this (stream, perspective): the batch's claimed copy of the same
         // group is redundant. Only a real runner invocation records here; a pass that cooled
         // everything returned above and left the group unrecorded on purpose (issue #700).
@@ -2978,7 +3001,7 @@ public partial class PerspectiveWorker(
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already replayed by a completed rewind; their rows are completed without a new rewind (#1361)")]
+    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already handled by an earlier rewind (replayed, or dropped as a straggler it could not replay); their rows are completed without a new rewind (#1361)")]
   private static partial void LogEventsCoveredByRewind(ILogger logger, Guid streamId, string perspectiveName, int count);
 
   [LoggerMessage(Level = LogLevel.Warning,
@@ -3143,6 +3166,64 @@ public partial class PerspectiveWorker(
     }
     return true;
   }
+
+  /// <summary>
+  /// #1862: retires the late events an ephemeral runner dropped instead of rewinding for them, and runs what is left of
+  /// the batch. The runner names one straggler per skipped rewind, so a batch holding several is handed back until no
+  /// straggler is left in it; every pass removes at least one event, so this ends.
+  /// </summary>
+  /// <remarks>
+  /// A dropped event is retired the way an event a rewind already covered is: its rows are completed with nothing
+  /// applied, it is marked in the cooldown and in the cursor cache's rewind memory (so a re-delivery under a new row is
+  /// covered rather than dropped again), its lifecycle is signaled, and waiters on it are released without claiming it
+  /// was applied. The cursor is not touched. A runner can only drop an event it was handed; a report that names none of
+  /// the batch retires nothing.
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StragglerDropped.cs</tests>
+  private async Task<(PerspectiveCursorCompletion Result, List<MessageEnvelope<IEvent>> Remaining)> _retireDroppedStragglersAsync(
+      IPerspectiveRunner runner,
+      PerspectiveCursorCompletion result,
+      List<MessageEnvelope<IEvent>> events,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext,
+      CancellationToken ct) {
+    var remaining = events;
+    while (result.DroppedStragglers.Length > 0) {
+      var dropped = result.DroppedStragglers.ToHashSet();
+      var retired = remaining.FindAll(e => dropped.Contains(e.MessageId.Value));
+      if (retired.Count == 0) {
+        break;
+      }
+      _retireDroppedStragglers(retired, streamCtx, batchContext);
+      remaining = remaining.FindAll(e => !dropped.Contains(e.MessageId.Value));
+      if (remaining.Count == 0) {
+        break;
+      }
+      result = await runner.RunWithEventsAsync(
+        streamCtx.StreamId, streamCtx.PerspectiveName, streamCtx.LastProcessedEventId, remaining, ct);
+    }
+    return (result, remaining);
+  }
+
+  private void _retireDroppedStragglers(
+      List<MessageEnvelope<IEvent>> retired,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext) {
+    var retiredIds = retired.ConvertAll(e => e.MessageId.Value);
+    _signalCooldownSkippedEvents(
+      retired, streamCtx.PerspectiveName, streamCtx.StreamId,
+      batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
+    _markProcessedInCooldown(_recentlyProcessedEventCache, retired, batchContext.RawByEventId, streamCtx.PerspectiveName);
+    _cursorCache.MarkReplayed(streamCtx.StreamId, streamCtx.PerspectiveName, (IEnumerable<Guid>)retiredIds);
+    _enqueueDrainModePerspectiveCompletions(streamCtx.StreamId, streamCtx.PerspectiveName, retired, batchContext.RawByEventId);
+    _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)retiredIds, streamCtx.PerspectiveName);
+    _recordStragglersDropped(streamCtx.PerspectiveName, retired.Count);
+  }
+
+  /// <summary>#1862: counts late events an ephemeral perspective dropped instead of rewinding for them.</summary>
+  private void _recordStragglersDropped(string perspectiveName, int count) =>
+    _metrics?.StragglersDropped.Add(count, new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
 
   /// <summary>
   /// #1361 — removes from <paramref name="freshEvents"/>, and returns, the events a completed rewind was already
@@ -3376,7 +3457,7 @@ public partial class PerspectiveWorker(
     _completionStrategy.ClearAcknowledged();
 
     // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
-    _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
+    _completionStrategy.ResetStale(_timeProvider.GetUtcNow());
 
     // 9. Dedup: filter out work items already processed within retention window
     var dedupedWork = _filterDuplicateWorkItems(workBatch.PerspectiveWork, claimWindowReservations);
@@ -4360,7 +4441,13 @@ public partial class PerspectiveWorker(
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
         eventsBehind, enablePerspectiveSpans, cancellationToken);
-      return (result, ProcessingMode.Replay, lockSkipped);
+      if (result.DroppedStragglers.Length == 0) {
+        return (result, ProcessingMode.Replay, lockSkipped);
+      }
+      // #1862: an ephemeral runner with no snapshot floor skipped the rewind and dropped the late event. The work
+      // item's rows are completed below whatever happens, and the events after the cursor it carries still need
+      // applying, so they take the normal path instead of being skipped with the rewind.
+      _recordStragglersDropped(streamCtx.PerspectiveName, result.DroppedStragglers.Length);
     }
 
     // Bootstrap snapshot if needed (existing stream with events but no snapshots)
@@ -5083,7 +5170,7 @@ public partial class PerspectiveWorker(
     }
     try {
       while (!ct.IsCancellationRequested) {
-        await Task.Delay(_streamLockOptions.KeepAliveInterval, ct);
+        await Task.Delay(_streamLockOptions.KeepAliveInterval, _timeProvider, ct);
         await _streamLocker.RenewLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, ct);
       }
     } catch (OperationCanceledException) {

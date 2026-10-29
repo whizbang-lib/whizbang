@@ -133,6 +133,27 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task EphemeralRewind_SkippedRewindNamesTheStragglerItDropsAsync() {
+    // #1862: the skipped rewind reports "nothing replayed" so the cursor stays put, but it must also name the late
+    // event it dropped. Without that the worker could not retire the event's work, and every claim found the same
+    // straggler, skipped the same rewind and logged the same drop, without end.
+    var template = _loadTemplate();
+
+    var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
+    var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await RunFromModelAsync(", guardIdx, StringComparison.Ordinal);
+    var namedIdx = template.IndexOf("DroppedStragglers = [triggeringEventId]", guardIdx, StringComparison.Ordinal);
+    await Assert.That(namedIdx).IsGreaterThan(guardIdx)
+      .Because("the skipped rewind's completion names the dropped straggler");
+    await Assert.That(namedIdx).IsLessThan(replayCallIdx)
+      .Because("it is the skip branch, not the replay, that names it");
+    var skipBranch = template[guardIdx..replayCallIdx];
+    await Assert.That(skipBranch).DoesNotContain("\u2014")
+      .Because("the drop warning is written in plain punctuation");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task PartialSkipBranch_StaysAtDebugLevelAsync() {
     // The partial-skip branch was already at Debug per step 6 slice 6. Lock it so a future
     // refactor can't quietly bump it back to Information.

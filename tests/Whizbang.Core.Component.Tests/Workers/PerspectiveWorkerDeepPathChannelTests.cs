@@ -88,8 +88,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
+  [Timeout(30000)]
   [NotInParallel("WhizbangActivityListener")]
-  public async Task Worker_BatchSpansWithListener_SetsBatchTagsAndExtractsTraceContextAsync() {
+  public async Task Worker_BatchSpansWithListener_SetsBatchTagsAndExtractsTraceContextAsync(CancellationToken cancellationToken) {
     // Arrange — a real ActivityListener so StartActivity returns non-null and tag lines execute
     var started = new ConcurrentBag<Activity>();
     // Resolve the source name BEFORE registering the listener. ActivitySource's constructor asks every
@@ -175,7 +176,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     }, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -203,7 +204,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync(CancellationToken cancellationToken) {
     // Arrange — full pipeline: events loaded, completion reported, fallback PostLifecycle
     // (no ILifecycleCoordinator registered) including the static detached stage helper.
     var streamId = Guid.CreateVersion7();
@@ -279,9 +281,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
 
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await invoker.WaitForStageAsync(LifecycleStage.PostLifecycleInline, TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await processedSignal.Task.WaitAsync(cancellationToken);
+    await invoker.WaitForStageAsync(LifecycleStage.PostLifecycleInline, cancellationToken);
     await worker.DrainDetachedAsync();
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -309,7 +311,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_BootstrapWithStreamLocker_AcquiresAndReleasesBootstrapLockOnceAsync() {
+  [Timeout(30000)]
+  public async Task Worker_BootstrapWithStreamLocker_AcquiresAndReleasesBootstrapLockOnceAsync(CancellationToken cancellationToken) {
     // Arrange — existing cursor + snapshot store with no snapshots + locker → bootstrap under lock
     var streamId = Guid.CreateVersion7();
     var lastEventId = Guid.CreateVersion7();
@@ -377,7 +380,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = lastEventId,
       PartitionNumber = 1
     }, cts.Token);
-    await coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionsAsync(1, cancellationToken);
 
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
@@ -386,7 +389,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = lastEventId,
       PartitionNumber = 1
     }, cts.Token);
-    await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionsAsync(2, cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -400,7 +403,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_RunnerThrowsWithUpcomingEvents_MarksSyncTrackerForFailedEventsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RunnerThrowsWithUpcomingEvents_MarksSyncTrackerForFailedEventsAsync(CancellationToken cancellationToken) {
     // Arrange — throwing runner + sync tracker + loaded upcoming events so the failure
     // path marks the failed event IDs as processed-by-perspective (waiter release).
     void handler(object? s, UnobservedTaskExceptionEventArgs e) {
@@ -472,7 +476,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         LastProcessedEventId = null,
         PartitionNumber = 1
       }, cts.Token);
-      await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+      await coordinator.FirstFailure.WaitAsync(cancellationToken);
       await cts.CancelAsync();
       try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (InvalidOperationException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -491,7 +495,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_PrePerspectiveLifecycleThrows_ReportsFailureForGroupAsync() {
+  [Timeout(30000)]
+  public async Task Worker_PrePerspectiveLifecycleThrows_ReportsFailureForGroupAsync(CancellationToken cancellationToken) {
     // Arrange — lifecycle coordinator whose BeginTracking throws during PrePerspective —
     // the group's catch must route the error to the failure path.
     void handler(object? s, UnobservedTaskExceptionEventArgs e) {
@@ -565,7 +570,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         LastProcessedEventId = null,
         PartitionNumber = 1
       }, cts.Token);
-      await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+      await coordinator.FirstFailure.WaitAsync(cancellationToken);
       await cts.CancelAsync();
       try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (InvalidOperationException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -581,7 +586,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_PostLifecycleAdvanceThrows_IsolatesErrorPerEventAsync() {
+  [Timeout(30000)]
+  public async Task Worker_PostLifecycleAdvanceThrows_IsolatesErrorPerEventAsync(CancellationToken cancellationToken) {
     // Arrange — coordinator path: two processed events; the tracking handle throws at
     // PostAllPerspectivesDetached for BOTH. The per-event catch must isolate the first
     // failure so the second event still gets its PostLifecycle attempt.
@@ -658,8 +664,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
 
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    await lifecycle.AllThrowsObserved.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await lifecycle.AllThrowsObserved.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -719,7 +725,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync(CancellationToken cancellationToken) {
     // Arrange — NOTIFY listener wired: worker subscribes at start, coalesces redundant
     // Perspective signals (SemaphoreFullException path), ignores non-Perspective categories,
     // and unsubscribes on StopAsync.
@@ -782,7 +789,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await worker.StartAsync(cts.Token);
     // StartAsync returns before ExecuteAsync runs; wait for the subscription signal so the
     // SubscriberCount assertion doesn't race the background subscribe.
-    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
     await Assert.That(listener.SubscriberCount).IsEqualTo(1)
       .Because("ExecuteAsync must subscribe to the perspective NOTIFY signal");
 
@@ -799,7 +806,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     }, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -820,7 +827,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// <see cref="Worker_SignalWhileBatchInFlight_WakesTheNextIterationAsync"/>.
   /// </summary>
   [Test]
-  public async Task Worker_SignalAfterWorkDrivenIterations_WakesOnTheFirstSignalAsync() {
+  [Timeout(30000)]
+  public async Task Worker_SignalAfterWorkDrivenIterations_WakesOnTheFirstSignalAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.WakeAfterWorkPerspective";
 
@@ -889,7 +897,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
 
     // Two iterations ended by WORK. Each leaves the wake wait parked and unawaited.
     for (var completed = 1; completed <= 2; completed++) {
@@ -900,7 +908,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         LastProcessedEventId = null,
         PartitionNumber = 1
       }, cts.Token);
-      await coordinator.WaitForCompletionsAsync(completed, TimeSpan.FromSeconds(10));
+      await coordinator.WaitForCompletionsAsync(completed, cancellationToken);
     }
     await Assert.That(worker.PendingWakeWaiters).IsLessThanOrEqualTo(1)
       .Because("iterations ended by work must not stack wake waiters; one parked waiter is the ceiling");
@@ -913,7 +921,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     // The idle event is the proof: the worker raises it only after the flag flipped, so awaiting it IS
     // the assertion. Reading IsIdle afterwards races the next iteration, which may already have
     // flipped active on re-emitted work, and reads false without anything being wrong.
-    await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await idleTick.Task.WaitAsync(cancellationToken);
     await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
       .Because("the one signal must reach the iteration the loop is actually awaiting");
 
@@ -928,7 +936,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// iteration parked a fresh wait and slept until the poll interval: the wake was lost.
   /// </summary>
   [Test]
-  public async Task Worker_SignalWhileBatchInFlight_WakesTheNextIterationAsync() {
+  [Timeout(30000)]
+  public async Task Worker_SignalWhileBatchInFlight_WakesTheNextIterationAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.WakeWhileBusyPerspective";
 
@@ -996,7 +1005,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
 
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
@@ -1007,14 +1016,14 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }, cts.Token);
     // Hold the loop inside the batch: the iteration that took it ended on work, so its wake wait
     // is parked and nothing awaits it.
-    await runner.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await runner.Entered.Task.WaitAsync(cancellationToken);
 
     // Act: exactly one signal, raised while the loop is between waits.
     listener.Raise(WorkSignalCategory.Perspective);
     runner.Release.TrySetResult();
 
     // Assert: the next iteration wakes on that signal, finds no work, and flips active -> idle.
-    await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await idleTick.Task.WaitAsync(cancellationToken);
     await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
       .Because("a signal raised while the loop is busy must wake the next iteration, not an abandoned wait");
 
@@ -1027,7 +1036,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// the loop has run. A heap dump of a long-running instance held 108,992 of them.
   /// </summary>
   [Test]
-  public async Task Worker_ManyWorkDrivenIterations_HoldsAtMostOneWakeWaiterAsync() {
+  [Timeout(30000)]
+  public async Task Worker_ManyWorkDrivenIterations_HoldsAtMostOneWakeWaiterAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.OneWaiterPerspective";
 
@@ -1084,7 +1094,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
 
     for (var completed = 1; completed <= 6; completed++) {
       await harness.EnqueueWorkAsync(new PerspectiveWork {
@@ -1094,7 +1104,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         LastProcessedEventId = null,
         PartitionNumber = 1
       }, cts.Token);
-      await coordinator.WaitForCompletionsAsync(completed, TimeSpan.FromSeconds(10));
+      await coordinator.WaitForCompletionsAsync(completed, cancellationToken);
     }
 
     await Assert.That(worker.PendingWakeWaiters).IsEqualTo(1)
@@ -1107,7 +1117,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_ScopeFactoryDisposedMidStream_BreaksConsumerLoopGracefullyAsync() {
+  [Timeout(30000)]
+  public async Task Worker_ScopeFactoryDisposedMidStream_BreaksConsumerLoopGracefullyAsync(CancellationToken cancellationToken) {
     // Arrange — a work item processed after the root provider is disposed produces
     // ObjectDisposedException inside ProcessChannelBatchAsync; the loop must break, not fault.
     var streamId = Guid.CreateVersion7();
@@ -1178,7 +1189,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     }, cts.Token);
-    await coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionsAsync(1, cancellationToken);
 
     // Act — dispose the DI root, then wake the loop with more work
     await serviceProvider.DisposeAsync();
@@ -1191,7 +1202,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }, CancellationToken.None);
 
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
-    await executeTask.WaitAsync(TimeSpan.FromSeconds(10));
+    await executeTask.WaitAsync(cancellationToken);
 
     // Assert — the loop exited cleanly (break on ObjectDisposedException, no fault)
     await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
@@ -1263,12 +1274,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     /// <summary>The perspective streams each lease release named, in order.</summary>
     public ConcurrentQueue<List<Guid>> PerspectiveLeaseReleases { get; } = new();
 
-    public Task WaitForCompletionsAsync(int count, TimeSpan timeout) {
+    public Task WaitForCompletionsAsync(int count, CancellationToken cancellationToken) {
       var tcs = _completionWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
       if (Volatile.Read(ref _completionCount) >= count) {
         tcs.TrySetResult();
       }
-      return tcs.Task.WaitAsync(timeout);
+      return tcs.Task.WaitAsync(cancellationToken);
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
@@ -1375,8 +1386,19 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       });
     }
 
+    /// <summary>#1862: the rewind is one an ephemeral runner with no snapshot floor skips, dropping its trigger.</summary>
+    public bool RewindDropsTheTrigger { get; init; }
+
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-      RunAsync(streamId, perspectiveName, null, cancellationToken);
+      RewindDropsTheTrigger
+        ? Task.FromResult(new PerspectiveCursorCompletion {
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = Guid.Empty,
+          Status = PerspectiveProcessingStatus.None,
+          DroppedStragglers = [triggeringEventId]
+        })
+        : RunAsync(streamId, perspectiveName, null, cancellationToken);
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _bootstrapCallCount);
@@ -1455,12 +1477,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       }
     }
 
-    public Task WaitForStageAsync(LifecycleStage stage, TimeSpan timeout) {
+    public Task WaitForStageAsync(LifecycleStage stage, CancellationToken cancellationToken) {
       var tcs = _stageWaiters.GetOrAdd(stage, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
       if (HasFired(stage)) {
         tcs.TrySetResult();
       }
-      return tcs.Task.WaitAsync(timeout);
+      return tcs.Task.WaitAsync(cancellationToken);
     }
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {

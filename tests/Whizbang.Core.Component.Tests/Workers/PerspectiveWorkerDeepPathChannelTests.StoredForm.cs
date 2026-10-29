@@ -46,7 +46,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_RunnerRefusesTheStoredForm_AnnouncesOnceAndParksTheRowAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RunnerRefusesTheStoredForm_AnnouncesOnceAndParksTheRowAsync(CancellationToken cancellationToken) {
     // The standard path rethrows after reporting. The consumer loop now contains that rethrow (it
     // reports the batch as a defect and carries on), so nothing should reach here any more; the
     // handler stays as a belt so a regression of the containment cannot fail an unrelated test.
@@ -121,8 +122,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         LastProcessedEventId = null,
         PartitionNumber = 1
       }, cts.Token);
-      await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-      await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+      await coordinator.FirstFailure.WaitAsync(cancellationToken);
+      await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
       await cts.CancelAsync();
       try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (JsonException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

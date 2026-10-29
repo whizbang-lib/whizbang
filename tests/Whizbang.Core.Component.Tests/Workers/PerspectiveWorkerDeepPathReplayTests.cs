@@ -36,7 +36,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
   private const string PERSPECTIVE = "Replay.DeepPerspective";
 
   [Test]
-  public async Task Worker_RewindWithReplayReader_PrependsPendingReplayEventsOnceAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindWithReplayReader_PrependsPendingReplayEventsOnceAsync(CancellationToken cancellationToken) {
     // Arrange — rewind-required cursor; the replay reader yields:
     //   1. a pending (IsNew) event below the cursor  → must be prepended
     //   2. the range-loaded event again (IsNew)      → deduped by the seen-set
@@ -84,8 +85,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await processedSignal.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -102,7 +103,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
   }
 
   [Test]
-  public async Task Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync(CancellationToken cancellationToken) {
     // Arrange — no IPerspectiveReplayReader registered: the fallback loads events up to the
     // rewind trigger and prepends the trigger envelope when the range load missed it.
     var streamId = Guid.CreateVersion7();
@@ -142,8 +144,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await processedSignal.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -159,7 +161,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
   }
 
   [Test]
-  public async Task Worker_RewindWithoutReplayReader_TriggerAlreadyLoaded_IssuesNoTriggerLookupAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindWithoutReplayReader_TriggerAlreadyLoaded_IssuesNoTriggerLookupAsync(CancellationToken cancellationToken) {
     // Arrange — the post-cursor load already returned the rewind trigger, so the fallback has nothing to add.
     var streamId = Guid.CreateVersion7();
     var triggerEventId = Guid.CreateVersion7();
@@ -190,7 +193,7 @@ public class PerspectiveWorkerDeepPathReplayTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
-    var processedCount = await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var processedCount = await processedSignal.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -204,7 +207,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
   }
 
   [Test]
-  public async Task Worker_RewindWithoutReplayReader_EventTypesUnavailable_SkipsTheTriggerLookupAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindWithoutReplayReader_EventTypesUnavailable_SkipsTheTriggerLookupAsync(CancellationToken cancellationToken) {
     // Arrange — an event store is registered but no event types are: nothing can be deserialized, so the
     // fallback must not query the store for the trigger.
     var streamId = Guid.CreateVersion7();
@@ -233,7 +237,7 @@ public class PerspectiveWorkerDeepPathReplayTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

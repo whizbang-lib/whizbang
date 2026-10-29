@@ -92,7 +92,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   /// leased rows reported through the failure channel so the database parks them.
   /// </summary>
   [Test]
-  public async Task DrainMode_UnreadableStoredForm_IsAnnouncedCountedAndParkedAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_UnreadableStoredForm_IsAnnouncedCountedAndParkedAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var workId = Guid.CreateVersion7();
@@ -113,8 +114,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -153,7 +154,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   /// reads again is released.
   /// </summary>
   [Test]
-  public async Task DrainMode_UnreadableStoredForm_AgainIsQuietAndRecoveryReleasesAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_UnreadableStoredForm_AgainIsQuietAndRecoveryReleasesAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var firstEvent = Guid.CreateVersion7();
     var secondEvent = Guid.CreateVersion7();
@@ -176,12 +178,12 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await harness.FailureCapture.WaitForCountAsync(2, TimeSpan.FromSeconds(10));
+    await harness.FailureCapture.WaitForCountAsync(2, cancellationToken);
     runner.NextException = null;
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -209,7 +211,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   /// The stored-form path parked its rows; every other failure parks its rows the same way.
   /// </remarks>
   [Test]
-  public async Task DrainMode_OtherFailure_IsNotClassifiedAsStoredFormButParksItsRowsAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_OtherFailure_IsNotClassifiedAsStoredFormButParksItsRowsAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var workId = Guid.CreateVersion7();
@@ -227,8 +230,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

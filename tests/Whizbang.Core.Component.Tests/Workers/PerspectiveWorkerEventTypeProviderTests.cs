@@ -30,7 +30,8 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerEventTypeProviderTests {
 
   [Test]
-  public async Task EventTypeProvider_SuppliedThroughTheConstructor_IsUsedAsync() {
+  [Timeout(30000)]
+  public async Task EventTypeProvider_SuppliedThroughTheConstructor_IsUsedAsync(CancellationToken cancellationToken) {
     // Arrange — DO NOT pass eventTypeProvider to constructor (simulates DI registration order issue).
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
@@ -100,14 +101,14 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // Wait on the event-store read itself — the call that proves lazy-resolve worked. The fake
     // completes this only after recording the call, so the assertion below cannot observe a
     // half-written state the way a poll on the counter could.
-    await eventStore.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await eventStore.Called.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
     // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no shutdown barrier at
     // all and left the worker running past the end of the test. SuppressThrowing because a body
     // leaving through a cancellation catch settles RanToCompletion or Canceled depending on
     // thread-pool timing — either is a clean stop.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — If lazy-resolve works, the worker should have resolved IEventTypeProvider from scope
@@ -117,7 +118,8 @@ public class PerspectiveWorkerEventTypeProviderTests {
   }
 
   [Test]
-  public async Task EventTypeProvider_SuppliedThroughTheConstructor_ReturnsNonEmptyTypeListAsync() {
+  [Timeout(30000)]
+  public async Task EventTypeProvider_SuppliedThroughTheConstructor_ReturnsNonEmptyTypeListAsync(CancellationToken cancellationToken) {
     // Arrange — Same setup: null constructor, provider in DI with real event types.
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
@@ -188,9 +190,9 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // written. Polling GetEventTypesCallCount instead let the loop exit between the increment and
     // the LastReturnedCount assignment, so the assertion below read 0 — a real CI failure, and one
     // that no amount of extra deadline would have fixed.
-    await eventTypeProvider.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await eventTypeProvider.Called.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — The resolved provider should have been called and returned non-empty types

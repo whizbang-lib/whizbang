@@ -45,6 +45,23 @@ public class PerspectiveMetricsTests {
   }
 
   [Test]
+  public async Task PerspectiveMetrics_StragglersDropped_CountsUnderItsNameWithThePerspectiveTagAsync() {
+    // #1862: the counter an operator reads to see late events an ephemeral perspective dropped.
+    using var factory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    metrics.StragglersDropped.Add(2, new KeyValuePair<string, object?>("perspective_name", "OrderSummary"));
+
+    var measurements = helper.GetByName("whizbang.perspective.stragglers_dropped");
+    var tagged = measurements.Single(m => m.Tags.ContainsKey("perspective_name"));
+    await Assert.That(tagged.Value).IsEqualTo(2d);
+    await Assert.That(tagged.Tags["perspective_name"]).IsEqualTo("OrderSummary");
+    await Assert.That(measurements.Sum(m => m.Value)).IsEqualTo(2d)
+      .Because("nothing is counted outside the perspective it was dropped for");
+  }
+
+  [Test]
   public async Task PerspectiveMetrics_BatchDuration_RecordedPerBatchAsync() {
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);

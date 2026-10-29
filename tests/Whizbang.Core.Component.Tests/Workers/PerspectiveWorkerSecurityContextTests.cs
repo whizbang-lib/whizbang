@@ -117,7 +117,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the IScopeContextAccessor.Current is set before lifecycle receptors are invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync() {
+  [Timeout(30000)]
+  public async Task PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync(CancellationToken cancellationToken) {
     // Arrange
     const string expectedUserId = "user-123";
     var streamId = Guid.CreateVersion7();
@@ -217,9 +218,9 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await worker.DrainDetachedAsync();
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
     await Assert.That(securityContextEstablishedBeforeInvoke).IsTrue()
@@ -233,7 +234,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op for security context establishment).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync() {
+  [Timeout(30000)]
+  public async Task PrePerspectiveDetached_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -315,9 +317,9 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await worker.DrainDetachedAsync();
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
     await Assert.That(lifecycleInvoked).IsTrue()
@@ -329,7 +331,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// but lifecycle receptors are still invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
+  [Timeout(30000)]
+  public async Task PrePerspectiveDetached_SecurityProviderReturnsNull_DoesNotSetAccessorAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -411,8 +414,8 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
     await Assert.That(accessorWasSet).IsFalse()
@@ -423,7 +426,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// Verifies that PostPerspectiveInline lifecycle receptors also receive security context.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveInline_WithSecurityProvider_EstablishesSecurityContextAsync() {
+  [Timeout(30000)]
+  public async Task PostPerspectiveInline_WithSecurityProvider_EstablishesSecurityContextAsync(CancellationToken cancellationToken) {
     // Arrange
     const string expectedUserId = "user-456";
     var streamId = Guid.CreateVersion7();
@@ -517,13 +521,9 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     // Wait for PostPerspectiveInline to be invoked (happens AFTER completion is reported)
-    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
-    var completedTask = await Task.WhenAny(postPerspectiveInlineInvoked.Task, timeoutTask);
-    if (completedTask == timeoutTask) {
-      throw new TimeoutException("PostPerspectiveInline was not invoked within timeout");
-    }
+    await postPerspectiveInlineInvoked.Task.WaitAsync(cancellationToken);
 
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
     await Assert.That(capturedUserId).IsEqualTo(expectedUserId)
@@ -535,7 +535,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// not just the first one.
   /// </summary>
   [Test]
-  public async Task MultipleEnvelopes_EstablishesContextForEachEnvelopeAsync() {
+  [Timeout(30000)]
+  public async Task MultipleEnvelopes_EstablishesContextForEachEnvelopeAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId1 = Guid.CreateVersion7();
@@ -631,9 +632,9 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await worker.DrainDetachedAsync();
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert - should have captured two different user IDs, one per envelope, in order
     await Assert.That(capturedUserIds.Count).IsEqualTo(2)
@@ -647,7 +648,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync() {
+  [Timeout(30000)]
+  public async Task PrePerspectiveDetached_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -733,9 +735,9 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await worker.DrainDetachedAsync();
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert
     await Assert.That(lifecycleInvoked).IsTrue()
@@ -757,7 +759,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// instead of using the securityContext returned by EstablishContextAsync.
   /// </remarks>
   [Test]
-  public async Task EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync() {
+  [Timeout(30000)]
+  public async Task EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync(CancellationToken cancellationToken) {
     // Arrange: Event envelope with NO scope in hops (GetCurrentScope() returns null)
     const string expectedTenantId = "tenant-123";
     const string expectedUserId = "user-456";
@@ -859,8 +862,8 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert: MessageContext should use extractor result, NOT envelope.GetCurrentScope() (which is null)
     await Assert.That(capturedTenantId).IsEqualTo(expectedTenantId)
@@ -878,7 +881,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the MessageContext falls back to envelope.GetCurrentScope() for scope values.
   /// </summary>
   [Test]
-  public async Task EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync() {
+  [Timeout(30000)]
+  public async Task EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync(CancellationToken cancellationToken) {
     // Arrange: Envelope WITH scope in hops (so GetCurrentScope returns valid data)
     const string expectedTenantId = "hop-tenant";
     const string expectedUserId = "hop-user";
@@ -975,8 +979,8 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert: Should fall back to envelope.GetCurrentScope()
     await Assert.That(capturedTenantId).IsEqualTo(expectedTenantId)
@@ -991,7 +995,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// lifecycle handlers append events via SecurityContextEventStoreDecorator.
   /// </summary>
   [Test]
-  public async Task EstablishSecurityContext_SetsInitiatingContextOnScopeContextAccessorAsync() {
+  [Timeout(30000)]
+  public async Task EstablishSecurityContext_SetsInitiatingContextOnScopeContextAccessorAsync(CancellationToken cancellationToken) {
     // Arrange
     const string expectedTenantId = "tenant-from-initiating";
     const string expectedUserId = "user-from-initiating";
@@ -1088,9 +1093,9 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
     await worker.DrainDetachedAsync();
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert: InitiatingContext should be set with proper TenantId and UserId
     await Assert.That(capturedInitiatingContext).IsNotNull()
@@ -1121,7 +1126,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// securityProvider returns null but envelope.GetCurrentScope() has data.</para>
   /// </remarks>
   [Test]
-  public async Task EstablishSecurityContext_WhenExtractorFailsButEnvelopeHasScope_InvokesCallbacksWithEnvelopeScopeAsync() {
+  [Timeout(30000)]
+  public async Task EstablishSecurityContext_WhenExtractorFailsButEnvelopeHasScope_InvokesCallbacksWithEnvelopeScopeAsync(CancellationToken cancellationToken) {
     // Arrange: Envelope WITH scope in hops (GetCurrentScope returns valid data)
     const string expectedTenantId = "hop-tenant-callback";
     const string expectedUserId = "hop-user-callback";
@@ -1222,8 +1228,8 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert: Callback should have been invoked with envelope's scope
     await Assert.That(callbackInvoked).IsTrue()
@@ -1274,7 +1280,7 @@ public class PerspectiveWorkerSecurityContextTests {
     await Assert.That(securityFromAmbient).IsNotNull()
       .Because("CascadeContext.GetSecurityFromAmbient() should find ImmutableScopeContext with ShouldPropagate=true");
     await Assert.That(securityFromAmbient!.TenantId).IsEqualTo("test-tenant");
-    await Assert.That(securityFromAmbient!.UserId).IsEqualTo("test-user");
+    await Assert.That(securityFromAmbient.UserId).IsEqualTo("test-user");
 
     // Cleanup: Reset static accessor
     ScopeContextAccessor.CurrentContext = null;
@@ -1316,7 +1322,7 @@ public class PerspectiveWorkerSecurityContextTests {
     await Assert.That(scopeFromEnvelope).IsNotNull()
       .Because("envelope.GetCurrentScope() should return scope from hops");
     await Assert.That(scopeFromEnvelope!.Scope.TenantId).IsEqualTo(expectedTenantId);
-    await Assert.That(scopeFromEnvelope!.Scope.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(scopeFromEnvelope.Scope.UserId).IsEqualTo(expectedUserId);
   }
 
   /// <summary>
@@ -1377,7 +1383,7 @@ public class PerspectiveWorkerSecurityContextTests {
     await Assert.That(securityFromAmbient).IsNotNull()
       .Because("CascadeContext.GetSecurityFromAmbient() should find ImmutableScopeContext with ShouldPropagate=true");
     await Assert.That(securityFromAmbient!.TenantId).IsEqualTo(expectedTenantId);
-    await Assert.That(securityFromAmbient!.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(securityFromAmbient.UserId).IsEqualTo(expectedUserId);
 
     // Cleanup
     ScopeContextAccessor.CurrentContext = null;
@@ -1388,7 +1394,8 @@ public class PerspectiveWorkerSecurityContextTests {
   /// callbacks are only invoked once (via the security provider, not again in PerspectiveWorker).
   /// </summary>
   [Test]
-  public async Task EstablishSecurityContext_WhenExtractorSucceeds_DoesNotInvokeCallbacksTwiceAsync() {
+  [Timeout(30000)]
+  public async Task EstablishSecurityContext_WhenExtractorSucceeds_DoesNotInvokeCallbacksTwiceAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -1482,8 +1489,8 @@ public class PerspectiveWorkerSecurityContextTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+    await coordinator.WaitForCompletionReportedAsync(cancellationToken);
+    await _stopAndAwaitWorkerBodyAsync(worker, cts, cancellationToken);
 
     // Assert: Callback should only be invoked once (by the security provider)
     // Note: This may be > 1 if multiple events are processed, but should be exactly 1 per event
@@ -1506,10 +1513,10 @@ public class PerspectiveWorkerSecurityContextTests {
   /// SuppressThrowing because a body leaving through a cancellation catch settles RanToCompletion or
   /// Canceled depending on thread-pool timing, and either one is a clean stop.
   /// </remarks>
-  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts, CancellationToken cancellationToken) {
     await cts.CancelAsync();
     if (worker.ExecuteTask is { } body) {
-      await body.WaitAsync(TimeSpan.FromSeconds(30))
+      await body.WaitAsync(cancellationToken)
         .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
   }
@@ -1861,14 +1868,8 @@ public class PerspectiveWorkerSecurityContextTests {
 
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _completionReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Completion was not reported within {timeout}");
-      }
-    }
+    public Task WaitForCompletionReportedAsync(CancellationToken cancellationToken) =>
+      _completionReported.Task.WaitAsync(cancellationToken);
 
     public Task ReportPerspectiveCompletionAsync(
         PerspectiveCursorCompletion completion,

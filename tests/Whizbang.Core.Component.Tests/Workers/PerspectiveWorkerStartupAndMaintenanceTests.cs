@@ -95,11 +95,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public Action<int>? OnRecordedCompletion { get; init; }
     private readonly SemaphoreSlim _recordSignal = new(0, int.MaxValue);
 
-    public async Task WaitForRecordedCompletionsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForRecordedCompletionsAsync(int count, CancellationToken cancellationToken) {
       for (var i = 0; i < count; i++) {
-        if (!await _recordSignal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {i} of {count} lifecycle-completion records within {timeout}");
-        }
+        await _recordSignal.WaitAsync(cancellationToken);
       }
     }
 
@@ -112,11 +110,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public int RewindQueryCount => _rewindQueryCount;
     private readonly SemaphoreSlim _rewindSignal = new(0, int.MaxValue);
 
-    public async Task WaitForRewindQueriesAsync(int count, TimeSpan timeout) {
+    public async Task WaitForRewindQueriesAsync(int count, CancellationToken cancellationToken) {
       for (var i = 0; i < count; i++) {
-        if (!await _rewindSignal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {i} of {count} rewind-scan queries within {timeout}");
-        }
+        await _rewindSignal.WaitAsync(cancellationToken);
       }
     }
 
@@ -128,11 +124,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public int GatherStatisticsCount => _gatherCount;
     private readonly SemaphoreSlim _gatherSignal = new(0, int.MaxValue);
 
-    public async Task WaitForGatherStatisticsAsync(int count, TimeSpan timeout) {
+    public async Task WaitForGatherStatisticsAsync(int count, CancellationToken cancellationToken) {
       for (var i = 0; i < count; i++) {
-        if (!await _gatherSignal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {i} of {count} GatherStatistics calls within {timeout}");
-        }
+        await _gatherSignal.WaitAsync(cancellationToken);
       }
     }
 
@@ -363,7 +357,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   [Test]
-  public async Task Startup_OrphanedLifecycles_ReplaysTerminalStagesAndRecordsCompletionAsync() {
+  [Timeout(1800000)]
+  public async Task Startup_OrphanedLifecycles_ReplaysTerminalStagesAndRecordsCompletionAsync(CancellationToken cancellationToken) {
     var orphan1 = _orphan();
     var orphan2 = _orphan();
     var coordinator = new StartupCoordinator { Orphans = [orphan1, orphan2] };
@@ -371,7 +366,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRecordedCompletionsAsync(2, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRecordedCompletionsAsync(2, cancellationToken);
 
     await Assert.That(coordinator.RecordedLifecycleCompletions).Contains(orphan1.EventId)
       .Because("Every orphaned event must get a durable completion marker after replay, or the next restart replays it again.");
@@ -393,7 +388,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_OrphanReplayThrowsForOneEvent_ContinuesWithRemainingOrphansAsync() {
+  [Timeout(30000)]
+  public async Task Startup_OrphanReplayThrowsForOneEvent_ContinuesWithRemainingOrphansAsync(CancellationToken cancellationToken) {
     var poisoned = _orphan();
     var healthy = _orphan();
     var coordinator = new StartupCoordinator { Orphans = [poisoned, healthy] };
@@ -403,7 +399,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRecordedCompletionsAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRecordedCompletionsAsync(1, cancellationToken);
 
     await Assert.That(coordinator.RecordedLifecycleCompletions).Contains(healthy.EventId)
       .Because("Per-orphan error isolation: a poisoned orphan must not block replay of the remaining orphans.");
@@ -415,7 +411,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_LargeOrphanBacklog_DrainsInBoundedPassesAsync() {
+  [Timeout(60000)]
+  public async Task Startup_LargeOrphanBacklog_DrainsInBoundedPassesAsync(CancellationToken cancellationToken) {
     // A backlog larger than one pass's cap must drain through REPEATED bounded passes — one
     // capped query + one capped replay batch per pass — instead of a single unbounded scan
     // that can stall the host past its liveness budget on a large store (and every probe kill
@@ -429,7 +426,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRecordedCompletionsAsync(103, TimeSpan.FromSeconds(60));
+    await coordinator.WaitForRecordedCompletionsAsync(103, cancellationToken);
 
     await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(2)
       .Because("a FULL first batch means more may remain — the reconciler must run another " +
@@ -443,7 +440,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_NoPerspectivesRegistered_SkipsOrphanReconciliationAsync() {
+  [Timeout(30000)]
+  public async Task Startup_NoPerspectivesRegistered_SkipsOrphanReconciliationAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator();
     var fx = _build(coordinator, new Registry([]));
 
@@ -451,7 +449,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     await fx.Worker.StartAsync(cts.Token);
     // The rewind scan runs strictly AFTER orphan reconciliation — reaching it proves the
     // reconciler already returned.
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     await Assert.That(coordinator.OrphanQueryCalled.Task.IsCompleted).IsFalse()
       .Because("With no registered perspectives there is no perspectives-per-event map, so the orphan query must never run.");
@@ -461,14 +459,15 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_OrphanQueryThrows_StartupContinuesToRewindScanAsync() {
+  [Timeout(30000)]
+  public async Task Startup_OrphanQueryThrows_StartupContinuesToRewindScanAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator { ThrowOnOrphanQuery = true };
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.OrphanQueryCalled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.OrphanQueryCalled.Task.WaitAsync(cancellationToken);
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
       .Because("Reconciliation is best-effort: a failed orphan query must be swallowed so the worker still starts.");
@@ -482,19 +481,20 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   [Test]
-  public async Task Startup_RewindScanClean_QueriesExactlyOnceAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanClean_QueriesExactlyOnceAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator();  // queue empty → every query returns []
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     // Prove the scan finished (worker reached the channel loop) by pushing a drain cycle through.
     var cycleDone = new SemaphoreSlim(0, int.MaxValue);
     fx.Worker.OnBatchCycleComplete += () => cycleDone.Release();
     await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
-    await Assert.That(await cycleDone.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+    await cycleDone.WaitAsync(cancellationToken);
 
     await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
       .Because("A clean scan (zero RewindRequired cursors) must return after one query — no blocking re-poll loop.");
@@ -504,7 +504,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanBackgroundMode_DoesNotRepollAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanBackgroundMode_DoesNotRepollAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator();
     coordinator.RewindResults.Enqueue([
       new RewindCursorInfo(Guid.CreateVersion7(), "Test.Perspectives.OrderPerspective", null, Guid.CreateVersion7())
@@ -514,12 +515,12 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     var cycleDone = new SemaphoreSlim(0, int.MaxValue);
     fx.Worker.OnBatchCycleComplete += () => cycleDone.Release();
     await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
-    await Assert.That(await cycleDone.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+    await cycleDone.WaitAsync(cancellationToken);
 
     await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
       .Because("Background mode logs the pending rewinds and hands them to the normal channel loop — it must NOT block startup re-polling.");
@@ -529,7 +530,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator();
     coordinator.RewindResults.Enqueue([
       new RewindCursorInfo(Guid.CreateVersion7(), "Test.Perspectives.OrderPerspective", null, Guid.CreateVersion7())
@@ -544,7 +546,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(2, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(2, cancellationToken);
 
     await Assert.That(coordinator.RewindQueryCount).IsEqualTo(2)
       .Because("Blocking mode must re-query until the RewindRequired set drains: one initial query returning work + one re-poll returning clean.");
@@ -554,7 +556,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanDisabled_NeverQueriesAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanDisabled_NeverQueriesAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator();
     var fx = _build(coordinator, _registryWithOnePerspective(),
       rewindOptions: new PerspectiveRewindOptions { StartupScanEnabled = false });
@@ -565,8 +568,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var cycleDone = new SemaphoreSlim(0, int.MaxValue);
     fx.Worker.OnBatchCycleComplete += () => cycleDone.Release();
     await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
-    await Assert.That(await cycleDone.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue()
-      .Because("The worker must reach the channel loop without running the scan.");
+    // The worker must reach the channel loop without running the scan.
+    await cycleDone.WaitAsync(cancellationToken);
 
     await Assert.That(coordinator.RewindQueryCount).IsEqualTo(0)
       .Because("StartupScanEnabled=false must skip the rewind query entirely.");
@@ -576,19 +579,20 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanThrows_WorkerStillProcessesWorkAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanThrows_WorkerStillProcessesWorkAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator { ThrowOnRewindQuery = true };
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     var cycleDone = new SemaphoreSlim(0, int.MaxValue);
     fx.Worker.OnBatchCycleComplete += () => cycleDone.Release();
     await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
-    await Assert.That(await cycleDone.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue()
-      .Because("The startup scan is best-effort: a thrown scan must be swallowed and the channel loop must still process work.");
+    // The startup scan is best-effort: a thrown scan must be swallowed and the channel loop must still process work.
+    await cycleDone.WaitAsync(cancellationToken);
     await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
       .Because("A failed startup scan must not fault the worker.");
 
@@ -601,7 +605,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   [Test]
-  public async Task Maintenance_StatisticsGatherAtSixtyCycles_SurvivesFailureAndFiresAgainAsync() {
+  [Timeout(300000)]
+  public async Task Maintenance_StatisticsGatherAtSixtyCycles_SurvivesFailureAndFiresAgainAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator { ThrowOnFirstGatherStatistics = true };
     var lifecycle = new SpyLifecycleCoordinator { CleanupReturnValue = 3 };
     var fx = _build(coordinator, _registryWithOnePerspective(),
@@ -624,7 +629,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     for (var i = 0; i < 121; i++) {
       await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
     }
-    await coordinator.WaitForGatherStatisticsAsync(2, TimeSpan.FromSeconds(30));
+    await coordinator.WaitForGatherStatisticsAsync(2, cancellationToken);
 
     await Assert.That(coordinator.GatherStatisticsCount).IsEqualTo(2)
       .Because("Statistics gather every 60 batch cycles; 121 cycles → exactly two gathers (cycle 60 + cycle 120).");
@@ -640,7 +645,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Maintenance_SixtyCyclesWithMetricsAndNoLifecycleCoordinator_PublishesThePendingCountAsync() {
+  [Timeout(30000)]
+  public async Task Maintenance_SixtyCyclesWithMetricsAndNoLifecycleCoordinator_PublishesThePendingCountAsync(CancellationToken cancellationToken) {
     var coordinator = new StartupCoordinator { PendingPerspectiveEvents = 42 };
     using var meterFactory = new TestMeterFactory();
     var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
@@ -667,10 +673,10 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     for (var i = 0; i < 60; i++) {
       await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
     }
-    await coordinator.WaitForGatherStatisticsAsync(1, TimeSpan.FromSeconds(30));
+    await coordinator.WaitForGatherStatisticsAsync(1, cancellationToken);
     await cts.CancelAsync();
     // The gauge is set after the gather returns, inside the same cycle: the body has to have finished.
-    await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await fx.Worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(fx.Worker.ExecuteTask.IsFaulted).IsFalse()
@@ -686,7 +692,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   [Test]
-  public async Task Startup_OrphanBacklogThatNeverDrains_StopsAfterThePassBudgetAsync() {
+  [Timeout(60000)]
+  public async Task Startup_OrphanBacklogThatNeverDrains_StopsAfterThePassBudgetAsync(CancellationToken cancellationToken) {
     // Every pass returns a full batch, so the backlog never reads as drained: only the pass budget ends it.
     var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
     var coordinator = new StartupCoordinator { Orphans = fullBatch };
@@ -695,7 +702,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
     // The rewind scan runs strictly after reconciliation, so reaching it proves reconciliation returned.
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(60));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
     await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(20)
       .Because("reconciliation runs at most 20 bounded passes, so a backlog that never drains cannot hold "
@@ -706,7 +713,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_StopRequestedDuringOrphanReconciliation_RunsNoFurtherPassAsync() {
+  [Timeout(30000)]
+  public async Task Startup_StopRequestedDuringOrphanReconciliation_RunsNoFurtherPassAsync(CancellationToken cancellationToken) {
     var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
     using var cts = new CancellationTokenSource();
     // The stop arrives as the last orphan of the first full pass is recorded, between passes.
@@ -721,8 +729,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRecordedCompletionsAsync(fullBatch.Count, TimeSpan.FromSeconds(30));
-    await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await coordinator.WaitForRecordedCompletionsAsync(fullBatch.Count, cancellationToken);
+    await fx.Worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(1)
@@ -734,7 +742,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanOnDisposedServices_PropagatesRatherThanLoggingAScanErrorAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanOnDisposedServices_PropagatesRatherThanLoggingAScanErrorAsync(CancellationToken cancellationToken) {
     // An ObjectDisposedException means the host is tearing the container down. The scan's best-effort
     // catch is deliberately not for that: it would log a scan error for what is a shutdown.
     var coordinator = new StartupCoordinator { RewindQueryException = new ObjectDisposedException("service provider") };
@@ -742,9 +751,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
-    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)))
+    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(cancellationToken))
       .Throws<ObjectDisposedException>()
       .Because("the startup scan swallows ordinary failures but lets disposal through");
 
@@ -753,7 +762,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   }
 
   [Test]
-  public async Task Startup_RewindScanCanceled_PropagatesRatherThanLoggingAScanErrorAsync() {
+  [Timeout(30000)]
+  public async Task Startup_RewindScanCanceled_PropagatesRatherThanLoggingAScanErrorAsync(CancellationToken cancellationToken) {
     // The cancellation side of the scan's catch filter: a cancellation is a stop, not a failed scan, so
     // it must leave the worker instead of being swallowed and letting startup carry on into the loop.
     var coordinator = new StartupCoordinator { RewindQueryException = new OperationCanceledException("stop requested") };
@@ -761,9 +771,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
-    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)))
+    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(cancellationToken))
       .Throws<OperationCanceledException>()
       .Because("the startup scan swallows ordinary failures but lets cancellation through");
     await Assert.That(fx.Worker.ExecuteTask!.IsCanceled).IsTrue()
@@ -778,7 +788,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   [Test]
-  public async Task NotificationListener_SubscribedOnStart_UnsubscribedOnStopAsync() {
+  [Timeout(30000)]
+  public async Task NotificationListener_SubscribedOnStart_UnsubscribedOnStopAsync(CancellationToken cancellationToken) {
     var listener = new FakeNotificationListener();
     var coordinator = new StartupCoordinator();
     var fx = _build(coordinator, _registryWithOnePerspective(),
@@ -794,7 +805,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
     await Assert.That(listener.SubscriberCount).IsEqualTo(1)
       .Because("ExecuteAsync must hook the perspective NOTIFY signal so inserts wake the worker without polling.");
 

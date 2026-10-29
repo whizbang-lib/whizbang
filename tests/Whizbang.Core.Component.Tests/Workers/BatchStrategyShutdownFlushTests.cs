@@ -217,6 +217,51 @@ public class BatchStrategyShutdownFlushTests {
       .Because("a host without the worker pipeline's batchers has nothing to flush");
   }
 
+  /// <summary>
+  /// #1875: a stop that reaches <see cref="IHostedLifecycleService.StoppedAsync"/> after the container was disposed (a
+  /// second, concurrent stop finished first and its caller disposed the host) resolved the batchers from the disposed
+  /// provider and failed with <see cref="ObjectDisposedException"/>. The container disposed, and so flushed, the
+  /// batchers it owned, so there is nothing left to flush and the provider is never touched.
+  /// </summary>
+  [Test]
+  public async Task AProviderDisposedBeforeTheStopFinishes_IsNotTouched_AndNothingIsFlushedAsync() {
+    var flushes = new ConcurrentQueue<string>();
+    var services = new ServiceCollection();
+    services.AddLogging(logging => logging.AddProvider(new ErrorLog()));
+    services.AddSingleton<IInboxBatchStrategy>(new Recorder("inbox", flushes));
+    services.AddSingleton<IOutboxBatchStrategy>(new Recorder("outbox", flushes));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
+    var provider = services.BuildServiceProvider();
+    // Resolved from the container, as the host resolves it, so the container owns it and disposes it with itself
+    var flush = provider.GetServices<IHostedService>().OfType<BatchStrategyShutdownFlush>().Single();
+    await flush.StoppingAsync(CancellationToken.None);
+    await provider.DisposeAsync();
+
+    await Assert.That(async () => await flush.StoppedAsync(CancellationToken.None)).ThrowsNothing()
+      .Because("a stop that finishes after the host was disposed must not resolve anything from the disposed provider");
+    await Assert.That(flushes).IsEmpty()
+      .Because("the disposed container already disposed, and so flushed, the batchers it owned");
+  }
+
+  /// <summary>
+  /// #1875: two stops of one host (the test host's and the application's own <c>Run</c>) share one flush. The second
+  /// returns the first's result instead of flushing stopped batchers again, so it never needs the provider either.
+  /// </summary>
+  [Test]
+  public async Task ASecondStop_SharesTheFirstFlush_AndFlushesNothingAgainAsync() {
+    var flushes = new ConcurrentQueue<string>();
+    var (services, flush) = _compose(flushes, new ErrorLog());
+
+    var first = flush.StoppedAsync(CancellationToken.None);
+    await first;
+    await services.DisposeAsync();
+    var second = flush.StoppedAsync(CancellationToken.None);
+
+    await Assert.That(ReferenceEquals(second, first)).IsTrue()
+      .Because("every stop of the host awaits the one flush the first stop started");
+    await Assert.That(string.Join(",", flushes)).IsEqualTo("inbox,outbox");
+  }
+
   [Test]
   public async Task ACanceledFlush_IsNotSwallowedAsync() {
     var flushes = new ConcurrentQueue<string>();

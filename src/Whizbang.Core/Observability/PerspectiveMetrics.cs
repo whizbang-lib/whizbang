@@ -121,6 +121,18 @@ public sealed class PerspectiveMetrics {
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public PassiveCounter<long> RewindsFailed { get; }
 
+  /// <summary>
+  /// Late events an ephemeral perspective dropped instead of rewinding for them, because no snapshot floor preceded them
+  /// and the bodies a replay would read were reaped. Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// Each straggler is counted once: its work is retired when it is dropped, so no later claim finds it again (#1862).
+  /// A rising count says late events are arriving outside the perspective's reorder window, which a snapshot cadence
+  /// or grace period wide enough to cover them would turn back into rewinds.
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public PassiveCounter<long> StragglersDropped { get; }
+
   /// <summary>Rewinds running right now (observable gauge).</summary>
   private long _rewindsInFlightValue;
 
@@ -172,6 +184,8 @@ public sealed class PerspectiveMetrics {
     Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
     RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");
     RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
+    StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
+      description: "Late events an ephemeral perspective dropped instead of rewinding for them");
 
     // Pinned at the concurrency limit means rewinds are queueing behind it, which no counter shows.
     meter.CreateObservableGauge("whizbang.perspective.rewinds_in_flight",
