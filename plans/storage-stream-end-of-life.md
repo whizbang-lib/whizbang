@@ -135,8 +135,30 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S4. P1: developer-driven finalization and sealing
 
-**Status (2026-10-24):** open. `src/` has no `IStreamFinalizer`, `[TerminalEvent]` or `StreamSealedException`.
-Depends on S3.
+**Status (2026-10-29):** implemented on `feat/1733-stream-sealing` (#1733), on top of storage bundle 9 (S3 and S7).
+Migration `266_SealedStreamsRefuseAppends.sql` (267, also reserved, is unused). Decisions taken in the slice:
+
+- **The reason** is a new column, `wh_stream_lifecycle.sealed_reason`, written with `sealed_at` and never changed after.
+  A terminal event writes `Terminal event <type> (event <id>)`. The seal is `sealed_at`, not the state: an archived
+  stream stays `Archived` when finalized, and `wh_restore_archived_stream` (copied from 262) now returns a sealed stream
+  to `Sealed` rather than `Active`.
+- **`[TerminalEvent]`** is registered by the message catalog generator (`TerminalEvents.Register` in its module
+  initializer, plus `IsTerminal` on the catalog entry for the receive path) and stamped as `EventFlags.Terminal`
+  (`1 << 6`); `_wh_event_flags_from_names` (copied from 232) reads the name. Inherited; ignored on a command.
+- **The refusal** sits in the outbox and inbox emit chains and in `wh_append_event`, under the stream lock. A direct
+  append raises `WHS01` (`StreamSealedException` on both drivers); the chains dead-letter the refused event alone
+  (`MessageFailureReason.StreamSealed`, 25, held for review) and store the rest, unlike the tombstone's `WHA01` trigger,
+  which fails the whole batch. An outbox write is dead-lettered even when its caller awaits the flush. An event after a
+  terminal event in the same write is refused.
+- **Ephemeral streams** are never sealed: they have no ledger row, finalizing one returns `NothingToSeal`, and the
+  terminal flag on an ephemeral event does nothing.
+- **Cost:** one probe per batch of `idx_stream_lifecycle_sealed` (partial on `sealed_at`, holding only sealed streams);
+  measured in `StreamSealingEmitCostScenarioTests` (numbers in the docs page).
+
+Open for later slices: S5 (scheduling the disposition of a sealed stream), S12 (closing the books seals through
+`IStreamFinalizer`). Docs: `stream-end-of-life.md#sealing-a-stream` and `event-streams.md` (docs branch `docs/1733`).
+
+Original slice text:
 
 - **Change.** `IStreamFinalizer.FinalizeAsync(streamId, reason)` and a declarative
   `[TerminalEvent]` attribute on an event type (generator-registered, no reflection). Finalizing

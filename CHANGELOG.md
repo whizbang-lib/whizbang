@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ephemeral, compaction-origin and stream-less events get no row; a purge removes it. Existing streams are seeded by a
   batched, resumable, idempotent backfill gated on `stream_lifecycle_backfill_version`, driven by the new
   `stream-lifecycle-backfill` maintenance step on both drivers.
+- **A stream can be sealed, and a sealed stream refuses every append (#1733, WS-3 S4).** `IStreamFinalizer.FinalizeAsync
+  (streamId, reason)` (registered by both Postgres drivers) seals a stream: its lifecycle row becomes `Sealed` with
+  `sealed_at` and the new `sealed_reason`. Finalizing is idempotent (a sealed stream keeps its first seal), requires a
+  reason, refuses the empty stream id, and has nothing to seal on a stream with no Sourced event (ephemeral streams end by
+  their time to live). An event type declared `[TerminalEvent]` (registered by the message catalog generator and stamped
+  as `EventFlags.Terminal`, bit 64, on the dispatch, receive and direct-append paths) seals its stream in the statement
+  that stores it, and an event after it in the same write is refused. A direct append to a sealed stream throws
+  `StreamSealedException` (stream id, sealed at, reason) on both drivers; an outbox or inbox write dead-letters only the
+  refused event with the new reason `StreamSealed` (25, held for review) and stores the rest of the batch. A restore
+  returns a sealed stream to `Sealed`. Migration 266; the append path pays one probe of a partial index holding only the
+  sealed streams (COST_LINE).
 - **Archived streams leave the hot event store through a pluggable `IArchiveStore`, with a Postgres-table store built in
   (#1736).** `WriteAsync(ArchiveBatch)` archives one stream's prefix (through the gated prefix truncate and all its
   guards) or the whole stream, copying then truncating in one transaction, so a failure leaves the stream fully hot.

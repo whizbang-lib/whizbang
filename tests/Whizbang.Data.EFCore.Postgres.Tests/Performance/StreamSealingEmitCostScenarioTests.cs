@@ -27,9 +27,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// not the refusal path. A perspective subscribes to the event, so the chain does its whole job.
 /// </para>
 /// <para>
-/// Blocks are counted per table over the call. The check reads only <c>wh_stream_lifecycle</c>'s
-/// <c>idx_stream_lifecycle_sealed</c>, so its cost is the difference in the ledger's blocks between the two sides. The
-/// server's execution time from <c>EXPLAIN ANALYZE</c> is reported beside them and gates nothing.
+/// Blocks are counted per table over the call, and the check's own probe is measured on its own with
+/// <c>EXPLAIN (ANALYZE, BUFFERS)</c>, because the ledger's block counts move between rounds by more than the probe costs.
+/// The server's execution time from <c>EXPLAIN ANALYZE</c> is reported beside them and gates nothing.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#what-sealing-costs</docs>
@@ -88,9 +88,7 @@ public class StreamSealingEmitCostScenarioTests : EFCoreTestBase {
     }
     await _executeAsync(conn, withCheck);
 
-    foreach (var (shape, pick, streams) in new (string, Func<Shapes, Shape>, int)[] {
-      ("existing", s => s.Existing, WARM_STREAMS), ("new", s => s.New, EVENTS),
-    }) {
+    foreach (var (shape, pick) in new (string, Func<Shapes, Shape>)[] { ("existing", s => s.Existing), ("new", s => s.New) }) {
       var a = after.ConvertAll(s => pick(s));
       var b = before.ConvertAll(s => pick(s));
       report.Measure($"seal_check.{shape}_streams.blocks_before", _median(b, x => x.Blocks), "blocks/batch");
@@ -100,8 +98,17 @@ public class StreamSealingEmitCostScenarioTests : EFCoreTestBase {
       report.Measure($"seal_check.{shape}_streams.ms_before", _median(b, x => x.ExecutionMs), "ms/batch");
       report.Measure($"seal_check.{shape}_streams.ms_after", _median(a, x => x.ExecutionMs), "ms/batch");
 
-      var checkBlocks = _median(a, x => x.LedgerBlocks) - _median(b, x => x.LedgerBlocks);
-      await Assert.That(checkBlocks).IsLessThanOrEqualTo(2.0 * streams)
+    }
+
+    // The check alone, measured exactly: the chain's probe for each batch shape, with its buffers counted by the server.
+    // The ledger's block counts above move by a few dozen blocks between rounds on their own (each round appends to
+    // other streams), which hides a cost this small; this isolates it.
+    foreach (var (shape, streams) in new (string, Guid[])[] {
+      ("existing", warm[0]), ("new", [.. Enumerable.Range(0, EVENTS).Select(_ => (Guid)TrackedGuid.New())]),
+    }) {
+      var probe = await _probeBuffersAsync(conn, streams);
+      report.Measure($"seal_check.{shape}_streams.probe_blocks", probe, "blocks/batch");
+      await Assert.That(probe).IsLessThanOrEqualTo(2L * streams.Length)
         .Because("the check probes an index of the sealed streams once per stream in the batch, never per event and never the event store");
     }
     Console.WriteLine(report.Render());
@@ -189,6 +196,20 @@ public class StreamSealingEmitCostScenarioTests : EFCoreTestBase {
     var plan = (string)(await emit.ExecuteScalarAsync())!;
     using var json = JsonDocument.Parse(plan);
     return json.RootElement[0].GetProperty("Execution Time").GetDouble();
+  }
+
+  /// <summary>The buffers the chain's sealed-stream probe reads for these streams, from EXPLAIN (ANALYZE, BUFFERS).</summary>
+  private static async Task<long> _probeBuffersAsync(NpgsqlConnection conn, Guid[] streams) {
+    await using var probe = conn.CreateCommand();
+    probe.CommandText = """
+      EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+      SELECT EXISTS (SELECT 1 FROM wh_stream_lifecycle l WHERE l.stream_id = ANY(@streams) AND l.sealed_at IS NOT NULL)
+      """;
+    probe.Parameters.AddWithValue(nameof(streams), NpgsqlDbType.Array | NpgsqlDbType.Uuid, streams);
+    var plan = (string)(await probe.ExecuteScalarAsync())!;
+    using var json = JsonDocument.Parse(plan);
+    var top = json.RootElement[0].GetProperty("Plan");
+    return top.GetProperty("Shared Hit Blocks").GetInt64() + top.GetProperty("Shared Read Blocks").GetInt64();
   }
 
   /// <summary>The outbox emit chain exactly as the named migration wrote it.</summary>
