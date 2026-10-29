@@ -57,8 +57,9 @@ public class UserScenarioReproductionTests {
     // Create registry that reads from SyncEventTypeRegistrations
     var typeRegistry = new TrackedEventTypeRegistry();
 
-    // Synchronization signals - proper coordination instead of Task.Delay
-    var syncWaitingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    // The perspective marks the event processed only once the awaiter is actually waiting on it. Signaling before
+    // WaitForStreamAsync let a slow runner mark it first, so the awaiter correctly found nothing pending.
+    var waitingTracker = new WaitRegisteredSyncEventTracker(singletonTracker);
     var markProcessedCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var syncCompleted = new TaskCompletionSource<SyncResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -96,12 +97,9 @@ public class UserScenarioReproductionTests {
         coordinator: mockCoordinator,
         clock: new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
         logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
-        syncEventTracker: singletonTracker,
+        syncEventTracker: waitingTracker,
         tracker: NullScopedEventTracker.Instance,
         lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-      // Signal that sync is about to start waiting
-      syncWaitingStarted.SetResult();
 
       var result = await awaiter.WaitForStreamAsync(
         typeof(UserScenarioPerspectiveC),
@@ -116,11 +114,8 @@ public class UserScenarioReproductionTests {
 
     // === PERSPECTIVE: Process Event B and call MarkProcessed ===
     var perspectiveTask = Task.Run(async () => {
-      // Wait until sync task has started waiting before processing
-      await syncWaitingStarted.Task;
-
-      // Small yield to ensure awaiter has started its polling loop
-      await Task.Yield();
+      // Wait until the awaiter has registered its wait on the tracker
+      await waitingTracker.WaitRegistered;
 
       // Simulate what PerspectiveWorker does - call MarkProcessedByPerspective with the event ID
       // CRITICAL: This must use the SAME eventId that was tracked
@@ -299,4 +294,55 @@ internal sealed class MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, 
   public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
     return Task.FromResult<PerspectiveCursorInfo?>(null);
   }
+}
+
+/// <summary>
+/// Forwards to a real tracker and signals once an awaiter has registered a wait for a perspective's events, so a
+/// test can mark them processed only while someone is actually waiting.
+/// </summary>
+internal sealed class WaitRegisteredSyncEventTracker(ISyncEventTracker inner) : ISyncEventTracker {
+  private readonly TaskCompletionSource _waitRegistered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public Task WaitRegistered => _waitRegistered.Task;
+
+  public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) =>
+    inner.TrackEvent(eventType, eventId, streamId, perspectiveName);
+
+  public IReadOnlyList<TrackedSyncEvent> GetPendingEvents(Guid streamId, string perspectiveName, Type[]? eventTypes = null) =>
+    inner.GetPendingEvents(streamId, perspectiveName, eventTypes);
+
+  public void MarkProcessed(IEnumerable<Guid> eventIds) => inner.MarkProcessed(eventIds);
+
+  public IReadOnlyList<Guid> GetAllTrackedEventIds() => inner.GetAllTrackedEventIds();
+
+  public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null,
+      CancellationToken cancellationToken = default) =>
+    inner.WaitForEventsAsync(eventIds, timeout, awaiterId, cancellationToken);
+
+  public void MarkProcessedByPerspective(IEnumerable<Guid> eventIds, string perspectiveName) =>
+    inner.MarkProcessedByPerspective(eventIds, perspectiveName);
+
+  public Task<bool> WaitForPerspectiveEventsAsync(IReadOnlyList<Guid> eventIds, string perspectiveName, TimeSpan timeout,
+      Guid? awaiterId = null, CancellationToken cancellationToken = default) {
+    // The inner tracker registers the wait before returning its task, so the signal follows the registration.
+    var wait = inner.WaitForPerspectiveEventsAsync(eventIds, perspectiveName, timeout, awaiterId, cancellationToken);
+    _waitRegistered.TrySetResult();
+    return wait;
+  }
+
+  public Task<bool> WaitForAllPerspectivesAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null,
+      CancellationToken cancellationToken = default) =>
+    inner.WaitForAllPerspectivesAsync(eventIds, timeout, awaiterId, cancellationToken);
+
+  public void UnregisterAwaiter(Guid awaiterId) => inner.UnregisterAwaiter(awaiterId);
+
+  public int CleanupStaleEntries(TimeSpan maxAge) => inner.CleanupStaleEntries(maxAge);
+
+  public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) =>
+    inner.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
+
+  public void MarkApplied(IEnumerable<Guid> eventIds, string perspectiveName) => inner.MarkApplied(eventIds, perspectiveName);
+
+  public Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) =>
+    inner.WhenAppliedAsync(eventId, perspectiveName, cancellationToken);
 }
