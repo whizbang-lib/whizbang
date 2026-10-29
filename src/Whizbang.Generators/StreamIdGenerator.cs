@@ -183,7 +183,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-        PropertyLocation: LocationUtilities.FirstOrNone(property)
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol)
     );
   }
 
@@ -281,7 +282,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-        PropertyLocation: LocationUtilities.FirstOrNone(property)
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol)
     );
   }
 
@@ -303,8 +305,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
-    _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
-    _reportGenerateStreamIdOnInitOnly(context, eventsWithStreamId, commandsWithStreamId);
+    // Most-derived first in every region that dispatches on type, so a base type's check never shadows a derived
+    // type's own [StreamId] (#1893).
+    var events = _mostDerivedFirst(eventsWithStreamId);
+    var commands = _mostDerivedFirst(commandsWithStreamId);
+    var composites = _mostDerivedFirst(compositesWithStreamId);
+
+    _reportStreamIdDiagnostics(context, events, eventsWithoutStreamId);
+    _reportGenerateStreamIdOnInitOnly(context, events, commands);
 
     // Load and prepare template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -315,25 +323,50 @@ public class StreamIdGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
     // Generate GetGenerationPolicy dispatch cases (events AND commands)
-    template = _generateGenerationPolicyRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateGenerationPolicyRegion(template, events, commands);
 
     // Generate event dispatch and extractors
-    template = _generateEventRegions(template, eventsWithStreamId);
+    template = _generateEventRegions(template, events);
 
     // Generate command dispatch and extractors
-    template = _generateCommandRegions(template, context, commandsWithStreamId);
+    template = _generateCommandRegions(template, context, commands);
 
     // Generate the object-typed (OTHER) regions for composites — IMessage-not-IEvent types carrying [StreamId].
-    template = _generateOtherRegions(template, compositesWithStreamId);
+    template = _generateOtherRegions(template, composites);
 
     // Generate SetStreamId dispatch cases
-    template = _generateSetStreamIdRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateSetStreamIdRegion(template, events, commands);
 
     // Generate [ModuleInitializer] registration code
-    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId, compositesWithStreamId);
+    template = _generateModuleInitializerRegion(template, events, commands, composites);
 
     context.AddSource("StreamIdExtractors.g.cs", template);
   }
+
+  /// <summary>
+  /// How many base types <paramref name="typeSymbol"/> has: zero for a type with none, one for a direct subclass of
+  /// <see cref="object"/>, and one more for each further level.
+  /// </summary>
+  private static int _inheritanceDepth(INamedTypeSymbol typeSymbol) {
+    var depth = 0;
+    for (var baseType = typeSymbol.BaseType; baseType is not null; baseType = baseType.BaseType) {
+      depth++;
+    }
+    return depth;
+  }
+
+  /// <summary>
+  /// Orders events or composites for type dispatch: deepest inheritance first, then by type name, so a base type's
+  /// <c>is</c> check comes after every type derived from it and the generated file does not depend on discovery order.
+  /// </summary>
+  private static ImmutableArray<StreamIdInfo> _mostDerivedFirst(ImmutableArray<StreamIdInfo> infos) =>
+    infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.EventType, StringComparer.Ordinal).ToImmutableArray();
+
+  /// <summary>
+  /// Orders commands for type dispatch: deepest inheritance first, then by type name (see the event overload).
+  /// </summary>
+  private static ImmutableArray<CommandStreamIdInfo> _mostDerivedFirst(ImmutableArray<CommandStreamIdInfo> infos) =>
+    infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.CommandType, StringComparer.Ordinal).ToImmutableArray();
 
   /// <summary>
   /// Reports diagnostics for events with and without stream keys.

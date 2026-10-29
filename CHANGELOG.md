@@ -814,6 +814,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A derived message type's own `[StreamId]` is no longer shadowed by its base type's.** The generated stream id
+  extractors dispatch through a chain of `if (message is T)` checks, and emitted them in discovery order, which follows
+  file and namespace order. When a base type with a `[StreamId]` was discovered before a derived type declaring its
+  own (plain or `Override = true`), the base's check matched every derived instance first, so `Resolve`,
+  `TryResolveAsGuid`, `ExtractStreamId`, `SetStreamId` and the `[GenerateStreamId]` policy lookup all used the
+  inherited property and the derived one was never read or written. Whether a contract resolved correctly depended
+  on how its namespace was spelled. Every region that dispatches on type now runs most-derived first (inheritance
+  depth descending, then the type name, so the generated file no longer depends on discovery order), for commands,
+  events and composites alike. **Behavior change:** a derived type that was shadowed now resolves and sets by its own
+  `[StreamId]` property, as WHIZ006 and the documentation already said it did. A caller that set only the inherited
+  property on such a type and relied on it being the stream id now gets the derived property's value (often empty), so
+  its messages route to a different stream; set the derived property, or remove its `[StreamId]` when the inherited one
+  is meant (Fixes #1893)
 - **A failed pending-events statistics query is reported instead of swallowed.** The perspective worker refreshes
   `whizbang.perspective.pending_events` about once a minute and discarded every failure of the query behind it
   (`IWorkCoordinator.GatherStatisticsAsync`: a timeout, a missing permission, a function a partial migration never
