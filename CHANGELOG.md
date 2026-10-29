@@ -54,6 +54,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger, migration 260). New API: `IArchiveStore`, `ArchiveBatch`, `ArchiveLocator`,
   `ArchiveCompression`, `ArchiveStatus`, `ArchiveWriteResult`, `ArchiveRestoreResult`, `PostgresTableArchiveStore`, and
   the scope, aggregate, created-at and flags properties of `ArchivedEvent`.
+- **Archived streams can leave the database for Azure Blob Storage: the new `Whizbang.Archive.AzureBlob` package
+  (#1737).** `AddWhizbangAzureBlobArchive` (from `Whizbang:Archive:AzureBlob`, or a delegate) replaces the
+  Postgres-table store in either registration order. A write moves the batch with the table store's SQL and every guard,
+  uploads the events as Brotli-compressed JSON-lines objects (quality 4 and at most 10,000 events per object by default),
+  writes one `wh_archive_manifest` row per object and only then commits, so a failed upload or a crash before the commit
+  leaves the stream fully hot; an object's name carries its SHA-256, so a retry rewrites the same object instead of
+  adding a second. Reads, restores and deletes go through the manifest only, every object is checked against its
+  recorded length and SHA-256 before it is decoded (`ArchiveObjectCorruptedException`), restore and delete reuse the
+  table store's SQL, and archives the table store wrote stay readable and move into objects on the stream's next write.
+  The account is a `ServiceUri` with the host's registered `TokenCredential` (no secret in configuration) or a
+  connection string for Azurite. Migration 268 adds the manifest, whose rows go with their stream's lifecycle row, so a
+  purge removes them. Both Postgres drivers now register `PostgresArchiveConnection`, how an archive store reaches the
+  service's database. New API: `AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
+  `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `PostgresArchiveConnection`.
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
   `pg_stats.correlation` was measured with each candidate seeded in its production write order
   (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle

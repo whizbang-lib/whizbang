@@ -233,8 +233,19 @@ which fails the whole emit-chain batch). Docs: `v1.0.0/fundamentals/events/archi
 
 ### S8. B3: Azure Blob archive store (production default)
 
-**Status (2026-10-24):** open. No `Whizbang.Archive.AzureBlob` package. Depends on S7. Decision 3 (#1673) puts
-Brotli first, not zstd as written below.
+**Status (2026-10-29):** implemented on `feat/1737-blob-archive` (#1737), on top of the S7 bundle. Migration
+`268_ArchiveManifest.sql`; package `Whizbang.Archive.AzureBlob` (`AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
+`AddWhizbangAzureBlobArchive`, `ArchiveObjectCorruptedException`); both drivers register `PostgresArchiveConnection`.
+As built, differing from the plan below: Brotli (decision 3), quality 4 by default (measured; 3 was a zstd level); the
+"two phases" are one database transaction (262's `wh_archive_stream` stages and truncates, the objects upload, the
+manifest rows are written, then the commit), which makes a crash before the commit leave the stream fully hot and an
+uploaded object unreferenced, and a retry rewrites the same content-addressed object; the manifest records each
+object's locator, range, count, byte length, SHA-256 and generation (checked on every read), with `ON DELETE CASCADE`
+from `wh_stream_lifecycle` so a purge removes it; restore and delete stage objects back through `wh_event_archive` and
+reuse 262's SQL; archives the table store wrote stay readable and move into objects on the next write. The account is
+`ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Open: a purge removes the
+manifest rows but not the objects (the purge cannot reach blob storage); no access-tier setting yet. Docs:
+`archive-store.md#the-azure-blob-store` (docs branch `docs/1737`).
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned
   in `Directory.Packages.props`). One blob per archive chunk: JSONL, zstd-compressed, with a manifest
