@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Workers;
 
@@ -337,7 +338,7 @@ public sealed partial class MaintenanceWorker(
     // returns to the free space map but never to the OS, and a dropped column leaves bytes that
     // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
     // Rewrite startup step performs it, in the window it should always have had.
-    await _rewriteBloatedTablesAsync(coordinator, ct);
+    await _rewriteBloatedTablesAsync(coordinator, sp, ct);
 
     // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
     // maintenance cycle so backings that don't implement it (default no-op
@@ -745,7 +746,7 @@ public sealed partial class MaintenanceWorker(
     return released;
   }
 
-  private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+  private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     IReadOnlyList<Whizbang.Core.Messaging.TableRewriteCandidate> candidates;
     try {
       candidates = await coordinator.GetTablesNeedingRewriteAsync(ct);
@@ -756,23 +757,61 @@ public sealed partial class MaintenanceWorker(
       return;
     }
 
+    // The catalog estimate shortlists; while pgstattuple is Ready, pgstattuple_approx confirms before a table is
+    // queued (#1807). Without it, the estimate queues the table as it always has.
+    var approxReady = ApproxBloatMeasurement.IsReady(sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>());
+    var measured = new Dictionary<string, Whizbang.Core.Observability.BloatMeasurement>(StringComparer.Ordinal);
     foreach (var c in candidates) {
       if (ct.IsCancellationRequested) {
         return;
       }
-      // Report either way — an operator who never looks at this still gets the bloat gauge.
-      LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
       if (c.Requested) {
-        continue;   // already on the books
+        // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
+        // and a row queued with a measurement keeps reporting it while it waits.
+        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
+        if (c.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
+          measured[c.TableName] = new(c.BloatRatio, c.Method);
+        }
+        continue;
       }
       try {
-        await coordinator.RequestTableRewriteAsync(c.TableName, ct);
+        await _recordRewriteAsync(coordinator, c, approxReady, measured, ct);
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {
         LogRewriteFailed(_logger, c.TableName, ex);
       }
     }
+    sp.GetService<Whizbang.Core.Observability.TableStatisticsMetrics>()?.UpdateMeasuredTableBloat(measured);
+  }
+
+  /// <summary>
+  /// Queues one shortlisted table: from its estimate when pgstattuple is not Ready or the measurement has no answer,
+  /// otherwise with its pgstattuple_approx measurement, and not at all when that measurement is under the threshold.
+  /// </summary>
+  private async Task _recordRewriteAsync(
+      IWorkCoordinator coordinator, Whizbang.Core.Messaging.TableRewriteCandidate candidate, bool approxReady,
+      Dictionary<string, Whizbang.Core.Observability.BloatMeasurement> measured, CancellationToken ct) {
+    var approx = approxReady
+      ? await ApproxBloatMeasurement.TryMeasureAsync(coordinator, candidate.TableName, _logger, ct)
+      : null;
+    if (approx is not { } ratio) {
+      LogRewriteNeeded(_logger, candidate.TableName, candidate.BloatRatio);
+      await coordinator.RequestTableRewriteAsync(candidate.TableName, ct);
+      return;
+    }
+
+    var measurement = new Whizbang.Core.Observability.BloatMeasurement(
+      ratio, Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+    measured[candidate.TableName] = measurement;
+    ApproxBloatMeasurement.ReportDisagreement(_logger, candidate.TableName, candidate.BloatRatio, measurement);
+    var method = measurement.Method.ToValue();
+    if (ratio < candidate.RewriteThreshold) {
+      LogRewriteNotConfirmed(_logger, candidate.TableName, candidate.BloatRatio, ratio, method, candidate.RewriteThreshold);
+      return;
+    }
+    LogRewriteNeededMeasured(_logger, candidate.TableName, ratio, method, candidate.BloatRatio);
+    await coordinator.RequestMeasuredTableRewriteAsync(candidate.TableName, measurement, candidate.BloatRatio, ct);
   }
 
   private async Task _reapDrivenEphemeralSnapshotAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
@@ -1021,6 +1060,14 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; Whizbang:Workers:Maintenance:TableRewriteStrategy decides what rewrites it: PgSqueeze rewrites it online from the maintenance cycle, and otherwise the post-ready Rewrite step performs it on the next boot as AllowTableRewrite permits (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
+
+  [LoggerMessage(EventId = 60, Level = LogLevel.Information,
+    Message = "Table {Table} was estimated at {Estimate}x but measures {Measured}x by {Method}, under the rewrite threshold of {Threshold}x; it is not queued")]
+  static partial void LogRewriteNotConfirmed(ILogger logger, string table, double estimate, double measured, string method, double threshold);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Table {Table} holds {Ratio}x the space its live rows need, measured by {Method} (estimated at {Estimate}x). Autovacuum cannot reclaim this; a rewrite can. Recorded; Whizbang:Workers:Maintenance:TableRewriteStrategy decides what rewrites it: PgSqueeze rewrites it online from the maintenance cycle, and otherwise the post-ready Rewrite step performs it on the next boot as AllowTableRewrite permits (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+  static partial void LogRewriteNeededMeasured(ILogger logger, string table, double ratio, string method, double estimate);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
   static partial void LogRewriteFailed(ILogger logger, string table, Exception ex);

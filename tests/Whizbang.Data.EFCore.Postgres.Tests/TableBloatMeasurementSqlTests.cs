@@ -129,6 +129,17 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Approx_OnAFrameworkTableThatDoesNotExist_HasNoAnswerAsync(CancellationToken cancellationToken) {
+    await _createPgstattupleAsync(cancellationToken);
+    await using var ctx = CreateDbContext();
+
+    var approx = await _coordinator(ctx).MeasureTableBloatAsync("wh_no_such_table", BloatMeasurementMethod.Approx, cancellationToken);
+
+    await Assert.That(approx.HasValue).IsFalse()
+      .Because("a table that is not in this schema has nothing to measure, which confirms nothing and rejects nothing");
+  }
+
+  [Test]
   public async Task Exact_IsNeverRunAsync(CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
 

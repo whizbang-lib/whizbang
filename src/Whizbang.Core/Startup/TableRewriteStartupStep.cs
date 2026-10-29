@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
@@ -126,20 +127,28 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       return new StartupStepReport(StartupStepOutcome.Skipped, "no rewrites owed");
     }
 
+    // While pgstattuple is Ready, "did it shrink" is answered by pgstattuple_approx, the measurement that queued the
+    // table, rather than by the rewriter's catalog estimate (#1807).
+    var approxReady = ApproxBloatMeasurement.IsReady(_capabilities);
     var rewritten = 0;
     var leftQueued = 0;
     foreach (var candidate in candidates) {
       cancellationToken.ThrowIfCancellationRequested();
-      var after = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
-      if (after is null || after >= candidate.BloatRatio) {
-        // No improvement — leave the request in place so the next boot retries, and say so,
+      var ratio = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
+      var after = await ApproxBloatMeasurement.AfterRewriteAsync(
+        coordinator, candidate.TableName, ratio, approxReady, _logger, cancellationToken).ConfigureAwait(false);
+      var before = candidate.Method.ToValue();
+      var afterMethod = after?.Method.ToValue() ?? "none";
+      if (after is not { } measured || measured.Ratio >= candidate.BloatRatio) {
+        // No improvement: leave the request in place so the next boot retries, and say so,
         // rather than clearing it and reporting success we did not achieve.
         leftQueued++;
-        LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, after ?? -1);
+        LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, before,
+          after?.Ratio ?? -1, afterMethod);
         continue;
       }
       rewritten++;
-      LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, after.Value);
+      LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
       if (candidate.Requested) {
         await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
       }
@@ -165,10 +174,11 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   private const string ONLINE_BUDGET_KEY = "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
-    Message = "Rewrite step: {Table} rewritten, bloat {Before}x -> {After}x")]
-  static partial void LogRewriteDone(ILogger logger, string table, double before, double after);
+    Message = "Rewrite step: {Table} rewritten, bloat {Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})")]
+  static partial void LogRewriteDone(ILogger logger, string table, double before, string beforeMethod, double after, string afterMethod);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
-    Message = "Rewrite step: {Table} rewrite did not reduce bloat ({Before}x -> {After}x); request left queued")]
-  static partial void LogRewriteIneffective(ILogger logger, string table, double before, double after);
+    Message = "Rewrite step: {Table} rewrite did not reduce bloat ({Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})); request left queued")]
+  static partial void LogRewriteIneffective(
+      ILogger logger, string table, double before, string beforeMethod, double after, string afterMethod);
 }

@@ -4203,7 +4203,10 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 
 /// <summary>A table offered for rewrite, with the measurement that justified offering it.</summary>
 /// <param name="TableName">Unqualified table name.</param>
-/// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
+/// <param name="BloatRatio">
+/// Heap bytes per live row over the expected row width; ~1.0 is lean. For a queued table measured before it was queued,
+/// the measured ratio, which the queue is ordered by; otherwise the catalog estimate. <see cref="Method"/> says which.
+/// </param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
   /// <summary>

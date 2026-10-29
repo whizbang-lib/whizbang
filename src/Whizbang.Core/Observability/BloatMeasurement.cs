@@ -56,15 +56,23 @@ public static class BloatMeasurementMethods {
   /// <param name="method">The method.</param>
   /// <returns><c>estimate</c>, <c>approx</c> or <c>exact</c>.</returns>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="method"/> is not a defined value.</exception>
-  public static string ToValue(this BloatMeasurementMethod method) => throw new NotImplementedException();
-
+  public static string ToValue(this BloatMeasurementMethod method) => method switch {
+    BloatMeasurementMethod.Estimate => ESTIMATE,
+    BloatMeasurementMethod.Approx => APPROX,
+    BloatMeasurementMethod.Exact => EXACT,
+    _ => throw new ArgumentOutOfRangeException(nameof(method), method, "Not a bloat measurement method."),
+  };
 
   /// <summary>The method a stored name stands for; a missing name is <see cref="BloatMeasurementMethod.Estimate"/>.</summary>
   /// <param name="value">The stored name, or null for a ratio recorded before the method was.</param>
   /// <returns>The method.</returns>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="value"/> is not one of the stable names.</exception>
-  public static BloatMeasurementMethod Parse(string? value) => throw new NotImplementedException();
-
+  public static BloatMeasurementMethod Parse(string? value) => value switch {
+    null or ESTIMATE => BloatMeasurementMethod.Estimate,
+    APPROX => BloatMeasurementMethod.Approx,
+    EXACT => BloatMeasurementMethod.Exact,
+    _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Not a bloat measurement method name."),
+  };
 }
 
 /// <summary>A table's bloat ratio and how it was obtained.</summary>

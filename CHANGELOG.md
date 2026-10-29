@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
+  The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
+  the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate
+  puts over the rewrite threshold with `pgstattuple_approx` before it enters the rewrite queue: at or over the threshold
+  it is queued with the measured ratio, under it it is not queued and the log gives both figures, and a measurement
+  more than 25% from its estimate is logged with both. The queue is taken largest measured ratio first, and the
+  re-measure after a rewrite (online rewrite and the boot `Rewrite` step) uses `pgstattuple_approx` too. The exact
+  `pgstattuple` scan never runs automatically, and without pgstattuple nothing changes. Migration 254 adds
+  `wh_table_rewrite_measurements` (the queued table's ratio, its `method` of `estimate`, `approx` or `exact`, and the
+  estimate it confirmed; a queued table without a row reads as `estimate`), `wh_measure_table_bloat_approx` and
+  `wh_request_measured_table_rewrite`, and `wh_clear_table_rewrite` removes the measurement with the request. The bloat
+  gauge gains a `method` tag (`estimate`, and a second `approx` series per measured table). New API:
+  `BloatMeasurementMethod`, `BloatMeasurement`, `IWorkCoordinator.MeasureTableBloatAsync` and
+  `RequestMeasuredTableRewriteAsync`, `TableRewriteCandidate.Method` and `RewriteThreshold`, and
+  `TableStatisticsMetrics.UpdateMeasuredTableBloat`.
+
 - **Online table rewrite through pg_squeeze, driven by the maintenance cycle (#1743).** With
   `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze`, the `online-table-rewrite` maintenance step rewrites
   the tables queued in `pending_table_rewrites` through `squeeze.squeeze_table`, largest bloat ratio first, within

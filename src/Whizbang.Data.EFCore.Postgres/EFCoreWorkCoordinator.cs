@@ -1215,14 +1215,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "wh_tables_needing_rewrite");
+    var measurements = BuildSchemaQualifiedName(schema, "wh_table_rewrite_measurements");
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    // The heap size is what an online rewrite copies; the per-cycle budget is spent by it.
-    cmd.CommandText = "SELECT r.table_name, r.bloat_ratio, r.requested, "
-      + $"COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0) FROM {fn}() r";
+    // The heap size is what an online rewrite copies; the per-cycle budget is spent by it. A queued table measured
+    // before it was queued (#1807) carries that measurement and its method, and the queue is taken largest ratio
+    // first by it; a queued table without one, and every table not queued, carries the estimate. The threshold is the
+    // one the scan compared the estimate with, so a measurement is held to the same line.
+    cmd.CommandText = "SELECT r.table_name, COALESCE(m.bloat_ratio, r.bloat_ratio), r.requested, "
+      + "COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0), m.method, "
+      + $"COALESCE((SELECT s.setting_value FROM {settings} s WHERE s.setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC "
+      + $"FROM {fn}() r LEFT JOIN {measurements} m ON r.requested AND m.table_name = r.table_name "
+      + "ORDER BY 2 DESC, 1";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("prefix", BuildSchemaQualifiedName(schema, ""));
     var results = new List<TableRewriteCandidate>();
@@ -1230,6 +1238,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       results.Add(new TableRewriteCandidate(reader.GetString(0), (double)reader.GetDecimal(1), reader.GetBoolean(2)) {
         SizeBytes = reader.GetInt64(3),
+        Method = BloatMeasurementMethods.Parse(reader.IsDBNull(4) ? null : reader.GetString(4)),
+        RewriteThreshold = (double)reader.GetDecimal(5),
       });
     }
     return results;
@@ -1338,15 +1348,62 @@ public class EFCoreWorkCoordinator<TDbContext>(
         .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)).ConnectionString;
 
   /// <inheritdoc />
-  public Task<double?> MeasureTableBloatAsync(
-      string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  /// <remarks>
+  /// The estimate is the catalog read the rewrites re-measure with. The approximate measurement calls
+  /// <c>wh_measure_table_bloat_approx</c>, which runs <c>pgstattuple_approx</c> in whichever schema the extension lives
+  /// in and raises when it is not installed. The exact <c>pgstattuple</c> scan is refused: the library never runs it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
+  public async Task<double?> MeasureTableBloatAsync(
+      string tableName, BloatMeasurementMethod method, CancellationToken cancellationToken = default) {
+    _requireFrameworkTable(tableName);
+    if (method is not (BloatMeasurementMethod.Estimate
+        or BloatMeasurementMethod.Approx)) {
+      throw new NotSupportedException(
+        $"Bloat is measured by estimate or approx only; {method} (the full pgstattuple scan) is never run by the library.");
+    }
+
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    if (method == BloatMeasurementMethod.Estimate) {
+      return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+    }
+
+    var fn = BuildSchemaQualifiedName(schema, "wh_measure_table_bloat_approx");
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@t)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("t", tableName);
+    var scalar = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return scalar is decimal ratio ? (double)ratio : null;
+  }
 
   /// <inheritdoc />
-  public Task RequestMeasuredTableRewriteAsync(
-      string tableName, Whizbang.Core.Observability.BloatMeasurement measurement, double estimatedRatio,
-      CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs:AMeasuredRequest_IsQueuedWithItsRatioAndMethod_AndTheQueueOrdersByTheMeasuredRatioAsync</tests>
+  public async Task RequestMeasuredTableRewriteAsync(
+      string tableName, BloatMeasurement measurement, double estimatedRatio,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var fn = BuildSchemaQualifiedName(schema, "wh_request_measured_table_rewrite");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@t, @ratio::NUMERIC, @method, @estimate::NUMERIC)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("t", tableName);
+    cmd.Parameters.AddWithValue("ratio", measurement.Ratio);
+    cmd.Parameters.AddWithValue("method", measurement.Method.ToValue());
+    cmd.Parameters.AddWithValue("estimate", estimatedRatio);
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
 
   /// <summary>The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it.</summary>
   private static async Task<double?> _measureRatioAsync(
