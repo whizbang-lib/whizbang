@@ -22,9 +22,17 @@ internal sealed class ArmedTimerClock() : FakeTimeProvider(new DateTimeOffset(20
   /// <summary>Completes once a timer with <paramref name="due"/> has been armed.</summary>
   public async Task WaitForArmedAsync(TimeSpan due, TimeSpan timeout) {
     using var cts = new CancellationTokenSource(timeout);
+    await WaitForArmedAsync(due, cts.Token);
+  }
+
+  /// <summary>
+  /// Completes once a timer with <paramref name="due"/> has been armed, bounded only by <paramref name="cancellationToken"/>
+  /// (the test's own timeout), never by a wall-clock budget of its own.
+  /// </summary>
+  public async Task WaitForArmedAsync(TimeSpan due, CancellationToken cancellationToken) {
     TimeSpan armed;
     do {
-      armed = await _armed.Reader.ReadAsync(cts.Token);
+      armed = await _armed.Reader.ReadAsync(cancellationToken);
     } while (armed != due);
   }
 }

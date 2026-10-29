@@ -20,6 +20,7 @@ namespace Whizbang.Core.Tests.Observability;
 /// Drives every branch of <see cref="NotifyDebounceStatsCollector.ExecuteAsync"/>: the missing-
 /// provider early return, the happy cycle (readings flow into <see cref="NotifyDebounceMetrics"/>),
 /// and the provider-throws → log-and-retry path. Mirrors the TableStatisticsCollector branch tests.
+/// Every wait is on the transition it asserts, on a fake clock, bounded only by the test's own timeout.
 /// </summary>
 /// <docs>operations/observability/metrics#notify-debounce</docs>
 [Category("Core")]
@@ -28,24 +29,30 @@ public class NotifyDebounceStatsCollectorTests {
 
   private static NotifyDebounceMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
+  private static readonly TimeSpan _interval = TimeSpan.FromSeconds(15);
+
   [Test]
-  public async Task NoProvider_LogsAndExitsLoopAsync() {
+  [Timeout(30000)]
+  public async Task NoProvider_LogsAndExitsLoopAsync(CancellationToken cancellationToken) {
     var services = new ServiceCollection();
     var sp = services.BuildServiceProvider();
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
+      logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
+      timeProvider: new ArmedTimerClock());
 
+    // The clock is never advanced, so only the early return can complete the task.
     await worker.StartAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
-      .Because("a missing provider is a config no-op — the collector exits without retrying");
+      .Because("a missing provider is a config no-op: the collector exits without retrying");
   }
 
   [Test]
-  public async Task ProviderRegistered_PopulatesMetrics_ThenWaitsAsync() {
+  [Timeout(30000)]
+  public async Task ProviderRegistered_PopulatesMetrics_ThenWaitsAsync(CancellationToken cancellationToken) {
     var fake = new RecordingProvider {
       ToReturn = [
         new NotifyDebounceKindStats("inbox", 10, 2, 50, 0),
@@ -56,20 +63,28 @@ public class NotifyDebounceStatsCollectorTests {
     services.AddSingleton<INotifyDebounceStatsProvider>(fake);
     var sp = services.BuildServiceProvider();
 
+    var clock = new ArmedTimerClock();
     var metrics = _newMetrics();
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
+      logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
+      timeProvider: clock);
+    var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.CycleCompleted += () => cycled.TrySetResult();
 
+    // Each wait is on the transition asserted: the cycle completing after the cache is written, then the
+    // interval being armed on the fake clock. Only the test's own timeout bounds them.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await fake.Called.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await cycled.Task.WaitAsync(cancellationToken);
+    await clock.WaitForArmedAsync(_interval, cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
-    await Assert.That(fake.CallCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(fake.CallCount).IsEqualTo(1)
+      .Because("one cycle reads once, then waits its interval on the clock before reading again");
     var outbox = metrics.GetForTest("outbox");
     await Assert.That(outbox.HasValue).IsTrue()
       .Because("the collector must feed the provider's readings into the metric cache");
@@ -77,29 +92,40 @@ public class NotifyDebounceStatsCollectorTests {
   }
 
   [Test]
-  public async Task ProviderThrows_LogsAndContinuesLoopAsync() {
+  [Timeout(30000)]
+  public async Task ProviderThrows_LogsAndContinuesLoopAsync(CancellationToken cancellationToken) {
     var fake = new RecordingProvider { ThrowOnNextCall = new InvalidOperationException("simulated db error") };
     var services = new ServiceCollection();
     services.AddSingleton<INotifyDebounceStatsProvider>(fake);
     var sp = services.BuildServiceProvider();
+    var clock = new ArmedTimerClock();
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
+      logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
+      timeProvider: clock);
+    var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.CycleCompleted += () => recovered.TrySetResult();
 
+    // The failed read is logged and the loop arms its interval on the collector's clock instead of
+    // faulting; advancing the clock past it is the only thing that causes the second read.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await fake.Called.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await fake.Called.Task.WaitAsync(cancellationToken);
+    await clock.WaitForArmedAsync(_interval, cancellationToken);
+    clock.Advance(_interval);
+    await recovered.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
-    await Assert.That(fake.CallCount).IsEqualTo(1)
-      .Because("the throw is logged and the loop continues to the delay, not a fault");
+    await Assert.That(fake.CallCount).IsEqualTo(2)
+      .Because("the throw is logged, the loop waits its interval, and the next cycle reads again");
   }
 
   [Test]
-  public async Task ShutdownDuringSchemaWait_ExitsWithoutQueryingTheProviderAsync() {
+  [Timeout(30000)]
+  public async Task ShutdownDuringSchemaWait_ExitsWithoutQueryingTheProviderAsync(CancellationToken cancellationToken) {
     // The gate exists because the state table arrives with a migration. A collector that fell
     // through the gate on shutdown would issue its first query against a schema that may not
     // exist yet -- and log an error for it -- while the host is already tearing down.
@@ -119,10 +145,10 @@ public class NotifyDebounceStatsCollectorTests {
     await worker.StartAsync(cts.Token);
     // Wait on a signal the code under test emits -- StartAsync returning proves nothing, the
     // loop body runs on the thread pool.
-    await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await gate.Entered.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
@@ -137,7 +163,8 @@ public class NotifyDebounceStatsCollectorTests {
   }
 
   [Test]
-  public async Task ProviderThrowsObjectDisposed_LeavesTheLoopInsteadOfRetryingAsync() {
+  [Timeout(30000)]
+  public async Task ProviderThrowsObjectDisposed_LeavesTheLoopInsteadOfRetryingAsync(CancellationToken cancellationToken) {
     // ObjectDisposedException here means the host's service provider is gone -- every later
     // cycle would throw the same way. The generic handler would log a warning every 15 seconds
     // for the remaining life of the process; the dedicated break is what stops that.
@@ -149,12 +176,13 @@ public class NotifyDebounceStatsCollectorTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
+      logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
+      timeProvider: new ArmedTimerClock());
 
-    // No cancellation anywhere: the ONLY thing that can end this task within the timeout is the
-    // ObjectDisposedException break. The log-and-continue arm would sit in a 15-second delay.
+    // No cancellation anywhere: the ONLY thing that can end this task is the ObjectDisposedException
+    // break. The log-and-continue arm would park on an interval the fake clock never reaches.
     await worker.StartAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+    await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue();
     await Assert.That(fake.CallCount).IsEqualTo(1)

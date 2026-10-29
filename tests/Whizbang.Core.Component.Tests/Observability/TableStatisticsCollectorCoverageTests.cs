@@ -34,7 +34,8 @@ public class TableStatisticsCollectorCoverageTests {
   /// the schema it would query against isn't provisioned yet.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_SchemaGateCancelledBeforeReady_ExitsGracefullyWithoutTouchingProviderAsync() {
+  [Timeout(30000)]
+  public async Task ExecuteAsync_SchemaGateCancelledBeforeReady_ExitsGracefullyWithoutTouchingProviderAsync(CancellationToken cancellationToken) {
     var provider = new RecordingProvider();
     var services = new ServiceCollection();
     services.AddSingleton<ITableStatisticsProvider>(provider);
@@ -55,12 +56,12 @@ public class TableStatisticsCollectorCoverageTests {
     // the token is already canceled at dequeue time, and the task then settles Canceled — which
     // satisfies IsCompleted, and leaves CallCount at zero, exactly as a correct early return does.
     // Both assertions below were therefore true of a collector that never ran at all.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+    await gate.Entered.WaitAsync(cancellationToken);
 
     await cts.CancelAsync();
     // See ReadModelsReadyDriverCoverageTests: a cancellation-catch exit settles as RanToCompletion
     // or Canceled by thread-pool timing, so suppress and assert completion rather than success.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
