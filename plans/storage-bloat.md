@@ -237,8 +237,13 @@ Each slice is one red-then-green increment and its own commit.
     BRIN index only where correlation is near 1 and a range filter exists. The existing B-tree
     `idx_event_store_ephemeral_reap` stays: the reap needs its order. RED: a plan-shape test per added
     index (`EXPLAIN` uses it for the range query).
-    **Status (2026-10-24):** open. No migration creates a BRIN index, and no correlation measurement is
-    recorded.
+    **Status (2026-10-29):** done in code, #1745. Measured with each table seeded in its production write order
+    (`BrinIndexCandidatesTests`): `wh_event_store.created_at` 0.98 and `commit_sequence` 0.98; `wh_log.logged_at`,
+    `wh_lifecycle_completions.completed_at` and `wh_message_deduplication.first_seen_at` 1.0 while growing and 0.60,
+    0.27 and 0.81 after one retention pass at their default retention. One index qualifies: migration 258 adds
+    `idx_event_store_created_at_brin` for the startup orphaned-lifecycle window (the last thirty minutes of
+    `created_at`, which no index reached). `commit_sequence` readers need its order (B-tree); the retention tables'
+    order rotates. No index is replaced or dropped. Docs: storage-maintenance page, `#brin-indexes`.
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
     **Status (2026-10-24):** done. #1669, closed by PR #1695: `whizbang.table.unused_index_bytes` on the

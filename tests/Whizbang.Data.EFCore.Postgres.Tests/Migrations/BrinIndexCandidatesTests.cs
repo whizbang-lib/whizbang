@@ -63,6 +63,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// freeing the pre-stamp row versions between batches: <c>created_at</c> and <c>commit_sequence</c> both stay
   /// near 1.
   /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-event-store-created-at</docs>
   [Test]
   public async Task TheEventStore_InItsProductionWriteOrder_CorrelatesNearOneAsync() {
     await using var dbContext = CreateDbContext();
@@ -82,6 +83,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// A retention table correlates near 1 while it only grows (the control), and falls below the bar after one
   /// retention pass at the table's default retention: the freed oldest pages take the newest rows.
   /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-retention-tables</docs>
   [Test]
   [Arguments("wh_message_deduplication", "first_seen_at", 30)]
   [Arguments("wh_lifecycle_completions", "completed_at", 7)]
@@ -109,6 +111,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   }
 
   /// <summary>The added index: BRIN over the event store's <c>created_at</c>, at the default 128 pages per range.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-pages-per-range</docs>
   [Test]
   public async Task TheEventStoreCreatedAtBrinIndex_ExistsAsync() {
     await using var dbContext = CreateDbContext();
@@ -120,12 +123,41 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
     await Assert.That(definition).Contains("USING brin (created_at)", StringComparison.Ordinal);
     await Assert.That(definition).Contains("pages_per_range='128'", StringComparison.Ordinal)
       .Because("one range is 1 MB of heap: the window reads a few ranges, and the index stays a few pages per GB");
+    await Assert.That(definition).DoesNotContain("autosummarize", StringComparison.Ordinal)
+      .Because("the window is the unsummarized tail, which a BRIN scan always reads; vacuum summarizes the rest");
+  }
+
+  /// <summary>
+  /// Nothing is replaced: the B-trees on the candidate columns stay, because the reap needs its order and the
+  /// retention deletes are served at any physical order.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-nothing-replaced</docs>
+  [Test]
+  [Arguments("idx_event_store_ephemeral_reap")]
+  [Arguments("idx_event_store_commit_sequence")]
+  [Arguments("idx_wh_log_logged_at")]
+  [Arguments("idx_lifecycle_completions_completed_at")]
+  [Arguments("idx_message_dedup_first_seen")]
+  public async Task TheExistingBTree_IsKeptAsync(string index) {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT am.amname FROM pg_class i JOIN pg_am am ON am.oid = i.relam
+      WHERE i.relname = @p_index AND i.relkind = 'i'
+      """;
+    cmd.Parameters.AddWithValue("p_index", index);
+    var method = await cmd.ExecuteScalarAsync() as string;
+
+    await Assert.That(method).IsEqualTo("btree");
   }
 
   /// <summary>
   /// No other BRIN index: <c>commit_sequence</c> readers need its order (a B-tree), and the retention tables do not
   /// correlate once retention runs.
   /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-commit-sequence</docs>
   [Test]
   public async Task NoOtherCandidate_HasABrinIndexAsync() {
     await using var dbContext = CreateDbContext();
@@ -156,6 +188,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// The query that motivated the index, the very SQL the coordinator runs, reads its window through the BRIN index
   /// on a store seeded in its production write order.
   /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-event-store-created-at</docs>
   [Test]
   public async Task TheOrphanedLifecycleQuery_ReadsTheWindowThroughTheBrinIndexAsync() {
     await using var dbContext = CreateDbContext();
@@ -173,6 +206,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// The control: the same query on the same store without the BRIN index reads the whole event store, so the
   /// harness can see the outcome the index removes.
   /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#brin-event-store-created-at</docs>
   [Test]
   public async Task TheOrphanedLifecycleQuery_WithoutTheBrinIndex_ScansTheStoreAsync() {
     await using var dbContext = CreateDbContext();
