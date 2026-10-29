@@ -322,13 +322,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // The object, checked against its manifest row before a byte of it is decoded.
   private async Task<IReadOnlyList<ArchiveChunkLine>> _downloadAsync(Guid streamId, ManifestRow row, CancellationToken cancellationToken) {
-    var blob = _objectClient(row);
-    var bytes = (await blob.Client.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
+    var (client, compression) = _objectClient(row);
+    var bytes = (await client.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
     var sha256 = ArchiveChunk.Sha256(bytes);
     if (bytes.LongLength != row.ByteLength || !string.Equals(sha256, row.Sha256, StringComparison.Ordinal)) {
       throw new ArchiveObjectCorruptedException(streamId, row.Locator, row.ByteLength, bytes.LongLength, row.Sha256, sha256);
     }
-    return ArchiveChunk.Decode(bytes, blob.Compression);
+    return ArchiveChunk.Decode(bytes, compression);
   }
 
   // An object in this store's container, or in the container its locator names (the setting may have changed since).
