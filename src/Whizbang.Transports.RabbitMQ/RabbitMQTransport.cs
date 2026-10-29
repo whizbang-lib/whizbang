@@ -643,7 +643,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     var collector = new TransportBatchCollector<PendingRabbitMessage>(
       batchOptions,
-      batch => FlushBatchAsync(batch, batchHandler, subscription, queueName)
+      batch => FlushBatchAsync(batch, batchHandler, subscription, queueName),
+      _timeProvider
     );
 
     var consumer = new AsyncEventingBasicConsumer(channel);

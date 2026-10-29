@@ -26,13 +26,17 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   private readonly BatchFlusher<Guid> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
+  /// <docs>operations/configuration/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:OutboxCompletionFlushWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   public OutboxCompletionFlushWorker(
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<OutboxCompletionFlushWorker> logger,
-    IPinnedConnectionPool pinnedPool) {
+    IPinnedConnectionPool pinnedPool,
+    TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(schemaReadyGate);
@@ -42,7 +46,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
+    _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
   }
 
   /// <inheritdoc />

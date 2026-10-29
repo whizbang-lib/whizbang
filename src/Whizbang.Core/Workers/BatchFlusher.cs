@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,13 +16,15 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <typeparam name="T">Item type the channel carries.</typeparam>
-/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+/// <docs>operations/configuration/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherRetryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherTests.cs</tests>
 public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private readonly Channel<T> _channel;
   private readonly Func<IReadOnlyList<T>, CancellationToken, Task> _flush;
   private readonly BatchFlusherOptions _options;
   private readonly ILogger _logger;
+  private readonly TimeProvider _timeProvider;
   private readonly CancellationTokenSource _stop = new();
   private readonly Task _loop;
   private readonly TaskCompletionSource _stoppedSignal = new();
@@ -61,16 +62,27 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   /// <param name="flush">Callback invoked per flush with the coalesced batch.</param>
   /// <param name="options">Tuning knobs.</param>
   /// <param name="logger">Logger.</param>
+  /// <param name="timeProvider">
+  /// The clock the coalesce window, the retry backoff and the shutdown drain bound run on. Null uses
+  /// <see cref="TimeProvider.System"/>; the flush workers pass the host's registered clock, and a test passes a fake
+  /// one so a window or a backoff ends only when the test moves time.
+  /// </param>
+  /// <docs>operations/configuration/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherTests.cs:SingleItem_FlushesAfterCoalesceWindowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherTests.cs:Constructor_WithoutAClock_RunsOnTheSystemClockAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherRetryTests.cs:FlushAlwaysFails_DropsAfterMaxAttemptsAndNamesTheConsequenceAsync</tests>
   public BatchFlusher(
     Func<IReadOnlyList<T>, CancellationToken, Task> flush,
     BatchFlusherOptions options,
-    ILogger logger) {
+    ILogger logger,
+    TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     ArgumentNullException.ThrowIfNull(options);
     _options = options;
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
+    _timeProvider = timeProvider ?? TimeProvider.System;
 
     _channel = Channel.CreateBounded<T>(new BoundedChannelOptions(_options.ChannelCapacity) {
       FullMode = BoundedChannelFullMode.Wait,
@@ -86,7 +98,6 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     _loop = _runAsync(_stop.Token);
   }
 
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The loop coalesces a batch under both a size bound and a deadline, and separates cancellation from channel closure at two points, because a closed channel ends the worker while cancellation ends the wait.")]
   private async Task _runAsync(CancellationToken ct) {
     try {
       while (!ct.IsCancellationRequested) {
@@ -95,21 +106,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
           break;
         }
 
-        var batch = new List<T>(_options.MaxBatchSize) { first };
-        var deadlineMs = Environment.TickCount + _options.CoalesceWindowMs;
-
-        // Coalesce additional items up to MaxBatchSize OR until deadline OR ImmediateFlushThreshold.
-        while (batch.Count < _options.MaxBatchSize && Environment.TickCount < deadlineMs) {
-          if (_channel.Reader.TryRead(out var next)) {
-            batch.Add(next);
-            if (batch.Count >= _options.ImmediateFlushThreshold) {
-              break;
-            }
-          } else {
-            // No item ready right now; yield (avoid busy spin) then re-check until deadline.
-            await Task.Yield();
-          }
-        }
+        var batch = await _coalesceAsync(first).ConfigureAwait(false);
 
         try {
           await _flushWithRetryAsync(batch, ct);
@@ -120,6 +117,39 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     } finally {
       _stoppedSignal.TrySetResult();
     }
+  }
+
+  /// <summary>
+  /// Gathers the batch that starts with <paramref name="first"/>: more items join it until it reaches
+  /// <see cref="BatchFlusherOptions.MaxBatchSize"/> or <see cref="BatchFlusherOptions.ImmediateFlushThreshold"/>, the
+  /// coalesce window closes, or the channel is completed. The window is a timer on the flusher's clock, and the wait
+  /// for the next item is a real wait on the channel, not a spin.
+  /// </summary>
+  /// <remarks>
+  /// A batch that already reached its threshold, the first item alone included, flushes without opening a window.
+  /// A completed channel ends the wait at once: shutdown drains what is queued instead of sitting out each window.
+  /// </remarks>
+  private async Task<List<T>> _coalesceAsync(T first) {
+    var batch = new List<T>(_options.MaxBatchSize) { first };
+    var target = Math.Min(_options.MaxBatchSize, _options.ImmediateFlushThreshold);
+    if (batch.Count >= target || _options.CoalesceWindowMs <= 0) {
+      return batch;
+    }
+
+    using var window = new CancellationTokenSource(TimeSpan.FromMilliseconds(_options.CoalesceWindowMs), _timeProvider);
+    while (batch.Count < target) {
+      // Completes at once when an item is already waiting. The window closing cancels the wait; that is observed as a
+      // status rather than thrown, since it is how most windows end.
+      var more = _channel.Reader.WaitToReadAsync(window.Token).AsTask();
+      await ((Task)more).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      if (!more.IsCompletedSuccessfully || !more.Result) {
+        break;
+      }
+      while (batch.Count < target && _channel.Reader.TryRead(out var next)) {
+        batch.Add(next);
+      }
+    }
+    return batch;
   }
 
   /// <summary>
@@ -152,7 +182,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
           Math.Max(1, _options.FlushRetryBackoffMs) * (1 << Math.Min(attempts - 1, 6)),
           Math.Max(1, _options.FlushRetryMaxBackoffMs));
         LogFlushRetry(_logger, batch.Count, attempts, maxAttempts, backoffMs, ex);
-        await Task.Delay(backoffMs, ct);
+        await Task.Delay(TimeSpan.FromMilliseconds(backoffMs), _timeProvider, ct);
       }
     }
   }
@@ -184,7 +214,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       // *after* the drain gives up, so flowing it in here would let an external cancel abort the
       // drain early and discard the buffered work this whole path exists to flush.
       await _loop
-        .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), CancellationToken.None)
+        .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), _timeProvider, CancellationToken.None)
         .ConfigureAwait(false);
     } catch (TimeoutException) {
       // A flush callback that will not return must not hold host shutdown open forever.
@@ -216,7 +246,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
 }
 
 /// <summary>Configuration for <see cref="BatchFlusher{T}"/>.</summary>
-/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+/// <docs>operations/configuration/configuration-reference</docs>
 public sealed class BatchFlusherOptions {
   /// <summary>Bounded channel capacity (back-pressure when full). Default 10 000.</summary>
   public int ChannelCapacity { get; set; } = 10_000;
@@ -227,7 +257,10 @@ public sealed class BatchFlusherOptions {
   /// <summary>Maximum wait (ms) coalescing additional items after the first. Default 25.</summary>
   public int CoalesceWindowMs { get; set; } = 25;
 
-  /// <summary>If batch reaches this size before the window closes, flush immediately. Default 250.</summary>
+  /// <summary>
+  /// If the batch reaches this size before the window closes, flush immediately. Default 250. The first item counts:
+  /// a threshold of one flushes every item as it arrives, without opening a coalesce window.
+  /// </summary>
   public int ImmediateFlushThreshold { get; set; } = 250;
 
   /// <summary>

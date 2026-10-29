@@ -1405,7 +1405,8 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   ) {
     return new TransportBatchCollector<PendingServiceBusMessage>(
       batchOptions,
-      batch => _flushPendingBatchAsync(batch, batchHandler, destination)
+      batch => _flushPendingBatchAsync(batch, batchHandler, destination),
+      _timeProvider
     );
   }
 

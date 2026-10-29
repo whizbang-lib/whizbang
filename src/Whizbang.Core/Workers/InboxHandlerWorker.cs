@@ -35,6 +35,10 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   /// <remarks>The inbox channel writer is the one the dispatch path holds rows in; each flush releases the rows it finishes (#1788).</remarks>
+  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
+  /// <docs>operations/configuration/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:InboxHandlerWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
@@ -43,7 +47,8 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
     IInboxChannelWriter inboxChannelWriter,
-    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
+    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
+    TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(inboxChannelWriter);
     _inboxChannelWriter = inboxChannelWriter;
     ArgumentNullException.ThrowIfNull(scopeFactory);
@@ -56,7 +61,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger);
+    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
     // The queue depth is observable (#740): the one place dispatched-but-uncommitted work waits in memory.
     metrics?.ObserveHandlerCommitQueue(() => _flusher.Pending);
   }

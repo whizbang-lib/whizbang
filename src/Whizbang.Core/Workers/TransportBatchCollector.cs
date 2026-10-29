@@ -36,8 +36,8 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
   private List<T> _pending = [];
   // Never nulled: Change on a disposed timer returns false and does nothing, which is exactly what a
   // late enqueue or the final flush during DisposeAsync needs.
-  private readonly Timer _slideTimer;
-  private readonly Timer _hardMaxTimer;
+  private readonly ITimer _slideTimer;
+  private readonly ITimer _hardMaxTimer;
   private bool _disposed;
 
   /// <summary>
@@ -52,14 +52,26 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
   /// </summary>
   /// <param name="options">Batch size, sliding window, and hard max configuration.</param>
   /// <param name="flushCallback">Callback invoked with the collected batch when a flush triggers.</param>
-  public TransportBatchCollector(TransportBatchOptions options, Func<IReadOnlyList<T>, Task> flushCallback) {
+  /// <param name="timeProvider">
+  /// The clock the sliding window and the hard max run on. Null uses <see cref="TimeProvider.System"/>; a transport
+  /// passes its own clock, and a test passes a fake one so a window closes only when the test moves time.
+  /// </param>
+  /// <docs>messaging/transports/transports</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_FlushesOnSlidingWindowTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs:Enqueue_HardMaxIsNotPostponedByLaterArrivalsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs:Constructor_WithoutAClock_RunsOnTheSystemClockAsync</tests>
+  public TransportBatchCollector(
+      TransportBatchOptions options,
+      Func<IReadOnlyList<T>, Task> flushCallback,
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(flushCallback);
 
     _options = options;
     _flushCallback = flushCallback;
-    _slideTimer = new Timer(SlideTimerTick, null, Timeout.Infinite, Timeout.Infinite);
-    _hardMaxTimer = new Timer(_hardMaxTimerCallback, null, Timeout.Infinite, Timeout.Infinite);
+    var clock = timeProvider ?? TimeProvider.System;
+    _slideTimer = clock.CreateTimer(SlideTimerTick, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    _hardMaxTimer = clock.CreateTimer(_hardMaxTimerCallback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
   }
 
   /// <summary>
@@ -79,7 +91,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
       // Start hard max timer on first message in batch
       if (_pending.Count == 1) {
-        _hardMaxTimer.Change(_options.MaxWaitMs, Timeout.Infinite);
+        _hardMaxTimer.Change(TimeSpan.FromMilliseconds(_options.MaxWaitMs), Timeout.InfiniteTimeSpan);
       }
 
       // Check batch size trigger
@@ -87,7 +99,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
       if (!shouldFlushNow) {
         // Reset sliding window timer
-        _slideTimer.Change(_options.SlideMs, Timeout.Infinite);
+        _slideTimer.Change(TimeSpan.FromMilliseconds(_options.SlideMs), Timeout.InfiniteTimeSpan);
       }
     }
 
@@ -160,8 +172,8 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       _pending = [];
 
       // Stop both timers
-      _slideTimer.Change(Timeout.Infinite, Timeout.Infinite);
-      _hardMaxTimer.Change(Timeout.Infinite, Timeout.Infinite);
+      _slideTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+      _hardMaxTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     try {
@@ -174,7 +186,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
         _pending = batch;
 
         // Restart slide timer so the batch gets retried
-        _slideTimer.Change(_options.SlideMs, Timeout.Infinite);
+        _slideTimer.Change(TimeSpan.FromMilliseconds(_options.SlideMs), Timeout.InfiniteTimeSpan);
       }
 
       throw;

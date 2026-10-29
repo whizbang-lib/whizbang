@@ -50,7 +50,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     _pinnedPool = pinnedPool;
     ArgumentNullException.ThrowIfNull(instanceProvider);
     _instanceProvider = instanceProvider;
-    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger);
+    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger, _timeProvider);
   }
 
   /// <inheritdoc />
