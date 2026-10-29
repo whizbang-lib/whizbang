@@ -168,6 +168,11 @@ public sealed class PostgresSchemaInitializer {
         }
       }
     }
+
+    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, whether or not its
+    // schema changed, except on the tables listed in perspective_storage_manual_tables (#1747). Never fatal.
+    await PerspectiveStorageParameters.ReconcileAsync(
+      connection, schema, (_perspectiveEntries ?? []).Select(e => e.Value), Logger, cancellationToken);
   }
 
   /// <summary>

@@ -341,6 +341,21 @@ public class JsonbColumnStorageIntegrationTests {
     await Assert.That(await _reloptionsAsync()).Contains("fillfactor=65");
   }
 
+  /// <summary>A reconcile whose own connection cannot be opened logs a warning and returns; it never fails the start.</summary>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  [Test]
+  public async Task TheEfReconcile_WhoseConnectionCannotOpen_WarnsAndReturnsAsync() {
+    await using var context = PhysicalJsonbContainmentIntegrationTests.Context(_connectionString);
+    var unreachable = new NpgsqlConnectionStringBuilder(_connectionString) { Database = "no_such_database_1747" }.ConnectionString;
+    var log = new ListLogger();
+
+    var report = await PerspectiveStorageReconcile.RunAsync(context, "public", [PerspectiveStorageParameters.MARKER + TABLE],
+      () => new NpgsqlConnection(unreachable), log, CancellationToken.None);
+
+    await Assert.That(report.Applied).IsEmpty();
+    await Assert.That(log.Entries.Single(e => e.Level == LogLevel.Warning).Message).Contains("not reconciled");
+  }
+
   private async Task<PerspectiveStorageReport> _reconcileWithoutFillFactorAsync(ILogger? logger = null, TimeSpan? lockTimeout = null) {
     var sql = string.Join('\n', ColumnStorageSql.ForTable(TABLE, new TableStorageInfo("lz4", 512,
       AutovacuumVacuumThreshold: 500, AutovacuumVacuumScaleFactor: 0, ToastAutovacuumVacuumThreshold: 300)));

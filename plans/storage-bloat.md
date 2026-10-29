@@ -316,11 +316,14 @@ All decided on 2026-10-22 in #1671 (the owner accepted the recommendations).
    every ordered read.
 3. **Removed storage attributes.** The schema pass resets (`RESET`) an autovacuum or fillfactor
    setting when the attribute property that set it is removed, so the database matches the code.
-   **Status (2026-10-29):** built (#1747). `ColumnStorageSql.ForTable` emits one guarded `RESET` for the governed
-   parameters the model does not declare (fillfactor and the six autovacuum ones, `toast.` included), from both
-   generators; it alters only what `reloptions` holds, and a reset fillfactor on a table with rows queues a rewrite.
-   Nothing records who set a parameter, so a value of those seven set by hand is reset too (design choice, documented
-   on the physical-fields page `#removed-storage-settings`); other parameters are never touched; `toast_tuple_target`
-   and compression are not reset. No migration.
+   **Status (2026-10-29):** built (#1747). Owner decision (2026-10-29): the model stays the authority by default,
+   with a database-level override. The generated schema declares the seven governed parameters (fillfactor, the six
+   autovacuum ones, `toast.` included) in a `-- @whizbang:table-storage` marker; `PerspectiveStorageParameters`
+   reconciles them at every start on both drivers (one catalog read, one `ALTER TABLE … SET, RESET` per differing
+   table, 5 s lock timeout, rewrite queued for a changed fillfactor on a table with rows), independent of the schema
+   hash. Migration 259 adds `perspective_storage_manual_tables` (comma-separated bare table names) whose tables are
+   neither set nor reset; each start logs the list and warns of ignored declared values. Restart-only by choice (no
+   maintenance-cycle path). `toast_tuple_target` and compression are not reset. Docs: physical-fields
+   `#removed-storage-settings` and `#manually-managed-tables`.
 4. **pg_squeeze privileges** on managed servers (superuser or REPLICATION) is an investigation, not a
    decision. It moves into C1.3 as a prerequisite to verify.
