@@ -712,6 +712,8 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(registered).IsTypeOf<PostgresTableArchiveStore>();
     await Assert.That(((PostgresTableArchiveStore)registered).Locator.Address).IsEqualTo("public.wh_event_archive")
       .Because("the driver qualifies the archive table with the context's schema, as it does its other stores");
+    await Assert.That(provider.GetRequiredService<PostgresArchiveConnection>().Schema).IsEqualTo("public")
+      .Because("a store that keeps state in the database (the blob store's manifest) reaches it the way the table store does");
     var result = await provider.GetRequiredService<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>().TruncateAsync(stream, 2, archive: true);
 
     await Assert.That(result).IsEqualTo(new StreamTruncateResult("truncated", 2));
