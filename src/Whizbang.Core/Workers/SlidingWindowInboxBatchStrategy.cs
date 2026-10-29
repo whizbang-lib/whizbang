@@ -265,7 +265,7 @@ public sealed partial class SlidingWindowInboxBatchStrategy : IInboxBatchStrateg
       ct => _flush(batch, ct),
       (ex, reason, attempt, delay) => {
         _metrics?.InboxFlushRetries.Add(1, new KeyValuePair<string, object?>(WorkCoordinatorMetrics.REASON_TAG, reason));
-        LogFlushRetrying(_logger, ex, batch.Length, streamKey, reason, attempt, _options.MaxFlushAttempts, delay);
+        LogFlushRetrying(ex, batch.Length, streamKey, reason, attempt, _options.MaxFlushAttempts, delay);
       },
       _stopCts.Token).ConfigureAwait(false);
     var cause = result.Outcome switch {
@@ -337,7 +337,7 @@ public sealed partial class SlidingWindowInboxBatchStrategy : IInboxBatchStrateg
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Storing {BatchSize} inbox message(s) for stream {StreamKey} failed with a transient {Reason}; attempt {Attempt} of {MaxAttempts}, retrying in {Delay}")]
-  private static partial void LogFlushRetrying(ILogger logger, Exception exception, int batchSize, Guid streamKey, string reason, int attempt, int maxAttempts, TimeSpan delay);
+  private partial void LogFlushRetrying(Exception exception, int batchSize, Guid streamKey, string reason, int attempt, int maxAttempts, TimeSpan delay);
 
   [LoggerMessage(Level = LogLevel.Error,
     Message = "{BatchSize} inbox message(s) for stream {StreamKey} were not stored ({Cause}, {Attempts} attempt(s)) and were written to wh_dead_letters with reason InboxStoreFailed. Dead-letter recovery stores them through the inbox store; to do it now, recover the dead letters whose source_id is one of these message ids: {MessageIds}")]
