@@ -307,6 +307,7 @@ public static partial class CompositeInboxFanout {
     var identityIds = identityComposite?.InnerEventIds;
     var identitySequences = identityComposite?.InnerCommitSequences;
     var originOverride = identityComposite?.OriginServiceId ?? Guid.Empty;
+    var isRedelivery = composite is RedeliveryComposite;
 
     if (typeNames.Count != payloads.Count) {
       return new FanoutResult(
@@ -410,6 +411,9 @@ public static partial class CompositeInboxFanout {
         MessageType = wireTypeName,
         SourceServiceId = sourceServiceId,
         SourceCommitSequence = sourceCommitSequence,
+        // A redelivery restores what the event store lost, so the store checks deduplication against the event
+        // store for its children instead of trusting it alone (#1843).
+        RestoreIfMissing = isRedelivery,
       });
     }
 

@@ -427,6 +427,26 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task MeasureTableBloatAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var ratio = await coordinator.MeasureTableBloatAsync("x", Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+
+    await Assert.That(ratio).IsNull();
+  }
+
+  [Test]
+  public async Task RequestMeasuredTableRewriteAsync_WithoutProviderSupport_RecordsThePlainRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequestMeasuredTableRewriteAsync(
+      "x", new Whizbang.Core.Observability.BloatMeasurement(3.0, Whizbang.Core.Observability.BloatMeasurementMethod.Approx), 2.5);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
   public async Task VacuumWorkTablesAsync_WithoutProviderSupport_VacuumsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -543,7 +563,7 @@ public class WorkCoordinatorDefaultsTests {
   public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
-    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, [], []);
+    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, null, [], []);
 
     await Assert.That(result).IsNull()
       .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");

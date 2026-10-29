@@ -80,6 +80,17 @@ public partial class MigrationTransactionBoundaryGuardTests {
       + "statement against the table",
   };
 
+  /// <summary>
+  /// Functions outside the enumeration whose body names wh_inbox and one of the moved columns, reviewed and
+  /// found to read that column from wh_inbox_state, the side table the cutover moved it to. The text match
+  /// cannot tell <c>ist.error</c> from <c>i.error</c>, so each entry names what it reads where.
+  /// </summary>
+  private static readonly Dictionary<string, string> READS_THE_MOVED_COLUMN_FROM_THE_SIDE_TABLE = new(StringComparer.Ordinal) {
+    ["wh_reconcile_redelivered_bundle_by_first_hop"] =
+      "253 (#1843, #1844): reads error from wh_inbox_state (alias ist) to find the children store_inbox_messages "
+      + "refused to restore; wh_inbox supplies only stream_id, scope and message_type, none of which moved",
+  };
+
   private const string CUTOVER_MIGRATION = "162_InboxWorkStateSideTable";
 
   /// <summary>
@@ -199,8 +210,19 @@ public partial class MigrationTransactionBoundaryGuardTests {
       }
     }
 
+    // A function a later migration drops is not a read path either: nothing can call it.
+    foreach (var migration in new PostgresMigrationProvider().GetMigrations()) {
+      var order = _migrationOrder(migration.Name);
+      foreach (Match drop in FunctionDrop().Matches(_stripLineComments(migration.Sql))) {
+        var dropped = drop.Groups[1].Value;
+        if (latest.TryGetValue(dropped, out var held) && order > held.Order) {
+          latest.Remove(dropped);
+        }
+      }
+    }
+
     foreach (var (function, (_, sql)) in latest) {
-      if (enumerated.Contains(function)) {
+      if (enumerated.Contains(function) || READS_THE_MOVED_COLUMN_FROM_THE_SIDE_TABLE.ContainsKey(function)) {
         continue;
       }
       var body = _bodyOf(sql, function);
@@ -257,6 +279,10 @@ public partial class MigrationTransactionBoundaryGuardTests {
   /// <summary>wh_inbox itself, not wh_inbox_state, which shares the prefix.</summary>
   [GeneratedRegex(@"\bwh_inbox\b(?!_)")]
   private static partial Regex BareInbox();
+
+  /// <summary>A dropped function's name, without the schema token.</summary>
+  [GeneratedRegex(@"DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?[^\s.(]+\.([a-z_][a-z0-9_]*)\s*\(", RegexOptions.IgnoreCase)]
+  private static partial Regex FunctionDrop();
 
   /// <summary>A function definition's name, without the schema token.</summary>
   [GeneratedRegex(@"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\.([a-z_][a-z0-9_]*)\s*\(", RegexOptions.IgnoreCase)]

@@ -116,6 +116,13 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   public PassiveCounter<long> OriginsAdopted { get; }
 
+  /// <summary>Stored events without an origin that a redelivery named an origin for but did not adopt, because the
+  /// event's first hop names another service: an event this service authored, or one received from a third service,
+  /// that the origin's store had filed as its own. Growth means an origin is redelivering events it did not author;
+  /// the warning logged once per bundle names the origin.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  public PassiveCounter<long> OriginsRefused { get; }
+
   /// <summary>Buckets recorded as ones repair cannot change: a redelivery answered with events that were all already
   /// stored under their origin, so repair stops asking for them. Each bucket is counted once.</summary>
   /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
@@ -210,6 +217,9 @@ public sealed class StreamIntegrityMetrics {
     OriginsAdopted = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_adopted",
       description: "Stored events whose empty origin columns a redelivery filled (history received before origins were recorded)");
+    OriginsRefused = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origins_refused",
+      description: "Stored events without an origin that a redelivery did not adopt because their first hop names another service");
     RepairsUnhealable = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repairs_unhealable",
       description: "Buckets a redelivery could not change; repair stops asking for them until they change or heal");

@@ -904,7 +904,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var committed = await _commitCompositeAsync(commitRequest, children.Count, scopeProvider, ct).ConfigureAwait(false);
     if (committed && composite is RedeliveryComposite redelivery) {
       _ = await RedeliveryReconciler.ReconcileAsync(
-        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
+        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(),
+        RedeliveryReconciler.OriginServiceNameOf(work.Envelope), ct).ConfigureAwait(false);
     }
   }
 

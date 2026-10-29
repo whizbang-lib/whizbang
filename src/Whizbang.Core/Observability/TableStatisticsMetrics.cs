@@ -20,6 +20,7 @@ public sealed class TableStatisticsMetrics {
 #pragma warning restore CA1707
 
   private const string TABLE_NAME_TAG = "table_name";
+  private const string METHOD_TAG = "method";
   private const string DATABASE_TAG = "database";
   private const string EVENT_TYPE_TAG = "event_type";
   private const string BYTES_UNIT = "bytes";
@@ -27,6 +28,7 @@ public sealed class TableStatisticsMetrics {
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
   private readonly ConcurrentDictionary<string, double> _tableBloat = new();
+  private readonly ConcurrentDictionary<string, BloatMeasurement> _measuredBloat = new();
   private readonly ConcurrentDictionary<string, TableStorageStatistics> _tableStorage = new();
   private readonly ConcurrentDictionary<string, EventTypeBytes> _eventTypeBytes = new();
   private readonly ConcurrentDictionary<string, UnusedIndex> _unusedIndexes = new();
@@ -56,12 +58,17 @@ public sealed class TableStatisticsMetrics {
     // Dead tuples awaiting vacuum are the familiar cause; a dropped column is the invisible one,
     // because Postgres leaves that column's bytes in every pre-existing row forever and only a
     // table rewrite removes them. Around 1.0 is healthy; a sustained large multiple means the
-    // table needs a rewrite, not more vacuuming.
+    // table needs a rewrite, not more vacuuming. The method tag says how each value was obtained: every table's
+    // catalog estimate is "estimate", and a table the maintenance cycle measured with pgstattuple_approx is a second
+    // series, "approx", so a guess and a measurement are never one line.
     meter.CreateObservableGauge(
       "whizbang.table.bloat_ratio",
-      observeValues: () => _tableBloat.Select(kv => _measure(kv.Value, _tag(TABLE_NAME_TAG, kv.Key))),
+      observeValues: () => _tableBloat
+        .Select(kv => _measure(kv.Value, _tag(TABLE_NAME_TAG, kv.Key), _tag(METHOD_TAG, BloatMeasurementMethods.ESTIMATE)))
+        .Concat(_measuredBloat.Select(kv =>
+          _measure(kv.Value.Ratio, _tag(TABLE_NAME_TAG, kv.Key), _tag(METHOD_TAG, kv.Value.Method.ToValue())))),
       unit: "ratio",
-      description: "Heap bytes per live row divided by the expected row width — 1.0 is lean");
+      description: "Heap bytes per live row divided by the expected row width, 1.0 is lean; the method tag says whether it was estimated or measured");
 
     // What the size is made of. A table whose bytes are in TOAST holds large documents, one whose
     // bytes are in indexes is over-indexed, and only the split tells the two apart from a table that
@@ -189,6 +196,17 @@ public sealed class TableStatisticsMetrics {
   public void UpdateTableBloat(IReadOnlyDictionary<string, double> ratios) => _replace(_tableBloat, ratios);
 
   /// <summary>
+  /// Replaces the measured bloat ratios, each reported on <c>whizbang.table.bloat_ratio</c> beside the table's estimate
+  /// and tagged with its method. Called by the maintenance cycle, which measures the tables the estimate shortlists.
+  /// </summary>
+  /// <param name="measurements">The latest measurement per table.</param>
+  /// <remarks>A table missing from <paramref name="measurements"/> stops reporting a measured value.</remarks>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsBloatMethodTests.cs</tests>
+  public void UpdateMeasuredTableBloat(IReadOnlyDictionary<string, BloatMeasurement> measurements) =>
+    _replace(_measuredBloat, measurements);
+
+  /// <summary>
   /// Updates the cached per-table storage split and live row counts. Called by
   /// <see cref="TableStatisticsCollector"/>.
   /// </summary>
@@ -217,4 +235,7 @@ public sealed class TableStatisticsMetrics {
 
   internal double? GetBloatRatioForTest(string table) =>
     _tableBloat.TryGetValue(table, out var v) ? v : null;
+
+  internal BloatMeasurement? GetMeasuredBloatForTest(string table) =>
+    _measuredBloat.TryGetValue(table, out var v) ? v : null;
 }

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Workers;
 
@@ -103,6 +104,7 @@ public sealed partial class OnlineTableRewriteStep(
       return;
     }
 
+    var approxReady = ApproxBloatMeasurement.IsReady(_capabilities);
     var budget = settings.OnlineRewriteMaxBytesPerCycle;
     var left = budget;
     var rewritten = 0;
@@ -117,7 +119,7 @@ public sealed partial class OnlineTableRewriteStep(
         continue;
       }
       left -= candidate.SizeBytes;
-      if (await _rewriteAsync(rewriter!, online.Tool, coordinator, candidate, cancellationToken).ConfigureAwait(false)) {
+      if (await _rewriteAsync(rewriter!, online.Tool, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
         rewritten++;
       }
     }
@@ -132,28 +134,36 @@ public sealed partial class OnlineTableRewriteStep(
     return PgRepackClient.RunsInProcess(settings) ? _pgRepack : null;
   }
 
-  /// <summary>Rewrites one table; true when it improved and its request was cleared.</summary>
+  /// <summary>
+  /// Rewrites one table; true when it improved and its request was cleared. While pgstattuple is Ready the re-measure
+  /// is pgstattuple_approx, the measurement that queued the table, rather than the rewriter's catalog estimate.
+  /// </summary>
   private async Task<bool> _rewriteAsync(
-      ITableRewriter rewriter, string tool, IWorkCoordinator coordinator, TableRewriteCandidate candidate, CancellationToken cancellationToken) {
-    double? after;
+      ITableRewriter rewriter, string tool, IWorkCoordinator coordinator, TableRewriteCandidate candidate, bool approxReady,
+      CancellationToken cancellationToken) {
+    double? rewritten;
     try {
-      after = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
+      rewritten = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogFailed(_logger, candidate.TableName, tool, ex);
       return false;
     }
-    if (after is null) {
+    var after = await ApproxBloatMeasurement.AfterRewriteAsync(
+      coordinator, candidate.TableName, rewritten, approxReady, _logger, cancellationToken).ConfigureAwait(false);
+    if (after is not { } measured) {
       LogNotRewritten(_logger, candidate.TableName);
       return false;
     }
-    if (after.Value >= candidate.BloatRatio) {
+    var before = candidate.Method.ToValue();
+    var afterMethod = measured.Method.ToValue();
+    if (measured.Ratio >= candidate.BloatRatio) {
       // The rewrite ran but the table measures no better: the request stays for the next cycle rather than being
       // cleared on a success that did not happen.
-      LogNotImproved(_logger, candidate.TableName, candidate.BloatRatio, after.Value);
+      LogNotImproved(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
       return false;
     }
     await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
-    LogRewritten(_logger, candidate.TableName, tool, candidate.BloatRatio, after.Value);
+    LogRewritten(_logger, candidate.TableName, tool, candidate.BloatRatio, before, measured.Ratio, afterMethod);
     return true;
   }
 
@@ -189,12 +199,13 @@ public sealed partial class OnlineTableRewriteStep(
   static partial void LogDeferred(ILogger logger, string table, long bytes, long left, string key, long budget);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
-    Message = "Online rewrite: {Table} rewritten through {Tool}, bloat {Before}x -> {After}x")]
-  static partial void LogRewritten(ILogger logger, string table, string tool, double before, double after);
+    Message = "Online rewrite: {Table} rewritten through {Tool}, bloat {Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})")]
+  static partial void LogRewritten(
+      ILogger logger, string table, string tool, double before, string beforeMethod, double after, string afterMethod);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
-    Message = "Online rewrite: {Table} did not reduce bloat ({Before}x -> {After}x); the request stays queued")]
-  static partial void LogNotImproved(ILogger logger, string table, double before, double after);
+    Message = "Online rewrite: {Table} did not reduce bloat ({Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})); the request stays queued")]
+  static partial void LogNotImproved(ILogger logger, string table, double before, string beforeMethod, double after, string afterMethod);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
     Message = "Online rewrite: {Table} was not rewritten (the coordinator logged why); the request stays queued")]

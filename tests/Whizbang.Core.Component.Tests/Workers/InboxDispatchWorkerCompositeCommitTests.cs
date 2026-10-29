@@ -105,13 +105,15 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
     /// <summary>Completes with the first redelivery reconciliation the worker asks for; a signal the body emits.</summary>
     public TaskCompletionSource<(Guid Origin, IReadOnlyList<Guid> EventIds)> Reconciled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public string? ReconciledOriginName { get; private set; }
     public int ReconcileCalls => Volatile.Read(ref _reconciles);
     private int _reconciles;
 
     public Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
-        Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+        Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
         CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _reconciles);
+      ReconciledOriginName = originServiceName;
       Reconciled.TrySetResult((originServiceId, eventIds));
       return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
     }
@@ -163,14 +165,14 @@ public class InboxDispatchWorkerCompositeCommitTests {
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
-  private static InboxWork _compositeWork() {
+  private static InboxWork _compositeWork(params MessageHop[] hops) {
     var msgId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
         Payload = JsonElement.Parse("{}"),
-        Hops = [],
+        Hops = [.. hops],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
@@ -378,6 +380,29 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
     await Assert.That(reconciledOrigin).IsEqualTo(origin);
     await Assert.That(reconciledIds).IsEquivalentTo([first, second]);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_IsReconciledUnderTheServiceNameOfTheBundlesFirstHopAsync() {
+    // #1844: the store adopts only events whose first hop names the bundle's origin, so the origin's name (the
+    // service of the bundle's own publish hop) reaches the reconciliation.
+    var origin = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(origin, (Guid)TrackedGuid.New()), integrityOptions: _autoRepair);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+    var publishHop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo { ServiceName = "orders-service", InstanceId = (Guid)TrackedGuid.New(), HostName = "host", ProcessId = 1 },
+      Timestamp = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero),
+    };
+
+    await h.Inbox.WriteAsync(_compositeWork(publishHop), cts.Token);
+    await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    _ = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(h.Coordinator.ReconciledOriginName).IsEqualTo("orders-service");
 
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);

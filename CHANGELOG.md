@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **Bloat is measured with pgstattuple_approx before a rewrite is queued, and every ratio records its method (#1807).**
+  The catalog estimate still runs every statistics pass for every table and feeds `whizbang.table.bloat_ratio`. While
+  the `pgstattuple` capability is Ready on every probed database, the maintenance cycle measures each table the estimate
+  puts over the rewrite threshold with `pgstattuple_approx` before it enters the rewrite queue: at or over the threshold
+  it is queued with the measured ratio, under it it is not queued and the log gives both figures, and a measurement
+  more than 25% from its estimate is logged with both. The queue is taken largest measured ratio first, and the
+  re-measure after a rewrite (online rewrite and the boot `Rewrite` step) uses `pgstattuple_approx` too. The exact
+  `pgstattuple` scan never runs automatically, and without pgstattuple nothing changes. Migration 254 adds
+  `wh_table_rewrite_measurements` (the queued table's ratio, its `method` of `estimate`, `approx` or `exact`, and the
+  estimate it confirmed; a queued table without a row reads as `estimate`), `wh_measure_table_bloat_approx` and
+  `wh_request_measured_table_rewrite`, and `wh_clear_table_rewrite` removes the measurement with the request. The bloat
+  gauge gains a `method` tag (`estimate`, and a second `approx` series per measured table). New API:
+  `BloatMeasurementMethod`, `BloatMeasurement`, `IWorkCoordinator.MeasureTableBloatAsync` and
+  `RequestMeasuredTableRewriteAsync`, `TableRewriteCandidate.Method` and `RewriteThreshold`, and
+  `TableStatisticsMetrics.UpdateMeasuredTableBloat`.
+
 - **Online table rewrite through pg_squeeze, driven by the maintenance cycle (#1743).** With
   `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze`, the `online-table-rewrite` maintenance step rewrites
   the tables queued in `pending_table_rewrites` through `squeeze.squeeze_table`, largest bloat ratio first, within
@@ -739,6 +755,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Stream integrity repairs an event inbox deduplication remembers but the event store lost.** A redelivered event
+  whose message id was already in `wh_message_deduplication` but which the consumer's event store no longer held (a
+  failed fan-out in an older version, manual cleanup, a store restored from an older backup) was dropped as a duplicate
+  on every redelivery, so its bucket never healed and repair asked for it on the terminal cadence forever. The children
+  of a redelivery bundle now carry `InboxMessage.RestoreIfMissing`, and for them `store_inbox_messages` (migration 252)
+  checks deduplication against the event store: a child neither the event store nor the inbox holds is stored again,
+  as state only, so it is projected without running trigger receptors a second time. A duplicate of a stored event is
+  still dropped, ordinary traffic keeps trusting deduplication, and ephemeral and at-most-once events are never
+  restored. A child on a stream whose earlier history was truncated here is refused, because it cannot be told from
+  an event the truncation removed on purpose: it is stored settled with the reason, the reconciliation reads it
+  (`wh_reconcile_redelivered_bundle_by_first_hop` from migration 253, `RedeliveredBucketPresence.RefusedTruncated`,
+  `RedeliveryReconciliation.RefusedTruncated`), and the bucket is marked as one repair cannot change and reported once
+  (Fixes #1843)
+- **A redelivery no longer stamps its origin on events this service authored.** Origin adoption on redelivery
+  (#1790) could not tell an event received before origins were recorded from one this service authored, since both
+  have empty origin columns; when an origin's own store had filed events received from this service as its own, its
+  redelivery would stamp itself as their origin, and the origin would then alarm on a surplus it could never repair.
+  Before an empty origin is filled, the receiver now reads the stored event's hops and adopts only when the first hop
+  names the bundle's origin service (the service on the bundle's publish hop, compared without case). A first hop
+  with no service identity (the slim stored form), no hops, or a bundle naming no service adopt as before, so that
+  history still converges; an event that already carries an origin is unchanged. Refused events keep their empty
+  origin and local digest, are counted per bucket (`RedeliveredBucketPresence.RefusedForeignOrigin`,
+  `RedeliveryReconciliation.RefusedForeignOrigin`) and on the new counter `whizbang.stream_integrity.origins_refused`,
+  and are reported in one Warning per bundle. Migration 253 adds `wh_reconcile_redelivered_bundle_by_first_hop`, the
+  one function the coordinator calls per bundle (it also returns the truncation refusals and replaces 252's
+  `wh_reconcile_redelivered_bundle`);
+  `IWorkCoordinator.AdoptRedeliveredOriginAsync` takes the origin's service name, `RedeliveryReconciler.ReconcileAsync`
+  accepts it, and `RedeliveryReconciler.OriginServiceNameOf` reads it from a bundle's envelope. The 249 function is
+  kept for versions that still call it (Fixes #1844)
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

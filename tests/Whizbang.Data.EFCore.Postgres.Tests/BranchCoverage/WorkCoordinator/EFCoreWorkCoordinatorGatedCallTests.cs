@@ -177,6 +177,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
         .Because("the program reported failure, so nothing is analyzed or re-measured"));
     register("RequestTableRewrite", "RequestTableRewriteAsync", (c, _) => c.RequestTableRewriteAsync("wh_settings"));
     register("ClearTableRewriteRequest", "ClearTableRewriteRequestAsync", (c, _) => c.ClearTableRewriteRequestAsync("wh_settings"));
+    register("MeasureTableBloat", "MeasureTableBloatAsync", (c, _) => c.MeasureTableBloatAsync("wh_settings", BloatMeasurementMethod.Estimate));
+    register("RequestMeasuredTableRewrite", "RequestMeasuredTableRewriteAsync", (c, _) =>
+      c.RequestMeasuredTableRewriteAsync("wh_settings", new BloatMeasurement(4.5, BloatMeasurementMethod.Approx), 4.0));
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>

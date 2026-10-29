@@ -101,7 +101,7 @@ public static class PostgresExtensionCatalog {
     new("pg_partman", "partition management (a built-in fallback exists)",
       ["Ledger partition management (create_parent, then run_maintenance from the maintenance worker)"],
       LibraryMayCreate: true, ALLOWLIST),
-    new("pgstattuple", "exact table bloat measurement (otherwise estimated)",
+    new("pgstattuple", "table bloat measured with pgstattuple_approx before a rewrite is queued, and after it (otherwise estimated)",
       ["Table bloat measurement"], LibraryMayCreate: true, ALLOWLIST),
     new("pg_stat_statements", "query statistics",
       ["Expensive-predicate advice", "Query diagnostics"], LibraryMayCreate: true, PRELOAD),

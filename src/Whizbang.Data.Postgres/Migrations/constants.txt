@@ -49,3 +49,8 @@ __AUDIT_ORIGINAL_STREAM_POSITION_PATH__ = ARRAY['p','OriginalStreamPosition']
 # The event types no integrity digest folds: the audit system events, as the type-name part of a stored type name
 # (216, #1492). The work coordinator's recomputes bind the same list (DigestExemptTypes.TypeNames).
 __DIGEST_EXEMPT_TYPES__ = ARRAY['Whizbang.Core.SystemEvents.EventAudited','Whizbang.Core.SystemEvents.CommandAudited']
+
+# Why a repair child that inbox deduplication remembers and the event store lost was not restored: its stream's
+# earlier history was truncated here (252, #1843). store_inbox_messages writes it to wh_inbox_state.error and
+# wh_reconcile_redelivered_bundle reads it back.
+__REPAIR_REFUSED_TRUNCATED__ = 'repair refused: stream prefix truncated'

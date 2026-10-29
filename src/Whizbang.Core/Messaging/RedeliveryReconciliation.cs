@@ -22,17 +22,26 @@ namespace Whizbang.Core.Messaging;
 /// <param name="EventType">The stored event type.</param>
 /// <param name="Present">The bundle's events this bucket already held.</param>
 /// <param name="Adopted">Of those, the events whose empty origin columns the bundle filled.</param>
+/// <param name="RefusedTruncated">The bundle's events deduplication remembers and the event store does not hold that the
+/// store refused to restore, because the stream's earlier history was truncated here (#1843).</param>
+/// <param name="RefusedForeignOrigin">Of the present events, those with empty origin columns the bundle did not fill,
+/// because the stored event's first hop names another service than the bundle's origin (#1844).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 public readonly record struct RedeliveredBucketPresence(
-  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted);
+  Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
+  int RefusedForeignOrigin = 0);
 
 /// <summary>What reconciling one redelivery bundle changed at the receiver.</summary>
 /// <param name="Children">The bundle's children this receiver kept.</param>
 /// <param name="Present">Children already in the event store.</param>
 /// <param name="Adopted">Present children whose empty origin columns the bundle filled.</param>
 /// <param name="MarkedUnhealable">Buckets newly recorded as ones repair cannot change.</param>
+/// <param name="RefusedTruncated">Children the store refused to restore past deduplication (#1843).</param>
+/// <param name="RefusedForeignOrigin">Present children with empty origin columns the bundle did not fill, because their
+/// first hop names another service than the bundle's origin (#1844).</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-public readonly record struct RedeliveryReconciliation(int Children, int Present, int Adopted, int MarkedUnhealable) {
+public readonly record struct RedeliveryReconciliation(
+  int Children, int Present, int Adopted, int MarkedUnhealable, int RefusedTruncated = 0, int RefusedForeignOrigin = 0) {
   /// <summary>Nothing was reconciled: no origin, no children, or no store that can answer.</summary>
   public static RedeliveryReconciliation None => default;
 }
@@ -68,11 +77,13 @@ public static partial class RedeliveryReconciler {
   /// <param name="services">The dispatch scope's services.</param>
   /// <param name="logger">Where the reports go.</param>
   /// <param name="now">The caller's clock.</param>
+  /// <param name="originServiceName">The origin's service name (<see cref="OriginServiceNameOf"/> of the bundle's
+  /// envelope); null when the bundle carries none.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>What the reconciliation changed.</returns>
   public static async Task<RedeliveryReconciliation> ReconcileAsync(
       IIdentityPreservingComposite composite, IReadOnlyList<InboxMessage> children, IServiceProvider services,
-      ILogger logger, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      ILogger logger, DateTimeOffset now, string? originServiceName = null, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(composite);
     ArgumentNullException.ThrowIfNull(children);
     ArgumentNullException.ThrowIfNull(services);
@@ -89,6 +100,7 @@ public static partial class RedeliveryReconciler {
       // A zero sequence is the origin's "not stamped yet" on the wire, never a position.
       var buckets = await coordinator.AdoptRedeliveredOriginAsync(
         origin,
+        originServiceName,
         [.. children.Select(c => c.MessageId)],
         [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)],
         cancellationToken).ConfigureAwait(false);
@@ -97,30 +109,38 @@ public static partial class RedeliveryReconciler {
       }
       var present = buckets.Sum(b => b.Present);
       var adopted = buckets.Sum(b => b.Adopted);
+      var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
+      var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
       var metrics = services.GetService<StreamIntegrityMetrics>();
+      _reportForeignOrigins(logger, metrics, refusedForeignOrigin, children.Count, originServiceName, origin);
       if (adopted > 0) {
         metrics?.OriginsAdopted.Add(adopted);
         LogOriginsAdopted(logger, adopted, children.Count, origin);
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0);
       }
-      // An event the store did not hold is stored by this bundle: the repair is working, nothing to conclude.
-      if (present < children.Count) {
-        return new RedeliveryReconciliation(children.Count, present, 0, 0);
+      // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
+      // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
+      // bundle that stored nothing and adopted nothing marks the buckets of the events it found present.
+      List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
+      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refusedTruncated >= children.Count
+        ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
+        : [];
+      if (refusedBuckets.Count + unchanged.Count == 0) {
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
       }
       var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
       if (ledger is null) {
-        return new RedeliveryReconciliation(children.Count, present, 0, 0);
+        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
       }
-      var marked = await ledger.MarkUnhealableBatchAsync(
-        [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
-        now, cancellationToken).ConfigureAwait(false);
-      foreach (var key in marked) {
-        LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin);
+      var marked = await _markAsync(ledger, origin, refusedBuckets, now,
+          key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        .ConfigureAwait(false);
+      marked += await _markAsync(ledger, origin, unchanged, now,
+          key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        .ConfigureAwait(false);
+      if (marked > 0) {
+        metrics?.RepairsUnhealable.Add(marked);
       }
-      if (marked.Count > 0) {
-        metrics?.RepairsUnhealable.Add(marked.Count);
-      }
-      return new RedeliveryReconciliation(children.Count, present, 0, marked.Count);
+      return new RedeliveryReconciliation(children.Count, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -129,10 +149,85 @@ public static partial class RedeliveryReconciler {
     }
   }
 
+  /// <summary>Marks the buckets as ones repair cannot change and reports each newly marked one once.</summary>
+  private static async Task<int> _markAsync(
+      IIntegrityRepairLedger ledger, Guid origin, List<RedeliveredBucketPresence> buckets, DateTimeOffset now,
+      Action<IntegrityRepairLedger.DivergenceKey> report, CancellationToken cancellationToken) {
+    if (buckets.Count == 0) {
+      return 0;
+    }
+    var marked = await ledger.MarkUnhealableBatchAsync(
+      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
+      now, cancellationToken).ConfigureAwait(false);
+    foreach (var key in marked) {
+      report(key);
+    }
+    return marked.Count;
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Repair cannot restore {EventType} (tenant {TenantScope}) on stream {StreamId} from origin {OriginServiceId}: "
+            + "a redelivered event that inbox deduplication remembers is missing from the event store, but the stream's "
+            + "earlier history was truncated here, so it could be an event the truncation removed on purpose and is not "
+            + "stored again. The bucket stops being requested and is reported again only if either side's digest changes. "
+            + "Compare the stream on both sides")]
+  private static partial void LogRepairRefusedTruncatedBucket(
+    ILogger logger, string eventType, string? tenantScope, Guid streamId, Guid originServiceId);
+
+  /// <summary>
+  /// Reports, once per bundle, the stored events the first-hop check did not let adopt the bundle's origin (#1844).
+  /// </summary>
+  private static void _reportForeignOrigins(
+      ILogger logger, StreamIntegrityMetrics? metrics, int refused, int children, string? originServiceName, Guid origin) {
+    if (refused == 0) {
+      return;
+    }
+    metrics?.OriginsRefused.Add(refused);
+    LogForeignOriginsRefused(logger, refused, children, originServiceName, origin);
+  }
+
+  /// <summary>
+  /// The service name a redelivery bundle's origin published it under: the service of the envelope's first hop (the
+  /// origin's own publish hop). Null when the envelope has no hop or its first hop carries no service identity
+  /// (<see cref="ServiceInstanceInfo.Unknown"/>, in any case), which leaves the first-hop check nothing to compare.
+  /// </summary>
+  /// <remarks>
+  /// Two owner decisions (#1844). A bundle that yields no name adopts: with nothing to compare, refusing would leave
+  /// history received before origins were recorded counted as missing and requested forever, which is the same
+  /// reason a stored first hop without a service identity adopts. The name is returned as written and the store
+  /// compares it without case, as the transport consumer compares service names, because one service's name can be
+  /// configured with different casing on different hosts, and a case difference must not turn the origin into
+  /// another service.
+  /// </remarks>
+  /// <param name="bundleEnvelope">The redelivery bundle's envelope as received.</param>
+  /// <returns>The origin's service name, or null.</returns>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
+  public static string? OriginServiceNameOf(IMessageEnvelope bundleEnvelope) {
+    ArgumentNullException.ThrowIfNull(bundleEnvelope);
+    var hops = bundleEnvelope.Hops;
+    if (hops is null || hops.Count == 0) {
+      return null;   // read from a wire form without a hop list
+    }
+    var name = hops[0].ServiceInstance.ServiceName;
+    return string.IsNullOrWhiteSpace(name)
+      || string.Equals(name, ServiceInstanceInfo.Unknown.ServiceName, StringComparison.OrdinalIgnoreCase)
+      ? null
+      : name;
+  }
+
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Redelivery from origin {OriginServiceId} filled the origin identity of {Adopted} of its {Children} event(s) "
             + "that were stored before origins were recorded; they now verify under that origin")]
   private static partial void LogOriginsAdopted(ILogger logger, int adopted, int children, Guid originServiceId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Redelivery from origin {OriginServiceName} ({OriginServiceId}) named itself as the origin of {Refused} of its "
+            + "{Children} event(s) that this store holds without an origin, but their first hop names another service, so "
+            + "they keep no origin. The usual cause is events this service authored that the origin's store had filed as "
+            + "its own before it recorded origins; the origin may report them as a surplus")]
+  private static partial void LogForeignOriginsRefused(
+    ILogger logger, int refused, int children, string? originServiceName, Guid originServiceId);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Repair cannot change {EventType} (tenant {TenantScope}) on stream {StreamId} from origin {OriginServiceId}: "

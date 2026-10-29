@@ -123,7 +123,7 @@ caches the first result).
 | pg_squeeze | online table rewrite (`storage-bloat.md`) | yes | the table rewriter calls `squeeze.squeeze_table(schema, table)` from the maintenance worker | allowlist, `shared_preload_libraries`, logical `wal_level`, restart |
 | pg_partman | partition management (`storage-ledger-retention.md`) | yes | `partman.create_parent` when a ledger is converted; `partman.run_maintenance` from the maintenance worker each cycle | allowlist (its background worker is not used) |
 | pg_repack | table rewrite without a long lock | yes (the extension) | either the `pg_repack` client run **in process** by the maintenance duty holder, or an **external job** that runs the same work from the queue | allowlist; the client program on `PATH` or at a configured path (in-process mode) |
-| pgstattuple | exact bloat measurement | yes | read by table statistics when Ready; otherwise estimated | allowlist |
+| pgstattuple | measured bloat (pgstattuple_approx) | yes | confirms a rewrite candidate before it is queued, and re-measures after, when Ready (#1807); otherwise estimated | allowlist |
 | pg_stat_statements | expensive-predicate advice | yes | read by the index advisor when Ready | `shared_preload_libraries` |
 | pg_cron | not used | no | detection only | n/a |
 
@@ -270,6 +270,13 @@ Each slice is one red-then-green increment and its own commit.
     `PostgresException` (it estimates from `pg_stats`), so there was no catch to replace. Reading pgstattuple when
     Ready, as the capability table above says, is a new measurement that scans tables on the statistics cadence and
     is the open question #1807 (cost, cadence, `pgstattuple_approx` or exact).
+    **Status (2026-10-28):** the bloat half is done in #1807 (owner decision: estimate to shortlist,
+    `pgstattuple_approx` to confirm). The estimate still runs every statistics pass. While pgstattuple is Ready on every
+    probed database the maintenance cycle measures a shortlisted table with `pgstattuple_approx` before queuing it,
+    queues it with the measured ratio (method `approx`, migration 254's `wh_table_rewrite_measurements`), does not
+    queue it when the measurement is under the threshold, and logs a measurement more than 25% from its estimate with
+    both figures. The re-measure after a rewrite uses `pgstattuple_approx` too; the exact scan never runs; the gauge has
+    a `method` tag. A failed measurement is logged and the estimate stands in.
 11. **Unknown keys (defect 8).** Shipped: the recorded
     manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
     start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry

@@ -1625,6 +1625,48 @@ public interface IWorkCoordinator {
   Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
+  /// <summary>
+  /// Measures one table's bloat ratio by <paramref name="method"/>, on the same scale as the estimate
+  /// <see cref="GetTablesNeedingRewriteAsync"/> reports.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Estimate"/> reads the catalog only.
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Approx"/> runs <c>pgstattuple_approx</c>, which reads
+  /// the visibility map and scans only the pages that are not all-visible; the caller asks for it only while the
+  /// pgstattuple capability is Ready. <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Exact"/> is never run
+  /// by the library and is refused.
+  /// </para>
+  /// <para>Default: nothing is measured (null).</para>
+  /// </remarks>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="method">How to measure it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ratio, or null when the table has no rows to measure against or the backend does not measure.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
+  Task<double?> MeasureTableBloatAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
+  /// <summary>
+  /// Records that a table owes a rewrite, as <see cref="RequestTableRewriteAsync"/> does, together with the measurement
+  /// that confirmed it and the estimate it confirmed, so the queue orders by the measured ratio and a reader can tell
+  /// how it was obtained.
+  /// </summary>
+  /// <param name="tableName">The table.</param>
+  /// <param name="measurement">The measured ratio and its method.</param>
+  /// <param name="estimatedRatio">The estimate the measurement confirmed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the request is recorded.</returns>
+  /// <remarks>Default: the request is recorded without its measurement.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
+  Task RequestMeasuredTableRewriteAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurement measurement, double estimatedRatio,
+      CancellationToken cancellationToken = default) =>
+    RequestTableRewriteAsync(tableName, cancellationToken);
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -1839,20 +1881,31 @@ public interface IWorkCoordinator {
   /// the origin identity the bundle carries: <paramref name="originServiceId"/> fills an empty origin, the event's
   /// sequence in <paramref name="commitSequences"/> fills an empty origin commit sequence, its integrity digest
   /// moves from the local lane to the origin's lane, and the sealed epochs it touched are refolded. An event that
-  /// already carries a different origin is never changed. Events the store does not hold are not reported; the
-  /// bundle stores them as usual.
+  /// already carries a different origin is never changed. An event with an empty origin whose stored first hop
+  /// names another service than <paramref name="originServiceName"/> was not authored by the origin (an event this
+  /// service authored, which the origin's store had filed as its own), so it adopts nothing and is counted as
+  /// <see cref="RedeliveredBucketPresence.RefusedForeignOrigin"/> (#1844); a first hop that carries no service identity
+  /// adopts as above. Events the store does not hold are not reported; the bundle stores them as usual, unless the store
+  /// refused to restore one past deduplication because its stream's earlier history was truncated here, which is
+  /// counted as <see cref="RedeliveredBucketPresence.RefusedTruncated"/> (#1843).
   /// </summary>
   /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="originServiceName">The origin's service name, from the bundle's first hop, compared with the stored
+  /// first hop's service without case (one service's name can be configured with different casing on different
+  /// hosts). Null, blank or the Unknown sentinel when the bundle carries none, which leaves the first-hop check
+  /// nothing to compare, so the event adopts as when a stored hop has no service identity: refusing would leave that
+  /// history requested forever.</param>
   /// <param name="eventIds">The bundle's event ids.</param>
   /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
   /// null when the origin had not stamped it.</param>
   /// <param name="cancellationToken">Cancellation.</param>
-  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held and how many of
-  /// those adopted the origin identity; null = unsupported.</returns>
+  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held, how many of those
+  /// adopted the origin identity, how many the first-hop check refused, and how many the store refused to restore;
+  /// null = unsupported.</returns>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs</tests>
   Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
-    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 
@@ -3390,6 +3443,20 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
   public string? DiscardedOnReceive { get; init; }
+
+  /// <summary>
+  /// Set on the children of a redelivery that stream integrity or an operator requested (a
+  /// <see cref="Whizbang.Core.Minting.RedeliveryComposite"/>): inbox deduplication is checked against the event store
+  /// rather than trusted alone. A child whose id deduplication remembers but which neither the event store nor the
+  /// inbox holds is stored again, as state only, so a repairable gap converges instead of being asked for forever
+  /// (#1843). It is refused, stored settled with the reason, when its stream's earlier history was truncated here,
+  /// because restoring it could bring back an event removed on purpose. False for every other message: deduplication
+  /// alone decides, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#remembered-but-missing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs</tests>
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool RestoreIfMissing { get; init; }
 }
 
 /// <summary>
@@ -4136,7 +4203,10 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 
 /// <summary>A table offered for rewrite, with the measurement that justified offering it.</summary>
 /// <param name="TableName">Unqualified table name.</param>
-/// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
+/// <param name="BloatRatio">
+/// Heap bytes per live row over the expected row width; ~1.0 is lean. For a queued table measured before it was queued,
+/// the measured ratio, which the queue is ordered by; otherwise the catalog estimate. <see cref="Method"/> says which.
+/// </param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
   /// <summary>
@@ -4144,6 +4214,22 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
   /// </summary>
   public long SizeBytes { get; init; }
+
+  /// <summary>
+  /// How <see cref="BloatRatio"/> was obtained: the measurement a queued table was confirmed with, or
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Estimate"/> for the catalog estimate (a table not yet
+  /// queued, or one queued without a measurement).
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  public Whizbang.Core.Observability.BloatMeasurementMethod Method { get; init; }
+
+  /// <summary>
+  /// The ratio at or above which a table is offered for rewrite (<c>table_rewrite_bloat_threshold</c>), against which a
+  /// measurement confirms or rejects the estimate; 0 when the backend does not report it, and then no measurement
+  /// rejects one.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  public double RewriteThreshold { get; init; }
 }
 
 /// <summary>What vacuuming one work table did (#1351).</summary>
