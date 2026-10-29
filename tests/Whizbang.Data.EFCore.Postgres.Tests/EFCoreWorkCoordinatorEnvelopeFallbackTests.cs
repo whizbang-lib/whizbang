@@ -132,9 +132,32 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
     var envelope = (MessageEnvelope<JsonElement>)orphans[0].Envelope;
     await Assert.That(envelope.Payload.GetProperty("answer").GetInt32()).IsEqualTo(7);
 
-    // Scope restoration also depends on JsonElement type info; its best-effort
-    // catch swallows the failure and yields no hops instead of failing the row.
-    await Assert.That(envelope.Hops).Count().IsEqualTo(0);
+    // Scope restoration reads the column as the stored scope itself (#1855), not through
+    // JsonElement, so the payload fallback no longer costs the event its scope.
+    await Assert.That(envelope.Hops).Count().IsEqualTo(1);
+    await Assert.That(envelope.GetCurrentScope()?.Scope.TenantId).IsEqualTo("tenant-a");
+  }
+
+  [Test]
+  public async Task GetOrphanedLifecycleEventsAsync_UnreadableScope_LogsAndYieldsNoHopsAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    var logger = new CapturingLogger();
+    var coordinator = _createCoordinator(dbContext, JsonContextRegistry.CreateCombinedOptions(), logger);
+
+    // Valid jsonb that is no scope in either stored format.
+    var (_, eventId) = await _seedOrphanAsync(connection, scope: "[1]");
+
+    var orphans = await coordinator.GetOrphanedLifecycleEventsAsync(
+      _orphanMap(), TimeSpan.FromHours(1));
+
+    await Assert.That(orphans).Count().IsEqualTo(1)
+      .Because("an unreadable scope costs the event its scope, never its reconciliation");
+    await Assert.That(orphans[0].EventId).IsEqualTo(eventId);
+    var envelope = (MessageEnvelope<JsonElement>)orphans[0].Envelope;
+    await Assert.That(envelope.Hops).IsEmpty();
+    await Assert.That(logger.MessagesFor(LogLevel.Warning).Any(m => m.Contains("Failed to parse reconciliation scope JSON", StringComparison.Ordinal))).IsTrue()
+      .Because("the replayed lifecycle event runs unscoped, so the parse failure behind it must be logged");
   }
 
   [Test]

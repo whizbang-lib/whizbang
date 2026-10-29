@@ -40,6 +40,8 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var window = TimeSpan.FromMilliseconds(20);
     var clock = new BatchWindowClock(window);
+    var abandoned = new System.Collections.Concurrent.ConcurrentQueue<OutboxFlushFailure>();
+    var abandonedReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: async (_, ct) => {
@@ -54,9 +56,16 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
       },
-      timeProvider: clock);
+      timeProvider: clock,
+      onFlushFailed: (failure, _) => {
+        abandoned.Enqueue(failure);
+        abandonedReported.TrySetResult();
+        return Task.FromResult(true);
+      },
+      metrics: null);
 
-    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    var message = _make(_idProvider.NewGuid());
+    await sut.AppendAsync(message, cancellationToken);
     await clock.Armed(1).WaitAsync(cancellationToken);
     clock.Advance(window);
     await flushEntered.Task.WaitAsync(cancellationToken);
@@ -72,6 +81,11 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     await Assert.That(async () => await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken))
       .ThrowsExactly<ObjectDisposedException>()
       .Because("the strategy must have fully stopped, not merely returned from a faulted drain task");
+    // #1871: the batch the forced stop interrupted is not dropped; its worker reports it once the stop has returned.
+    await abandonedReported.Task.WaitAsync(cancellationToken);
+    var reported = abandoned.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.AbandonedAtShutdown);
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
   }
 
   /// <summary>

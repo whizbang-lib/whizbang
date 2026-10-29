@@ -841,6 +841,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shares the one flush the first stop started, so the buffered batches are still stored while the provider is alive,
   and a stop that arrives after the container disposed the flush service resolves nothing (the container already
   disposed, and so flushed, the batchers it owned).
+- **A stored event read back without hops keeps its whole scope on every driver path.** The Dapper typed read (through
+  the event envelope adapter) rebuilt a hopless event's scope from the tenant and user alone, the Dapper polymorphic and
+  checkpoint-range reads from the four id fields, and EF Core reconciliation from the tenant and user, so allowed
+  principals, scope extensions and the system and declared-unscoped markers were dropped and a receptor or perspective
+  reading them after a replay, rebuild, redelivery or reconciliation saw less than the original dispatch did. Every
+  read-back path now restores the stored scope through one reader (`StoredScope`), field for field as the EF Core event
+  store does; a first hop that recorded its own scope still keeps it, and a row stored without a scope still reads back
+  unscoped. The hop-scope source guard now allows no tenant-and-user-only hop scope anywhere (Fixes #1855)
+- **An outbox message the producer-side batcher accepted is never dropped when its store fails (Fixes #1871).** An event
+  a receptor returned through `LocalInvokeAsync` (or one it published) is buffered per stream and stored by that
+  stream's worker after the caller has returned. A store that failed was logged ("Dispatcher re-emission will
+  recover") and its batch dropped, though nothing re-emits it, so a burst over many streams against a remote database
+  lost a random subset of events: the per-stream flushes overflowed the connection pool, and a pool or server
+  connection failure is not retried by the store. Now a transient database failure (lost connection, exhausted pool,
+  command timeout, server out of connection slots, deadlock) is retried on the stream's own worker with backoff on the
+  strategy's `TimeProvider`, so the stream's order is kept (`Whizbang:Workers:OutboxBatch:MaxFlushAttempts`, default 5;
+  `FlushRetryBackoff`, default 100 ms; `FlushRetryMaxBackoff`, default 5 s). A batch that still cannot be stored, fails
+  with an error a retry cannot fix, or is abandoned by a stop past its deadline is written to `wh_dead_letters` as
+  `wh_outbox` dead letters with the new reason `OutboxStoreFailed` (23), through `wh_store_outbox_dead_letters`
+  (migration 256), which also logs each message in `wh_log`; dead-letter recovery then stores it through
+  `store_outbox_messages` (default policy: five recoveries a minute apart, then held for review). It is counted
+  (`whizbang.work_coordinator.outbox_flush.failed_messages`, tagged `cause` and `outcome`; retries in
+  `whizbang.work_coordinator.outbox_flush.retries`), reported to every registered `IOutboxFlushFailureObserver`, and
+  logged at Error with every message id and how to recover it; when the dead-letter write fails too, the log says the
+  messages are lost unless re-sent. A stop past its deadline now waits for that report instead of discarding what was
+  buffered. The outbox and inbox batch flushes take a slot of the `WorkCoordinatorGate`, so concurrent per-stream
+  flushes cannot open more connections than the gate allows. `LocalInvokeAsync` still does not wait for the write.
+  `IWorkCoordinator` gains `StoreOutboxDeadLettersAsync`, implemented by both Postgres drivers.
+- **Stored keys that differ from a declared JSON name only in case are rewritten at startup and read back, not
+  defaulted (Fixes #1874).** Releases before the message JSON context honored `[JsonPropertyName]` (#920) stored a
+  property under its C# name. Where that differs from the declared name only in case (`"X"` for
+  `[JsonPropertyName("x")] X`), Entity Framework's mapped reader matched the declared name exactly, found no key, and
+  read the member's default with no error: a row loaded "successfully" with every such value zeroed. The stored-form
+  rewrite phase (EF Core) and the schema pass (Dapper) now find stored keys that match a declared name only
+  case-insensitively, at any depth and inside collections of records, and move them to the declared name
+  (`DeclaredKeySpellingPass`). The declared names come from what reads each document: Entity Framework's model for a
+  mapped document, the serializer's metadata otherwise; the Dapper driver learns each table's model type from a
+  `typeof` the generated schema registers at load (`PerspectiveDocumentModels`), with no reflection. The scan walks
+  each table in primary-key order in bounded chunks, returns only the rows its predicate finds, and conditions each
+  update on the row version it read. Each table rewritten is logged at Warning with the member paths and row counts
+  (`Rewrote stored keys to their declared spelling in public.wh_per_picture: 56 row(s) updated; data
+  $.Objects[*].Points[*]: X -> x in 56 row(s); ...`). Both spellings with the same value merge; with different values,
+  or a key matching two declared names, the row is left as it was and startup stops naming the table, column, row and
+  path (`StoredFormConversionBlockedException`). Each table checked is recorded in `wh_stored_form_migrations` as
+  `declared-names:<table>:<hash of its declarations>`, settled by the first pass that changes nothing and finds nothing
+  missing, after which it is skipped with one lookup until its declarations change. A `required` member (or
+  `[JsonRequired]`) is enforced on read-model rows only: the generated message JSON context marks it required on a
+  perspective model and on the types only perspective models carry, so a stored row missing it fails the read with a
+  `JsonException` instead of defaulting. Events, commands and every other message keep reading a missing member as
+  its default: events are history, read tolerantly and upcast, so a replay or rebuild never fails because a later
+  change added `required`, and new messages are still protected by the compiler's `required` at construction. A type
+  a perspective model shares with an event is read tolerantly too, since one type has one reader, and its required
+  members are declared to the startup check (`DeclaredRequiredMembers`). A required member whose type admits null is
+  never marked, because the framework omits a null when writing. Entity Framework's mapped reader cannot refuse a
+  missing key, so the startup pass reports stored rows missing a required member at Error, naming the path, the row
+  count and sample rows, on every path and for shared types as well. Events are history and are not rewritten: the
+  combined serializer options now read property names case-insensitively, so an event stored under the C# name
+  replays with its values; writing still uses the declared name. **Upgrade:** the first start rewrites affected rows;
+  deploy without a mixed fleet, or let a second start catch rows an older instance wrote meanwhile (a pass that
+  changed rows is not settled). A row holding both spellings with different values stops startup until one key is
+  removed. A `required` non-nullable member missing from a stored perspective row of a type only perspective models
+  carry now fails that row's read; fill old documents with `[StoredForm(DefaultWhenMissing = ...)]` or drop the
+  `required` modifier. Stored events and other messages are unaffected. A type with two
+  members whose JSON names differ only in case now fails at first use with System.Text.Json's name-conflict error,
+  because names are matched case-insensitively; rename one with `[JsonPropertyName]`. A stored key that differs from
+  its declared name by more than case (a C# name `Points` declared `pts`) is not moved; declare it with
+  `[StoredForm(PreviousName = "Points")]`.
+- **A batch drain worker no longer runs with the ambient context of the caller that started it (Fixes #1883).** The
+  outbox, inbox and apply sliding-window batchers and the per-stream serializer start a stream's drain worker from
+  inside the first append for that stream, and `Task.Run` copied that caller's `ExecutionContext` into the worker. Every
+  later flush of the stream then saw the first appender's `AsyncLocal` values: its pinned connection
+  (`PinnedConnectionContext.Current`) after the caller released it, or while the caller was still using it, and its
+  scope, tenant and activity, carried into flushes of other callers' messages. Drain workers now start with the flow
+  suppressed, so a flush sees no ambient state from whoever appended first.
+- **An inbox message the inbox batcher accepted is never dropped when its store fails (Fixes #1885).** The default
+  `IInboxBatchStrategy`, `SlidingWindowInboxBatchStrategy`, logged a failed per-stream store and dropped the batch,
+  counting on transport redelivery. But `AppendAsync` returns once the message is buffered, so the code that appended
+  it may already have settled it with its broker, and the batcher holds no acknowledgement it could withhold. (The
+  transports' own receive paths do not use this batcher: they store each delivery before settling it, so a failed
+  store there already leaves the delivery for the broker to re-deliver.) The inbox batcher now does what the outbox
+  batcher does since #1871: a transient database failure is retried on the stream's own worker with backoff, keeping
+  the stream's order (`Whizbang:Workers:InboxBatch:MaxFlushAttempts`, default 5; `FlushRetryBackoff`, default 100 ms;
+  `FlushRetryMaxBackoff`, default 5 s). A batch that still cannot be stored, fails with an error a retry cannot fix, or
+  is abandoned by a stop past its deadline is written to `wh_dead_letters` as `wh_inbox` dead letters with the new
+  reason `InboxStoreFailed` (24), through `wh_store_inbox_dead_letters` (migration 257), which also logs each message
+  in `wh_log`; a message whose store had committed is skipped. Dead-letter recovery re-enters it through the inbox
+  store like any inbox dead letter (default policy: five recoveries a minute apart, then held for review). It is
+  counted (`whizbang.work_coordinator.inbox_flush.failed_messages`, tagged `cause` and `outcome`; retries in
+  `whizbang.work_coordinator.inbox_flush.retries`), reported to every registered `IInboxFlushFailureObserver`, and
+  logged at Error with every message id. `IWorkCoordinator` gains `StoreInboxDeadLettersAsync`, implemented by both
+  Postgres drivers.
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

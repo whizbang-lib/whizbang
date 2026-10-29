@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// flush callback's call order.
 /// </para>
 /// </remarks>
-/// <docs>internals/outbox-batch-strategy</docs>
+/// <docs>extending/internals/outbox-batch-strategy</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxBatchStrategyRegistrationTests.cs</tests>
 public sealed class ImmediateOutboxBatchStrategy : IOutboxBatchStrategy {
   private readonly OutboxBulkFlushCallback _flush;

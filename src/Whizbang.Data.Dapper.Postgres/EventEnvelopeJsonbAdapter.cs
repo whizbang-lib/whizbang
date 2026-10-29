@@ -120,8 +120,8 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       hops = [];
     }
 
-    // Restore ScopeDelta from Scope column if present
-    _restoreScopeFromJson(jsonb.ScopeJson, hops);
+    // Restore the whole stored scope from the Scope column when the row recorded no scoped hop (#1855)
+    StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, _jsonOptions));
 
     // Deserialize payload (event data) with concrete type - AOT-compatible
     var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
@@ -138,89 +138,5 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
         ? pri.GetInt32()
         : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
     };
-  }
-
-  /// <summary>
-  /// Restores ScopeDelta from Scope JSON column into the first hop.
-  /// Supports both new PerspectiveScope short keys and legacy snake_case format.
-  /// </summary>
-  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson)) {
-      return;
-    }
-
-    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
-    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
-    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
-    // any perspective requiring a security context rejected the event on every retry until it
-    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
-    // scope still yields none, because the emptiness check above returns first.
-    if (hops.Count == 0) {
-      hops.Add(new MessageHop {
-        Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
-        ServiceInstance = ServiceInstanceInfo.Unknown,
-      });
-    }
-
-    var (tenantId, userId) = _parseScopeValues(scopeJson);
-
-    if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
-    }
-  }
-
-  /// <summary>
-  /// Parses tenant and user IDs from scope JSON, trying PerspectiveScope format first, then legacy.
-  /// </summary>
-  private (string? TenantId, string? UserId) _parseScopeValues(string scopeJson) {
-    var (tenantId, userId) = _tryParsePerspectiveScope(scopeJson);
-
-    if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)) {
-      (tenantId, userId) = _tryParseLegacyScope(scopeJson);
-    }
-
-    return (tenantId, userId);
-  }
-
-  /// <summary>
-  /// Attempts to parse scope values from the PerspectiveScope format (short keys: t, u, c, o, ap, ex).
-  /// </summary>
-  private (string? TenantId, string? UserId) _tryParsePerspectiveScope(string scopeJson) {
-    // Ask rather than demand: GetTypeInfo throws when the context does not carry PerspectiveScope,
-    // which turned "this reader cannot speak the short-key format" into a hard failure instead of
-    // the legacy-format fallback the caller is written around.
-    if (!_jsonOptions.TryGetTypeInfo(typeof(PerspectiveScope), out var perspectiveScopeTypeInfo)) {
-      return (null, null);
-    }
-
-    try {
-      if (JsonSerializer.Deserialize(scopeJson, perspectiveScopeTypeInfo) is PerspectiveScope perspectiveScope) {
-        return (perspectiveScope.TenantId, perspectiveScope.UserId);
-      }
-    } catch (JsonException) {
-      // Fall back to legacy format
-    }
-
-    return (null, null);
-  }
-
-  /// <summary>
-  /// Attempts to parse scope values from the legacy snake_case format (tenant_id, user_id).
-  /// </summary>
-  private (string? TenantId, string? UserId) _tryParseLegacyScope(string scopeJson) {
-    var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
-
-    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
-      return (null, null);
-    }
-
-    return (_extractScopeValue(scopeDict, "tenant_id"), _extractScopeValue(scopeDict, "user_id"));
-  }
-
-  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
-    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
-      ? elem.Value.GetString()
-      : null;
   }
 }

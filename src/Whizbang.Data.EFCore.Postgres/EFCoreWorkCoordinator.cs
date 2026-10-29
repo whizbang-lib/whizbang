@@ -3069,7 +3069,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT {functionName}(@p_category, @p_instance_id, @p_ids, @p_lease)";
     cmd.Parameters.Add(new NpgsqlParameter("p_category", NpgsqlTypes.NpgsqlDbType.Text) { Value = category.ToSqlCategory() });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
     cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = leaseSeconds });
     // The function returns an empty array, never NULL, so the result is always a uuid[].
@@ -4370,6 +4370,76 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, logger: _logger, cancellationToken: cancellationToken));
   }
 
+  /// <inheritdoc />
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreOutboxDeadLettersAsync(
+    OutboxMessage[] messages,
+    OutboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    var call = new UnstoredDeadLetters(
+      _serializeNewOutboxMessages(messages), messages.Length, "wh_store_outbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation);
+    await _storeUnstoredDeadLettersAsync(call, cancellationToken);
+    return true;
+  }
+
+  /// <inheritdoc />
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs:StoreInboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreInboxDeadLettersAsync(
+    InboxMessage[] messages,
+    InboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    await _storeUnstoredDeadLettersAsync(new UnstoredDeadLetters(
+      _serializeNewInboxMessages(messages), messages.Length, "wh_store_inbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation), cancellationToken);
+    return true;
+  }
+
+  /// <summary>The arguments of <c>wh_store_outbox_dead_letters</c> (256) and <c>wh_store_inbox_dead_letters</c> (257).</summary>
+  private sealed record UnstoredDeadLetters(
+    string MessagesJson, int Count, string Function, int FailureReason, string? ErrorText, int Attempts, Guid InstanceId, string Generation);
+
+  /// <summary>
+  /// Writes messages a batcher accepted and never stored to the dead-letter table through the given function, one
+  /// dead letter id per message (#1871, #1885).
+  /// </summary>
+  private async Task _storeUnstoredDeadLettersAsync(UnstoredDeadLetters call, CancellationToken cancellationToken) {
+    var deadLetterIds = new Guid[call.Count];
+    for (var i = 0; i < deadLetterIds.Length; i++) {
+      deadLetterIds[i] = (Guid)TrackedGuid.New();
+    }
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), call.Function);
+
+    var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+    await using var connectionScope = await CoordinatorConnectionScope.AcquireForEfCoreAsync(connection, cancellationToken);
+    await using var cmd = connectionScope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {functionName}(@p_messages::jsonb, @p_dead_letter_ids, @p_failure_reason, @p_error_text, @p_attempts, @p_instance_id, @p_generation)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_messages", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = call.MessagesJson });
+    cmd.Parameters.Add(new NpgsqlParameter("p_dead_letter_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterIds });
+    cmd.Parameters.Add(new NpgsqlParameter("p_failure_reason", NpgsqlTypes.NpgsqlDbType.Integer) { Value = call.FailureReason });
+    cmd.Parameters.Add(new NpgsqlParameter("p_error_text", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)call.ErrorText ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_attempts", NpgsqlTypes.NpgsqlDbType.Integer) { Value = call.Attempts });
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = call.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_generation", NpgsqlTypes.NpgsqlDbType.Text) { Value = call.Generation });
+    await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
   /// <summary>
   /// An outbox row was skipped because its message id already existed: a retry re-emitted a message whose
   /// first emission had already committed. Debug because the metric is the operator's signal; the log
@@ -5024,8 +5094,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
 
-    // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
-    // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.
+    // Restore the stored scope from the scope column so the replayed lifecycle stages run under it.
     var hops = _buildHopsFromScope(row.Scope);
 
     return new MessageEnvelope<JsonElement> {
@@ -5039,39 +5108,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  // The whole stored scope, as the event store restores it (#1855): a lifecycle receptor re-run here sees the
+  // extensions, allowed principals and markers the original dispatch carried, not the tenant and user alone.
   private List<MessageHop> _buildHopsFromScope(string? scopeJson) {
-    if (string.IsNullOrEmpty(scopeJson)) {
-      return [];
-    }
-
+    var hops = new List<MessageHop>();
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
-      var scopeElement = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(scopeJson, typeInfo)!);
-
-      string? tenantId = null;
-      string? userId = null;
-
-      if (scopeElement.TryGetProperty("t", out var t) && t.ValueKind == JsonValueKind.String) {
-        tenantId = t.GetString();
-      }
-      if (scopeElement.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String) {
-        userId = u.GetString();
-      }
-
-      if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-        return [new MessageHop {
-          Type = HopType.Current,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
-        }];
-      }
+      StoredScope.RestoreInto(hops, StoredScope.Read(scopeJson, _jsonOptions));
     } catch (Exception ex) {
       // Scope parsing is best-effort for reconciliation, but a parse failure silently drops the
-      // tenant/user security context so the replayed lifecycle event runs unscoped — always log it.
+      // stored scope so the replayed lifecycle event runs unscoped: always log it.
       EFCoreWorkCoordinatorLog.ReconcileScopeParseFailed(_logger ?? NullLogger<EFCoreWorkCoordinator<TDbContext>>.Instance, ex);
     }
-
-    return [];
+    return hops;
   }
 
   /// <summary>
@@ -5125,7 +5173,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_delivery_count", NpgsqlTypes.NpgsqlDbType.Integer) {
         Value = (object?)import.DeliveryCount ?? DBNull.Value
       });
-      cmd.Parameters.AddWithValue("p_instance_id", _instanceId());
+      cmd.Parameters.AddWithValue(PARAM_INSTANCE_ID, _instanceId());
       cmd.Parameters.AddWithValue("p_generation", new Whizbang.Core.Messaging.DefaultGenerationProvider().GetGeneration());
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}(@p_dead_letter_id,@p_message_id,@p_stream_id,@p_message_type,@p_destination,@p_envelope_json,@p_broker_reason,@p_broker_description,@p_enqueued_at,@p_delivery_count,@p_instance_id,@p_generation)";
@@ -6103,7 +6151,7 @@ internal static class VacuumedWorkTables {
 internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(
     Level = LogLevel.Warning,
-    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.")]
+    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without its stored scope.")]
   public static partial void ReconcileScopeParseFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 74, Level = LogLevel.Warning,

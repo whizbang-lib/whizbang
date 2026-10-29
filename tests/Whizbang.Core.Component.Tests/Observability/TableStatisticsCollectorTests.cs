@@ -19,7 +19,8 @@ namespace Whizbang.Core.Tests.Observability;
 public class TableStatisticsCollectorTests {
 
   [Test]
-  public async Task Collector_WhenScopeFactoryDisposed_ExitsGracefullyWithoutRetryAsync() {
+  [Timeout(30000)]
+  public async Task Collector_WhenScopeFactoryDisposed_ExitsGracefullyWithoutRetryAsync(CancellationToken cancellationToken) {
     // Reproduces: Kestrel bind failure → DI container disposed → TableStatisticsCollector
     // used to catch ObjectDisposedException, log a warning, then wait 30s and retry forever.
     // After the fix it should break out of the loop and exit cleanly.
@@ -28,15 +29,17 @@ public class TableStatisticsCollectorTests {
   scopeFactory: new AlwaysDisposedScopeFactory(),
   metrics: metrics,
   schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
-      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
+      timeProvider: new ArmedTimerClock());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask!;
 
-    // With fix: completes immediately (breaks on ObjectDisposedException).
-    // Without fix: waits 30 s before retrying → times out here.
-    await executeTask.WaitAsync(TimeSpan.FromSeconds(2));
+    // With the fix the loop breaks on ObjectDisposedException and the task completes. Without it the
+    // collector parks on its interval, and the fake clock is never advanced, so the task never completes
+    // and only the test's own timeout ends the wait: no wall-clock budget decides the outcome.
+    await executeTask.WaitAsync(cancellationToken);
     await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
       .Because("Collector should break out of the loop on ObjectDisposedException, not retry");
   }
@@ -85,7 +88,8 @@ public class TableStatisticsCollectorTests {
   /// </para>
   /// </summary>
   [Test]
-  public async Task Collector_PublishesTableBloatRatioAsync() {
+  [Timeout(30000)]
+  public async Task Collector_PublishesTableBloatRatioAsync(CancellationToken cancellationToken) {
     var provider = new BloatReportingProvider();
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = new TableStatisticsCollector(
@@ -105,7 +109,7 @@ public class TableStatisticsCollectorTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await cycled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cycled.Task.WaitAsync(cancellationToken);
 
     await Assert.That(ratioWhenSignalled).IsEqualTo(4.2)
       .Because("the cycle signal must come after the caches are written, or every observer of it "
@@ -122,10 +126,7 @@ public class TableStatisticsCollectorTests {
   #region Test Fakes
 
   private sealed class AlwaysDisposedScopeFactory : IServiceScopeFactory {
-    public IServiceScope CreateScope() {
-      ObjectDisposedException.ThrowIf(true, nameof(IServiceProvider));
-      return null!; // unreachable
-    }
+    public IServiceScope CreateScope() => throw new ObjectDisposedException(nameof(IServiceProvider));
   }
 
   #endregion

@@ -94,6 +94,34 @@ public class DefaultDeadLetterRecoveryPolicyTests {
     await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
   }
 
+  /// <summary>
+  /// A message the outbox batcher could not store is re-stored by recovery, soon and often, and held for review once
+  /// that budget is spent (#1871).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_OutboxStoreFailed_RetriesAggressivelyThenHoldsAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.OutboxStoreFailed));
+    await Assert.That(result.Name).IsEqualTo("AggressiveRetry");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(5);
+    await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
+  /// A message the inbox batcher could not store is re-stored by recovery, soon and often, and held for review once
+  /// that budget is spent (#1885).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_InboxStoreFailed_RetriesAggressivelyThenHoldsAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.InboxStoreFailed));
+    await Assert.That(result.Name).IsEqualTo("AggressiveRetry");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(5);
+    await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
   [Test]
   public async Task GetPolicy_ValidationError_HoldsForReviewWithoutRetryAsync() {
     var policy = _newPolicy();

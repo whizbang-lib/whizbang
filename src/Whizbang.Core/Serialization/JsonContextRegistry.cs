@@ -256,7 +256,12 @@ public static class JsonContextRegistry {
   /// <para>The returned options set <see cref="JsonSerializerOptions.AllowOutOfOrderMetadataProperties"/>
   /// so polymorphic payloads survive a PostgreSQL <c>jsonb</c> round-trip, which reorders object keys and
   /// would otherwise push the <c>$type</c> discriminator out of the first position STJ requires.</para>
+  ///
+  /// <para>They also set <see cref="JsonSerializerOptions.PropertyNameCaseInsensitive"/>, so a document an
+  /// earlier release wrote under a C# name that differs from the declared <c>[JsonPropertyName]</c> only in
+  /// case reads its value rather than the member's default. Writing always uses the declared name.</para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/DeclaredNameReadTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
@@ -312,7 +317,13 @@ public static class JsonContextRegistry {
       // perspective completion stalls). This is the single choke point every consumer's options flow
       // through, so enabling it here fixes the event store, perspective persistence, and every Dapper/
       // EF Core read path at once.
-      AllowOutOfOrderMetadataProperties = true
+      AllowOutOfOrderMetadataProperties = true,
+      // A property is written under its declared [JsonPropertyName], and releases before that was honored wrote
+      // it under its C# name. Where the two differ only in case ("X" for a declared "x"), a case-sensitive reader
+      // finds no key and silently leaves the member at its default: an event stored by such a release replays as
+      // zeros. Events are history and are never rewritten, so the reader accepts the other case instead. An exact
+      // match is still preferred, and writing is unchanged (#1874).
+      PropertyNameCaseInsensitive = true
     };
 
     // Register WhizbangId converters as runtime converters in addition to resolvers.

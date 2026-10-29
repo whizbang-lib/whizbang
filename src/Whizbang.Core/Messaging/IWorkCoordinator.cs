@@ -648,6 +648,44 @@ public interface IWorkCoordinator {
     => Task.CompletedTask;
 
   /// <summary>
+  /// Writes outbox messages that were never stored to the dead-letter table, through the
+  /// <c>wh_store_outbox_dead_letters</c> SQL function, as <c>wh_outbox</c> dead letters in the shape a stored row's
+  /// dead letter takes, so dead-letter recovery stores them through <c>store_outbox_messages</c> (#1871). The same
+  /// call records the loss in <c>wh_log</c> with the message ids. A message already stored (its store committed and
+  /// only the reply was lost) is skipped rather than dead-lettered a second time.
+  /// </summary>
+  /// <param name="messages">The messages that were not stored.</param>
+  /// <param name="request">Why, how many attempts were made, and who is recording it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True when the messages are recorded; false from a coordinator with no dead-letter table (the default).</returns>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxFlushPoolExhaustionTests.cs</tests>
+  Task<bool> StoreOutboxDeadLettersAsync(
+    OutboxMessage[] messages,
+    OutboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(false);
+
+  /// <summary>
+  /// Writes inbox messages the inbox batcher accepted and never stored to the dead-letter table, through the
+  /// <c>wh_store_inbox_dead_letters</c> SQL function, as <c>wh_inbox</c> dead letters in the shape a stored inbox
+  /// row's dead letter takes, so dead-letter recovery re-enters them through <c>store_inbox_messages</c> (#1885). The
+  /// same call records the loss in <c>wh_log</c> with the message ids. A message already stored (its store committed
+  /// and only the reply was lost) is skipped rather than dead-lettered.
+  /// </summary>
+  /// <param name="messages">The messages that were not stored.</param>
+  /// <param name="request">Why, how many attempts were made, and who is recording it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True when the messages are recorded; false from a coordinator with no dead-letter table (the default).</returns>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxFlushDeadLetterTests.cs</tests>
+  Task<bool> StoreInboxDeadLettersAsync(
+    InboxMessage[] messages,
+    InboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(false);
+
+  /// <summary>
   /// Evicts streams from <c>wh_active_streams</c> when their pending-work tables are empty,
   /// so the next event for an evicted stream rebinds via the
   /// <c>store_outbox_messages</c> / <c>store_inbox_messages</c> UPSERT path. Called from

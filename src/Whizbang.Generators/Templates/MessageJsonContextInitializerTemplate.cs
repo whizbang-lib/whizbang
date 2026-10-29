@@ -27,5 +27,10 @@ public static class MessageJsonContextInitializer {
     #region DERIVED_TYPE_REGISTRATIONS
     // This region will be replaced with RegisterDerivedType calls for each message type
     #endregion
+
+    #region REQUIRED_MEMBER_DECLARATIONS
+    // This region will be replaced with DeclaredRequiredMembers.Register calls for each type a perspective model
+    // shares with an event or another message: their reader tolerates a missing required member (#1874)
+    #endregion
   }
 }
