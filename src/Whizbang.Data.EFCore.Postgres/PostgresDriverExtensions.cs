@@ -307,11 +307,13 @@ public static class PostgresDriverExtensions {
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
         // writes through it; a blob store package registers its own IArchiveStore first and wins.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
-        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp =>
-          new PostgresTableArchiveStore(
-            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
-            defaultSchema(sp),
-            sp.GetService<ILogger<PostgresTableArchiveStore>>()));
+        // How an archive store reaches this database, shared by the table store and any store that keeps state here.
+        selector.Services.TryAddSingleton(sp =>
+          new PostgresArchiveConnection(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
+          var database = sp.GetRequiredService<PostgresArchiveConnection>();
+          return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
+        });
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>
