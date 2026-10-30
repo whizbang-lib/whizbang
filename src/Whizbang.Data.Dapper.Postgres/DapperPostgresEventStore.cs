@@ -316,14 +316,15 @@ public class DapperPostgresEventStore(
     var parameters = _buildAppendParameters(streamId, envelope, jsonb, Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver));
 
     try {
-      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException, and (#1733)
-      // an append to a sealed stream as StreamSealedException.
-      await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException, (#1733) an
+      // append to a sealed stream as StreamSealedException, and (#1738) one to a stream archived whole as
+      // StreamArchivedException.
+      await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
         Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
           connection,
           GetAppendSql(),
           parameters,
-          cancellationToken: cancellationToken)));
+          cancellationToken: cancellationToken))));
     } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
       // The version is assigned under the stream's lock and can no longer collide, so a unique violation is
       // the event id: this event is already stored. Retrying would only fail the same way.

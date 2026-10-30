@@ -93,6 +93,9 @@ public static class WorkerPipelineExtensions {
       return services;
     }
     services.AddSingleton(WorkerPipelineRegistrationMarker.Instance);
+    // #1738: Whizbang:Archive (read-through) and Whizbang:StreamLifecycle (the append-to-archived policy per stream type),
+    // bound by hand and validated at host start.
+    Whizbang.Core.Archival.ArchiveOptionsBinder.AddWhizbangArchiveOptions(services);
     // Every worker below takes its collaborators as required constructor parameters; the defaults
     // make a pipeline composed without AddWhizbang constructible (TryAdd, so AddWhizbang's own
     // call and the host's registrations are unaffected).

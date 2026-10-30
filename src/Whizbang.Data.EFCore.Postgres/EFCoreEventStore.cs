@@ -200,10 +200,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
       // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
       command.Parameters.Add(new NpgsqlParameter("p_flags", NpgsqlDbType.Integer) { Value = Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver) });
-      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, or as StreamSealedException
-      // for a sealed stream (#1733), with nothing stored.
-      await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
-        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken)));
+      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, as StreamSealedException
+      // for a sealed stream (#1733), or as StreamArchivedException for a stream archived whole (#1738), with nothing stored.
+      await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken))));
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
       // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(

@@ -283,6 +283,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:SyncPolicies_ThroughTheCoordinator_StoresTheConfiguredSetAsync</tests>
+  public async Task SyncStreamTypePoliciesAsync(
+      IReadOnlyList<Whizbang.Core.Archival.StreamTypePolicy> policies, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(policies);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await Whizbang.Data.Postgres.StreamTypePolicyWriter.WriteAsync(
+        scope.Connection, BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.StreamTypePolicyWriter.FUNCTION_NAME), policies,
+        cancellationToken).ConfigureAwait(false);
+  }
+
   public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
     var schema = _resolveSchema(typeof(OutboxRecord));
     // 162: every column the backlog query reads (processed_at, scheduled_for, instance_id,
@@ -4334,8 +4348,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
 
     // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException, and
-    // (#1733) an awaited event on a sealed stream as StreamSealedException.
-    await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
+    // (#1733) an awaited event on a sealed stream as StreamSealedException, and (#1738) one on a stream archived whole as
+    // StreamArchivedException.
+    await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
       var now = DateTime.UtcNow;
       // The store reports which rows it skipped because the same message id already existed. With
       // deterministic emission identity (EmissionIdentity) a skipped row is the republish a retry would
@@ -4368,7 +4383,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       if (cmd.Transaction is null) {
         await DoorbellRinger.RingAsync(connectionScope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
       }
-    }, logger: _logger, cancellationToken: cancellationToken)));
+    }, logger: _logger, cancellationToken: cancellationToken))));
   }
 
   /// <inheritdoc />

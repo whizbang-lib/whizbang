@@ -377,6 +377,12 @@ public sealed class DeadLetterRecoveryOptions {
     [MessageFailureReason.MixedStreamRefused] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     // WS-3 S4: a sealed stream refuses the same event every time it is re-driven; the stream has ended, so hold it.
     [MessageFailureReason.StreamSealed] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    // WS-3 S9 (#1738): an archived stream whose type refuses appends refuses the same event every time until someone
+    // restores it, so hold it.
+    [MessageFailureReason.StreamArchived] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    // #1738: held by its stream's restore request until the stream is back, so by the time recovery sees it the restore
+    // has run: re-drive it soon, a few times, and hold it for review if it still fails.
+    [MessageFailureReason.AwaitingRestore] = new("AfterRestore", 3, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
     // #1871: a message the batcher could not store, nearly always because the database was unreachable or out of
     // connections for longer than the batcher's own retries. Recovery stores it through the outbox store, so re-drive
     // it soon and often, and hold it for review once the budget is spent so a store that keeps refusing is visible.
