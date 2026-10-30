@@ -529,7 +529,7 @@ public class AzureBlobArchiveStoreTests {
     var (stream, _) = await _seedAsync(3);
     var store = _store(maxEventsPerChunk: 2);
     _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
-    var locators = (await _manifestAsync(stream)).Select(m => m.Split('|')[3] + "|0").ToList();
+    var locators = (await _manifestAsync(stream)).ConvertAll(m => m.Split('|')[3] + "|0");
 
     _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
       new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });

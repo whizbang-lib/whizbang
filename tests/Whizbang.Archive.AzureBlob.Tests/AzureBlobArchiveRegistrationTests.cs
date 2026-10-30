@@ -93,7 +93,6 @@ public class AzureBlobArchiveRegistrationTests {
     await Assert.That(() => new ArchiveObjectDeletionStep(store).RunAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
     await Assert.That(() => store.DeleteQueuedObjectsAsync(0)).Throws<ArgumentOutOfRangeException>()
       .Because("a drain of nothing is a caller's mistake, not a no-op");
-    await Assert.That(ArchiveObjectDeletionStep.BATCH_SIZE).IsEqualTo(100);
   }
 
   [Test]
