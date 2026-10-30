@@ -844,6 +844,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   property on such a type and relied on it being the stream id now gets the derived property's value (often empty), so
   its messages route to a different stream; set the derived property, or remove its `[StreamId]` when the inherited one
   is meant (Fixes #1893)
+- **Serializer options cached against the registry generation no longer miss a registration made while they were
+  built.** Registering a context, converter or type-info modifier advanced `JsonContextRegistry.Generation` before the
+  entry was in the registry. A build on another thread in that window read the new generation, missed the entry, and
+  was then reused as current until the next registration, so the types the missed context described could not be read
+  through the shared options (`PerspectiveDocumentSerialization.Options`, `WithCompleteChain`, the multi-stream command
+  options). The generation now advances only after the entry is visible, and the sequence number that orders
+  registrations of equal priority is unchanged (Fixes #1900)
 - **A failed pending-events statistics query is reported instead of swallowed.** The perspective worker refreshes
   `whizbang.perspective.pending_events` about once a minute and discarded every failure of the query behind it
   (`IWorkCoordinator.GatherStatisticsAsync`: a timeout, a missing permission, a function a partial migration never
