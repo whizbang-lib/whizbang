@@ -17,24 +17,18 @@ namespace Whizbang.Core.Perspectives;
 /// the end exactly as <see cref="ReplayEventOrder.Order"/> chooses it. Ties break as that sort breaks them: on the id's
 /// canonical text, then the later event read.
 /// </remarks>
+/// <param name="alsoTrack">
+/// Events to find the last of too, in the same ordering (<see cref="LastMatching"/>); null tracks none.
+/// </param>
 /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs</tests>
-public sealed class LastInReplayOrder {
-  private readonly Func<MessageEnvelope<IEvent>, bool>? _alsoTrack;
+public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoTrack = null) {
   private readonly Candidates _last = new();
   private readonly Candidates _lastMatching = new();
   private Guid _origin;
   private bool _singleOrigin = true;
   private bool _allVersioned = true;
   private bool _allStamped = true;
-
-  /// <summary>Starts an empty selection.</summary>
-  /// <param name="alsoTrack">
-  /// Events to find the last of too, in the same ordering (<see cref="LastMatching"/>); null tracks none.
-  /// </param>
-  /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs:LastMatching_IsTheLastMatchingEventInReplayOrderAsync</tests>
-  public LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoTrack = null) => _alsoTrack = alsoTrack;
 
   /// <summary>How many events were offered.</summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
@@ -64,7 +58,7 @@ public sealed class LastInReplayOrder {
     _allVersioned &= envelope.LocalStreamVersion.HasValue;
     _allStamped &= envelope.LocalCommitSequence.HasValue;
     _last.Offer(envelope);
-    if (_alsoTrack?.Invoke(envelope) == true) {
+    if (alsoTrack?.Invoke(envelope) == true) {
       _lastMatching.Offer(envelope);
     }
     Count++;
