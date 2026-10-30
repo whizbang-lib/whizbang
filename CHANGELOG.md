@@ -598,6 +598,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A new stream starts at version 1 on every write path (#1913).** A direct append (`IEventStore.AppendAsync`: system
+  events, compaction, direct use) numbered a stream it created from 0, while the outbox and inbox paths number from 1,
+  and the in-memory and Sqlite stores also started at 0. Every path now starts a new stream at 1: migration 267 changes
+  `wh_append_event` (the 266 definition otherwise unchanged) to insert at `COALESCE(MAX(version), 0) + 1` on both
+  Postgres drivers, and the in-memory and Sqlite stores follow. **Contract change:** the event store contract now
+  expects a new stream's sequences to run 1, 2, 3 (it expected 0, 1, 2), so `GetLastSequenceAsync` after three appends
+  returns 3 and `ReadAsync(fromSequence: 3)` returns the third event; a stream with no events still reports -1. Existing
+  streams keep their numbering: a stream that began at 0 continues from its highest version, and
+  `ApplyContext.Current.IsFirstEventInStream` still names its version 0 as its first event. The ledger records
+  migrations by file name, so a database that already applied 268 and 269 applies 267 when it arrives (Fixes #1913)
 - **A dispatch made before the migration completes waits for it instead of being refused.** A send, publish,
   local invoke or cascade that arrives while the schema is not ready used to fail at once with
   `WhizbangNotReadyException: dispatch refused: the schema is not ready (Migrate has not completed)`, so a startup seed

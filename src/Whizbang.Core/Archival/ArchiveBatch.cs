@@ -38,7 +38,7 @@ public sealed record ArchiveBatch {
   /// must survive above the version (the carry-forward), so a prefix batch never empties a stream.
   /// </summary>
   /// <param name="streamId">The stream.</param>
-  /// <param name="throughVersion">The last version archived. Zero or more: a directly appended stream starts at 0.</param>
+  /// <param name="throughVersion">The last version archived. Zero or more: a stream starts at version 1, and one a direct append created before #1913 started at 0.</param>
   /// <returns>The batch.</returns>
   /// <exception cref="ArgumentException"><paramref name="streamId"/> is the empty id.</exception>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="throughVersion"/> is negative.</exception>

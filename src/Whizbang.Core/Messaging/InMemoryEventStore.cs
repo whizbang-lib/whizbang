@@ -265,7 +265,8 @@ public class InMemoryEventStore : IEventStore {
   private sealed class StreamData {
     private readonly Lock _lock = new();
     private readonly List<EventRecord> _events = [];
-    private long _currentSequence = -1;
+    // A new stream starts at version 1, as on every other write path (#1913): the first append takes 0 + 1.
+    private long _currentSequence;
 
     [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface required for polymorphic storage of envelopes with different TMessage types")]
     public void Append(IMessageEnvelope envelope) {
