@@ -421,6 +421,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TimeProvider`.
 
 #### Context, identity & serialization
+- **WHIZ017 warns when a stream id generation opt-out cannot hold across assemblies.** A type that declares its own
+  `[StreamId]` (plain or `Override = true`) and no `[GenerateStreamId]` does not inherit its base's `[GenerateStreamId]`,
+  but only when the base is compiled in the same assembly: a base in another assembly is matched by that assembly's
+  stream id extractor first, so its `[GenerateStreamId]` still applies. The new warning names the type, its stream id
+  and the base, and says to declare `[GenerateStreamId]` on the derived type or move the base into the same assembly.
+  A base in the same assembly, a derived type that declares `[GenerateStreamId]`, one with no `[StreamId]` of its own
+  and a base that does not generate are not reported (Fixes #1904)
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
   `UpdateStreamScopeCommand`, `[RequirePermission]` + claim aggregation, and scope JSONB column
   population with read-path hydration.
@@ -532,6 +539,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+
+- **A dispatch made before the migration completes waits for it instead of being refused.** A send, publish,
+  local invoke or cascade that arrives while the schema is not ready used to fail at once with
+  `WhizbangNotReadyException: dispatch refused: the schema is not ready (Migrate has not completed)`, so a startup seed
+  or a request served during the migration failed. It now waits on the schema-ready gate's own signal and runs when the
+  migration completes, logging once that dispatch is deferred until the migration completes. The wait honors the
+  caller's cancellation token and is bounded by the new `Whizbang:SchemaInitialization:DispatchMaxWait`
+  (`SchemaInitializationOptions.DispatchMaxWait`, default five minutes), after which the dispatch fails with
+  `WhizbangNotReadyException` as before; `00:00:00` restores the immediate refusal. Holding the whole application until
+  the migration completes stays opt-in, with `NonBlockingSchemaInit = false` (Fixes #1877)
+
+- **A host with no message broker starts without registering a transport.** With `AddTransportConsumer()` and no
+  `ITransport` registered, startup used to fail validation (registration validation reported `TransportConsumerWorker`
+  needing `ITransport`, and container validation could not activate the worker), so a broker-less application had to
+  register `InProcessTransport`, the in-process test transport, in production. Now the transport consumer is built
+  only when a transport is registered: with none it is not started, readiness does not wait for subscriptions, and
+  startup logs once that cross-service messaging is off because no transport is configured. Local dispatch is
+  unaffected, and registering a transport, `InProcessTransport` in a test included, starts the consumer as before
+  (Fixes #1876)
 
 - **Per-message debug logging and by-name type lookups no longer allocate (#1756).** With debug logging off, the
   dispatcher's tag-processing step and the perspective worker's per-batch description cost nothing (tag processing

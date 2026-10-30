@@ -84,16 +84,17 @@ public class RealCompositionValidationTests {
   }
 
   [Test]
-  public async Task ATransportConsumerWithoutATransportIsStillReportedAsync() {
+  public async Task ATransportConsumerWithoutATransport_IsNotAGapAsync() {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddWhizbang().AddTransportConsumer();
 
     var missing = _missing(services);
 
-    // Once the worker IS registered, its transport is a real gap and must still fail startup.
-    await Assert.That(missing).Contains(
-      new MissingRegistration(typeof(TransportConsumerWorker), typeof(ITransport)));
+    // #1876: a host with no message broker must start. With no transport the consumer is not built, so the
+    // transport it would need is not a gap; registering a transport turns the consumer on.
+    await Assert.That(missing.Where(m => m.MissingService == typeof(ITransport))).IsEmpty()
+      .Because("a broker-less host is a supported composition, not a missing registration");
   }
 
   private static List<MissingRegistration> _missing(IServiceCollection services) {

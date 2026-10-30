@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Utilities;
@@ -27,6 +28,7 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [
     DiagnosticDescriptors.MultipleStreamIdAttributes,
     DiagnosticDescriptors.StreamIdOverrideWithNothingToOverride,
+    DiagnosticDescriptors.GenerationOptOutAcrossAssemblies,
   ];
 
   /// <inheritdoc/>
@@ -43,6 +45,8 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
     if (declared.Count == 0) {
       return;
     }
+
+    _reportOptOutAcrossAssemblies(context, type, declared[0]);
 
     // The one the generators use, and the one the type would inherit without its own
     var used = StreamIdSelection.Select(type)?.Property.Name ?? declared[0].Name;
@@ -65,4 +69,46 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.MultipleStreamIdAttributes, location, type.Name, used));
     }
   }
+
+  /// <summary>
+  /// WHIZ017 (#1904): a type with its own <c>[StreamId]</c> and no <c>[GenerateStreamId]</c> opts out of its base's
+  /// generation policy (#1893), but the opt-out holds only within one assembly. When a base compiled in another
+  /// assembly declares <c>[GenerateStreamId]</c>, that assembly's extractor answers first, so the base's policy still
+  /// applies; reported on the type's own <c>[StreamId]</c>. A base in the same assembly is not reported.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz017</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInAnotherAssembly_ReportsWhiz017Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInTheSameAssembly_IsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:ADerivedTypeThatDeclaresGenerateStreamId_IsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderABaseInAnotherAssemblyThatDoesNotGenerate_IsNotReportedAsync</tests>
+  private static void _reportOptOutAcrossAssemblies(
+      SymbolAnalysisContext context, INamedTypeSymbol type, StreamIdSelection.Declaration ownStreamId) {
+    if (_declaresGenerateStreamId(type)) {
+      return;
+    }
+    for (var baseType = type.BaseType; baseType is not null; baseType = baseType.BaseType) {
+      if (!SymbolEqualityComparer.Default.Equals(baseType.ContainingAssembly, type.ContainingAssembly)
+          && _declaresGenerateStreamId(baseType)) {
+        var location = LocationUtilities.ApplicationOrFallback(ownStreamId.Attribute, Location.None, context.CancellationToken);
+        context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.GenerationOptOutAcrossAssemblies, location,
+          type.Name, ownStreamId.Name, baseType.Name, baseType.ContainingAssembly.Name));
+        return;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Whether the type itself (not a base) declares <c>[GenerateStreamId]</c>: on the type, on one of its
+  /// properties, or on a constructor parameter, the three places the generator reads it.
+  /// </summary>
+  private static bool _declaresGenerateStreamId(INamedTypeSymbol type) =>
+    _hasGenerateStreamId(type.GetAttributes())
+    || type.GetMembers().OfType<IPropertySymbol>().Any(p => _hasGenerateStreamId(p.GetAttributes()))
+    || type.InstanceConstructors.Any(c => c.Parameters.Any(p => _hasGenerateStreamId(p.GetAttributes())));
+
+  private static bool _hasGenerateStreamId(ImmutableArray<AttributeData> attributes) =>
+    attributes.Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, GENERATE_STREAM_ID));
+
+  private const string GENERATE_STREAM_ID = "Whizbang.Core.GenerateStreamIdAttribute";
 }
