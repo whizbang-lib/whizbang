@@ -43,8 +43,13 @@ public sealed record PermissionSetModel {
   public string Permissions { get; init; } = string.Empty;
 }
 
-/// <summary>Counts the Apply calls a perspective made; a perspective takes one from DI.</summary>
+/// <summary>
+/// Counts the Apply calls a perspective made. The test perspectives are built with no arguments (the generated
+/// registrations construct them that way), so the counter of the rewind running on this flow is ambient.
+/// </summary>
 public sealed class ApplyCounter {
+  public static readonly AsyncLocal<ApplyCounter?> Current = new();
+
   public int Applies { get; private set; }
 
   /// <summary>Runs once, on the first Apply: the seam a test appends a newer event through while a rewind runs.</summary>
@@ -60,43 +65,43 @@ public sealed class ApplyCounter {
 
 /// <summary>Every Apply builds the row from its event alone, and says so.</summary>
 [OverwriteOnly]
-public sealed class OverwritePermissionsPerspective(ApplyCounter counter) :
+public sealed class OverwritePermissionsPerspective :
     IPerspectiveFor<PermissionSetModel, PermissionsSet>,
     IPerspectiveFor<PermissionSetModel, PermissionsNoted>,
     IPerspectiveWithActionsFor<PermissionSetModel, PermissionsRevoked> {
   public PermissionSetModel Apply(PermissionSetModel currentData, PermissionsSet @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return new PermissionSetModel { UserId = @event.UserId, Revision = @event.Revision, Permissions = @event.Permissions };
   }
 
   public PermissionSetModel Apply(PermissionSetModel currentData, PermissionsNoted @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return null!;  // no model: the row stays as the events before this one left it
   }
 
   public ApplyResult<PermissionSetModel> Apply(PermissionSetModel currentData, PermissionsRevoked @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return ApplyResult<PermissionSetModel>.Purge();
   }
 }
 
 /// <summary>The same Applies without the marker: the full replay every rewind of it makes.</summary>
-public sealed class FoldedPermissionsPerspective(ApplyCounter counter) :
+public sealed class FoldedPermissionsPerspective :
     IPerspectiveFor<PermissionSetModel, PermissionsSet>,
     IPerspectiveFor<PermissionSetModel, PermissionsNoted>,
     IPerspectiveWithActionsFor<PermissionSetModel, PermissionsRevoked> {
   public PermissionSetModel Apply(PermissionSetModel currentData, PermissionsSet @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return new PermissionSetModel { UserId = @event.UserId, Revision = @event.Revision, Permissions = @event.Permissions };
   }
 
   public PermissionSetModel Apply(PermissionSetModel currentData, PermissionsNoted @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return null!;  // no model: the row stays as the events before this one left it
   }
 
   public ApplyResult<PermissionSetModel> Apply(PermissionSetModel currentData, PermissionsRevoked @event) {
-    counter.Count();
+    ApplyCounter.Current.Value?.Count();
     return ApplyResult<PermissionSetModel>.Purge();
   }
 }
@@ -271,7 +276,6 @@ public class OverwriteOnlyRewindTests {
     public Harness(string runnerTypeName, IPerspectiveSnapshotStore? snapshots = null, IReceptorInvoker? receptorInvoker = null) {
       var services = new ServiceCollection();
       services.AddLogging();
-      services.AddSingleton(Counter);
       services.AddSingleton<OverwritePermissionsPerspective>();
       services.AddSingleton<FoldedPermissionsPerspective>();
       if (receptorInvoker is not null) {
@@ -290,8 +294,10 @@ public class OverwriteOnlyRewindTests {
       await Events.AppendAsync(userId, GeneratedRunners.Envelope(payload, origin ?? Guid.Empty, originSequence));
     }
 
-    public Task RewindAsync(Guid userId) =>
-      Runner.RewindAndRunAsync(userId, _perspectiveName, TrackedGuid.New().Value, CancellationToken.None);
+    public async Task<PerspectiveCursorCompletion> RewindAsync(Guid userId) {
+      ApplyCounter.Current.Value = Counter;
+      return await Runner.RewindAndRunAsync(userId, _perspectiveName, TrackedGuid.New().Value, CancellationToken.None);
+    }
   }
 
   /// <summary>Holds one snapshot, placed before every event the test appends.</summary>

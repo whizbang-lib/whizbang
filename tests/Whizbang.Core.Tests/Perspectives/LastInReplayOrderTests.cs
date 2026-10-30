@@ -32,9 +32,14 @@ public class LastInReplayOrderTests {
       SourceCommitSequence = source,
     };
 
+  /// <summary>A read, named for what it exercises.</summary>
+  public sealed record ReplayBatch(string Name, MessageEnvelope<IEvent>[] Batch) {
+    public override string ToString() => Name;
+  }
+
   /// <summary>One batch per ordering ReplayEventOrder can choose, each read in an order that disagrees with it.</summary>
-  public static IEnumerable<Func<(string Name, MessageEnvelope<IEvent>[] Batch)>> Batches() {
-    (string, MessageEnvelope<IEvent>[])[] batches = [
+  public static IEnumerable<Func<ReplayBatch>> Batches() {
+    (string Name, MessageEnvelope<IEvent>[] Batch)[] batches = [
       ("one origin: origin order, the last read is not last",
         [_event(1, version: 1, origin: _originA, source: 20), _event(2, version: 2, origin: _originA, source: 30), _event(3, version: 3, origin: _originA, source: 10)]),
       ("one origin: a tie on the origin sequence breaks on the id text",
@@ -57,12 +62,12 @@ public class LastInReplayOrderTests {
         [_event(3, local: 5), _event(1), _event(2, local: 1)]),
       ("a single event", [_event(1)]),
     ];
-    return batches.Select(b => (Func<(string, MessageEnvelope<IEvent>[])>)(() => b));
+    return batches.Select(b => (Func<ReplayBatch>)(() => new ReplayBatch(b.Name, b.Batch)));
   }
 
   [Test]
   [MethodDataSource(nameof(Batches))]
-  public async Task Last_IsTheEventAFullReplayFoldsLastAsync((string Name, MessageEnvelope<IEvent>[] Batch) row) {
+  public async Task Last_IsTheEventAFullReplayFoldsLastAsync(ReplayBatch row) {
     var selection = new LastInReplayOrder();
     foreach (var envelope in row.Batch) {
       selection.Offer(envelope);
@@ -75,7 +80,7 @@ public class LastInReplayOrderTests {
 
   [Test]
   [MethodDataSource(nameof(Batches))]
-  public async Task LastMatching_IsTheLastMatchingEventInReplayOrderAsync((string Name, MessageEnvelope<IEvent>[] Batch) row) {
+  public async Task LastMatching_IsTheLastMatchingEventInReplayOrderAsync(ReplayBatch row) {
     // Mark every other event, so the matching subset's last differs from the batch's.
     var marked = row.Batch.Select((e, i) => new MessageEnvelope<IEvent>(e.MessageId, new Probe(Marked: i % 2 == 0), []) {
       LocalStreamVersion = e.LocalStreamVersion,
@@ -88,7 +93,7 @@ public class LastInReplayOrderTests {
       selection.Offer(envelope);
     }
 
-    var expected = ReplayEventOrder.Order(marked).Where(e => ((Probe)e.Payload).Marked).Last();
+    var expected = ReplayEventOrder.Order(marked).Last(e => ((Probe)e.Payload).Marked);
     await Assert.That(selection.LastMatching).IsSameReferenceAs(expected)
       .Because($"{row.Name}: the matching events are ordered by the ordering the whole read chose");
   }

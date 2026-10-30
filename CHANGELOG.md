@@ -401,6 +401,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A rewind of an `[OverwriteOnly]` perspective applies only the stream's last event.** Some perspectives fold
+  nothing: each `Apply` builds the row from its event alone, so the row is the last event's. The runner did not know,
+  and a late event, an event below the row's position, a refused write or a row waking after eviction replayed the whole
+  stream, holding every event's body in memory to produce a row only the last one decides. Streams of hundreds of large
+  events replayed side by side were enough to exhaust a service's memory. A perspective now declares it with
+  `[OverwriteOnly]` (never inferred). Its rewind reads the stream as before but keeps only the last event in the order a
+  full replay folds it (origin order, stream order, commit order or id order, chosen the same way; the new
+  `LastInReplayOrder`), applies that one to an empty model, and writes through the same write the full replay ends with,
+  snapshot included. The events before it are counted, never held or applied, and no receptor runs for them: a rewind
+  rebuilds state, it does not re-deliver events. The rewind folds the stream in full instead, and writes the same row a
+  full replay always wrote, when the last event cannot decide the row alone: the stream holds an event whose `Apply`
+  returns an action or an `ApplyResult` (it can purge), the last `Apply` returns no model or throws, or the stream starts
+  purged. Each catch-up pass over events appended during the rewind applies its own last event. The new analyzer
+  warning WHIZ108 reports an `Apply` of a marked perspective that reads its current model (Fixes #1869)
 - **An `Apply` can tell a stream's first event from the event itself: `ApplyContext.Current.IsFirstEventInStream`.**
   The runner never passes `Apply` a null model (a stream with no row gets an empty one), so `current is null` never
   detected a stream's first event, and row state is the wrong signal anyway: a purge, an eviction, a rebuild or a replay

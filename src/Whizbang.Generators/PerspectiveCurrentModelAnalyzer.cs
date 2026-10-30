@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -36,8 +37,27 @@ public class PerspectiveCurrentModelAnalyzer : DiagnosticAnalyzer {
       description: "The perspective runner hands every Apply a model: the stored row, or an empty model for a stream that has none. A null test of that model is never true, and row state cannot tell a stream's first event anyway, because a purge, an eviction, a rebuild or a replay changes it. ApplyContext.Current.IsFirstEventInStream is decided by the event's position in its stream, so every replay reaches the same answer."
   );
 
+  /// <summary>
+  /// WHIZ108: Warning - an Apply of an [OverwriteOnly] perspective reads its current model, which the marker says it never
+  /// does (#1869).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz108</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/OverwriteOnlyAnalyzerTests.cs:AnOverwriteOnlyApplyThatReadsItsCurrentModel_IsWarnedAsync</tests>
+  public static readonly DiagnosticDescriptor OverwriteOnlyApplyReadsCurrentModel = new(
+      id: "WHIZ108",
+      title: "An overwrite-only perspective's Apply must not read its current model",
+      messageFormat: "Apply method '{0}' of overwrite-only perspective '{1}' reads its current model '{2}'. A rewind of an [OverwriteOnly] perspective applies only the stream's last event to an empty model, so whatever this Apply carries forward from the model would be lost. Build the model from the event alone, or remove [OverwriteOnly].",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "[OverwriteOnly] declares that every Apply builds the row from its event alone, so the row after any event is that event's. The runner relies on it: a rewind applies only the stream's last event instead of replaying the stream. An Apply that reads its current-model parameter folds earlier events into the row, which the rewind would drop."
+  );
+
   /// <inheritdoc/>
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(ApplyTestsCurrentModelForNull);
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+    ImmutableArray.Create(ApplyTestsCurrentModelForNull, OverwriteOnlyApplyReadsCurrentModel);
+
+  private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -66,7 +86,24 @@ public class PerspectiveCurrentModelAnalyzer : DiagnosticAnalyzer {
             ApplyTestsCurrentModelForNull, node.GetLocation(), symbol.Name, current.Name));
       }
     }
+
+    // WHIZ108 (#1869): one report per Apply, at the first read, is enough to name the contradiction.
+    if (symbol.ContainingType.GetAttributes().Any(static a => Shared.Utilities.TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE))
+        && _firstRead(method, current, context.SemanticModel, context.CancellationToken) is { } read) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          OverwriteOnlyApplyReadsCurrentModel, read.GetLocation(), symbol.Name, symbol.ContainingType.Name, current.Name));
+    }
   }
+
+  /// <summary>The first use of the current-model parameter in the Apply that reads it; <c>nameof</c> reads nothing.</summary>
+  private static IdentifierNameSyntax? _firstRead(MethodDeclarationSyntax method, IParameterSymbol current, SemanticModel model, System.Threading.CancellationToken ct) =>
+    method.DescendantNodes().OfType<IdentifierNameSyntax>().FirstOrDefault(identifier =>
+      !_insideNameof(identifier)
+      && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(identifier, ct).Symbol, current));
+
+  private static bool _insideNameof(SyntaxNode node) =>
+    node.Ancestors().OfType<InvocationExpressionSyntax>()
+      .Any(static invocation => invocation.Expression is IdentifierNameSyntax { Identifier.ValueText: "nameof" });
 
   /// <summary>
   /// True for <c>current is null</c>, <c>current is not null</c>, <c>current == null</c>, <c>null == current</c> and

@@ -457,7 +457,7 @@ internal static class DiagnosticDescriptors {
 | WHIZ060-063 | Serializable properties |
 | WHIZ070-072 | Vector fields, polymorphic base types |
 | WHIZ080-099 | RPC handlers, message tags, generator notices |
-| WHIZ100-107 | Perspective purity and the current model (Apply methods) |
+| WHIZ100-108 | Perspective purity and the current model (Apply methods) |
 | WHIZ110-122 | Pinned type identity and the pinned-type ledger |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
 | WHIZ180 | Audit settings the generator cannot register |
