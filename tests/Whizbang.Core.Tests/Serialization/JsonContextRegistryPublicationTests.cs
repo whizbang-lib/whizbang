@@ -72,11 +72,11 @@ public class JsonContextRegistryPublicationTests {
   public async Task AModifierRegisteredDuringABuild_RunsInTheOptionsAfterwardAsync() {
     JsonContextRegistry.RegisterContext(new MarkerResolver<ModifierMarker>(), priority: int.MaxValue);
     var modified = false;
-    Action<JsonTypeInfo> modifier = info => modified |= info.Type == typeof(ModifierMarker);
+    void Modify(JsonTypeInfo info) => modified |= info.Type == typeof(ModifierMarker);
 
     try {
       using (JsonContextRegistry.AfterSequenceAllocatedForTests(_buildCompleteChain)) {
-        JsonContextRegistry.RegisterTypeInfoModifier(modifier);
+        JsonContextRegistry.RegisterTypeInfoModifier(Modify);
       }
 
       var options = JsonContextRegistry.WithCompleteChain(null);
@@ -84,7 +84,7 @@ public class JsonContextRegistryPublicationTests {
 
       await Assert.That(modified).IsTrue().Because(REUSED_STALE);
     } finally {
-      JsonContextRegistry.RemoveTypeInfoModifierForTests(modifier);
+      JsonContextRegistry.RemoveTypeInfoModifierForTests(Modify);
     }
   }
 
