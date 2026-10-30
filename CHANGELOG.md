@@ -882,6 +882,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `whizbang.lifecycle_coordinator.tracked_entries` reports the live count. Ended entries no longer keep their finished
   detached-stage tasks, and ending an event whose perspectives all reported no longer takes its state off
   `pending_perspective_states` a second time (Fixes #1797)
+- **The GraphQL jsonb containment test no longer fails when its shard runs whole.** Tests that empty a process-wide
+  registry the database tests read (the model registrars, the physical field hydrators, the DbContext registration
+  and initialization registries) ran under keys of their own, so one could empty the model registrars while the
+  GraphQL test rebuilt its context after a sibling had cleared the physical field registry; the filter then had no
+  physical column to translate to and failed in milliseconds. Its query plan was never the cause: the plan uses the
+  GIN index in every statistics state. Those tests now also hold the database tests' key, a guard fails any test that
+  resets such a registry without it, and the test's assertions carry the response, SQL and plan (Fixes #1903)
 - **Every Dapper maintenance step acts on the schema the host names.** The partition maintenance step and the physical
   column fill step wrote `public` into every statement, and the managed-schema reconcile step asked the server for
   `current_schema()`, while the Dapper work coordinator takes its schema from the connection string's `Search Path`

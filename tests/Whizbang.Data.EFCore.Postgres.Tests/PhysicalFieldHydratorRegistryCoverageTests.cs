@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// either class would change what the other's materialization produces.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PhysicalFieldHydratorRegistry.cs</code-under-test>
-[NotInParallel("PhysicalFieldHydratorRegistry")]
+[NotInParallel(["PhysicalFieldHydratorRegistry", "EFCorePostgresTests"])]
 [Category("Shard1")]
 public class PhysicalFieldHydratorRegistryCoverageTests {
 
