@@ -29,6 +29,8 @@ public class LifecycleTrackingEndsTests {
   private const string PARTIAL_ENDED = "whizbang.lifecycle_coordinator.partial_tracking_ended";
   private const string COMPLETED_SWEPT = "whizbang.lifecycle_coordinator.completed_tracking_swept";
   private const string TRACKED_ENTRIES = "whizbang.lifecycle_coordinator.tracked_entries";
+  private const string PENDING_PERSPECTIVES = "whizbang.lifecycle_coordinator.pending_perspective_states";
+  private const string PENDING_WHEN_ALL = "whizbang.lifecycle_coordinator.pending_when_all_states";
   private const string PERSPECTIVE_A = "Test.APerspective";
   private const string PERSPECTIVE_B = "Test.BPerspective";
   private const string PERSPECTIVE_C = "Test.CPerspective";
@@ -161,5 +163,85 @@ public class LifecycleTrackingEndsTests {
 
     await Assert.That(_current(helper, TRACKED_ENTRIES)).IsEqualTo(2)
       .Because("the gauge reads the entries the coordinator holds right now, so a leak shows on a dashboard");
+  }
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task EndingACompletedEvent_TakesItsPerspectiveStateOffThePendingGaugeOnlyOnceAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new LifecycleCoordinatorMetrics(new WhizbangMetrics(factory));
+    var coordinator = new LifecycleCoordinator(new FakeLogger<LifecycleCoordinator>(), metrics, new FakeTimeProvider());
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+    var eventId = _begin(coordinator);
+    coordinator.ExpectPerspectiveCompletions(eventId, [PERSPECTIVE_A]);
+    coordinator.SignalPerspectiveComplete(eventId, PERSPECTIVE_A);
+
+    coordinator.AbandonTracking(eventId);
+
+    await Assert.That(_current(helper, PENDING_PERSPECTIVES)).IsEqualTo(0)
+      .Because("the state left the pending gauge when it completed; ending the event must not take it off again");
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task Sweep_EndingAnEntry_ReleasesItsSegmentAndPerspectiveGatesAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new LifecycleCoordinatorMetrics(new WhizbangMetrics(factory));
+    var clock = new FakeTimeProvider();
+    var coordinator = new LifecycleCoordinator(new FakeLogger<LifecycleCoordinator>(), metrics, clock);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+    var eventId = _begin(coordinator);
+    coordinator.ExpectCompletionsFrom(eventId, PostLifecycleCompletionSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, [PERSPECTIVE_A, PERSPECTIVE_B]);
+
+    clock.Advance(_bound + TimeSpan.FromSeconds(1));
+    coordinator.CleanupStaleTracking(_bound);
+
+    await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(0)
+      .Because("an ended entry's segment gate goes with it");
+    await Assert.That(_current(helper, PENDING_PERSPECTIVES)).IsEqualTo(0)
+      .Because("an ended entry's incomplete perspective gate goes with it");
+  }
+
+  [Test]
+  public async Task Sweep_SkipsAnEntryAnotherPathEndedWhileItRan_CountingItOnceAsync() {
+    var clock = new FakeTimeProvider();
+    var logger = new EndingOthersLogger();
+    var coordinator = new LifecycleCoordinator(logger, timeProvider: clock);
+    logger.Coordinator = coordinator;
+    var first = _begin(coordinator);
+    var second = _begin(coordinator);
+    logger.Others = [first, second];
+    foreach (var id in logger.Others) {
+      coordinator.ExpectPerspectiveCompletions(id, [PERSPECTIVE_A, PERSPECTIVE_B]);
+      coordinator.SignalPerspectiveComplete(id, PERSPECTIVE_A);
+    }
+    clock.Advance(_bound + TimeSpan.FromSeconds(1));
+
+    // Ending the first partial entry logs, and the log ends the other entry as a worker's exit would mid-sweep.
+    var cleaned = coordinator.CleanupStaleTracking(_bound);
+
+    await Assert.That(cleaned).IsEqualTo(1)
+      .Because("the entry another path ended first is not counted again by the sweep");
+    await Assert.That(coordinator.TrackedCount).IsEqualTo(0);
+  }
+
+  /// <summary>Ends every other tracked event the first time the coordinator logs, as a concurrent exit would.</summary>
+  private sealed class EndingOthersLogger : ILogger<LifecycleCoordinator> {
+    public LifecycleCoordinator? Coordinator { get; set; }
+    public Guid[] Others { get; set; } = [];
+    private bool _fired;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (_fired) {
+        return;
+      }
+      _fired = true;
+      var message = formatter(state, exception);
+      foreach (var other in Others.Where(id => !message.Contains(id.ToString(), StringComparison.Ordinal))) {
+        Coordinator!.AbandonTracking(other);
+      }
+    }
   }
 }

@@ -1066,6 +1066,9 @@ public partial class PerspectiveWorker(
         LogReconciliationCompleted(_logger, orphan.EventId);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogReconciliationError(_logger, ex, orphan.EventId);
+      } finally {
+        // The replay began this entry, so it ends it, whatever the stages did: nothing else would (#1797).
+        lifecycleCoordinator.AbandonTracking(orphan.EventId);
       }
     }
 
@@ -4941,7 +4944,11 @@ public partial class PerspectiveWorker(
         // drain-mode twin at _buildDrainModeTypeNameCache). Hand-building it risked drift.
         var eventTypeKey = TypeNameFormatter.Format(eventType);
         if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
-          lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+          // Only a tracked event can fire: an ended one (a cooled row re-signaling it) would get an expectation
+          // nothing completes and nothing sweeps (#1797).
+          if (lifecycleCoordinator.GetTracking(eventId) is not null) {
+            lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+          }
         } else {
           LogEventTypeNotInPerspectiveRegistry(_logger, eventTypeKey);
         }
@@ -4958,47 +4965,77 @@ public partial class PerspectiveWorker(
       }
     }
 
-    foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
-      // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete
-      if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
-        // Not all perspectives have completed yet — keep tracking alive for next batch.
-        // Don't abandon: the tracking instance preserves the stage guard so
-        // PostAllPerspectivesDetached fires exactly once across all batch cycles.
-        continue;
+    try {
+      foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
+        await _fireTerminalStagesAndEndAsync(eventId, envelope, lifecycleCoordinator, scopedProvider, cancellationToken);
       }
-
-      try {
-        await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
-
-        // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
-        var tracking = lifecycleCoordinator.GetTracking(eventId);
-        if (tracking is not null) {
-          // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
-          coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
-
-          // PostLifecycle: fires once per event as the final lifecycle stage
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-          coordinatorMetrics?.PostLifecycleFired.Add(1);
-
-          // Record durable lifecycle completion marker for crash recovery
-          await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
-        }
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Isolate per-event errors — one failing receptor must not prevent other events
-        // from firing PostLifecycle. Without this, a single throwing receptor kills the
-        // entire batch loop and all subsequent events never get PostLifecycle.
-        LogPostLifecycleError(_logger, ex, eventId);
-        coordinatorMetrics?.PostLifecycleErrors.Add(1);
+    } catch (OperationCanceledException) {
+      // Canceled mid-batch: every event whose gate is open ends here too. Nothing in memory finishes its stages
+      // now; the missing durable completion marker replays them at the next startup (#1797).
+      foreach (var eventId in batchProcessedEvents.Keys.Where(id => _isReadyToFire(id, lifecycleCoordinator))) {
+        lifecycleCoordinator.AbandonTracking(eventId);
       }
+      throw;
+    }
+  }
 
-      // DON'T abandon tracking after stages fire — the tracking instance's stage guard
-      // prevents PostAllPerspectivesDetached from firing again in subsequent batch cycles.
-      // The tracking is marked _isComplete after PostLifecycleInline (see LifecycleTrackingState),
-      // so all future AdvanceToAsync calls return immediately.
-      // Memory cleanup happens naturally as events age out of batchProcessedEvents.
+  /// <summary>
+  /// The events a batch can fire: tracked, with every expected perspective reported. An untracked event has no
+  /// lifecycle left in this process (a cooled row re-signaling an event whose tracking already ended).
+  /// </summary>
+  private static bool _isReadyToFire(Guid eventId, ILifecycleCoordinator lifecycleCoordinator) =>
+    lifecycleCoordinator.GetTracking(eventId) is not null && lifecycleCoordinator.AreAllPerspectivesComplete(eventId);
+
+  /// <summary>
+  /// Fires one event's PostAllPerspectives and PostLifecycle stages once its WhenAll gate is open, then ends its
+  /// tracking. The end is the exit this path owns: the worker began the tracking, so it ends it once the
+  /// lifecycle is done, when a terminal-stage receptor fails (the failure is isolated and not retried in memory)
+  /// and when the stages are canceled. An event still waiting on a perspective keeps its entry for a later
+  /// batch (#1797).
+  /// </summary>
+  /// <docs>fundamentals/lifecycle/lifecycle-coordinator#live-tracking</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_EveryProjectedEventsTracking_EndsOnceItsLifecycleCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_AnEventWaitingOnAPerspectiveThatHasNotReported_StaysTrackedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_APostAllPerspectivesReceptorThatThrows_StillEndsItsEventsTrackingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:FirePostLifecycle_CanceledMidBatch_EndsEveryReadyEventsTrackingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:FirePostLifecycle_AnEventWhoseTrackingEnded_IsNeitherRegisteredNorFiredAgainAsync</tests>
+  private async Task _fireTerminalStagesAndEndAsync(
+      Guid eventId,
+      MessageEnvelope<IEvent> envelope,
+      ILifecycleCoordinator lifecycleCoordinator,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
+    // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete. Not complete yet: the
+    // entry stays for a later batch, and its stage guard keeps PostAllPerspectivesDetached to exactly once.
+    if (!_isReadyToFire(eventId, lifecycleCoordinator)) {
+      return;
+    }
+
+    try {
+      await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
+
+      // The tracking was created during PrePerspective via BeginTracking
+      var tracking = lifecycleCoordinator.GetTracking(eventId)!;
+      // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
+      coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
+
+      // PostLifecycle: fires once per event as the final lifecycle stage
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+      coordinatorMetrics?.PostLifecycleFired.Add(1);
+
+      // Record durable lifecycle completion marker for crash recovery
+      await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Isolate per-event errors — one failing receptor must not prevent other events
+      // from firing PostLifecycle. Without this, a single throwing receptor kills the
+      // entire batch loop and all subsequent events never get PostLifecycle.
+      LogPostLifecycleError(_logger, ex, eventId);
+      coordinatorMetrics?.PostLifecycleErrors.Add(1);
+    } finally {
+      lifecycleCoordinator.AbandonTracking(eventId);
     }
   }
 
