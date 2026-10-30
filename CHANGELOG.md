@@ -401,6 +401,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **An `Apply` can tell a stream's first event from the event itself: `ApplyContext.Current.IsFirstEventInStream`.**
+  The runner never passes `Apply` a null model (a stream with no row gets an empty one), so `current is null` never
+  detected a stream's first event, and row state is the wrong signal anyway: a purge, an eviction, a rebuild or a replay
+  changes it. The new fact is decided by the event's position in its stream, so a live apply, a rewind, a rebuild and a
+  replay reach the same answer. A stream's first event is the one at version 1, or at version 0 for a stream whose
+  numbering began there (a version-1 event of a stream that also holds a version 0 is not first). Every read a
+  perspective folds from carries it (`MessageEnvelope.IsFirstInLocalStream`): the polymorphic read on both Postgres
+  drivers and the in-memory store, and the live drain, whose `get_stream_events` returns `out_first_in_stream`
+  (migration 264, one unique-index probe per stream, made for version-1 rows only; `StreamEventData.IsFirstInStream`).
+  A store that does not record stream positions reports no first event. `ApplyContext.Enter` sets the fact for a unit
+  test that calls an `Apply` directly. The new analyzer warning WHIZ107 reports an `Apply` that tests its current model
+  for null (`is null`, `is not null`, `== null`, `!= null`) and points at the new fact (Fixes #1878)
 - **A saga can end in one commit or rollback signal (#1613).** A `[Saga]` marked `[SignalsOutcome]` publishes exactly
   one `SagaCommittedEvent` or `SagaRolledBackEvent` per run on its own stream, whichever path ends it: `Completed`
   commits; `Failed`, `Abandoned` and (by default) `CompletedWithFailures` roll back, the last overridable with

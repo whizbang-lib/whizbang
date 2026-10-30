@@ -60,6 +60,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     public Guid Id { get; init; }
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
+    public bool IsFirstInStream { get; init; }
     public long? CommitSequence { get; init; }
     public Guid? OriginServiceId { get; init; }
     public long? OriginCommitSequence { get; init; }
@@ -86,6 +87,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       Id = e.Id,
       EventType = e.EventType,
       Version = e.Version,
+      // The first event in its stream (#1878): version 0, or version 1 when the stream holds no version 0. The
+      // lookup is a probe of the (stream_id, version) unique index, made for version-1 rows only.
+      IsFirstInStream = e.Version == 0
+        || (e.Version == 1 && !_context.Set<EventStoreRecord>().Any(z => z.StreamId == e.StreamId && z.Version == 0)),
       CommitSequence = e.CommitSequence,
       OriginServiceId = e.OriginServiceId,
       OriginCommitSequence = e.OriginCommitSequence,
@@ -428,6 +433,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
         // can run backward against the order the stream was written in.
         LocalStreamVersion = record.Version,
+        // Decided by the query from the event's position, whatever the read starts after (#1878).
+        IsFirstInLocalStream = record.IsFirstInStream,
         // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
         // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
         // its true position in the stream). Dropping it demotes single-origin streams to
@@ -735,7 +742,9 @@ public sealed class EFCoreEventStore<TDbContext>(
       // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
       // through to the perspective runner so the idempotency filter can compare commit_sequence
       // when both sides have it (production forensic G5).
-      LocalCommitSequence = raw.CommitSequence
+      LocalCommitSequence = raw.CommitSequence,
+      // The drain query decided it from the event's position (264, #1878).
+      IsFirstInLocalStream = raw.IsFirstInStream,
     };
   }
 

@@ -305,6 +305,11 @@ public abstract class DapperEventStoreBase : IEventStore {
     public string? Scope { get; set; }
     /// <summary>The row's position in its stream (<c>wh_event_store.version</c>), when the read selects it.</summary>
     public long? Version { get; set; }
+    /// <summary>
+    /// Whether the row is the first in its stream, when the read selects it (#1878): version 0, or version 1 when the
+    /// stream holds no version 0.
+    /// </summary>
+    public bool IsFirstInStream { get; set; }
   }
 
   /// <inheritdoc />

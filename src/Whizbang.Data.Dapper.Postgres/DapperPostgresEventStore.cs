@@ -412,24 +412,31 @@ public class DapperPostgresEventStore(
   /// </summary>
   private static string _getReadInStreamOrderSql(Guid? fromEventId) =>
     fromEventId is null
-      ? @"SELECT es.event_type AS EventType,
-                 eb.event_data::text AS EventData,
-                 eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope,
-                 es.version AS Version
-          FROM wh_event_store es
-          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+      ? READ_IN_STREAM_ORDER_COLUMNS + @"
           WHERE es.stream_id = @StreamId
           ORDER BY es.version, es.event_id"
-      : @"SELECT es.event_type AS EventType,
+      : READ_IN_STREAM_ORDER_COLUMNS + @"
+          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          ORDER BY es.version, es.event_id";
+
+  /// <summary>
+  /// The replay read's columns and source. <c>IsFirstInStream</c> is decided from the event's position (#1878): version 0,
+  /// or version 1 when the stream holds no version 0, so it holds whatever the read starts after. The version-0 probe
+  /// runs for version-1 rows only (CASE evaluates its arms in order), one unique-index probe per stream.
+  /// </summary>
+  private const string READ_IN_STREAM_ORDER_COLUMNS = @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version,
+                 CASE
+                   WHEN es.version = 0 THEN TRUE
+                   WHEN es.version = 1 THEN NOT EXISTS (
+                     SELECT 1 FROM wh_event_store e0 WHERE e0.stream_id = es.stream_id AND e0.version = 0)
+                   ELSE FALSE
+                 END AS IsFirstInStream
           FROM wh_event_store es
-          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
-          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
-          ORDER BY es.version, es.event_id";
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id";
 
   /// <summary>
   /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.
@@ -461,6 +468,7 @@ public class DapperPostgresEventStore(
 
     var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
     envelope.LocalStreamVersion = row.Version;
+    envelope.IsFirstInLocalStream = row.IsFirstInStream;
     return envelope;
   }
 

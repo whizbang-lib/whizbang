@@ -4149,6 +4149,16 @@ public record StreamEventData {
   /// </summary>
   /// <docs>operations/dead-letter-queue/perspective-events</docs>
   public int Failures { get; init; }
+
+  /// <summary>
+  /// Whether the event is the first in its stream (<c>get_stream_events.out_first_in_stream</c>, migration 264): the
+  /// event at version 1, or at version 0 for a stream whose numbering began there. The drain carries it onto the
+  /// envelope (<see cref="Observability.MessageEnvelope{T}.IsFirstInLocalStream"/>) for the perspective runner (#1878).
+  /// False for a driver or function revision that does not return it.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
+  public bool IsFirstInStream { get; init; }
 }
 
 /// <summary>

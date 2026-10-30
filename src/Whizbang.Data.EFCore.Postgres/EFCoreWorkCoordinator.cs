@@ -5370,6 +5370,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Pre-139 SQL function: no failure counter. Field stays 0, so the dead-letter check
       // never fires off a lease count (the safe direction; attempts is still tracked for diagnostics).
     }
+    var firstInStreamOrdinal = -1;
+    try {
+      firstInStreamOrdinal = reader.GetOrdinal("out_first_in_stream");
+    } catch (IndexOutOfRangeException) {
+      // Pre-264 SQL function: no first-in-stream fact. Field stays false: an event whose position the read does not
+      // know is never the first in its stream (#1878).
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -5394,6 +5401,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Failures = hasFailuresColumn && !await reader.IsDBNullAsync(failuresOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetInt32(failuresOrdinal)
           : 0,
+        IsFirstInStream = firstInStreamOrdinal >= 0 && reader.GetBoolean(firstInStreamOrdinal),
       });
     }
 
