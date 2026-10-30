@@ -5029,7 +5029,7 @@ public partial class PerspectiveWorker(
       // Record durable lifecycle completion marker for crash recovery
       await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Isolate per-event errors — one failing receptor must not prevent other events
+      // Isolate per-event errors: one failing receptor must not prevent other events
       // from firing PostLifecycle. Without this, a single throwing receptor kills the
       // entire batch loop and all subsequent events never get PostLifecycle.
       LogPostLifecycleError(_logger, ex, eventId);
