@@ -165,7 +165,7 @@ public abstract class EventStoreContractTests {
   [Test]
   public async Task AppendAsync_ANewStream_StartsAtVersionOneAsync() {
     var eventStore = await CreateEventStoreAsync();
-    var streamId = Guid.NewGuid();
+    var streamId = (Guid)TrackedGuid.New();
 
     await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
 
