@@ -543,6 +543,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WhizbangNotReadyException` as before; `00:00:00` restores the immediate refusal. Holding the whole application until
   the migration completes stays opt-in, with `NonBlockingSchemaInit = false` (Fixes #1877)
 
+- **A host with no message broker starts without registering a transport.** With `AddTransportConsumer()` and no
+  `ITransport` registered, startup used to fail validation (registration validation reported `TransportConsumerWorker`
+  needing `ITransport`, and container validation could not activate the worker), so a broker-less application had to
+  register `InProcessTransport`, the in-process test transport, in production. Now the transport consumer is built
+  only when a transport is registered: with none it is not started, readiness does not wait for subscriptions, and
+  startup logs once that cross-service messaging is off because no transport is configured. Local dispatch is
+  unaffected, and registering a transport, `InProcessTransport` in a test included, starts the consumer as before
+  (Fixes #1876)
+
 - **Per-message debug logging and by-name type lookups no longer allocate (#1756).** With debug logging off, the
   dispatcher's tag-processing step and the perspective worker's per-batch description cost nothing (tag processing
   30-41 ns and 32-88 B down to 3-5 ns and 0 B; a 16-group batch description 414 ns and 1,752 B down to 1.2 ns and 0 B).

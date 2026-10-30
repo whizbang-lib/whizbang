@@ -197,10 +197,7 @@ public static class TransportConsumerBuilderExtensions {
     // Self-contained: this worker requires the instance identity, so the extension that
     // registers it must guarantee the identity exists rather than assume a fuller composition.
     builder.Services.AddWhizbangInstanceIdentity();
-    builder.Services.TryAddSingleton<TransportConsumerWorker>();
-    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
-    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
-      sp => sp.GetRequiredService<TransportConsumerWorker>()));
+    _addConsumerWorker(builder.Services);
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
@@ -316,10 +313,7 @@ public static class TransportConsumerBuilderExtensions {
     // Self-contained: this worker requires the instance identity, so the extension that
     // registers it must guarantee the identity exists rather than assume a fuller composition.
     builder.Services.AddWhizbangInstanceIdentity();
-    builder.Services.TryAddSingleton<TransportConsumerWorker>();
-    builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
-    builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
-      sp => sp.GetRequiredService<TransportConsumerWorker>()));
+    _addConsumerWorker(builder.Services);
 
     // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
     // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
@@ -341,6 +335,59 @@ public static class TransportConsumerBuilderExtensions {
         tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
+  }
+
+  /// <summary>
+  /// Registers the consumer worker, and its place in the host and in readiness, so that a host with no
+  /// message broker still starts (#1876). The worker is built only when an <see cref="ITransport"/> is
+  /// registered: with none, the factory yields no worker, nothing validates or resolves a transport, and
+  /// <see cref="NoTransportConfiguredNotice"/> takes the worker's place, logging once that cross-service
+  /// messaging is off and contributing no wait to readiness. Registering a transport, including
+  /// <see cref="InProcessTransport"/> in a test, turns the worker on.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_BuildsUnderContainerValidationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithoutATransport_IsNotAGapAsync</tests>
+  private static void _addConsumerWorker(IServiceCollection services) {
+    // A factory rather than a type registration: container validation (ValidateOnBuild) activates a type
+    // registration's constructor graph, which needs a transport. A null result is what GetService returns,
+    // and the forwards below read it. Registered through a descriptor so registration validation does not
+    // read the constructor as this registration's requirements: the transport is optional here.
+    services.TryAdd(ServiceDescriptor.Singleton<TransportConsumerWorker>(sp => sp.GetService<ITransport>() is not { } transport
+      ? null!
+      : new TransportConsumerWorker(
+          transport,
+          sp.GetRequiredService<TransportConsumerOptions>(),
+          sp.GetRequiredService<SubscriptionResilienceOptions>(),
+          sp.GetRequiredService<IServiceScopeFactory>(),
+          sp.GetRequiredService<System.Text.Json.JsonSerializerOptions>(),
+          sp.GetRequiredService<OrderedStreamProcessor>(),
+          sp.GetRequiredService<TransportMetrics>(),
+          sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TransportConsumerWorker>>(),
+          sp.GetRequiredService<IServiceInstanceProvider>(),
+          sp.GetRequiredService<ISchemaReadyGate>(),
+          sp.GetRequiredService<IOptions<RoutingOptions>>(),
+          sp.GetRequiredService<IWorkChannelWriter>(),
+          sp.GetRequiredService<IOptions<ClaimWorkerOptions>>(),
+          sp.GetRequiredService<IReceptorRegistryQuery>(),
+          sp.GetRequiredService<IReceptorRegistry>(),
+          sp.GetRequiredService<IEphemeralModeResolver>(),
+          sp.GetRequiredService<IEventMarkerResolver>(),
+          sp.GetRequiredService<IOptions<ControlClassOptions>>(),
+          sp.GetService<TransportBatchOptions>(),
+          sp.GetService<Tags.ControlClassResolver>(),
+          sp.GetService<TimeProvider>())));
+
+    services.TryAddSingleton<NoTransportConfiguredNotice>();
+    // Singleton + forwards so the SAME worker instance is the hosted service and the readiness contributor:
+    // Ready composes its SubscriptionsReady signal.
+    services.AddSingleton<IHostedService>(sp =>
+      (IHostedService?)sp.GetService<TransportConsumerWorker>() ?? sp.GetRequiredService<NoTransportConfiguredNotice>());
+    services.AddSingleton<Whizbang.Core.Startup.IStartupReadinessContributor>(sp =>
+      (Whizbang.Core.Startup.IStartupReadinessContributor?)sp.GetService<TransportConsumerWorker>()
+        ?? sp.GetRequiredService<NoTransportConfiguredNotice>());
   }
 
   /// <summary>
