@@ -157,7 +157,7 @@ public class InMemoryEventStore : IEventStore {
     var typeSet = new HashSet<Type>(eventTypes);
 
     // The replay read, in the stream's own order with each event's version, as the SQL stores read it (#1352).
-    foreach (var (version, envelope) in stream.ReadInStreamOrder(fromEventId)) {
+    foreach (var (version, isFirst, envelope) in stream.ReadInStreamOrder(fromEventId)) {
       cancellationToken.ThrowIfCancellationRequested();
 
       // Check if the payload is an IEvent
@@ -183,6 +183,8 @@ public class InMemoryEventStore : IEventStore {
           SourceServiceId = envelope.SourceServiceId,
           SourceCommitSequence = envelope.SourceCommitSequence,
           LocalStreamVersion = version,
+          // The stream's first appended event, whatever the read starts after (#1878).
+          IsFirstInLocalStream = isFirst,
         };
         yield return typedEnvelope;
       }
@@ -305,14 +307,16 @@ public class InMemoryEventStore : IEventStore {
 
     /// <summary>
     /// The events after <paramref name="fromEventId"/> (by id, as the SQL stores filter), in the order they were
-    /// appended, with each one's version: the replay read (#1352).
+    /// appended, with each one's version and whether it is the stream's first: the replay read (#1352, #1878).
     /// </summary>
-    public IEnumerable<(long Version, IMessageEnvelope Envelope)> ReadInStreamOrder(Guid? fromEventId) {
+    public IEnumerable<(long Version, bool IsFirst, IMessageEnvelope Envelope)> ReadInStreamOrder(Guid? fromEventId) {
       lock (_lock) {
+        // Null only for a stream a reader reaches between its creation and its first append, which holds no event.
+        var first = _events.FirstOrDefault();
         return [.. _events
           .Where(e => fromEventId == null || e.EventId.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.Version)
-          .Select(e => (e.Version, e.Envelope))];
+          .Select(e => (e.Version, ReferenceEquals(e, first), e.Envelope))];
       }
     }
 

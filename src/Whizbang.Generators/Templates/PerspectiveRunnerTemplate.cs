@@ -732,7 +732,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // A purged stream stays purged (issue #1027): an event after the purge is skipped, not applied to an
         // empty model, unless its Apply returns Resurrect. The checkpoint still advances past a skipped event.
         if (pendingPurge) {
-          var resurrection = TryResurrect(perspective, streamId, @event);
+          var resurrection = TryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
           lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
@@ -769,7 +769,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         __MODEL_TYPE_NAME__? appliedModel;
         global::Whizbang.Core.Perspectives.ModelAction action;
         try {
-          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
         } catch (Exception applyEx) {
           _logger.LogError(
               applyEx,
@@ -1127,12 +1127,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Applies an event to the model using the perspective's synchronous Apply method.
   /// AOT-compatible: uses switch statement instead of reflection.
   /// Apply methods are pure functions that return new model state and optional action.
+  /// The event's facts (<see cref="global::Whizbang.Core.Perspectives.ApplyContext"/>) are current for the Apply and
+  /// restored when it returns or throws (#1878).
   /// </summary>
   /// <returns>Tuple of (model, action) where action indicates Delete/Purge/None.</returns>
   private (__MODEL_TYPE_NAME__?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEvent(
       __PERSPECTIVE_CLASS_NAME__ perspective,
       __MODEL_TYPE_NAME__? currentModel,
-      IEvent @event) {
+      IEvent @event,
+      bool isFirstEventInStream) {
+
+    using var applyContext = global::Whizbang.Core.Perspectives.ApplyContext.Enter(isFirstEventInStream);
 
     // AOT-compatible switch on event type (no reflection)
     // Generator produces one case per event type the perspective handles
@@ -1159,9 +1164,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private __MODEL_TYPE_NAME__? TryResurrect(
       __PERSPECTIVE_CLASS_NAME__ perspective,
       Guid streamId,
-      IEvent @event) {
+      IEvent @event,
+      bool isFirstEventInStream) {
     try {
-      var (model, action) = ApplyEvent(perspective, CreateEmptyModel(streamId), @event);
+      var (model, action) = ApplyEvent(perspective, CreateEmptyModel(streamId), @event, isFirstEventInStream);
       return action == global::Whizbang.Core.Perspectives.ModelAction.Resurrect ? model : null;
     } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
       _logger.LogDebug(
@@ -1721,7 +1727,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // A purged stream stays purged: skip the event unless its Apply returns Resurrect. The frontier still
       // moves past a skipped event, so the cursor never re-flags it as a straggler.
       if (pendingPurge) {
-        var resurrection = TryResurrect(perspective, streamId, @event);
+        var resurrection = TryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
         lastSuccessfulEventId = envelope.MessageId.Value;
         lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
@@ -1742,7 +1748,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__? appliedModel;
       global::Whizbang.Core.Perspectives.ModelAction action;
       try {
-        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
       } catch (Exception applyEx) {
         _logger.LogError(
             applyEx,
