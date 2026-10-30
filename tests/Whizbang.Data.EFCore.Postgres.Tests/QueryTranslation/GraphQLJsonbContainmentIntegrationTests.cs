@@ -86,13 +86,13 @@ public class GraphQLJsonbContainmentIntegrationTests {
       """);
 
     var json = result.ToJson();
-    await Assert.That(json).Contains("\"title\": \"item-42\"");
-    await Assert.That(json).DoesNotContain("\"errors\"");
-    await Assert.That(json.Split("\"title\"").Length - 1).IsEqualTo(1);
-    await Assert.That(capture.Text).Contains("labels @> ");
+    await Assert.That(json).Contains("\"title\": \"item-42\"").Because(json);
+    await Assert.That(json).DoesNotContain("\"errors\"").Because(json);
+    await Assert.That(json.Split("\"title\"").Length - 1).IsEqualTo(1).Because(json);
+    await Assert.That(capture.Text).Contains("labels @> ").Because(capture.Text);
 
     var plan = await PhysicalJsonbContainmentIntegrationTests.PlanAsync(_connectionString, capture);
-    await Assert.That(plan).Contains("idx_jsonb_graph_item_labels_gin");
+    await Assert.That(plan).Contains("idx_jsonb_graph_item_labels_gin").Because(plan);
   }
 
   [Test]
