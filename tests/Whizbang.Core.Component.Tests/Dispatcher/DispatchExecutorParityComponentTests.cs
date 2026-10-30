@@ -3,10 +3,10 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Microsoft.Extensions.Time.Testing;
 using Whizbang.Core.Component.Tests.ExecutorShapes.Owned;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.PolicyBehavior;
