@@ -10,11 +10,11 @@
       },
       "Microsoft.Data.Sqlite": {
         "type": "Direct",
-        "requested": "[10.0.13, )",
-        "resolved": "10.0.13",
-        "contentHash": "w37nz3WFmDtRfXxWEwIXX2OgqDRiwhD1JGbFwfpFCF8GkCrV/yO6Y2JF5058J2RGoI2sCcdn02wrk0yEcekWcw==",
+        "requested": "[10.0.14, )",
+        "resolved": "10.0.14",
+        "contentHash": "muyroan6rKrf0omZL8UF7Kw5uOGp/yBg1L/XWvkFN3WhKaNtK2IWqRZw93nIwVqjhTVDO0l4CEGhHIh+mb+sKg==",
         "dependencies": {
-          "Microsoft.Data.Sqlite.Core": "10.0.13",
+          "Microsoft.Data.Sqlite.Core": "10.0.14",
           "SQLitePCLRaw.bundle_e_sqlite3": "2.1.13",
           "SQLitePCLRaw.core": "2.1.13"
         }
@@ -109,8 +109,8 @@
       },
       "Microsoft.Data.Sqlite.Core": {
         "type": "Transitive",
-        "resolved": "10.0.13",
-        "contentHash": "Gge8XsSCOwcbkbdmt2UDAe6kIv9Q0vA6yb3wsTStjjexaMFLTWfc/1gH4kbhJ+zWiXRTRA4lG2sOQNVfir204w==",
+        "resolved": "10.0.14",
+        "contentHash": "1p9rO3Q2X/L/9YrYog3vaDzi8u+WZfJCOkDYoHqmofqYP0DLPLPyZcS2Rnh/79JXAodgbs1AgsaNwLpIvC3Xew==",
         "dependencies": {
           "SQLitePCLRaw.core": "2.1.13"
         }
@@ -469,7 +469,7 @@
         "type": "Project",
         "dependencies": {
           "Dapper": "[2.1.89, )",
-          "Microsoft.Data.Sqlite": "[10.0.13, )",
+          "Microsoft.Data.Sqlite": "[10.0.14, )",
           "Npgsql": "[10.0.1, )",
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
         }
@@ -477,7 +477,7 @@
       "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Data.Sqlite": "[10.0.13, )",
+          "Microsoft.Data.Sqlite": "[10.0.14, )",
           "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom": "[0.100.0-local.111, )",
           "SoftwareExtravaganza.Whizbang.Data.Schema": "[0.100.0-local.111, )"
         }
