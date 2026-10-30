@@ -65,9 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table store's SQL, and archives the table store wrote stay readable and move into objects on the stream's next write.
   The account is a `ServiceUri` with the host's registered `TokenCredential` (no secret in configuration) or a
   connection string for Azurite. Migration 268 adds the manifest, whose rows go with their stream's lifecycle row, so a
-  purge removes them. Both Postgres drivers now register `PostgresArchiveConnection`, how an archive store reaches the
+  purge removes them. Migration 269 queues every object a manifest row stops naming (a purge, a restore, a delete) in
+  `wh_archive_object_deletions`, in the same transaction, and the package's `archive-object-deletion` maintenance step
+  (`ArchiveObjectDeletionStep`, under the maintainer duty, 100 objects per cycle) deletes them, removing a row only once
+  storage confirms (a missing object counts) and retrying a failed delete after a backoff of one minute doubling to an
+  hour, so a purge leaves nothing unreachable in blob storage. Both Postgres drivers now register `PostgresArchiveConnection`, how an archive store reaches the
   service's database. New API: `AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
-  `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `PostgresArchiveConnection`.
+  `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `ArchiveObjectDeletionStep`,
+  `PostgresArchiveConnection`.
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
   `pg_stats.correlation` was measured with each candidate seeded in its production write order
   (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle

@@ -243,8 +243,10 @@ uploaded object unreferenced, and a retry rewrites the same content-addressed ob
 object's locator, range, count, byte length, SHA-256 and generation (checked on every read), with `ON DELETE CASCADE`
 from `wh_stream_lifecycle` so a purge removes it; restore and delete stage objects back through `wh_event_archive` and
 reuse 262's SQL; archives the table store wrote stay readable and move into objects on the next write. The account is
-`ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Open: a purge removes the
-manifest rows but not the objects (the purge cannot reach blob storage); no access-tier setting yet. Docs:
+`ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Migration
+`269_ArchiveObjectDeletionQueue.sql` (owner decision on #1737): a trigger on the manifest queues every object a row stops
+naming (purge, restore, delete) in the removing transaction, and `ArchiveObjectDeletionStep` (maintenance, maintainer
+duty) deletes them with confirm-then-clear and backoff retries. Open: no access-tier setting yet. Docs:
 `archive-store.md#the-azure-blob-store` (docs branch `docs/1737`).
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned
