@@ -102,6 +102,11 @@ public class DapperArchiveStoreTests : PostgresTestBase {
       await Assert.That(((PostgresTableArchiveStore)store).Locator.ToString())
         .IsEqualTo("postgres-table://wh_event_archive?codec=none&format=1")
         .Because("the Dapper driver resolves its tables through the connection's search path");
+      var database = provider.GetRequiredService<PostgresArchiveConnection>();
+      await Assert.That(database.Schema).IsNull()
+        .Because("a store that keeps state in the database reaches it through the same search path");
+      await using var opened = await database.Open(CancellationToken.None);
+      await Assert.That(opened.State).IsEqualTo(System.Data.ConnectionState.Open);
     }
 
     entries.AddWhizbangWorkers();

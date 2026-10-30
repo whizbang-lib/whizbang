@@ -210,8 +210,9 @@ public partial class DapperWorkCoordinator(
 
     var json = _serializeNewOutboxMessages(messages);
 
-    // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException.
-    await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
+    // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException, and
+    // (#1733) an awaited event on a sealed stream as StreamSealedException.
+    await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
       var connection = __scope.Connection;
       var prefix = await _prefixAsync(connection, cancellationToken);
@@ -226,7 +227,7 @@ public partial class DapperWorkCoordinator(
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
-    }, logger: _logger, cancellationToken: cancellationToken));
+    }, logger: _logger, cancellationToken: cancellationToken)));
   }
 
   /// <inheritdoc />

@@ -418,6 +418,28 @@ public class ImmediateWorkCoordinatorStrategyTests {
       .Because("the refused write can never succeed; offering it again would fail every later flush on this strategy");
   }
 
+  /// <summary>
+  /// A write refused because its stream is sealed rolled back and its caller has the error; the same write is refused
+  /// every time, so it is withdrawn like a mixed-stream refusal (#1733).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForASealedStream_TheNextFlushDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new StreamSealedException("Stream x was sealed", Guid.NewGuid(), DateTimeOffset.UnixEpoch, "Closed")
+    };
+    var sut = _strategy(fakeCoordinator);
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<StreamSealedException>();
+    var later = _createOutboxMessage();
+    sut.QueueOutboxMessage(later);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    Guid[] onlyTheLaterWork = [later.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(onlyTheLaterWork)
+      .Because("the refused write can never succeed; offering it again would fail every later flush on this strategy");
+  }
+
   private static ImmediateWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator) =>
     new(
       coordinator: coordinator,

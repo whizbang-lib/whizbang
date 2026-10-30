@@ -147,7 +147,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
         IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
         MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
-        DefaultRouting: _defaultRouting(typeSymbol)
+        DefaultRouting: _defaultRouting(typeSymbol),
+        // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
+        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol)
     );
   }
 
@@ -174,6 +176,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       }
     }
     return null;
+  }
+
+  private const string TERMINAL_EVENT_ATTRIBUTE = "global::Whizbang.Core.Attributes.TerminalEventAttribute";
+
+  // [TerminalEvent] on the type or a base type (the attribute is inherited).
+  private static bool _isTerminal(INamedTypeSymbol typeSymbol) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      if (type.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, TERMINAL_EVENT_ATTRIBUTE))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private const string DEFAULT_ROUTING_ATTRIBUTE = "global::Whizbang.Core.Dispatch.DefaultRoutingAttribute";
@@ -338,6 +352,11 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     foreach (var info in ordered.Where(i => i.DefaultRouting is not null)) {
       source.AppendLine($"    global::Whizbang.Core.Dispatch.MessageDefaultRouting.Register(typeof({info.TypeName}), {info.DefaultRouting});");
     }
+    // [TerminalEvent] (WS-3 S4), registered without DI so every path that derives an event's flags stamps the
+    // terminal bit without reflection, however its dispatcher or event store was built.
+    foreach (var info in ordered.Where(i => i.IsTerminal)) {
+      source.AppendLine($"    global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof({info.TypeName}));");
+    }
     source.AppendLine("  }");
     source.AppendLine("}");
 
@@ -392,6 +411,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.IsCompacted) {
       initParts.Add("IsCompacted = true");
     }
+    if (info.IsTerminal) {
+      initParts.Add("IsTerminal = true");
+    }
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
@@ -426,5 +448,6 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsComposite = false,
     bool IsCompacted = false,
     long? MaxPayloadBytes = null,
-    string? DefaultRouting = null
+    string? DefaultRouting = null,
+    bool IsTerminal = false
 );

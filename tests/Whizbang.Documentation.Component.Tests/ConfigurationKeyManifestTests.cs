@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Whizbang.Archive.AzureBlob;
 using Whizbang.Core;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Health;
@@ -81,6 +82,7 @@ public class ConfigurationKeyManifestTests {
     services.AddAzureServiceBusTransport(FAKE_SERVICE_BUS);
     services.AddRabbitMQTransport("amqp://guest:guest@localhost:5672/");
     services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    services.AddWhizbangAzureBlobArchive(configuration);
     services.AddWhizbangManagedHealth();
     services.AddWhizbangRunControl();
     services.AddWhizbangMessageSecurity();

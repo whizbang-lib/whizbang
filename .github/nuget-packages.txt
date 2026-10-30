@@ -1,6 +1,7 @@
 # Every package a full publish ships, one id per line. Single source of truth for the
 # verify-packages action: a publish must contain exactly these, at exactly one version.
 # Add a line when a project becomes packable; remove one when it stops.
+SoftwareExtravaganza.Whizbang.Archive.AzureBlob
 SoftwareExtravaganza.Whizbang.CLI
 SoftwareExtravaganza.Whizbang.Core
 SoftwareExtravaganza.Whizbang.Data.Dapper.Custom

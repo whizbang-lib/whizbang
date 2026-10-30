@@ -72,6 +72,7 @@
     <Project Path="src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
     <Project Path="src/Whizbang.Offloads.InMemory/Whizbang.Offloads.InMemory.csproj" />
     <Project Path="src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
+    <Project Path="src/Whizbang.Archive.AzureBlob/Whizbang.Archive.AzureBlob.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
     <Project Path="test-diagnostics/DiagnosticsTest.csproj" />
@@ -125,6 +126,8 @@
     <Project Path="tests/Whizbang.Offloads.InMemory.Tests/Whizbang.Offloads.InMemory.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.AzureBlob.Tests/Whizbang.Offloads.AzureBlob.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.AzureBlob.Integration.Tests/Whizbang.Offloads.AzureBlob.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.Archive.AzureBlob.Tests/Whizbang.Archive.AzureBlob.Tests.csproj" />
+    <Project Path="tests/Whizbang.Archive.AzureBlob.Integration.Tests/Whizbang.Archive.AzureBlob.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Tests/Whizbang.Transports.AzureServiceBus.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Component.Tests/Whizbang.Transports.AzureServiceBus.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/Whizbang.Transports.AzureServiceBus.Integration.Tests.csproj" />

@@ -3388,10 +3388,14 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// Whether a refusal of this event by the mixed-stream guard (<c>WHIZ133</c>: one stream never holds both ephemeral
   /// and Sourced events) fails the store with <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
   /// Set by the flushes whose caller awaits the store (the immediate and scoped strategies); false (the default) on
-  /// every background write, where only the refused row is dead-lettered and the rest of the write is stored.
+  /// every background write, where only the refused row is dead-lettered and the rest of the write is stored. The same
+  /// flag asks the store to raise <see cref="StreamSealedException"/> for this event when its stream is sealed (#1733),
+  /// for the same reason: the caller awaits the write.
   /// </summary>
   /// <docs>operations/diagnostics/whiz133</docs>
+  /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_DirectCommitOfASourcedEventOnAnEphemeralStream_ThrowsMixedStreamEventExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
   public bool RaiseOnMixedStream { get; init; }
 }
 /// <summary>

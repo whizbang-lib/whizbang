@@ -95,6 +95,19 @@ public class DefaultDeadLetterRecoveryPolicyTests {
   }
 
   /// <summary>
+  /// An event refused because its stream is sealed is refused the same way every time it is re-driven, so recovery
+  /// holds it for review instead of retrying it (WS-3 S4).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_StreamSealed_HoldsForReviewWithoutRetryAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.StreamSealed));
+    await Assert.That(result.Name).IsEqualTo("HoldForReview");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(0);
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
   /// A message the outbox batcher could not store is re-stored by recovery, soon and often, and held for review once
   /// that budget is spent (#1871).
   /// </summary>

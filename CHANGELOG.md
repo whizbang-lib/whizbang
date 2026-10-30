@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ephemeral, compaction-origin and stream-less events get no row; a purge removes it. Existing streams are seeded by a
   batched, resumable, idempotent backfill gated on `stream_lifecycle_backfill_version`, driven by the new
   `stream-lifecycle-backfill` maintenance step on both drivers.
+- **A stream can be sealed, and a sealed stream refuses every append (#1733, WS-3 S4).** `IStreamFinalizer.FinalizeAsync
+  (streamId, reason)` (registered by both Postgres drivers) seals a stream: its lifecycle row becomes `Sealed` with
+  `sealed_at` and the new `sealed_reason`. Finalizing is idempotent (a sealed stream keeps its first seal), requires a
+  reason, refuses the empty stream id, and has nothing to seal on a stream with no Sourced event (ephemeral streams end by
+  their time to live). An event type declared `[TerminalEvent]` (registered by the message catalog generator and stamped
+  as `EventFlags.Terminal`, bit 64, on the dispatch, receive and direct-append paths) seals its stream in the statement
+  that stores it, and an event after it in the same write is refused. A write whose caller awaits it (a direct append,
+  or an outbox write flushed by the immediate or scoped strategy) throws `StreamSealedException` (stream id, sealed at,
+  reason) on both drivers and keeps nothing, as the mixed-stream refusal does; a write nobody awaits (batch flushes,
+  handler commits, the inbox) dead-letters only the refused event with the new reason `StreamSealed` (25, held for
+  review) and stores the rest of the batch. A restore
+  returns a sealed stream to `Sealed`. Migration 266; the append path pays one probe of a partial index holding only the
+  sealed streams (measured on a 500-event batch: 2 blocks for 50 streams, 201 for 500 new streams, under 0.6% of the batch).
 - **Archived streams leave the hot event store through a pluggable `IArchiveStore`, with a Postgres-table store built in
   (#1736).** `WriteAsync(ArchiveBatch)` archives one stream's prefix (through the gated prefix truncate and all its
   guards) or the whole stream, copying then truncating in one transaction, so a failure leaves the stream fully hot.
@@ -41,6 +54,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger, migration 260). New API: `IArchiveStore`, `ArchiveBatch`, `ArchiveLocator`,
   `ArchiveCompression`, `ArchiveStatus`, `ArchiveWriteResult`, `ArchiveRestoreResult`, `PostgresTableArchiveStore`, and
   the scope, aggregate, created-at and flags properties of `ArchivedEvent`.
+- **Archived streams can leave the database for Azure Blob Storage: the new `Whizbang.Archive.AzureBlob` package
+  (#1737).** `AddWhizbangAzureBlobArchive` (from `Whizbang:Archive:AzureBlob`, or a delegate) replaces the
+  Postgres-table store in either registration order. A write moves the batch with the table store's SQL and every guard,
+  uploads the events as Brotli-compressed JSON-lines objects (quality 4 and at most 10,000 events per object by default),
+  writes one `wh_archive_manifest` row per object and only then commits, so a failed upload or a crash before the commit
+  leaves the stream fully hot; an object's name carries its SHA-256, so a retry rewrites the same object instead of
+  adding a second. Reads, restores and deletes go through the manifest only, every object is checked against its
+  recorded length and SHA-256 before it is decoded (`ArchiveObjectCorruptedException`), restore and delete reuse the
+  table store's SQL, and archives the table store wrote stay readable and move into objects on the stream's next write.
+  The account is a `ServiceUri` with the host's registered `TokenCredential` (no secret in configuration) or a
+  connection string for Azurite. Migration 268 adds the manifest, whose rows go with their stream's lifecycle row, so a
+  purge removes them. Migration 269 queues every object a manifest row stops naming (a purge, a restore, a delete) in
+  `wh_archive_object_deletions`, in the same transaction, and the package's `archive-object-deletion` maintenance step
+  (`ArchiveObjectDeletionStep`, under the maintainer duty, 100 objects per cycle) deletes them, removing a row only once
+  storage confirms (a missing object counts) and retrying a failed delete after a backoff of one minute doubling to an
+  hour, so a purge leaves nothing unreachable in blob storage. Both Postgres drivers now register `PostgresArchiveConnection`, how an archive store reaches the
+  service's database. New API: `AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
+  `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `ArchiveObjectDeletionStep`,
+  `PostgresArchiveConnection`.
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
   `pg_stats.correlation` was measured with each candidate seeded in its production write order
   (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle

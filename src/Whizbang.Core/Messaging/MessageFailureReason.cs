@@ -228,6 +228,15 @@ public enum MessageFailureReason {
   InboxStoreFailed = 24,
 
   /// <summary>
+  /// The event's stream is sealed (finalized, or ended by a terminal event), so the step that copies events into the
+  /// event store refused it and dead-lettered the row; the other events of the same write were stored. Not retried: a
+  /// sealed stream refuses the same event every time. The recorded error text is the refusal the store words for
+  /// <see cref="StreamSealedException"/>: the stream, when it was sealed and why.
+  /// </summary>
+  /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
+  StreamSealed = 25,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

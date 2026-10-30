@@ -533,6 +533,91 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _tombstoneAsync(connection, stream)).IsNull();
   }
 
+  // ── The archive manifest (268, #1737) ────────────────────────────────────────────────────────────
+
+  // One manifest row for a chunk of the stream, as a blob store writes it after its archive.
+  private static Task _manifestRowAsync(NpgsqlConnection connection, Guid streamId, long firstVersion) =>
+    _executeAsync(connection,
+      "INSERT INTO wh_archive_manifest (stream_id, first_version, last_version, event_count, locator, byte_length, sha256, origin_generation) " +
+      $"VALUES (@id, {firstVersion}, {firstVersion + 1}, 2, 'azure-blob://c/s/chunk?codec=brotli&format=1', 10, " +
+      "'0000000000000000000000000000000000000000000000000000000000000000', 1)", streamId);
+
+  [Test]
+  public async Task Purge_AStreamArchivedOutsideTheDatabase_TakesItsManifestRows_AndLeavesOthersAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var purged = Guid.CreateVersion7();
+    var kept = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, purged, 2);
+    _ = await _streamAsync(connection, kept, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(purged));
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(kept));
+    await _manifestRowAsync(connection, purged, 1);
+    await _manifestRowAsync(connection, kept, 1);
+
+    var report = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [purged], RequestedBy = "operator-1", Reason = "archived by mistake" });
+
+    await Assert.That(report.Totals.ContainsKey("wh_archive_manifest")).IsFalse()
+      .Because("the rows go by the cascade from the lifecycle row, which the purge report does not count");
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", purged))
+      .IsEqualTo(0L).Because("a purged stream must never be restored from an object its manifest still names");
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_manifest WHERE stream_id = @id", kept))
+      .IsEqualTo(1L).Because("the cascade follows the purged stream's lifecycle row only");
+  }
+
+  [Test]
+  public async Task Purge_QueuesTheObjectsItsManifestRowsNamed_InItsOwnTransactionAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+    await _manifestRowAsync(connection, stream, 1);
+    const string QUEUED = "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id";
+    const string PURGE = "SELECT count(*) FROM wh_purge_streams(ARRAY[@id]::uuid[], FALSE, gen_random_uuid(), 0, 'operator-1', 'test')";
+
+    await _executeAsync(connection, "BEGIN");
+    _ = await _scalarAsync(connection, PURGE, stream);
+    var queuedInside = await _scalarAsync(connection, QUEUED, stream);
+    await _executeAsync(connection, "ROLLBACK");
+    var queuedAfterRollback = await _scalarAsync(connection, QUEUED, stream);
+    _ = await _scalarAsync(connection, PURGE, stream);
+
+    await Assert.That(queuedInside).IsEqualTo(1L).Because("the purge queues the object in the transaction that removes its manifest row");
+    await Assert.That(queuedAfterRollback).IsEqualTo(0L).Because("a purge that rolls back queues nothing");
+    await Assert.That(await _scalarAsync(connection, QUEUED, stream)).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync(connection,
+        "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id AND locator = 'azure-blob://c/s/chunk?codec=brotli&format=1'", stream))
+      .IsEqualTo(1L).Because("the queue keeps the object's locator: its container and name");
+  }
+
+  [Test]
+  public async Task Purge_OfATableStoreArchive_QueuesNothingAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    _ = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id", stream))
+      .IsEqualTo(0L).Because("the table store keeps no objects outside the database, so its purge has nothing to queue");
+  }
+
+  [Test]
+  public async Task Manifest_ARowForAStreamWithNoLifecycleRow_IsRefusedAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+
+    var refused = await Assert.ThrowsAsync<PostgresException>(() => _manifestRowAsync(connection, Guid.CreateVersion7(), 1));
+
+    await Assert.That(refused!.ConstraintName).IsEqualTo("fk_archive_manifest_stream")
+      .Because("every archive writes the stream's lifecycle row first, so a manifest row without one is a bug, not data");
+  }
+
   // ── Restore and delete ───────────────────────────────────────────────────────────────────────────
 
   [Test]
@@ -712,6 +797,8 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(registered).IsTypeOf<PostgresTableArchiveStore>();
     await Assert.That(((PostgresTableArchiveStore)registered).Locator.Address).IsEqualTo("public.wh_event_archive")
       .Because("the driver qualifies the archive table with the context's schema, as it does its other stores");
+    await Assert.That(provider.GetRequiredService<PostgresArchiveConnection>().Schema).IsEqualTo("public")
+      .Because("a store that keeps state in the database (the blob store's manifest) reaches it the way the table store does");
     var result = await provider.GetRequiredService<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>().TruncateAsync(stream, 2, archive: true);
 
     await Assert.That(result).IsEqualTo(new StreamTruncateResult("truncated", 2));

@@ -198,6 +198,11 @@ public partial class ImmediateWorkCoordinatorStrategy(
       // offered to a later flush (which it would fail too) or to the disposal safety net.
       _queues.Clear();
       throw;
+    } catch (StreamSealedException) {
+      // #1733: the store refused the write because a stream it appends to is sealed. It rolled back and the caller has
+      // the refusal; a sealed stream refuses the same write every time, so it is withdrawn as above.
+      _queues.Clear();
+      throw;
     }
 
     // Clear queues after flush

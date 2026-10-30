@@ -20,6 +20,8 @@ public class DirectAppendKindTests {
   public sealed record Typing([property: StreamId] Guid Id) : IEphemeralEvent;
   public sealed record Noted([property: StreamId] Guid Id) : IEvent;
   public sealed record Declared([property: StreamId] Guid Id) : IEvent;
+  [TerminalEvent]
+  public sealed record Closed([property: StreamId] Guid Id) : IEvent;
   public sealed record Bundle : Whizbang.Core.Minting.ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => [];
   }
@@ -51,6 +53,11 @@ public class DirectAppendKindTests {
   public async Task Of_ACompositeEvent_KeepsNoRoutingBitAsync() =>
     await Assert.That(DirectAppendKind.Of(new Bundle(), null)).IsEqualTo(0)
       .Because("a direct append creates no routing work, so the row must not claim it");
+
+  [Test]
+  public async Task Of_ATerminalEvent_KeepsTheTerminalBitAsync() =>
+    await Assert.That(DirectAppendKind.Of(new Closed(Guid.Empty), null)).IsEqualTo(64)
+      .Because("wh_append_event seals the stream when the event it stores carries the terminal bit (WS-3 S4)");
 
   private sealed class DeclaresEphemeral(Type ephemeralType) : IEphemeralModeResolver {
     public EphemeralInfo? Resolve(string clrTypeName) => null;

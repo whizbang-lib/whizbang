@@ -63,6 +63,8 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
     foreach (var entry in entries) {
       var flags = (entry.IsCollective ? EventFlags.Collective : EventFlags.None)
                 | (entry.IsComposite ? EventFlags.Composite : EventFlags.None)
+                // WS-3 S4: a received terminal event seals the receiver's copy of its stream too.
+                | (entry.IsTerminal ? EventFlags.Terminal : EventFlags.None)
                 // Compacted wins over Ephemeral (a compaction summary is permanent StateBased, never
                 // reaped) — the same precedence EphemeralFlagDeriver applies on the typed path.
                 | (entry switch {

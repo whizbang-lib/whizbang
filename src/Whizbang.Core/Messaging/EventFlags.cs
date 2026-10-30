@@ -115,6 +115,17 @@ public enum EventFlags {
   /// <docs>resilience/stream-integrity</docs>
   AtMostOnce = 1 << 5,
 
+  /// <summary>
+  /// Treatment flag: this event <strong>ends its stream</strong>. Its type carries
+  /// <see cref="Attributes.TerminalEventAttribute"/>, which the message-type catalog generator registers, so the flag is
+  /// stamped without reflection on every path that stores the event (the outbox, the inbox and a direct append). Storing
+  /// it seals the stream in the same transaction (<c>wh_stream_lifecycle.state = 'Sealed'</c>), and every later append to
+  /// the stream is refused. Read only on a Sourced event: an ephemeral event or a compaction origin
+  /// (<c>(flags &amp; 24) &lt;&gt; 0</c>) has no lifecycle row to seal, so the flag does nothing there.
+  /// </summary>
+  /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
+  Terminal = 1 << 6,
+
   // Future flags add new values here without requiring schema migrations.
 }
 
