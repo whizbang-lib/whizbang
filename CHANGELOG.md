@@ -899,6 +899,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
+  for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
+  some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of
+  the process. The worker now ends an event's tracking at its exit: once PostAllPerspectives and PostLifecycle have
+  fired, when a terminal-stage receptor fails, and when the stages are canceled; the startup orphan replay ends each
+  entry it began. An event still waiting on a perspective keeps its entry for a later batch, and a cooled row that
+  re-signals an ended event no longer registers an expectation nothing completes. The sweep is a safety net on an
+  injected clock: it removes a completed entry whatever its age (counted as
+  `whizbang.lifecycle_coordinator.completed_tracking_swept`, a path that skipped its exit), and ends an entry nothing
+  has reported for within the bound, logging at Debug the perspectives that never reported and counting it as
+  `whizbang.lifecycle_coordinator.partial_tracking_ended`, which replaces
+  `whizbang.lifecycle_coordinator.stale_tracking_preserved_partial_perspectives`. The new gauge
+  `whizbang.lifecycle_coordinator.tracked_entries` reports the live count. Ended entries no longer keep their finished
+  detached-stage tasks, and ending an event whose perspectives all reported no longer takes its state off
+  `pending_perspective_states` a second time (Fixes #1797)
+- **The GraphQL jsonb containment test no longer fails when its shard runs whole.** Tests that empty a process-wide
+  registry the database tests read (the model registrars, the physical field hydrators, the DbContext registration
+  and initialization registries) ran under keys of their own, so one could empty the model registrars while the
+  GraphQL test rebuilt its context after a sibling had cleared the physical field registry; the filter then had no
+  physical column to translate to and failed in milliseconds. Its query plan was never the cause: the plan uses the
+  GIN index in every statistics state. Those tests now also hold the database tests' key, a guard fails any test that
+  resets such a registry without it, and the test's assertions carry the response, SQL and plan (Fixes #1903)
 - **Every Dapper maintenance step acts on the schema the host names.** The partition maintenance step and the physical
   column fill step wrote `public` into every statement, and the managed-schema reconcile step asked the server for
   `current_schema()`, while the Dapper work coordinator takes its schema from the connection string's `Search Path`

@@ -21,10 +21,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// for the sibling <c>DbContextInitializationRegistry</c> registry — is the only way to reach the
 /// branch. <see cref="NotInParallelAttribute"/> uses the exact key
 /// <see cref="ModelRegistrationRegistryTests"/> already uses to guard the same static state, so the
-/// two classes serialize against each other instead of racing.
+/// two classes serialize against each other instead of racing. It also holds the database tests' key: emptying the
+/// registrars while a database test builds its context leaves that context without its models' physical fields (#1903).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ModelRegistrationRegistry.cs</code-under-test>
-[NotInParallel("ModelRegistrationRegistry tests share static state")]
+[NotInParallel(["ModelRegistrationRegistry tests share static state", "EFCorePostgresTests"])]
 [Category("Shard1")]
 public class ModelRegistrationRegistryCoverageTests {
   private IDisposable? _restore;

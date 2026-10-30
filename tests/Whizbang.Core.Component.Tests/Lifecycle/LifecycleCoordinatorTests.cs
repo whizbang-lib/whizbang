@@ -1005,7 +1005,7 @@ public class LifecycleCoordinatorTests {
   }
 
   [Test]
-  public async Task CleanupStaleTracking_PreservesCompleteEntries_EvenWhenOldAsync() {
+  public async Task CleanupStaleTracking_RemovesCompleteEntries_HoweverRecentAsync() {
     // Arrange
     var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
@@ -1015,11 +1015,12 @@ public class LifecycleCoordinatorTests {
     // Mark complete by advancing to PostLifecycleInline
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
 
-    // Act — cleanup with zero threshold (would be stale if not complete)
-    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+    // Act: a threshold nothing reaches: only completion can make the sweep take the entry
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromHours(1));
 
-    // Assert — complete entries are preserved
-    await Assert.That(cleaned).IsEqualTo(0);
+    // Assert: a completed entry has nothing left to wait for, so the sweep never keeps it (#1797)
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
   }
 
   [Test]
@@ -1084,8 +1085,8 @@ public class LifecycleCoordinatorTests {
   }
 
   [Test]
-  public async Task CleanupStaleTracking_PreservesEntry_WhenPartialPerspectiveCompletionsExistAsync() {
-    // Arrange — simulate multi-batch scenario: A signals, cleanup fires, B+C signal later
+  public async Task CleanupStaleTracking_EndsPartialEntry_OncePastTheBoundAsync() {
+    // Arrange: A reports, then nothing more arrives before the bound passes
     var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "partial-race"));
@@ -1096,16 +1097,13 @@ public class LifecycleCoordinatorTests {
     coordinator.SignalPerspectiveComplete(eventId, "A");
     await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
 
-    // Cleanup fires — entry must NOT be cleaned (A's signal would be lost)
+    // Cleanup past the bound: a partial entry is ended, not kept for a report that may never come (#1797)
     var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
 
-    await Assert.That(cleaned).IsEqualTo(0);
-    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
-
-    // Batch M: perspectives B and C complete — lifecycle must resolve
-    coordinator.SignalPerspectiveComplete(eventId, "B");
-    coordinator.SignalPerspectiveComplete(eventId, "C");
-    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.SignalPerspectiveComplete(eventId, "B")).IsFalse()
+      .Because("the ended entry's WhenAll state went with it");
   }
 
   [Test]
@@ -1142,26 +1140,8 @@ public class LifecycleCoordinatorTests {
   }
 
   [Test]
-  public async Task CleanupStaleTracking_PreservesEntry_EvenWithZeroThresholdAsync() {
-    // Arrange — partial completions survive even the most aggressive threshold
-    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
-    var eventId = Guid.NewGuid();
-    var envelope = _createEnvelope(new TestEvent(eventId, "zero-threshold"));
-    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
-    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
-    coordinator.SignalPerspectiveComplete(eventId, "A");
-
-    // Act — zero threshold: cutoff is exactly now
-    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
-
-    // Assert — partial completions guard overrides staleness
-    await Assert.That(cleaned).IsEqualTo(0);
-    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
-  }
-
-  [Test]
   public async Task CleanupStaleTracking_RemovesEntry_WhenAllPerspectivesAlreadyCompleteAsync() {
-    // Arrange — fully complete entries are preserved by IsComplete guard, not partial guard
+    // Arrange: a fully complete entry is removed by the sweep whatever its perspective state
     var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "all-complete"));
@@ -1176,13 +1156,13 @@ public class LifecycleCoordinatorTests {
     // Act — cleanup with negative threshold (everything looks stale by time)
     var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
 
-    // Assert — complete entries preserved (by existing IsComplete guard)
-    await Assert.That(cleaned).IsEqualTo(0);
+    // Assert: a completed entry is never kept by the sweep (#1797)
+    await Assert.That(cleaned).IsEqualTo(1);
   }
 
   [Test]
   [NotInParallel("Metrics")]
-  public async Task CleanupStaleTracking_PreservedPartialPerspectives_IncrementsMetricAsync() {
+  public async Task CleanupStaleTracking_EndedPartialPerspectives_IncrementsMetricAsync() {
     // Arrange
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);
@@ -1199,8 +1179,8 @@ public class LifecycleCoordinatorTests {
     // Act — cleanup with negative threshold
     coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
 
-    // Assert — preserved metric should be incremented
-    var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stale_tracking_preserved_partial_perspectives");
+    // Assert: the ended partial entry is counted
+    var measurements = helper.GetByName("whizbang.lifecycle_coordinator.partial_tracking_ended");
     await Assert.That(measurements).Count().IsEqualTo(1);
     await Assert.That(measurements[0].Value).IsEqualTo(1L);
   }

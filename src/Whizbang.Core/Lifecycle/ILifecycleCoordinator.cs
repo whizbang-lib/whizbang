@@ -114,13 +114,15 @@ public interface ILifecycleCoordinator {
   bool AreAllPerspectivesComplete(Guid eventId);
 
   /// <summary>
-  /// Removes tracking entries that have been inactive longer than the specified threshold.
-  /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
-  /// Uses a debounce-style sliding window — each stage transition and perspective signal
-  /// resets the inactivity timer, so active events are never cleaned up.
+  /// Safety net for entries no exit ended: removes every completed entry, and every entry inactive longer than
+  /// the threshold, including one some of whose expected perspectives reported while the rest never did.
+  /// Uses a debounce-style sliding window: each stage transition and perspective signal resets the inactivity
+  /// timer, so an entry still being reported for is never ended. Normal operation ends entries at their exits.
   /// </summary>
   /// <param name="inactivityThreshold">How long an entry must be inactive before cleanup.</param>
-  /// <returns>Number of stale entries removed.</returns>
+  /// <returns>Number of entries removed.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
   int CleanupStaleTracking(TimeSpan inactivityThreshold);
 }
 

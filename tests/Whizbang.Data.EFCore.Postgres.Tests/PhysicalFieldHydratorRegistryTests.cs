@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PhysicalFieldHydratorRegistry.cs</code-under-test>
-[NotInParallel("PhysicalFieldHydratorRegistry")]
+[NotInParallel(["PhysicalFieldHydratorRegistry", "EFCorePostgresTests"])]
 [Category("Shard4")]
 public class PhysicalFieldHydratorRegistryTests {
 
