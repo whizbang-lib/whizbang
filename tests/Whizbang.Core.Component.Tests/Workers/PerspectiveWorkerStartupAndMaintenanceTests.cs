@@ -234,7 +234,18 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public ValueTask SignalSegmentCompleteAsync(
         Guid eventId, PostLifecycleCompletionSource source,
         IServiceProvider scopedProvider, CancellationToken ct) => ValueTask.CompletedTask;
-    public void AbandonTracking(Guid eventId) { }
+    public ConcurrentQueue<Guid> Abandoned { get; } = new();
+    private readonly System.Threading.Channels.Channel<Guid> _abandonedSignal = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    public void AbandonTracking(Guid eventId) {
+      Abandoned.Enqueue(eventId);
+      _abandonedSignal.Writer.TryWrite(eventId);
+    }
+    /// <summary>Waits until <paramref name="count"/> entries have been ended.</summary>
+    public async Task WaitForAbandonedAsync(int count, CancellationToken cancellationToken) {
+      for (var i = 0; i < count; i++) {
+        await _abandonedSignal.Reader.ReadAsync(cancellationToken);
+      }
+    }
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) { }
     public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) => false;
     public bool AreAllPerspectivesComplete(Guid eventId) => true;
@@ -383,6 +394,29 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       .Because("The reconciler scans a bounded 30-minute lookback window, not the whole table.");
     await Assert.That(coordinator.CapturedPerspectivesMap!.ContainsKey(ORPHAN_EVENT_TYPE)).IsTrue()
       .Because("The registry-derived event-type → perspectives map drives the orphan query.");
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task Startup_OrphanReplay_EndsEveryReplayedEventsTracking_WhetherItsStagesSucceedOrThrowAsync(CancellationToken cancellationToken) {
+    var poisoned = _orphan();
+    var healthy = _orphan();
+    var coordinator = new StartupCoordinator { Orphans = [poisoned, healthy] };
+    var lifecycle = new SpyLifecycleCoordinator();
+    lifecycle.ThrowOnAdvanceFor.Add(poisoned.EventId);
+    var fx = _build(coordinator, _registryWithOnePerspective(), lifecycleCoordinator: lifecycle);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await lifecycle.WaitForAbandonedAsync(2, cancellationToken);
+
+    await Assert.That(lifecycle.Abandoned).Contains(healthy.EventId)
+      .Because("a replayed lifecycle that completed ends its tracking; nothing else would (#1797)");
+    await Assert.That(lifecycle.Abandoned).Contains(poisoned.EventId)
+      .Because("a replay that failed ends its tracking too; the missing durable marker brings it back next startup");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);

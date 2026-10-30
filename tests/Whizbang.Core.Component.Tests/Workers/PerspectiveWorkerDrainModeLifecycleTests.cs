@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <tests>src/Whizbang.Core/Workers/PerspectiveWorker.cs:_processDrainModeStreamsAsync</tests>
 /// </summary>
 [NotInParallel]
-public class PerspectiveWorkerDrainModeLifecycleTests {
+public partial class PerspectiveWorkerDrainModeLifecycleTests {
 
   // ========================================
   // TEST EVENTS (two types to test filtering)
@@ -158,8 +158,11 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public List<Guid> GetEventsForPerspective(string perspectiveName) =>
       _eventsPerPerspective.GetValueOrDefault(perspectiveName, []);
 
+    /// <summary>Perspectives that never report: no runner, so the worker never signals them complete.</summary>
+    public HashSet<string> SilentPerspectives { get; } = [];
+
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
-      new CapturingPerspectiveRunner(this);
+      SilentPerspectives.Contains(perspectiveName) ? null : new CapturingPerspectiveRunner(this);
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registrations;
 
@@ -539,8 +542,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       .Because("Both perspectives should have run via RunWithEventsAsync");
     await Assert.That(allComplete).IsTrue()
       .Because("Both perspectives signaled complete — WhenAll should resolve");
-    await Assert.That(hasTracking).IsTrue()
-      .Because("BeginTracking was called in PrePerspective");
+    await Assert.That(hasTracking).IsFalse()
+      .Because("the event's tracking ends at its exit once PostLifecycle has fired (#1797)");
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because($"Expected PostAllPerspectivesInline (runCount={runCount}) but only saw: [{string.Join(", ", allStages)}]");
   }

@@ -30,13 +30,19 @@ namespace Whizbang.Core.Lifecycle;
 /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
 public sealed partial class LifecycleCoordinator(
     ILogger<LifecycleCoordinator> logger,
-    LifecycleCoordinatorMetrics? metrics = null) : ILifecycleCoordinator {
+    LifecycleCoordinatorMetrics? metrics = null,
+    TimeProvider? timeProvider = null) : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
   private readonly ConcurrentBag<Task> _abandonedDetachedTasks = [];
   private readonly LifecycleCoordinatorMetrics? _metrics = metrics;
   private readonly ILogger<LifecycleCoordinator> _logger = logger;
+  private readonly TimeProvider? _timeProvider = timeProvider;
+
+  internal int TrackedCount => _tracked.Count;
+
+  internal int RetainedDetachedTaskCount => _abandonedDetachedTasks.Count;
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(
@@ -157,7 +163,7 @@ public sealed partial class LifecycleCoordinator(
 
   /// <inheritdoc/>
   public int CleanupStaleTracking(TimeSpan inactivityThreshold) {
-    var cutoff = DateTimeOffset.UtcNow - inactivityThreshold;
+    var cutoff = (_timeProvider ?? TimeProvider.System).GetUtcNow() - inactivityThreshold;
     var cleaned = 0;
 
     foreach (var kvp in _tracked) {
