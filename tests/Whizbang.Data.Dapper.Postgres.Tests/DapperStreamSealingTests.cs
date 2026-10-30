@@ -108,6 +108,24 @@ public class DapperStreamSealingTests : PostgresTestBase {
       .IsEqualTo(1L).Because("the refusal is the sealed stream's event alone; the other stream's event is stored");
   }
 
+  [Test]
+  public async Task StoreOutboxMessagesAsync_AnAwaitedWriteToASealedStream_ThrowsStreamSealedExceptionAsync() {
+    var coordinator = new DapperWorkCoordinator(
+      ConnectionString, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), NullLogger<DapperWorkCoordinator>.Instance);
+    var stream = (Guid)TrackedGuid.New();
+    await coordinator.StoreOutboxMessagesAsync([_outbox(stream)], partitionCount: 10000);
+    await new PostgresStreamFinalizer(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, timeProvider: new FixedClock(_t0))
+      .FinalizeAsync(stream, "Closed");
+
+    var thrown = await Assert.That(async () =>
+        await coordinator.StoreOutboxMessagesAsync([_outbox(stream) with { RaiseOnMixedStream = true }], partitionCount: 10000))
+      .Throws<StreamSealedException>();
+
+    await Assert.That(thrown!.StreamId).IsEqualTo(stream);
+    await Assert.That(thrown.SealedAt).IsEqualTo(_t0);
+    await Assert.That(thrown.Reason).IsEqualTo("Closed");
+  }
+
   // ===== Helpers =====
 
   private sealed class FixedClock(DateTimeOffset now) : TimeProvider {

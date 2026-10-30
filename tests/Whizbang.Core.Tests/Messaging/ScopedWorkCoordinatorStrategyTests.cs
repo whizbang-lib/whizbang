@@ -96,6 +96,25 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   /// <summary>
+  /// A write refused because its stream is sealed is withdrawn like a mixed-stream refusal: the caller has it, and the
+  /// disposal safety net does not write it again (#1733).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForASealedStream_DisposalDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new StreamSealedException("Stream x was sealed", Guid.NewGuid(), DateTimeOffset.UnixEpoch, "Closed")
+    };
+    var sut = _strategy(fakeCoordinator);
+    _queueTestOutboxMessage(sut);
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<StreamSealedException>();
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).IsEmpty()
+      .Because("the caller has the refusal; disposal writes only work nobody flushed");
+  }
+
+  /// <summary>
   /// The disposal safety net has no caller to tell, so a refusal there is dead-lettered by the store and the rest of
   /// the write is kept (#1546).
   /// </summary>

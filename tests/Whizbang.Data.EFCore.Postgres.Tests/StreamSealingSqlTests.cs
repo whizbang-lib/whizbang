@@ -225,21 +225,77 @@ public class StreamSealingSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task StoreOutboxMessages_AnAwaitedWriteToASealedStream_IsDeadLettered_NotRaisedAsync() {
+  public async Task StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
     var stream = (Guid)TrackedGuid.New();
     await coordinator.StoreOutboxMessagesAsync([_outbox(stream)], partitionCount: 10000);
-    await _finalizer(_t0).FinalizeAsync(stream, "Closed");
+    await _finalizer(_t0).FinalizeAsync(stream, "Closed by the owner");
     // The flag the immediate and scoped strategies set on a flush their caller awaits.
     var awaited = _outbox(stream) with { RaiseOnMixedStream = true };
+    var unrelated = _outbox((Guid)TrackedGuid.New()) with { RaiseOnMixedStream = true };
 
-    await coordinator.StoreOutboxMessagesAsync([awaited], partitionCount: 10000);
+    var thrown = await Assert.That(async () =>
+        await coordinator.StoreOutboxMessagesAsync([awaited, unrelated], partitionCount: 10000))
+      .Throws<StreamSealedException>();
+
+    await Assert.That(thrown!.StreamId).IsEqualTo(stream);
+    await Assert.That(thrown.SealedAt).IsEqualTo(_t0);
+    await Assert.That(thrown.Reason).IsEqualTo("Closed by the owner")
+      .Because("a caller that awaits the write is told, as the mixed-stream refusal tells it (#1546)");
+    var conn = await _openAsync(dbContext);
+    await Assert.That(await _outboxCountAsync(conn, unrelated.MessageId)).IsEqualTo(0L)
+      .Because("an awaited write is all or nothing: the caller sees the failure and nothing of the write is kept");
+    await Assert.That(await _deadLetterAsync(conn, awaited.MessageId)).IsNull()
+      .Because("the caller has the refusal in hand; dead-lettering it as well would report it twice");
+    await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_TheSameWriteNotAwaited_IsDeadLettered_AndAnAwaitedWriteToAnOpenStreamIsStoredAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
+    var stream = (Guid)TrackedGuid.New();
+    var open = (Guid)TrackedGuid.New();
+    await coordinator.StoreOutboxMessagesAsync([_outbox(stream)], partitionCount: 10000);
+    await _finalizer(_t0).FinalizeAsync(stream, "Closed");
+    var fireAndForget = _outbox(stream);
+    var awaitedOpen = _outbox(open) with { RaiseOnMixedStream = true };
+
+    await coordinator.StoreOutboxMessagesAsync([fireAndForget], partitionCount: 10000);
+    await coordinator.StoreOutboxMessagesAsync([awaitedOpen], partitionCount: 10000);
 
     var conn = await _openAsync(dbContext);
-    await Assert.That((await _deadLetterAsync(conn, awaited.MessageId))!.FailureReason).IsEqualTo(STREAM_SEALED_REASON)
-      .Because("an outbox write is dead-lettered whoever waits on it; only the direct append raises StreamSealedException");
-    await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(1L);
+    await Assert.That((await _deadLetterAsync(conn, fireAndForget.MessageId))!.FailureReason).IsEqualTo(STREAM_SEALED_REASON)
+      .Because("a write nobody awaits has no caller to tell, so the refused event is dead-lettered");
+    await Assert.That(await _storedCountAsync(conn, open)).IsEqualTo(1L)
+      .Because("the control: an awaited write to an open stream is stored, so the raise is the seal's doing");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_AnAwaitedWriteAfterATerminalEventInTheSameWrite_ThrowsAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
+    var stream = (Guid)TrackedGuid.New();
+    var ids = _orderedIds(2);
+    var terminal = CreateTestOutboxMessage(ids[0], "sealing-topic", stream, isEvent: true) with {
+      MessageType = TERMINAL_TYPE,
+      Flags = EventFlags.Terminal,
+      RaiseOnMixedStream = true,
+    };
+    var after = CreateTestOutboxMessage(ids[1], "sealing-topic", stream, isEvent: true) with {
+      MessageType = EVENT_TYPE,
+      RaiseOnMixedStream = true,
+    };
+
+    var thrown = await Assert.That(async () =>
+        await coordinator.StoreOutboxMessagesAsync([after, terminal], partitionCount: 10000))
+      .Throws<StreamSealedException>();
+
+    await Assert.That(thrown!.Reason).IsEqualTo($"Terminal event Probe.Contracts.AccountClosed (event {ids[0]})");
+    var conn = await _openAsync(dbContext);
+    await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(0L)
+      .Because("the awaited write rolls back whole, the terminal event with it");
   }
 
   [Test]
