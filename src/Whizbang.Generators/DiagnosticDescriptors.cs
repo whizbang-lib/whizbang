@@ -1065,6 +1065,30 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "[StreamId(Override = true)] says a derived stream id replaces an inherited one on purpose. When no base type declares a [StreamId], there is nothing to replace; remove Override = true."
   );
+
+  /// <summary>
+  /// WHIZ017: Warning - a type declares its own <c>[StreamId]</c> and no <c>[GenerateStreamId]</c>, under a base
+  /// type in another assembly that declares <c>[GenerateStreamId]</c>.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz017</docs>
+  /// <remarks>
+  /// A derived type with its own <c>[StreamId]</c> does not inherit its base's <c>[GenerateStreamId]</c> (#1893), and
+  /// within one assembly the generator emits that opt-out. Each assembly has its own stream id extractor, though, and
+  /// the base assembly's answers "generate" first for the derived type, so across assemblies the base's policy still
+  /// applies (#1904). The fix is to say what the derived type wants: declare <c>[GenerateStreamId]</c> on it, or keep
+  /// the base in the derived type's assembly.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInAnotherAssembly_ReportsWhiz017Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:TheAnalyzer_DeclaresWhiz017AsAWarningAsync</tests>
+  public static readonly DiagnosticDescriptor GenerationOptOutAcrossAssemblies = new(
+      id: "WHIZ017",
+      title: "Stream ID Generation Opt-Out Cannot Hold Across Assemblies",
+      messageFormat: "Type {0} declares its own [StreamId] '{1}' and no [GenerateStreamId], but base type {2} declares [GenerateStreamId]; the base's [GenerateStreamId] will still apply because the base is in another assembly ({3}). Declare [GenerateStreamId] on {0}, or move {2} into the same assembly.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A derived type with its own [StreamId] and no [GenerateStreamId] opts out of its base's stream id generation, but only when the base is compiled in the same assembly. A base in another assembly is matched by that assembly's extractor first, so its [GenerateStreamId] still applies to the derived type."
+  );
   /// <summary>
   /// WHIZ099: Info - MessageJsonContextGenerator ran, and how many message types it found.
   /// </summary>
