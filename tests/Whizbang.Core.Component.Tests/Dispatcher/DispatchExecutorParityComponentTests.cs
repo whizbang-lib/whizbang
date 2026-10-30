@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Microsoft.Extensions.Time.Testing;
 using Whizbang.Core.Component.Tests.ExecutorShapes.Owned;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.PolicyBehavior;
@@ -179,34 +180,73 @@ public class DispatchExecutorParityComponentTests {
     await Assert.That(outbox.QueuedOf(typeof(PbUnownedCommand))).IsEmpty();
   }
 
-  // ── E26: every entry refuses while the schema is not ready ───────────────────────────────────
+  // ── E26: every entry defers while the schema is not ready (#1877) ───────────────────────────
 
   [Test]
-  public async Task EveryEntry_WhileTheSchemaIsNotReady_RefusesBeforeRunningAnythingAsync() {
-    var outbox = new PolicyRecordingOutbox();
-    await using var provider = _buildProvider(outbox, services => services.AddSingleton<ISchemaReadyGate>(new ClosedSchemaGate()));
-    var dispatcher = _dispatcher(provider);
+  public async Task EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync() {
+    var gate = new SchemaReadyGate();
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), services => {
+      services.AddSingleton<ISchemaReadyGate>(gate);
+      services.AddSingleton<TimeProvider>(new FakeTimeProvider());
+    });
     var id = Guid.CreateVersion7();
 
-    var entries = new (string Name, Func<Task> Call)[] {
-      ("SendAsync", () => dispatcher.SendAsync(new ExVoidCommand(id))),
-      ("SendManyAsync", () => dispatcher.SendManyAsync(new object[] { new ExVoidCommand(id) })),
-      ("LocalInvokeAsync(void)", async () => await dispatcher.LocalInvokeAsync((object)new ExVoidCommand(id))),
-      ("LocalInvokeAsync<TResult>", async () => await dispatcher.LocalInvokeAsync<ExRpcResponse>((object)new ExRpcCommand(id))),
-      ("LocalInvokeWithReceiptAsync", async () => await dispatcher.LocalInvokeWithReceiptAsync<ExRpcResponse>((object)new ExRpcCommand(id))),
-      ("LocalSendManyAsync", async () => await dispatcher.LocalSendManyAsync(new object[] { new ExVoidCommand(id) })),
-      ("PublishAsync", () => dispatcher.PublishAsync(new ExVoidEvent(id))),
-      ("PublishManyAsync", () => dispatcher.PublishManyAsync(new object[] { new ExVoidEvent(id) })),
-      ("CascadeMessageAsync", () => dispatcher.CascadeMessageAsync(new ExVoidEvent(id), sourceEnvelope: null, DispatchModes.Both)),
-    };
+    var calls = _everyEntry(_dispatcher(provider), id).Select(entry => (entry.Name, Task: entry.Call())).ToList();
 
-    foreach (var (name, call) in entries) {
-      await Assert.That(call).ThrowsExactly<WhizbangNotReadyException>().Because($"{name} writes, so it refuses while the schema is not ready");
+    foreach (var (name, task) in calls) {
+      await Assert.That(task.IsCompleted).IsFalse().Because($"{name} writes, so it waits for the migration");
+    }
+    await Assert.That(PolicyProbe.Count(nameof(ExVoidCommandReceptor), id)).IsEqualTo(0);
+    await Assert.That(PolicyProbe.Count(nameof(ExRpcCommandReceptor), id)).IsEqualTo(0);
+
+    gate.MarkReady();
+
+    foreach (var (_, task) in calls) {
+      await task;
+    }
+    await Assert.That(PolicyProbe.Count(nameof(ExVoidCommandReceptor), id)).IsGreaterThan(0)
+      .Because("every deferred entry runs once the migration completes");
+    await Assert.That(PolicyProbe.Count(nameof(ExRpcCommandReceptor), id)).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task EveryEntry_DeferredPastTheMaxWait_ThrowsNotReadyBeforeRunningAnythingAsync() {
+    var time = new FakeTimeProvider();
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), services => {
+      services.AddSingleton<ISchemaReadyGate>(new ClosedSchemaGate());
+      services.AddSingleton<TimeProvider>(time);
+    });
+    var id = Guid.CreateVersion7();
+
+    var calls = _everyEntry(_dispatcher(provider), id).Select(entry => (entry.Name, Task: entry.Call())).ToList();
+    time.Advance(TimeSpan.FromMinutes(5));
+
+    foreach (var (name, task) in calls) {
+      await Assert.That(async () => await task).ThrowsExactly<WhizbangNotReadyException>()
+        .Because($"{name} waited the default five minutes for a migration that did not complete");
     }
     await Assert.That(PolicyProbe.Count(nameof(ExVoidCommandReceptor), id)).IsEqualTo(0);
     await Assert.That(PolicyProbe.Count(nameof(ExVoidEventReceptor), id)).IsEqualTo(0);
     await Assert.That(PolicyProbe.Count(nameof(ExRpcCommandReceptor), id)).IsEqualTo(0);
   }
+
+  private static (string Name, Func<Task> Call)[] _everyEntry(IDispatcher dispatcher, Guid id) => [
+    ("SendAsync", () => dispatcher.SendAsync(new ExVoidCommand(id))),
+    ("SendManyAsync", () => dispatcher.SendManyAsync(new object[] { new ExVoidCommand(id) })),
+    ("LocalInvokeAsync(void)", async () => await dispatcher.LocalInvokeAsync((object)new ExVoidCommand(id))),
+    ("LocalInvokeAsync<TMessage>(void, context)", async () => await dispatcher.LocalInvokeAsync(new ExVoidCommand(id), _context())),
+    ("LocalInvokeAsync(void, options)", async () => await dispatcher.LocalInvokeAsync((object)new ExVoidCommand(id), new DispatchOptions())),
+    ("LocalInvokeAsync<TResult>", async () => await dispatcher.LocalInvokeAsync<ExRpcResponse>((object)new ExRpcCommand(id))),
+    ("LocalInvokeAsync<TMessage, TResult>(context)", async () => await dispatcher.LocalInvokeAsync<ExRpcCommand, ExRpcResponse>(new ExRpcCommand(id), _context())),
+    ("LocalInvokeAsync<TResult>(options)", async () => await dispatcher.LocalInvokeAsync<ExRpcResponse>((object)new ExRpcCommand(id), new DispatchOptions())),
+    ("LocalInvokeWithReceiptAsync", async () => await dispatcher.LocalInvokeWithReceiptAsync<ExRpcResponse>((object)new ExRpcCommand(id))),
+    ("LocalInvokeWithReceiptAsync(options)", async () => await dispatcher.LocalInvokeWithReceiptAsync<ExRpcResponse>((object)new ExRpcCommand(id), new DispatchOptions())),
+    ("LocalSendManyAsync", async () => await dispatcher.LocalSendManyAsync(new object[] { new ExVoidCommand(id) })),
+    ("PublishAsync", () => dispatcher.PublishAsync(new ExVoidEvent(id))),
+    ("PublishAsync(options)", () => dispatcher.PublishAsync(new ExVoidEvent(id), new DispatchOptions())),
+    ("PublishManyAsync", () => dispatcher.PublishManyAsync(new object[] { new ExVoidEvent(id) })),
+    ("CascadeMessageAsync", () => dispatcher.CascadeMessageAsync(new ExVoidEvent(id), sourceEnvelope: null, DispatchModes.Both)),
+  ];
 
   // ── E27: a call that needs a result refuses without a handler, ContinueWhenNoHandler or not ──
 
