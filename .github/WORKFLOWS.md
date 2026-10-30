@@ -15,7 +15,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | NuGet Publish | `nuget-publish.yml` | dispatch; called by the above | Pushes a packages artifact and creates the tag and GitHub release |
 | Git Flow Check | `git-flow-check.yml` | PRs | Refuses a branch direction the supported flows don't allow |
 | PR intake | `pr-intake.yml` | PRs (`pull_request_target`), issues, comments, reviews, the merge queue, a finished CI run, a `docs-pr-changed` dispatch, schedule (daily) | The process around the gates (`.github/scripts/Invoke-PrIntake.ps1`): issue labels and commands, `/recheck`, the pipeline-owner re-check after a review and in the queue, and re-running `Gate · Review checks` when the docs pull request that satisfies it is opened, edited or reopened (sent by the docs repository's `library-review-recheck.yml`), or when a run ends that the docs pull request outlived (#1806) |
-| Dependabot lock files | `dependabot-lockfiles.yml` | Dependabot PRs into `develop` that change packages | Regenerates the NuGet lock files Dependabot leaves stale and pushes them to its branch (below) |
+| Dependabot lock files | `dependabot-lockfiles.yml` | Dependabot PRs into `develop` that change packages | Regenerates the NuGet lock files Dependabot leaves stale and commits them to its branch (below) |
 | CodeQL | `codeql.yml` | pushes, PRs, schedule | Static security analysis |
 | Secret Scanning | `security-secrets.yml` | pushes, PRs, dispatch | Scans for committed secrets |
 | Supply Chain Security | `security-supply-chain.yml` | pushes, PRs, schedule, dispatch | Dependency vulnerability scanning |
@@ -65,12 +65,18 @@ reference keeps the old version, and CI's locked-mode restore fails with NU1004 
 OSV Scanner. `dependabot-lockfiles.yml` fixes that on the pull request itself: it runs
 `dotnet restore --force-evaluate` over `Whizbang.slnx` and every project with a lock file outside it
 (today `benchmarks/Whizbang.Benchmarks.Postgres` and `tests/Whizbang.Soak.Tests`), and when a lock file
-changed it commits only `packages.lock.json` files, signed off, as the GitHub App's bot account, and
-pushes to the Dependabot branch. The logic is `.github/scripts/Update-DependabotLockFiles.ps1`, tested
-by `Test · Pipeline scripts`.
+changed it commits only `packages.lock.json` files, signed off, as the GitHub App's bot account, on top
+of the Dependabot branch. The logic is `.github/scripts/Update-DependabotLockFiles.ps1`, tested by
+`Test · Pipeline scripts`.
 
-- **Why a GitHub App.** A push made with `GITHUB_TOKEN` starts no workflow, so CI would never run on the
-  fixed head. A push made with an app installation token does.
+- **Why a GitHub App.** A branch update made with `GITHUB_TOKEN` starts no workflow, so CI would never
+  run on the fixed head. One made with an app installation token does.
+- **Why the API, not `git push`.** `develop`'s ruleset requires verified commits, and a commit made with
+  `git commit` on the runner is unsigned, so it blocked the pull request. The script instead creates the
+  blobs, the tree and the commit through the GitHub API and fast-forwards the branch (`force: false`).
+  GitHub signs a commit an app creates that way, as long as the request names no author or committer;
+  the commit is then attributed to the app's bot account. If Dependabot moved the branch meanwhile, the
+  update is refused and the run ends with a notice; the run for the new head regenerates again.
 - **When it runs.** Only when both the pull request's author and the event's actor are
   `dependabot[bot]`, so a person's push, or the app's own push, never triggers it. A run that finds the
   lock files already current commits nothing. It is not part of CI and is not a required check; the

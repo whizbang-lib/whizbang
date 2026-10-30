@@ -6,10 +6,12 @@ name: Dependabot lock files
 # Dependabot's NuGet updater bumps Directory.Packages.props and the packages.lock.json of each project
 # that references the package directly. Projects that reach the package through a project reference keep
 # the old version, so CI's locked-mode restore fails with NU1004 (Compile, Format, OSV Scanner). This
-# workflow regenerates every lock file on a Dependabot pull request and pushes them back to its branch.
+# workflow regenerates every lock file on a Dependabot pull request and commits them to its branch.
 #
-# The push uses a GitHub App installation token rather than GITHUB_TOKEN, because a push made with
-# GITHUB_TOKEN does not trigger CI and the pull request would be left with no result for its fixed head.
+# The commit uses a GitHub App installation token rather than GITHUB_TOKEN, because a branch update made
+# with GITHUB_TOKEN does not trigger CI and the pull request would be left with no result for its fixed
+# head. It is created through the GitHub API, not with git commit and git push: GitHub signs a commit an
+# app creates through the API, and develop's ruleset accepts only verified commits.
 # The app's id and private key are Dependabot secrets (LOCKFILE_APP_ID, LOCKFILE_APP_PRIVATE_KEY): a
 # workflow Dependabot triggers sees only Dependabot secrets. Without them the job skips with a notice.
 # Setup and caveats: .github/WORKFLOWS.md, "Dependabot lock files".
@@ -18,7 +20,7 @@ name: Dependabot lock files
 # and Scorecard flags pull_request_target as a dangerous workflow. Not part of CI and never a required
 # check: the gate, "Gate · CI result", reads only ci.yml's own jobs.
 #
-# Loop safety: the app's push re-triggers this workflow with the app as the actor, which the job's
+# Loop safety: the app's commit re-triggers this workflow with the app as the actor, which the job's
 # condition refuses; the script also stops when the head commit is the app's, and a restore over the
 # regenerated files changes nothing.
 
@@ -48,8 +50,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The pull request's head, not the merge commit, since that is what gets pushed back. No stored
-      # credential: the restore runs the branch's MSBuild, and the push passes the app token itself.
+      # The pull request's head, not the merge commit, since the new commit's parent is that head. No
+      # stored credential: the restore runs the branch's MSBuild, and nothing is pushed with git.
       - name: Checkout the pull request branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +85,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Regenerate, commit and push the lock files
+      - name: Regenerate and commit the lock files
         if: steps.credentials.outputs.ready == 'true'
         env:
           LOCKFILE_TOKEN: ${{ steps.app-token.outputs.token }}
