@@ -33,6 +33,48 @@ public static class JsonContextRegistry {
   private static long _registrationSeq;
 
   /// <summary>
+  /// Runs on the registering thread after a registration takes its sequence number and before the
+  /// registration is visible. Set only by tests, through <see cref="AfterSequenceAllocatedForTests"/>.
+  /// </summary>
+  [ThreadStatic]
+  private static Action? _afterSequenceAllocatedForTests;
+
+  /// <summary>
+  /// Runs <paramref name="callback"/> inside every registration this thread makes until the returned
+  /// scope is disposed, at the point after the registration takes its sequence number and before it is
+  /// visible.
+  /// </summary>
+  /// <param name="callback">What to run at that point, typically a build of options from the registry.</param>
+  /// <returns>A scope that restores the previous callback when disposed.</returns>
+  /// <remarks>
+  /// A registration racing a build on another thread opens a window too narrow to hit on purpose. This
+  /// puts the build inside the window on one thread, so a test can show what a build there records
+  /// without depending on how two threads happen to interleave. Thread-static, so a registration on any
+  /// other thread is untouched.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryPublicationTests.cs</tests>
+  internal static IDisposable AfterSequenceAllocatedForTests(Action callback) {
+    var previous = _afterSequenceAllocatedForTests;
+    _setAfterSequenceAllocated(callback);
+    return new AfterSequenceAllocatedScope(previous);
+  }
+
+  private static void _setAfterSequenceAllocated(Action? callback) => _afterSequenceAllocatedForTests = callback;
+
+  private sealed class AfterSequenceAllocatedScope(Action? previous) : IDisposable {
+    private readonly Action? _previous = previous;
+
+    public void Dispose() => _setAfterSequenceAllocated(_previous);
+  }
+
+  /// <summary>Takes the next sequence number, which orders a registration among those of equal priority.</summary>
+  private static long _allocateSequence() {
+    var seq = Interlocked.Increment(ref _registrationSeq);
+    _afterSequenceAllocatedForTests?.Invoke();
+    return seq;
+  }
+
+  /// <summary>
   /// A registered type-info provider with its ranking metadata. <paramref name="Profile"/> of
   /// <c>null</c> means the provider applies to every <see cref="SerializationProfile"/>; a specific value
   /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
@@ -118,7 +160,7 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, _allocateSequence()));
   }
 
   /// <summary>
@@ -145,7 +187,7 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(new ConverterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _converters.Enqueue(new ConverterEntry(converter, priority, profile, _allocateSequence()));
   }
 
   /// <summary>
@@ -172,7 +214,7 @@ public static class JsonContextRegistry {
       Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(modifier);
 
-    _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+    _modifiers.Enqueue(new ModifierEntry(modifier, profile, _allocateSequence()));
   }
   /// <summary>
   /// Removes a modifier a test registered, keeping every other registration in its original order.
