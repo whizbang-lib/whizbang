@@ -82,7 +82,7 @@ public class InMemoryEventStoreReadOrderingChangeLevelTests {
       await store.AppendAsync(streamId, _envelope(ids[i], i));
     }
 
-    // Read from sequence 2 — should include insertions 1, 2, 3 (skipping insertion 0, at version 1: #1913).
+    // Read from sequence 2: should include insertions 1, 2, 3 (skipping insertion 0, at version 1: #1913).
     // Result is sorted by EventId.
     var read = new List<Guid>();
     await foreach (var env in store.ReadAsync<TestEvent>(streamId, fromSequence: 2)) {

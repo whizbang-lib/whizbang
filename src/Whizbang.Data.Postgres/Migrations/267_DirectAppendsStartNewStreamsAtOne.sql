@@ -21,6 +21,10 @@
 -- Objects: wh_append_event
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
+-- wh_append_event has had more than one arity over its migrations, so every definition site clears the overloads
+-- first (CREATE OR REPLACE at another arity would add one), as 266 does.
+SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
+
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
 -- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:DirectAppend_CreatesAndAdvancesTheRowAsync</tests>
