@@ -183,7 +183,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-        PropertyLocation: LocationUtilities.FirstOrNone(property)
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol),
+        DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
     );
   }
 
@@ -281,8 +283,42 @@ public class StreamIdGenerator : IIncrementalGenerator {
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-        PropertyLocation: LocationUtilities.FirstOrNone(property)
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol),
+        DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
     );
+  }
+
+  /// <summary>
+  /// Whether <paramref name="typeSymbol"/> declares its own <c>[StreamId]</c> (plain or <c>Override = true</c>) with
+  /// no <c>[GenerateStreamId]</c> of its own while a base type's policy generates. Such a type does not inherit the
+  /// base's <c>[GenerateStreamId]</c>: the policy follows the stream id, so a type that names its own stream id names
+  /// its own policy too, and the generated policy lookup gets an explicit "do not generate" case for it ahead of the
+  /// base's check (#1893). A type with no <c>[StreamId]</c> of its own still inherits the base's stream id and policy.
+  /// </summary>
+  /// <docs>extending/attributes/generatestreamid</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedOverrideWithNoGenerateStreamId_DoesNotInheritTheBasesClassLevelGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndGenerateStreamId_UsesItsOwnGenerationPolicyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithNoStreamIdOfItsOwn_InheritsTheBasesGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ATypeWithNoStreamIdOfItsOwn_InheritsTheGenerationPolicyOfItsNearestBaseAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ATypeWithItsOwnStreamId_DoesNotInheritAGenerateStreamIdFromAnyLevelAboveAsync</tests>
+  private static bool _declinesInheritedGenerate(INamedTypeSymbol typeSymbol, IPropertySymbol streamIdProperty, bool hasGenerate) =>
+    !hasGenerate
+    && SymbolEqualityComparer.Default.Equals(streamIdProperty.ContainingType, typeSymbol)
+    && _anyBaseGenerates(typeSymbol);
+
+  /// <summary>
+  /// Whether any base type of <paramref name="typeSymbol"/> resolves to a stream id with <c>[GenerateStreamId]</c>,
+  /// so the generated policy lookup's check for that base would also match an instance of this type.
+  /// </summary>
+  private static bool _anyBaseGenerates(INamedTypeSymbol typeSymbol) {
+    for (var level = typeSymbol.BaseType; level is not null; level = level.BaseType) {
+      if (_resolveStreamId(level) is { HasGenerate: true }) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
@@ -303,8 +339,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
-    _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
-    _reportGenerateStreamIdOnInitOnly(context, eventsWithStreamId, commandsWithStreamId);
+    // Most-derived first in every region that dispatches on type, so a base type's check never shadows a derived
+    // type's own [StreamId] (#1893).
+    var events = _mostDerivedFirst(eventsWithStreamId);
+    var commands = _mostDerivedFirst(commandsWithStreamId);
+    var composites = _mostDerivedFirst(compositesWithStreamId);
+
+    _reportStreamIdDiagnostics(context, events, eventsWithoutStreamId);
+    _reportGenerateStreamIdOnInitOnly(context, events, commands);
 
     // Load and prepare template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -315,25 +357,50 @@ public class StreamIdGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
     // Generate GetGenerationPolicy dispatch cases (events AND commands)
-    template = _generateGenerationPolicyRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateGenerationPolicyRegion(template, events, commands);
 
     // Generate event dispatch and extractors
-    template = _generateEventRegions(template, eventsWithStreamId);
+    template = _generateEventRegions(template, events);
 
     // Generate command dispatch and extractors
-    template = _generateCommandRegions(template, context, commandsWithStreamId);
+    template = _generateCommandRegions(template, context, commands);
 
     // Generate the object-typed (OTHER) regions for composites — IMessage-not-IEvent types carrying [StreamId].
-    template = _generateOtherRegions(template, compositesWithStreamId);
+    template = _generateOtherRegions(template, composites);
 
     // Generate SetStreamId dispatch cases
-    template = _generateSetStreamIdRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateSetStreamIdRegion(template, events, commands);
 
     // Generate [ModuleInitializer] registration code
-    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId, compositesWithStreamId);
+    template = _generateModuleInitializerRegion(template, events, commands, composites);
 
     context.AddSource("StreamIdExtractors.g.cs", template);
   }
+
+  /// <summary>
+  /// How many base types <paramref name="typeSymbol"/> has: zero for a type with none, one for a direct subclass of
+  /// <see cref="object"/>, and one more for each further level.
+  /// </summary>
+  private static int _inheritanceDepth(INamedTypeSymbol typeSymbol) {
+    var depth = 0;
+    for (var baseType = typeSymbol.BaseType; baseType is not null; baseType = baseType.BaseType) {
+      depth++;
+    }
+    return depth;
+  }
+
+  /// <summary>
+  /// Orders events or composites for type dispatch: deepest inheritance first, then by type name, so a base type's
+  /// <c>is</c> check comes after every type derived from it and the generated file does not depend on discovery order.
+  /// </summary>
+  private static ImmutableArray<StreamIdInfo> _mostDerivedFirst(ImmutableArray<StreamIdInfo> infos) =>
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.EventType, StringComparer.Ordinal)];
+
+  /// <summary>
+  /// Orders commands for type dispatch: deepest inheritance first, then by type name (see the event overload).
+  /// </summary>
+  private static ImmutableArray<CommandStreamIdInfo> _mostDerivedFirst(ImmutableArray<CommandStreamIdInfo> infos) =>
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.CommandType, StringComparer.Ordinal)];
 
   /// <summary>
   /// Reports diagnostics for events with and without stream keys.
@@ -390,17 +457,20 @@ public class StreamIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the GENERATION_POLICY_DISPATCH region for events and commands with [GenerateStreamId].
+  /// Generates the GENERATION_POLICY_DISPATCH region for events and commands with [GenerateStreamId], and a
+  /// "do not generate" case for each type that declines a base type's policy (see
+  /// <see cref="_declinesInheritedGenerate"/>). The inputs are most-derived first, so each case precedes its base's.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
   private static string _generateGenerationPolicyRegion(
       string template,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
 
-    var eventsWithGenerate = eventsWithStreamId.Where(e => e.HasGenerate).ToImmutableArray();
-    var commandsWithGenerate = commandsWithStreamId.Where(c => c.HasGenerate).ToImmutableArray();
+    var eventsWithPolicy = eventsWithStreamId.Where(e => e.HasGenerate || e.DeclinesInheritedGenerate).ToImmutableArray();
+    var commandsWithPolicy = commandsWithStreamId.Where(c => c.HasGenerate || c.DeclinesInheritedGenerate).ToImmutableArray();
 
-    if (eventsWithGenerate.IsEmpty && commandsWithGenerate.IsEmpty) {
+    if (eventsWithPolicy.IsEmpty && commandsWithPolicy.IsEmpty) {
       return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", "");
     }
 
@@ -413,24 +483,27 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var generationPolicyCode = new StringBuilder();
     generationPolicyCode.AppendLine("// Type-based dispatch for generation policy");
 
-    foreach (var info in eventsWithGenerate) {
+    foreach (var info in eventsWithPolicy) {
       var caseCode = generationPolicySnippet
           .Replace(PLACEHOLDER_EVENT_TYPE, info.EventType)
-          .Replace("__SHOULD_GENERATE__", "true")
-          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+          .Replace("__SHOULD_GENERATE__", _csharpBool(info.HasGenerate))
+          .Replace("__ONLY_IF_EMPTY__", _csharpBool(info.OnlyIfEmpty));
       generationPolicyCode.AppendLine(caseCode);
     }
 
-    foreach (var info in commandsWithGenerate) {
+    foreach (var info in commandsWithPolicy) {
       var caseCode = generationPolicySnippet
           .Replace(PLACEHOLDER_EVENT_TYPE, info.CommandType)
-          .Replace("__SHOULD_GENERATE__", "true")
-          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+          .Replace("__SHOULD_GENERATE__", _csharpBool(info.HasGenerate))
+          .Replace("__ONLY_IF_EMPTY__", _csharpBool(info.OnlyIfEmpty));
       generationPolicyCode.AppendLine(caseCode);
     }
 
     return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", generationPolicyCode.ToString().TrimEnd());
   }
+
+  /// <summary>The C# literal for <paramref name="value"/>.</summary>
+  private static string _csharpBool(bool value) => value ? "true" : "false";
 
   /// <summary>
   /// Generates event dispatch, extractor, and try-extract regions.

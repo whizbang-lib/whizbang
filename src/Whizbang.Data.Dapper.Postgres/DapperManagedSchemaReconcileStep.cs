@@ -21,7 +21,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Once per fleet per <see cref="ManagedSchemaHostPass.ClaimWindow"/>: only the instance that takes the window's claim
 /// (<see cref="FleetClaim"/>) reconciles, and the reconcile takes the schema lock with a try, so it never waits on a
 /// start that is migrating. It runs with this instance's id, the configured settings and every registered
-/// contributor, exactly as the start does.
+/// contributor, exactly as the start does. It reconciles the schema the Dapper work coordinator writes to: the
+/// connection string's <c>Search Path</c>, else the server's <c>current_schema()</c> (#1894).
 /// </remarks>
 /// <param name="connectionString">The database the perspectives are in.</param>
 /// <param name="declare">What the perspectives declare; called for a fresh set each run.</param>
@@ -29,6 +30,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="timeProvider">The clock the claim window is read from.</param>
 /// <docs>fundamentals/perspectives/managed-schema-objects#every-later-start</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperManagedObjectsStartupTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMaintenanceStepNamedSchemaTests.cs:TheManagedSchemaReconcileStep_ClaimsInTheHostsSchemaAsync</tests>
 public sealed class DapperManagedSchemaReconcileStep(
     string connectionString,
     Func<ManagedSchemaObjectSet> declare,
@@ -48,10 +50,7 @@ public sealed class DapperManagedSchemaReconcileStep(
 
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    string schema;
-    await using (var current = new NpgsqlCommand("SELECT current_schema()", connection)) {
-      schema = (string)(await current.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
-    }
+    var schema = await DapperCoordinatorSchema.ResolveAsync(connectionString, connection, cancellationToken).ConfigureAwait(false);
 
     var key = ManagedSchemaHostPass.ClaimKey(schema, timeProvider.GetUtcNow());
     if (!await FleetClaim.TryClaimAsync(

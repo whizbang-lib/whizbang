@@ -220,6 +220,81 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(after.Value.Hi).IsEqualTo(Hi);
   }
 
+  /// <summary>The stored type of an audit record, one of the digest-exempt types the emit chain never folds (#1492).</summary>
+  private static readonly string _auditRecordType =
+    Whizbang.Core.TypeNameFormatter.AssemblyQualifiedName(typeof(Whizbang.Core.SystemEvents.EventAudited));
+
+  /// <summary>Stamps every unstamped row in commit order, as the commit-sequence stamper would.</summary>
+  private static async Task _stampCommitSequencesAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = """
+      UPDATE wh_event_store es SET commit_sequence = s.seq
+      FROM (SELECT event_id, nextval('wh_commit_seq') AS seq FROM wh_event_store
+            WHERE commit_sequence IS NULL ORDER BY event_id) s
+      WHERE es.event_id = s.event_id
+      """;
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<long> _originGenerationAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT setting_value::bigint FROM wh_settings WHERE setting_key = 'integrity_origin_generation'";
+    return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  private static async Task<string?> _truncateAsync(NpgsqlConnection connection, Guid streamId, long throughVersion) {
+    await using var close = connection.CreateCommand();
+    close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, @through, FALSE)";
+    close.Parameters.AddWithValue("sid", streamId);
+    close.Parameters.AddWithValue("through", throughVersion);
+    return (string?)await close.ExecuteScalarAsync();
+  }
+
+  [Test]
+  public async Task TruncateStreamPrefix_APrefixOfOnlyAnAuditRecord_IsNotAMutationOfFoldedHistoryAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    // One commit per event, so the versions are the commit order: the audit record 1, the domain event 2, the survivor 3.
+    var streamId = Guid.NewGuid();
+    var domain = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(Guid.NewGuid(), streamId, _auditRecordType, flags: 0));
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(domain, streamId, "Whizbang.Tests.DigestTruncateDomainEvent", flags: 0));
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestTruncateDomainEvent", flags: 0));
+    await _stampCommitSequencesAsync(connection);
+    var before = await _originGenerationAsync(connection);
+
+    await Assert.That(await _truncateAsync(connection, streamId, 1)).IsEqualTo("truncated");
+    var afterAudit = await _originGenerationAsync(connection);
+    await Assert.That(await _truncateAsync(connection, streamId, 2)).IsEqualTo("truncated");
+    var afterDomain = await _originGenerationAsync(connection);
+
+    await Assert.That((afterAudit - before, afterDomain - afterAudit)).IsEqualTo((0L, 1L))
+      .Because("the audit record was never folded, so removing it refolds nothing and does not advance the origin "
+        + "generation; removing the domain event, which was folded, does (the control)");
+  }
+
+  [Test]
+  public async Task TruncateStreamPrefix_APrefixHoldingAnAuditRecord_LeavesTheDigestEqualToAFreshFoldAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    const string domainType = "Whizbang.Tests.DigestTruncateAuditPrefixEvent";
+    var streamId = Guid.NewGuid();
+    var survivor = Guid.NewGuid();
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(Guid.NewGuid(), streamId, _auditRecordType, flags: 0));
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(Guid.NewGuid(), streamId, domainType, flags: 0));
+    await _commitAsync(connection, Guid.NewGuid(), _outboxMessage(survivor, streamId, domainType, flags: 0));
+    await _stampCommitSequencesAsync(connection);
+
+    await Assert.That(await _truncateAsync(connection, streamId, 2)).IsEqualTo("truncated");
+
+    var (Lo, Hi) = await _expectedDigestAsync(connection, survivor);
+    var after = await _digestRowAsync(connection, streamId);
+    await Assert.That(after).IsEqualTo((Lo, Hi, 1))
+      .Because("the stored digest is a fresh fold of what remains: the survivor alone, the audit record never in it");
+  }
+
   /// <summary>Orders two ids the way Postgres compares <c>uuid</c>: byte order, which is the order of the hex text.</summary>
   private static (Guid Low, Guid High) _inPostgresOrder(Guid a, Guid b) =>
     string.CompareOrdinal(a.ToString(), b.ToString()) < 0 ? (a, b) : (b, a);

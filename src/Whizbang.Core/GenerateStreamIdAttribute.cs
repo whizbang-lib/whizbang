@@ -39,6 +39,12 @@ namespace Whizbang.Core;
 /// </code>
 /// </para>
 /// <para>
+/// The policy follows the stream id. A derived type with no [StreamId] of its own inherits its base type's
+/// [StreamId] and its [GenerateStreamId]. A derived type that declares its own [StreamId] (plain or
+/// <c>Override = true</c>) does not inherit the base's [GenerateStreamId]; declare [GenerateStreamId] on it to
+/// auto-generate its own stream id.
+/// </para>
+/// <para>
 /// Events with [StreamId] but WITHOUT [GenerateStreamId] must have a StreamId provided
 /// before dispatch — the StreamIdGuard will throw if it's Guid.Empty.
 /// </para>
@@ -48,6 +54,8 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:PublishAsync_EventWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithoutGenerateStreamId_DoesNotAutoGenerateAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithNoStreamIdOfItsOwn_InheritsTheBasesGenerateStreamIdAsync</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class GenerateStreamIdAttribute : Attribute {
   /// <summary>

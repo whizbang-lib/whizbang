@@ -33,6 +33,58 @@ public static class JsonContextRegistry {
   private static long _registrationSeq;
 
   /// <summary>
+  /// Registrations made visible so far: what <see cref="Generation"/> reports. Advanced only after the
+  /// entry is in its queue, never when its sequence number is taken, so a build that reads a
+  /// generation can never miss a registration that generation counts (#1900).
+  /// </summary>
+  private static long _publishedRegistrations;
+
+  /// <summary>
+  /// Runs on the registering thread after a registration takes its sequence number and before the
+  /// registration is visible. Set only by tests, through <see cref="AfterSequenceAllocatedForTests"/>.
+  /// </summary>
+  [ThreadStatic]
+  private static Action? _afterSequenceAllocatedForTests;
+
+  /// <summary>
+  /// Runs <paramref name="callback"/> inside every registration this thread makes until the returned
+  /// scope is disposed, at the point after the registration takes its sequence number and before it is
+  /// visible.
+  /// </summary>
+  /// <param name="callback">What to run at that point, typically a build of options from the registry.</param>
+  /// <returns>A scope that restores the previous callback when disposed.</returns>
+  /// <remarks>
+  /// A registration racing a build on another thread opens a window too narrow to hit on purpose. This
+  /// puts the build inside the window on one thread, so a test can show what a build there records
+  /// without depending on how two threads happen to interleave. Thread-static, so a registration on any
+  /// other thread is untouched.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryPublicationTests.cs</tests>
+  internal static IDisposable AfterSequenceAllocatedForTests(Action callback) {
+    var previous = _afterSequenceAllocatedForTests;
+    _setAfterSequenceAllocated(callback);
+    return new AfterSequenceAllocatedScope(previous);
+  }
+
+  private static void _setAfterSequenceAllocated(Action? callback) => _afterSequenceAllocatedForTests = callback;
+
+  private sealed class AfterSequenceAllocatedScope(Action? previous) : IDisposable {
+    private readonly Action? _previous = previous;
+
+    public void Dispose() => _setAfterSequenceAllocated(_previous);
+  }
+
+  /// <summary>Takes the next sequence number, which orders a registration among those of equal priority.</summary>
+  private static long _allocateSequence() {
+    var seq = Interlocked.Increment(ref _registrationSeq);
+    _afterSequenceAllocatedForTests?.Invoke();
+    return seq;
+  }
+
+  /// <summary>Counts a registration in <see cref="Generation"/>; called only once its entry is visible.</summary>
+  private static void _publish() => Interlocked.Increment(ref _publishedRegistrations);
+
+  /// <summary>
   /// A registered type-info provider with its ranking metadata. <paramref name="Profile"/> of
   /// <c>null</c> means the provider applies to every <see cref="SerializationProfile"/>; a specific value
   /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
@@ -118,7 +170,8 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, _allocateSequence()));
+    _publish();
   }
 
   /// <summary>
@@ -145,7 +198,8 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(new ConverterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _converters.Enqueue(new ConverterEntry(converter, priority, profile, _allocateSequence()));
+    _publish();
   }
 
   /// <summary>
@@ -172,7 +226,8 @@ public static class JsonContextRegistry {
       Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(modifier);
 
-    _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+    _modifiers.Enqueue(new ModifierEntry(modifier, profile, _allocateSequence()));
+    _publish();
   }
   /// <summary>
   /// Removes a modifier a test registered, keeping every other registration in its original order.
@@ -288,6 +343,10 @@ public static class JsonContextRegistry {
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
     }
 
+    // Read before the registry is, so the generation recorded below never counts a registration this
+    // build did not see (#1900).
+    var generation = Generation;
+
     // Highest priority first; registration order (Seq) breaks ties. JsonTypeInfoResolver.Combine is
     // first-match-wins, so the ordered list makes the winning provider deterministic.
     var orderedResolvers = resolvers
@@ -343,7 +402,7 @@ public static class JsonContextRegistry {
       options.Converters.Add(entry.Converter);
     }
 
-    _completeChains.AddOrUpdate(options, new CompletedChain(Generation, options));
+    _completeChains.AddOrUpdate(options, new CompletedChain(generation, options));
     return options;
   }
 
@@ -415,12 +474,12 @@ public static class JsonContextRegistry {
       return entry.Options;
     }
 
-    var completed = _complete(hostOptions);
+    var completed = _complete(hostOptions, generation);
     _completeChains.AddOrUpdate(hostOptions, new CompletedChain(generation, completed));
     return completed;
   }
 
-  private static JsonSerializerOptions _complete(JsonSerializerOptions hostOptions) {
+  private static JsonSerializerOptions _complete(JsonSerializerOptions hostOptions, long generation) {
     var registry = CreateCombinedOptions();
     // The host's settings (naming policy, ignore conditions) and converters are kept as they are.
     var completed = new JsonSerializerOptions(hostOptions) {
@@ -436,7 +495,7 @@ public static class JsonContextRegistry {
       completed.Converters.Add(converter);
     }
     // Already complete: completing it again returns it unchanged.
-    _completeChains.AddOrUpdate(completed, new CompletedChain(Generation, completed));
+    _completeChains.AddOrUpdate(completed, new CompletedChain(generation, completed));
     return completed;
   }
 
@@ -513,10 +572,18 @@ public static class JsonContextRegistry {
   /// What lets a caller reuse a set of options built from this registry without either rebuilding
   /// per call, which throws the serializer's metadata cache away every time, or caching forever,
   /// which cannot resolve a type from an assembly whose contexts registered after the cache was
-  /// built. Compare it to the value seen when the options were built; a difference means rebuild.
+  /// built. Read it before building and compare it to that value later; a difference means rebuild.
+  /// <para>
+  /// A registration is counted only once it is visible. A build that reads the generation first and then
+  /// reads the registry therefore includes every registration that generation counts; one it misses
+  /// advances the generation when it lands, so options recorded against the earlier value are rebuilt
+  /// rather than reused (#1900).
+  /// </para>
   /// </remarks>
+  /// <docs>extending/internals/json-serialization-customizations</docs>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryGenerationTests.cs</tests>
-  public static long Generation => Interlocked.Read(ref _registrationSeq);
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryPublicationTests.cs</tests>
+  public static long Generation => Interlocked.Read(ref _publishedRegistrations);
 
   /// <summary>
   /// Gets the count of registered type name mappings (for diagnostics/testing).

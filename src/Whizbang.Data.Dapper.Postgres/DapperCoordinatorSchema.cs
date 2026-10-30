@@ -24,6 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <docs>data/drivers</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCoordinatorSchemaTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorNamedSchemaTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMaintenanceStepNamedSchemaTests.cs</tests>
 internal static class DapperCoordinatorSchema {
   /// <summary>The <c>search_path</c> entry that stands for the session user's own schema, which configures none.</summary>
   private const string SESSION_USER_ENTRY = "$user";
@@ -52,6 +53,21 @@ internal static class DapperCoordinatorSchema {
     return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string
       ?? Whizbang.Data.Postgres.PgIdentifier.PUBLIC_SCHEMA;
   }
+
+  /// <summary>
+  /// The schema the coordinator writes to, for a component that has only the connection string, such as a maintenance
+  /// step: the first schema the string's <c>Search Path</c> names (<see cref="FromConnectionString"/>), else the
+  /// server's answer (<see cref="CurrentAsync"/>) (#1894).
+  /// </summary>
+  /// <param name="connectionString">The component's connection string.</param>
+  /// <param name="connection">An open connection to the same database.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMaintenanceStepNamedSchemaTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPartitionMaintenanceStepTests.cs</tests>
+  internal static async Task<string> ResolveAsync(
+      string connectionString, NpgsqlConnection connection, CancellationToken cancellationToken) =>
+    FromConnectionString(connectionString)
+      ?? await CurrentAsync(connection, cancellationToken).ConfigureAwait(false);
 
   private static string _resolve(string entry) =>
     entry.Length >= 2 && entry[0] == '"' && entry[^1] == '"'

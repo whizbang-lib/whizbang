@@ -841,6 +841,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Every Dapper maintenance step acts on the schema the host names.** The partition maintenance step and the physical
+  column fill step wrote `public` into every statement, and the managed-schema reconcile step asked the server for
+  `current_schema()`, while the Dapper work coordinator takes its schema from the connection string's `Search Path`
+  and asks the server only when that names none. On a host whose framework tables live in another schema the first two
+  found no tables (or another service's), and the reconcile step claimed and reconciled in whatever schema the session
+  resolved first, such as the session user's own schema ahead of a `Search Path` of `"$user", svc`. All three now
+  resolve the schema the way the coordinator does, the claim of the fill and reconcile steps is taken and keyed in that
+  schema, and a schema named only in `Search Path` is honored even on a pooled connection that does not carry the
+  session's `search_path` (Fixes #1894)
+- **Truncating a stream prefix leaves digest-exempt audit records out, exactly as every digest fold does.**
+  `wh_truncate_stream_prefix` read the audit record types (`EventAudited`, `CommandAudited`), which no fold ever adds to
+  a digest, into the per-lane ranges it refolds and into its digest subtraction. A prefix holding only audit records
+  therefore refolded sealed epochs and advanced the origin generation, telling every consumer that folded history had
+  changed so they reset their seals and re-verified, when nothing folded had been removed; and a digest bucket an
+  earlier release had folded for an audit record was subtracted from instead of being left to the verification sweep.
+  Both reads now carry the same exemption predicate the folds use (migration 263), so the truncate subtracts, refolds
+  and reports exactly what was folded (Fixes #1891)
+- **A derived message type's own `[StreamId]` is no longer shadowed by its base type's.** The generated stream id
+  extractors dispatch through a chain of `if (message is T)` checks, and emitted them in discovery order, which follows
+  file and namespace order. When a base type with a `[StreamId]` was discovered before a derived type declaring its
+  own (plain or `Override = true`), the base's check matched every derived instance first, so `Resolve`,
+  `TryResolveAsGuid`, `ExtractStreamId`, `SetStreamId` and the `[GenerateStreamId]` policy lookup all used the
+  inherited property and the derived one was never read or written. Whether a contract resolved correctly depended
+  on how its namespace was spelled. Every region that dispatches on type now runs most-derived first (inheritance
+  depth descending, then the type name, so the generated file no longer depends on discovery order), for commands,
+  events and composites alike. **Behavior change:** a derived type that was shadowed now resolves and sets by its own
+  `[StreamId]` property, as WHIZ006 and the documentation already said it did. A caller that set only the inherited
+  property on such a type and relied on it being the stream id now gets the derived property's value (often empty), so
+  its messages route to a different stream; set the derived property, or remove its `[StreamId]` when the inherited one
+  is meant. **Behavior change:** a derived type that declares its own `[StreamId]` (plain or `Override = true`) no
+  longer inherits its base type's `[GenerateStreamId]`. The generation policy follows the stream id, so such a type is
+  not auto-generated, where before the base's policy applied and the minted id was written into the derived property;
+  declare `[GenerateStreamId]` on the derived type to keep auto-generation. A derived type with no `[StreamId]` of its
+  own still inherits the base's stream id and its `[GenerateStreamId]` (Fixes #1893)
+- **Serializer options cached against the registry generation no longer miss a registration made while they were
+  built.** Registering a context, converter or type-info modifier advanced `JsonContextRegistry.Generation` before the
+  entry was in the registry. A build on another thread in that window read the new generation, missed the entry, and
+  was then reused as current until the next registration, so the types the missed context described could not be read
+  through the shared options (`PerspectiveDocumentSerialization.Options`, `WithCompleteChain`, the multi-stream command
+  options). The generation now advances only after the entry is visible, and the sequence number that orders
+  registrations of equal priority is unchanged (Fixes #1900)
 - **A failed pending-events statistics query is reported instead of swallowed.** The perspective worker refreshes
   `whizbang.perspective.pending_events` about once a minute and discarded every failure of the query behind it
   (`IWorkCoordinator.GatherStatisticsAsync`: a timeout, a missing permission, a function a partial migration never
