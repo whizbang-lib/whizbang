@@ -25,7 +25,8 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// <c>RaiseOnMixedStream</c> (#1546) is set by a flush whose caller awaits it (the immediate and scoped strategies'
 /// <c>FlushAsync</c>): every outbox message it stores asks the store to raise a WHIZ133 refusal as
-/// <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+/// <see cref="MixedStreamEventException"/> instead of dead-lettering the row, and a sealed stream's refusal as
+/// <see cref="StreamSealedException"/> (#1733).
 /// <c>DetachedWork</c> (#1721) is where the flush records the detached lifecycle stages it starts, so the stopping host
 /// waits for them before it disposes the service provider they resolve their receptors from.
 /// </remarks>

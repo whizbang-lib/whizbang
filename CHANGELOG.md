@@ -31,9 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reason, refuses the empty stream id, and has nothing to seal on a stream with no Sourced event (ephemeral streams end by
   their time to live). An event type declared `[TerminalEvent]` (registered by the message catalog generator and stamped
   as `EventFlags.Terminal`, bit 64, on the dispatch, receive and direct-append paths) seals its stream in the statement
-  that stores it, and an event after it in the same write is refused. A direct append to a sealed stream throws
-  `StreamSealedException` (stream id, sealed at, reason) on both drivers; an outbox or inbox write dead-letters only the
-  refused event with the new reason `StreamSealed` (25, held for review) and stores the rest of the batch. A restore
+  that stores it, and an event after it in the same write is refused. A write whose caller awaits it (a direct append,
+  or an outbox write flushed by the immediate or scoped strategy) throws `StreamSealedException` (stream id, sealed at,
+  reason) on both drivers and keeps nothing, as the mixed-stream refusal does; a write nobody awaits (batch flushes,
+  handler commits, the inbox) dead-letters only the refused event with the new reason `StreamSealed` (25, held for
+  review) and stores the rest of the batch. A restore
   returns a sealed stream to `Sealed`. Migration 266; the append path pays one probe of a partial index holding only the
   sealed streams (measured on a 500-event batch: 2 blocks for 50 streams, 201 for 500 new streams, under 0.6% of the batch).
 - **Archived streams leave the hot event store through a pluggable `IArchiveStore`, with a Postgres-table store built in

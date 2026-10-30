@@ -12,8 +12,11 @@
 --                a direct append    wh_append_event raises SQLSTATE WHS01, which both drivers surface as
 --                                   StreamSealedException (stream id, sealed_at, reason). The caller awaits the
 --                                   append, so nothing is stored.
---                the outbox chain   the refused event alone is dead-lettered (MessageFailureReason.StreamSealed, 25)
---                                   with the same wording as the exception, and the rest of the batch is stored. The
+--                an awaited outbox  an element carrying RaiseOnMixedStream (the immediate and scoped strategies' flush,
+--                write              which the caller awaits) raises WHS01 from store_outbox_messages, as the
+--                                   mixed-stream refusal (228) raises WH133 for it; the whole write rolls back.
+--                the outbox chain   every other refused event alone is dead-lettered (MessageFailureReason.StreamSealed,
+--                                   25) with the same wording as the exception, and the rest of the batch is stored. The
 --                                   refusal sits in _emit_event_store_chain itself, so no outbox writer can go around it.
 --                the inbox chain    the same, for a received event: recorded in wh_dead_letters and its lease row
 --                                   completed in place, as the mixed-stream refusal (228) does.
@@ -39,10 +42,12 @@
 --
 -- Dependencies: 260 (wh_stream_lifecycle; last word of _emit_event_store_chain, _emit_event_store_chain_for_inbox and
 --               wh_append_event), 262 (last word of wh_restore_archived_stream), 232 (last word of
---               _wh_event_flags_from_names), 228 (_wh_inbox_dead_letter_snapshot), 241 (move_to_dead_letters)
+--               _wh_event_flags_from_names), 228 (_wh_inbox_dead_letter_snapshot), 241 (move_to_dead_letters, and the last word of
+--               store_outbox_messages)
 -- Objects: sealed_reason, idx_stream_lifecycle_sealed, _wh_event_flags_from_names, _wh_terminal_seal_reason,
 --          _wh_stream_sealed_refusal_text, _wh_sealed_stream_refusals, _wh_refuse_sealed_stream_outbox_events,
---          _wh_refuse_sealed_stream_inbox_events, wh_finalize_stream, _emit_event_store_chain,
+--          _wh_refuse_sealed_stream_inbox_events, _wh_raise_sealed_stream_outbox_events, store_outbox_messages,
+--          wh_finalize_stream, _emit_event_store_chain,
 --          _emit_event_store_chain_for_inbox, wh_append_event, wh_restore_archived_stream
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
@@ -455,6 +460,418 @@ COMMENT ON FUNCTION __SCHEMA__.wh_finalize_stream(UUID, TEXT, TIMESTAMPTZ) IS
 -- ===========================================================================================
 -- The write paths
 -- ===========================================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('_wh_raise_sealed_stream_outbox_events');
+
+-- An awaited outbox write (the element carries RaiseOnMixedStream, set by the immediate and scoped strategies' flush)
+-- to a sealed stream: raised to the caller as SQLSTATE WHS01 (StreamSealedException), so the whole write rolls back,
+-- the same way 228 raises a mixed-stream refusal. Takes the write's stream locks first, in the copy's order, so the seal
+-- it reads cannot change before the copy; the copy's later request for the same locks is a no-op in this transaction.
+-- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteAfterATerminalEventInTheSameWrite_ThrowsAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:StoreOutboxMessagesAsync_AnAwaitedWriteToASealedStream_ThrowsStreamSealedExceptionAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_raise_sealed_stream_outbox_events(
+  p_event_ids UUID[],
+  p_stream_ids UUID[],
+  p_flags INTEGER[],
+  p_event_types TEXT[],
+  p_raise_ids UUID[],
+  p_now TIMESTAMPTZ
+) RETURNS VOID AS $$
+DECLARE
+  v_refusal_text TEXT;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || s.sid::text))
+  FROM (
+    SELECT DISTINCT u.sid
+    FROM unnest(p_stream_ids) AS u(sid)
+    WHERE u.sid IS NOT NULL
+    ORDER BY u.sid
+  ) AS s;
+
+  SELECT r.refusal_text INTO v_refusal_text
+  FROM __SCHEMA__._wh_sealed_stream_refusals(p_event_ids, p_stream_ids, p_flags, p_event_types, p_now) r
+  WHERE r.refused_event_id = ANY(p_raise_ids)
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'WHS01',
+      MESSAGE = v_refusal_text,
+      HINT = 'A sealed stream has ended; append to a new stream instead.';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_raise_sealed_stream_outbox_events(UUID[], UUID[], INTEGER[], TEXT[], UUID[], TIMESTAMPTZ) IS
+  'Raises SQLSTATE WHS01 (StreamSealedException) for an outbox event its caller awaits on a sealed stream, under the '
+  'write''s stream locks (#1733). Writes nothing.';
+
+-- store_outbox_messages: last word 241, with the sealed-stream raise for an awaited event before the mixed-stream
+-- refusal. Nothing else changes.
+
+-- <docs>fundamentals/events/system-events#audit</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditRecordStreamPositionSqlTests.cs:Store_EventAndItsAuditTogether_RecordCarriesTheEventsVersionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveOrderingHeadTests.cs:StoreOutboxMessagesAsync_TwoCoordinators_LinkTheSecondToTheFirstAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_RefusedEventInABatch_LeavesTheOtherStreamsStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsWrittenAsNames_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecovery_OfAnOutboxMessageStillInTheOutbox_LeavesItsDeadLetterDueAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_TheSameWriteNotAwaited_IsDeadLettered_AndAnAwaitedWriteToAnOpenStreamIsStoredAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
+  p_messages JSONB,
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER
+) RETURNS TABLE(
+  message_id UUID,
+  stream_id UUID,
+  was_newly_created BOOLEAN
+) AS $$
+#variable_conflict use_column
+DECLARE
+  v_msg RECORD;
+  v_partition INTEGER;
+  v_was_new BOOLEAN;
+  v_inserted_event_ids UUID[] := ARRAY[]::UUID[];
+  -- 216: streams this call pins, written after the audit position fill so the work tables stay in canonical lock order.
+  v_pin_streams UUID[] := ARRAY[]::UUID[];
+  v_pin_partitions INTEGER[] := ARRAY[]::INTEGER[];
+  -- 114 edge-notify state: streams probed once per call (first encounter, BEFORE this
+  -- call inserts for them), the probed-empty subsets per category, and the notify sets.
+  v_probed_streams UUID[] := ARRAY[]::UUID[];
+  v_empty_outbox_streams UUID[] := ARRAY[]::UUID[];
+  v_empty_persp_streams UUID[] := ARRAY[]::UUID[];
+  v_notify_outbox_streams UUID[] := ARRAY[]::UUID[];
+  v_notify_persp_streams UUID[] := ARRAY[]::UUID[];
+  -- 190: the outbox envelope as stored, with a keyed collective's predecessor link written into its payload.
+  v_envelope JSONB;
+  v_predecessor_id UUID;
+  v_predecessor_type TEXT;
+  -- 216 (#1485): the audit records this call stores, and the event each one audits, for the position fill below.
+  v_audit_record_ids UUID[] := ARRAY[]::UUID[];
+  v_audited_event_ids UUID[] := ARRAY[]::UUID[];
+  v_audited_event_text TEXT;
+  -- 228 (#1546): the stream, flags and type of each event in v_inserted_event_ids (same positions), the events whose
+  -- refusal is raised to the caller, and the events the refusal dead-lettered.
+  v_inserted_event_streams UUID[] := ARRAY[]::UUID[];
+  v_inserted_event_flags INTEGER[] := ARRAY[]::INTEGER[];
+  v_inserted_event_types TEXT[] := ARRAY[]::TEXT[];
+  v_raise_event_ids UUID[] := ARRAY[]::UUID[];
+  v_refused_event_ids UUID[];
+  v_claimed INTEGER;          -- 241: rows the recovery claim touched
+BEGIN
+  IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
+
+  FOR v_msg IN
+    SELECT
+      (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID as msg_id,
+      elem->>'Destination' as destination,
+      elem->>'MessageType' as message_type,
+      elem->>'EnvelopeType' as envelope_type,
+      elem->'Envelope' as envelope_data,
+      elem->'Metadata' as metadata,
+      elem->'Scope' as scope,
+      (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID as stream_id,
+      (elem->>'IsEvent')::BOOLEAN as is_event,
+      -- 149: the priority the producer declared; zero (undeclared) and an absent field read as standard.
+      COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
+      -- EventFlags (062): persisted so migration 061's collective routing can see (flags & 1). 232 (#1612): the
+      -- number (what the framework writes) is read here; a name list is read bit by bit by _wh_event_flags_from_names,
+      -- which raises on a name it does not know rather than store the event as Sourced.
+      CASE
+        WHEN elem->>__ENVELOPE_FIELD_FLAGS__ IS NULL OR elem->>__ENVELOPE_FIELD_FLAGS__ = '' THEN 0
+        WHEN elem->>__ENVELOPE_FIELD_FLAGS__ ~ '^[0-9]+$' THEN (elem->>__ENVELOPE_FIELD_FLAGS__)::INTEGER
+        ELSE __SCHEMA__._wh_event_flags_from_names(elem->>__ENVELOPE_FIELD_FLAGS__)
+      END as flags,
+      NULLIF(elem->>'ScheduledFor', '')::TIMESTAMPTZ as scheduled_for,
+      -- 115 tag-bound coalescing: the group a pending single belongs to (NULL for normal rows).
+      NULLIF(elem->>'CoalesceGroup', '') as coalesce_group,
+      -- 190: set only on a collective with an ordering key; the type its successor names as its predecessor.
+      NULLIF(elem->>'CollectiveLinkType', '') as collective_link_type,
+      -- 228 (#1546): set by a write its caller awaits; a refusal of this event is raised instead of dead-lettered.
+      COALESCE((elem->>'RaiseOnMixedStream')::BOOLEAN, false) as raise_on_mixed_stream,
+      -- 241 (#1722): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
+      (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from
+    FROM jsonb_array_elements(p_messages) as elem
+    ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
+  LOOP
+    -- 241 (#1722): dead-letter recovery re-enters a message HERE, as one more arrival, so every rule below applies to
+    -- it unchanged. A row that names its dead letter claims it first (Recovering), in this transaction, so two
+    -- recoveries of one row cannot both re-enter it, and a dead letter whose message the outbox still holds is left
+    -- alone. The row then carries the dead-letter id, and complete_outbox_published settles it once published.
+    IF v_msg.recovered_from IS NOT NULL THEN
+      UPDATE __SCHEMA__.wh_dead_letters dl
+      SET recovery_status = 1,                  -- Recovering, until the message is published
+          recovery_attempts = dl.recovery_attempts + 1,
+          last_recovery_at = p_now
+      WHERE dl.dead_letter_id = v_msg.recovered_from
+        AND dl.source_id = v_msg.msg_id
+        AND dl.recovery_status NOT IN (1, 2, 3, 4)  -- not already Recovering, HoldForReview, Recovered, PermanentlyFailed
+        AND dl.recovered_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_outbox o WHERE o.message_id = v_msg.msg_id);
+      GET DIAGNOSTICS v_claimed = ROW_COUNT;
+      IF v_claimed = 0 THEN
+        CONTINUE;  -- claimed by another recovery, already settled, or the message is still in the outbox
+      END IF;
+    END IF;
+
+    IF v_msg.stream_id IS NOT NULL THEN
+      v_partition := __SCHEMA__.compute_partition(v_msg.stream_id, p_partition_count);
+    ELSE
+      v_partition := NULL;
+    END IF;
+
+    -- 114: emptiness probe, once per distinct stream per call, BEFORE this call's first
+    -- insert for that stream (the loop is stream-ordered, so first encounter precedes all
+    -- of the stream's inserts). FOR SHARE serializes against an in-flight completion of
+    -- the last pending row; see the header's MVCC lost-wakeup guard.
+    IF v_msg.stream_id IS NOT NULL AND NOT (v_msg.stream_id = ANY(v_probed_streams)) THEN
+      v_probed_streams := array_append(v_probed_streams, v_msg.stream_id);
+
+      PERFORM 1 FROM __SCHEMA__.wh_outbox o
+        WHERE o.stream_id = v_msg.stream_id
+          AND o.processed_at IS NULL
+          AND o.published_at IS NULL
+          AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
+        LIMIT 1
+        FOR SHARE OF o SKIP LOCKED;   -- 140: a locked pending row is being completed; treat as empty and ring
+      IF NOT FOUND THEN
+        v_empty_outbox_streams := array_append(v_empty_outbox_streams, v_msg.stream_id);
+      END IF;
+
+      PERFORM 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.stream_id = v_msg.stream_id
+          AND pe.processed_at IS NULL
+        -- 161: the ORDER BY is what makes the index reachable, and it is the whole fix. Under a
+        -- bare LIMIT 1 the planner prices a sequential scan as though the first row it reads will
+        -- match, because processed_at IS NULL is true of nearly every row; on a stream whose work
+        -- is all done there is no match at all, so it scans to exhaustion. An index alone does not
+        -- change that choice and neither do extended statistics, both measured. Ordering by the
+        -- index's own key removes the bad plan instead of out-costing it: a sequential scan would
+        -- have to sort before it could answer. stream_id is pinned by the equality above, so the
+        -- clause changes no result -- order by that column alone is dropped as redundant, which is
+        -- why event_id is here too.
+        ORDER BY pe.stream_id, pe.event_id
+        LIMIT 1
+        FOR SHARE OF pe SKIP LOCKED;  -- 140: same rule for the perspective doorbell
+      IF NOT FOUND THEN
+        v_empty_persp_streams := array_append(v_empty_persp_streams, v_msg.stream_id);
+      END IF;
+    END IF;
+
+    -- 190: a keyed collective is linked to the one stored before it on its key (its stream), in this
+    -- transaction, and the key's head moves to it. The head row is locked until commit, so publishers on one
+    -- key, on any instance, take turns and form one chain. A message already stored (a retry's republish, or
+    -- a scheduled row stored again when due) is not linked again: that would move the head backward.
+    v_envelope := COALESCE(v_msg.envelope_data, '{}'::jsonb);
+    IF v_msg.collective_link_type IS NOT NULL
+       AND v_msg.stream_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_outbox o WHERE o.message_id = v_msg.msg_id)
+       AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = v_msg.msg_id) THEN
+      SELECT l.predecessor_id, l.predecessor_type
+        INTO v_predecessor_id, v_predecessor_type
+        FROM __SCHEMA__.wh_link_collective_predecessor(v_msg.stream_id, v_msg.msg_id, v_msg.collective_link_type, p_now) l;
+      IF v_predecessor_id IS NOT NULL
+         AND jsonb_typeof(v_envelope -> 'p') = 'object'
+         AND v_envelope #>> __COLLECTIVE_PREDECESSOR_ID_PATH__ IS NULL THEN
+        v_envelope := jsonb_set(
+          jsonb_set(v_envelope, __COLLECTIVE_PREDECESSOR_ID_PATH__, to_jsonb(v_predecessor_id::TEXT)),
+          __COLLECTIVE_PREDECESSOR_TYPE_PATH__, to_jsonb(v_predecessor_type));
+      END IF;
+    END IF;
+
+    INSERT INTO __SCHEMA__.wh_outbox (
+      message_id,
+      destination,
+      message_type,
+      envelope_type,
+      event_data,
+      metadata,
+      scope,
+      stream_id,
+      partition_number,
+      is_event,
+      flags,
+      status,
+      attempts,
+      created_at,
+      instance_id,
+      lease_expiry,
+      scheduled_for,
+      coalesce_group,
+      priority,
+      recovered_from_dead_letter_id
+    ) VALUES (
+      v_msg.msg_id,
+      v_msg.destination,
+      v_msg.message_type,
+      v_msg.envelope_type,
+      v_envelope,
+      COALESCE(v_msg.metadata, '{}'::jsonb),
+      COALESCE(v_msg.scope, 'null'::jsonb),
+      v_msg.stream_id,
+      v_partition,
+      COALESCE(v_msg.is_event, false),
+      COALESCE(v_msg.flags, 0),
+      1,  -- Stored flag
+      0,  -- Initial attempts
+      p_now,
+      p_instance_id,  -- Immediate lease
+      p_lease_expiry,
+      v_msg.scheduled_for,
+      v_msg.coalesce_group,
+      v_msg.priority,
+      v_msg.recovered_from  -- 241: NULL for every arrival but a recovery
+    )
+    ON CONFLICT ON CONSTRAINT wh_outbox_pkey DO NOTHING;
+
+    GET DIAGNOSTICS v_was_new = ROW_COUNT;
+
+    -- 241: a recovery that lost the race to a concurrent store of the same id hands its dead letter back, so the dead
+    -- letter is never left Recovering behind a row that does not name it.
+    IF NOT v_was_new AND v_msg.recovered_from IS NOT NULL THEN
+      UPDATE __SCHEMA__.wh_dead_letters dl
+      SET recovery_status = 0
+      WHERE dl.dead_letter_id = v_msg.recovered_from AND dl.recovery_status = 1;
+      CONTINUE;
+    END IF;
+
+    -- 216 (#1485): an audit record built on the outbox path names the event it audits but carries position 0,
+    -- because that event has no version until the emit chain stores it. Collected here and filled in below,
+    -- after the chain has run. Matched by type, so no other message's payload is ever touched, and by a
+    -- well-formed id, so a malformed payload is left alone rather than failing the batch.
+    IF v_was_new
+       AND NOT COALESCE(v_msg.is_event, false)
+       AND split_part(v_msg.message_type, ',', 1) = __AUDIT_RECORD_TYPE__
+       AND jsonb_typeof(v_envelope #> __AUDIT_ORIGINAL_STREAM_POSITION_PATH__) = 'number' THEN
+      v_audited_event_text := v_envelope #>> __AUDIT_ORIGINAL_EVENT_ID_PATH__;
+      IF v_audited_event_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_audit_record_ids := array_append(v_audit_record_ids, v_msg.msg_id);
+        v_audited_event_ids := array_append(v_audited_event_ids, v_audited_event_text::UUID);
+      END IF;
+    END IF;
+
+    IF v_was_new AND COALESCE(v_msg.is_event, false) AND v_msg.stream_id IS NOT NULL THEN
+      v_inserted_event_ids := array_append(v_inserted_event_ids, v_msg.msg_id);
+      v_inserted_event_streams := array_append(v_inserted_event_streams, v_msg.stream_id);
+      v_inserted_event_flags := array_append(v_inserted_event_flags, COALESCE(v_msg.flags, 0));
+      v_inserted_event_types := array_append(v_inserted_event_types, v_msg.message_type);
+      IF v_msg.raise_on_mixed_stream THEN
+        v_raise_event_ids := array_append(v_raise_event_ids, v_msg.msg_id);
+      END IF;
+    END IF;
+
+    -- 114: a genuinely-new, drainable-now row on a probed-empty stream is the
+    -- empty→non-empty edge. Future-scheduled rows are not drainable now, so they
+    -- do not ring (they surface via the scheduled-retry NOTIFY / poll when due).
+    IF v_was_new AND v_msg.stream_id IS NOT NULL
+       AND (v_msg.scheduled_for IS NULL OR v_msg.scheduled_for <= p_now)
+       AND v_msg.stream_id = ANY(v_empty_outbox_streams)
+       AND NOT (v_msg.stream_id = ANY(v_notify_outbox_streams)) THEN
+      v_notify_outbox_streams := array_append(v_notify_outbox_streams, v_msg.stream_id);
+    END IF;
+
+    -- Pinning is ownership/routing, unchanged by 114 (the cold-notify tracking that
+    -- used to ride this block is gone; the notify decision now keys on queue state).
+    -- 216: the pin is collected here and written after the audit position fill below, so this function
+    -- locks wh_outbox before wh_active_streams. The emit chain reads a stream's pinned owner and falls back
+    -- to p_instance_id when none is pinned, which is the owner the pin would have named.
+    IF v_was_new AND v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
+      v_pin_streams := array_append(v_pin_streams, v_msg.stream_id);
+      v_pin_partitions := array_append(v_pin_partitions, COALESCE(v_partition, 0));
+    END IF;
+
+    RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
+  END LOOP;
+
+  -- 228 (#1546): an event that would make its stream hold both ephemeral and Sourced events is refused before the
+  -- copy. A refusal the caller awaits raises (the whole call rolls back); any other is dead-lettered, which moves its
+  -- outbox row out of the queue, and is left out of the copy so the rest of the write is stored.
+  -- 266 (#1733): an event the caller awaits that a sealed stream refuses raises SQLSTATE WHS01 (StreamSealedException)
+  -- and the whole call rolls back, as the mixed-stream refusal raises for it. Checked first, so an awaited event that is
+  -- both is reported as sealed. Every other refused event is dead-lettered by the emit chain, which stores the rest.
+  IF cardinality(v_raise_event_ids) > 0 THEN
+    PERFORM __SCHEMA__._wh_raise_sealed_stream_outbox_events(
+      v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types, v_raise_event_ids, p_now);
+  END IF;
+
+  IF cardinality(v_inserted_event_ids) > 0 THEN
+    v_refused_event_ids := __SCHEMA__._wh_refuse_mixed_stream_outbox_events(
+      v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types,
+      v_raise_event_ids, p_instance_id);
+    IF cardinality(v_refused_event_ids) > 0 THEN
+      v_inserted_event_ids := ARRAY(
+        SELECT kept.id FROM unnest(v_inserted_event_ids) AS kept(id) WHERE kept.id <> ALL(v_refused_event_ids));
+    END IF;
+  END IF;
+
+  IF cardinality(v_inserted_event_ids) > 0 THEN
+    PERFORM __SCHEMA__._emit_event_store_chain(
+      v_inserted_event_ids,
+      p_instance_id,
+      p_lease_expiry,
+      p_now,
+      p_partition_count
+    );
+
+    -- 114: the perspective edge is decided AFTER the emit chain, so it rings only for
+    -- streams whose perspective queue was empty before this call AND for which this
+    -- call actually created work items (our own inserts are visible in-transaction).
+    -- Association-less event types create no work and therefore never ring here.
+    IF cardinality(v_empty_persp_streams) > 0 THEN
+      SELECT COALESCE(array_agg(DISTINCT pe.stream_id), ARRAY[]::UUID[])
+        INTO v_notify_persp_streams
+        FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.stream_id = ANY(v_empty_persp_streams)
+          AND pe.processed_at IS NULL;
+    END IF;
+  END IF;
+
+  -- 216 (#1485): each audit record stored by this call takes its event's version, read by primary key. The
+  -- chain above has stored the events this call carried; an event stored by an earlier call is found too. An
+  -- event not yet stored (its write is still to come) leaves the record at 0.
+  IF cardinality(v_audit_record_ids) > 0 THEN
+    UPDATE __SCHEMA__.wh_outbox o
+    SET event_data = jsonb_set(o.event_data::jsonb, __AUDIT_ORIGINAL_STREAM_POSITION_PATH__, to_jsonb(es.version::BIGINT))
+    FROM unnest(v_audit_record_ids, v_audited_event_ids) AS a(record_id, audited_event_id)
+    JOIN __SCHEMA__.wh_event_store es ON es.event_id = a.audited_event_id
+    WHERE o.message_id = a.record_id;
+  END IF;
+
+  -- Pin the streams collected above: the first message of a stream names its partition, as the per-message
+  -- insert did. Sorted by stream id, so two calls pinning the same streams take them in one order.
+  IF cardinality(v_pin_streams) > 0 THEN
+    INSERT INTO __SCHEMA__.wh_active_streams
+      (stream_id, partition_number, assigned_instance_id, last_activity_at)
+    SELECT DISTINCT ON (p.stream_id) p.stream_id, p.partition_number, p_instance_id, p_now
+    FROM unnest(v_pin_streams, v_pin_partitions) WITH ORDINALITY AS p(stream_id, partition_number, ord)
+    ORDER BY p.stream_id, p.ord
+    ON CONFLICT (stream_id) DO NOTHING;
+  END IF;
+
+  IF cardinality(v_notify_outbox_streams) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_OUTBOX__, v_notify_outbox_streams);
+  END IF;
+  IF cardinality(v_notify_persp_streams) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_PERSPECTIVE__, v_notify_persp_streams);
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
+  'Stores new outbox messages (149, 161), links each keyed collective to the one stored before it on its key '
+  '(190, #1003), and fills each audit record''s stream position from its stored event (216, #1485), in the same '
+  'transaction. 228: refuses an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, '
+  '#1546), raising when the element asks for it and dead-lettering the row otherwise. 232: reads every bit of flags '
+  'written as a name list, and raises 22P02 on a name EventFlags does not define (#1612). 241 (#1722): a message '
+  'recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead '
+  'letter and its row names it for complete_outbox_published to settle. 266: raises SQLSTATE WHS01 '
+  '(StreamSealedException) for an event the caller awaits on a sealed stream (#1733).';
+
 
 -- _emit_event_store_chain: last word 260, with the sealing check before the copy and the terminal seal in the ledger
 -- upsert. Nothing else changes.

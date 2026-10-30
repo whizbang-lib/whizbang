@@ -10,10 +10,11 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A sealed stream refuses every append, on every path. A direct append (the caller awaits it) fails with this
-/// exception; an event written through the outbox or received through the inbox is dead-lettered instead, with the
-/// reason <see cref="MessageFailureReason.StreamSealed"/> and this exception's message as its error text, and the other
-/// events of the same write are stored.
+/// A sealed stream refuses every append, on every path. A write its caller awaits fails with this exception and keeps
+/// nothing: a direct append, and an outbox write flushed by the immediate or scoped strategy (the same writes the
+/// mixed-stream refusal raises for). A write nobody awaits (a batch flush, a handler commit, the inbox) is dead-lettered
+/// instead, with the reason <see cref="MessageFailureReason.StreamSealed"/> and this exception's message as its error
+/// text, and the other events of the same write are stored.
 /// </para>
 /// <para>
 /// <see cref="Exception.Message"/> is the store's own wording, the same text a dead-lettered refusal records:

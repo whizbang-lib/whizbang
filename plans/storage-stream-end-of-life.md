@@ -148,8 +148,10 @@ Migration `266_SealedStreamsRefuseAppends.sql` (267, also reserved, is unused). 
 - **The refusal** sits in the outbox and inbox emit chains and in `wh_append_event`, under the stream lock. A direct
   append raises `WHS01` (`StreamSealedException` on both drivers); the chains dead-letter the refused event alone
   (`MessageFailureReason.StreamSealed`, 25, held for review) and store the rest, unlike the tombstone's `WHA01` trigger,
-  which fails the whole batch. An outbox write is dead-lettered even when its caller awaits the flush. An event after a
-  terminal event in the same write is refused.
+  which fails the whole batch. An outbox write whose caller awaits the flush (the `RaiseOnMixedStream` element of the
+  immediate and scoped strategies) raises `WHS01` from `store_outbox_messages` instead (owner decision on #1733,
+  matching the mixed-stream refusal), and the strategy withdraws it. An event after a terminal event in the same write
+  is refused.
 - **Ephemeral streams** are never sealed: they have no ledger row, finalizing one returns `NothingToSeal`, and the
   terminal flag on an ephemeral event does nothing.
 - **Cost:** one probe per batch of `idx_stream_lifecycle_sealed` (partial on `sealed_at`, holding only sealed streams);
