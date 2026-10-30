@@ -118,9 +118,9 @@ public abstract class EventStoreContractTests {
     var envelope3 = _createTestEnvelope(streamId, EVENT_3_PAYLOAD);
     await eventStore.AppendAsync(streamId, envelope3);
 
-    // Act - Read from sequence 2 (third event, 0-indexed)
+    // Act - Read from sequence 3 (third event; a new stream starts at 1, #1913)
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 2)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 3)) {
       events.Add(evt);
     }
 
@@ -154,8 +154,23 @@ public abstract class EventStoreContractTests {
     // Act
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
 
-    // Assert - Last sequence should be 2 (0-indexed, so 0, 1, 2)
-    await Assert.That(lastSequence).IsEqualTo(2);
+    // Assert - Last sequence should be 3: a new stream is numbered 1, 2, 3 (#1913)
+    await Assert.That(lastSequence).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// A new stream starts at version 1 on every write path (#1913): a direct append numbers a stream as the outbox and
+  /// inbox paths always have, so a stream's first event is at version 1 whichever path wrote it.
+  /// </summary>
+  [Test]
+  public async Task AppendAsync_ANewStream_StartsAtVersionOneAsync() {
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
+
+    await Assert.That(await eventStore.GetLastSequenceAsync(streamId)).IsEqualTo(1)
+      .Because("a new stream's first event is at version 1 on every write path (#1913)");
   }
 
   [Test]

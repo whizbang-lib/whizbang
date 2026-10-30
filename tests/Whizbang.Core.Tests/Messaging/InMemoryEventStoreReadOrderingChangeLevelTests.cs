@@ -82,10 +82,10 @@ public class InMemoryEventStoreReadOrderingChangeLevelTests {
       await store.AppendAsync(streamId, _envelope(ids[i], i));
     }
 
-    // Read from sequence 1 — should include insertions 1, 2, 3 (skipping insertion 0).
+    // Read from sequence 2 — should include insertions 1, 2, 3 (skipping insertion 0, at version 1: #1913).
     // Result is sorted by EventId.
     var read = new List<Guid>();
-    await foreach (var env in store.ReadAsync<TestEvent>(streamId, fromSequence: 1)) {
+    await foreach (var env in store.ReadAsync<TestEvent>(streamId, fromSequence: 2)) {
       read.Add(env.MessageId.Value);
     }
 
@@ -97,7 +97,7 @@ public class InMemoryEventStoreReadOrderingChangeLevelTests {
     await Assert.That(read.SequenceEqual(expected)).IsTrue()
       .Because("fromSequence filter applies on Version (insertion order); the returned slice is then sorted by EventId.");
     await Assert.That(read.Count).IsEqualTo(3)
-      .Because("Insertion 0 (Version=0) is filtered out by fromSequence=1.");
+      .Because("Insertion 0 (Version=1) is filtered out by fromSequence=2.");
   }
 
   /// <summary>

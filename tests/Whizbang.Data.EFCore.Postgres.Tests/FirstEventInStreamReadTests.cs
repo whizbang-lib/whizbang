@@ -30,6 +30,7 @@ public class FirstEventInStreamReadTests : EFCoreTestBase {
   private static readonly bool[] _firstOfThree = [true, false, false];
   private static readonly bool[] _noneOfTwo = [false, false];
   private static readonly bool[] _firstOfTwo = [true, false];
+  private static readonly long?[] _zeroThenOne = [0, 1];
 
   [Test]
   [Arguments(0)]
@@ -42,8 +43,8 @@ public class FirstEventInStreamReadTests : EFCoreTestBase {
     for (var i = 0; i < 3; i++) {
       ids.Add(await _appendAsync(store, streamId, i));
     }
-    if (firstVersion == 1) {
-      await _renumberFromOneAsync(context, streamId);
+    if (firstVersion == 0) {
+      await _renumberFromZeroAsync(context, streamId);
     }
 
     var whole = await _readAsync(store, streamId, fromEventId: null);
@@ -54,6 +55,29 @@ public class FirstEventInStreamReadTests : EFCoreTestBase {
     await Assert.That(whole.Select(e => e.IsFirstInLocalStream)).IsEquivalentTo(_firstOfThree, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(afterFirst.Select(e => e.IsFirstInLocalStream)).IsEquivalentTo(_noneOfTwo, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("a version-1 event of a stream that also holds a version 0 is not first, read alone or not");
+  }
+
+  /// <summary>
+  /// A stream written before #1913 keeps its numbering from 0: the next direct append takes version 1, and the
+  /// stream's first event is still its version 0.
+  /// </summary>
+  [Test]
+  public async Task DirectAppend_ToAStreamNumberedFromZero_ContinuesItsNumbering_AndItsVersionZeroStaysFirstAsync() {
+    await using var context = CreateDbContext();
+    var store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var streamId = (Guid)TrackedGuid.New();
+    await _appendAsync(store, streamId, 0);
+    await _renumberFromZeroAsync(context, streamId);
+
+    await _appendAsync(store, streamId, 1);
+    var read = await _readAsync(store, streamId, fromEventId: null);
+
+    await Assert.That(read.Select(e => e.LocalStreamVersion)).IsEquivalentTo(
+      _zeroThenOne, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("an existing stream keeps its numbering: the next append follows its highest version");
+    await Assert.That(read.Select(e => e.IsFirstInLocalStream)).IsEquivalentTo(
+      _firstOfTwo, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a stream numbered from 0 still has its version 0 as its first event");
   }
 
   [Test]
@@ -132,14 +156,16 @@ public class FirstEventInStreamReadTests : EFCoreTestBase {
     return read;
   }
 
-  /// <summary>Moves a stream a direct append numbered from 0 onto the numbering the dispatch paths use, from 1.</summary>
-  private static async Task _renumberFromOneAsync(WorkCoordinationDbContext context, Guid streamId) {
+  /// <summary>
+  /// Moves a stream onto the numbering a direct append used before #1913, from 0: a stream written before the change.
+  /// </summary>
+  private static async Task _renumberFromZeroAsync(WorkCoordinationDbContext context, Guid streamId) {
     var conn = await _openAsync(context);
     await using var cmd = conn.CreateCommand();
     // Two steps, so no intermediate version collides with one not yet moved.
     cmd.CommandText = """
       UPDATE wh_event_store SET version = version + 1000 WHERE stream_id = @sid;
-      UPDATE wh_event_store SET version = version - 999 WHERE stream_id = @sid;
+      UPDATE wh_event_store SET version = version - 1001 WHERE stream_id = @sid;
       """;
     cmd.Parameters.AddWithValue("sid", streamId);
     await cmd.ExecuteNonQueryAsync();

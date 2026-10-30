@@ -118,9 +118,10 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       .ToListAsync();
 
     await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events[0].Version).IsEqualTo(0);
-    await Assert.That(events[1].Version).IsEqualTo(1);
-    await Assert.That(events[2].Version).IsEqualTo(2);
+    // A new stream starts at version 1 on every write path (#1913).
+    await Assert.That(events[0].Version).IsEqualTo(1);
+    await Assert.That(events[1].Version).IsEqualTo(2);
+    await Assert.That(events[2].Version).IsEqualTo(3);
   }
 
   [Test]
@@ -885,7 +886,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var records = await context.Set<EventStoreRecord>().Where(e => e.StreamId == streamId).ToListAsync();
     await Assert.That(records).Count().IsEqualTo(1);
     await Assert.That(records[0].StreamId).IsEqualTo(streamId);
-    await Assert.That(records[0].Version).IsEqualTo(0);
+    await Assert.That(records[0].Version).IsEqualTo(1);  // a new stream starts at version 1 (#1913)
   }
 
   [Test]

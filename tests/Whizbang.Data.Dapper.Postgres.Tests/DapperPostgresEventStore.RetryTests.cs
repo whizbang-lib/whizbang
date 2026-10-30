@@ -115,7 +115,8 @@ public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
         versions.Add(rows.GetInt32(0));
       }
     }
-    await Assert.That(versions).IsEquivalentTo(Enumerable.Range(0, writers).ToList());
+    // The name predates #1913 and stays, because shipped migrations link to it: a new stream now starts at version 1.
+    await Assert.That(versions).IsEquivalentTo(Enumerable.Range(1, writers).ToList());
   }
 
   /// <summary>
@@ -132,8 +133,8 @@ public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
     await Assert.That(ex!.Message).Contains("an event with this id is already stored");
     await Assert.That(ex.Message).DoesNotContain("concurrent writes");
     await Assert.That((ex.InnerException as PostgresException)?.SqlState).IsEqualTo(PostgresErrorCodes.UniqueViolation);
-    await Assert.That(await _store.GetLastSequenceAsync(streamId)).IsEqualTo(0L)
-      .Because("the failed append stored nothing");
+    await Assert.That(await _store.GetLastSequenceAsync(streamId)).IsEqualTo(1L)
+      .Because("the failed append stored nothing: the stream still ends at its first event, version 1 (#1913)");
   }
 
   /// <summary>Returns once the given number of this database's backends wait on an advisory lock (false if the calls finish first).</summary>

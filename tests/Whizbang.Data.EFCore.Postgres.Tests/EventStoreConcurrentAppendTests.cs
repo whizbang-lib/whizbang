@@ -57,8 +57,9 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     }
 
     var versions = await _versionsAsync(streamId);
-    await Assert.That(versions).IsEquivalentTo(Enumerable.Range(0, WRITERS).ToList())
-      .Because("twenty writers on one stream get versions 0..19: no gap, no duplicate, no 'Concurrent modification detected'");
+    // The name predates #1913 and stays, because shipped migrations link to it: a new stream now starts at version 1.
+    await Assert.That(versions).IsEquivalentTo(Enumerable.Range(1, WRITERS).ToList())
+      .Because("twenty writers on a new stream get versions 1..20: no gap, no duplicate, no 'Concurrent modification detected'");
   }
 
   [Test]
