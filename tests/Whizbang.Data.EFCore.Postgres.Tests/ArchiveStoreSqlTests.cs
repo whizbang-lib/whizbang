@@ -567,6 +567,47 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Purge_QueuesTheObjectsItsManifestRowsNamed_InItsOwnTransactionAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+    await _manifestRowAsync(connection, stream, 1);
+    const string QUEUED = "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id";
+    const string PURGE = "SELECT count(*) FROM wh_purge_streams(ARRAY[@id]::uuid[], FALSE, gen_random_uuid(), 0, 'operator-1', 'test')";
+
+    await _executeAsync(connection, "BEGIN");
+    _ = await _scalarAsync(connection, PURGE, stream);
+    var queuedInside = await _scalarAsync(connection, QUEUED, stream);
+    await _executeAsync(connection, "ROLLBACK");
+    var queuedAfterRollback = await _scalarAsync(connection, QUEUED, stream);
+    _ = await _scalarAsync(connection, PURGE, stream);
+
+    await Assert.That(queuedInside).IsEqualTo(1L).Because("the purge queues the object in the transaction that removes its manifest row");
+    await Assert.That(queuedAfterRollback).IsEqualTo(0L).Because("a purge that rolls back queues nothing");
+    await Assert.That(await _scalarAsync(connection, QUEUED, stream)).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync(connection,
+        "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id AND locator = 'azure-blob://c/s/chunk?codec=brotli&format=1'", stream))
+      .IsEqualTo(1L).Because("the queue keeps the object's locator: its container and name");
+  }
+
+  [Test]
+  public async Task Purge_OfATableStoreArchive_QueuesNothingAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 2);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    _ = await new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_archive_object_deletions WHERE stream_id = @id", stream))
+      .IsEqualTo(0L).Because("the table store keeps no objects outside the database, so its purge has nothing to queue");
+  }
+
+  [Test]
   public async Task Manifest_ARowForAStreamWithNoLifecycleRow_IsRefusedAsync() {
     await using var ctx = CreateDbContext();
     var connection = await _openAsync(ctx);
