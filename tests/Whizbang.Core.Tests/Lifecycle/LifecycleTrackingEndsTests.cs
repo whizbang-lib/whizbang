@@ -149,6 +149,20 @@ public class LifecycleTrackingEndsTests {
   }
 
   [Test]
+  public async Task Sweep_NeverRetainsACompletedEntry_WithNoMetricsRegisteredAsync() {
+    var coordinator = new LifecycleCoordinator(new FakeLogger<LifecycleCoordinator>(), timeProvider: new FakeTimeProvider());
+    var eventId = _begin(coordinator);
+    await using var provider = new ServiceCollection()
+      .AddSingleton<IReceptorInvoker, CompletingInvoker>()
+      .BuildServiceProvider();
+    await coordinator.GetTracking(eventId)!.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
+
+    await Assert.That(coordinator.CleanupStaleTracking(TimeSpan.FromHours(1))).IsEqualTo(1)
+      .Because("the rule holds whether or not a host registered the lifecycle metrics");
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+  }
+
+  [Test]
   [NotInParallel("Metrics")]
   public async Task TrackedEntriesGauge_ReportsTheLiveTrackedCountAsync() {
     using var factory = new TestMeterFactory();
