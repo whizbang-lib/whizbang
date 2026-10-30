@@ -3040,6 +3040,15 @@ public sealed record ArchivedEvent(
 
   /// <summary>The event's flags (<c>EventFlags</c> bits), or null for a row archived before flags were kept.</summary>
   public int? Flags { get; init; }
+
+  /// <summary>The event's local commit sequence, or null for a row archived before it was kept or never stamped.</summary>
+  public long? CommitSequence { get; init; }
+
+  /// <summary>The service the event originated in, for a received event; null for a local one.</summary>
+  public Guid? OriginServiceId { get; init; }
+
+  /// <summary>The event's commit sequence in its origin service, for a received event.</summary>
+  public long? OriginCommitSequence { get; init; }
 }
 
 /// <summary>

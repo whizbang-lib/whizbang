@@ -5,6 +5,7 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Postgres;
 
@@ -263,6 +264,35 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await Assert.That(selected!.Value.SnapshotEventId).IsEqualTo(earlier);
     await Assert.That(selected.Value.SnapshotVersion).IsNull()
       .Because("the snapshot genuinely records no version, and the result says so rather than inventing one");
+  }
+
+  /// <summary>
+  /// The rewind's snapshot floor carries how far an archive of the stream reaches when one covers the snapshot (#1738).
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  [Test]
+  public async Task GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync() {
+    var streamId = TrackedGuid.New().Value;
+    const string perspectiveName = "StreamOrderPerspective";
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    await _appendEventAsync(streamId, first, version: 1, commitSequence: 1);
+    await _appendEventAsync(streamId, second, version: 2, commitSequence: 2);
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, first, JsonDocument.Parse("""{"at":1}"""));
+    var unmarked = await ((IPerspectiveSnapshotStore)_store).GetSnapshotFloorAsync(streamId, perspectiveName, second);
+    await using (var connection = new Npgsql.NpgsqlConnection(_testBase.TestConnectionString)) {
+      await connection.OpenAsync();
+      await using var mark = connection.CreateCommand();
+      mark.CommandText = "UPDATE wh_perspective_snapshots SET archived_through_version = 1 WHERE stream_id = @stream";
+      mark.Parameters.AddWithValue("stream", streamId);
+      await mark.ExecuteNonQueryAsync();
+    }
+    var marked = await ((IPerspectiveSnapshotStore)_store).GetSnapshotFloorAsync(streamId, perspectiveName, second);
+
+    await Assert.That(unmarked!.SnapshotEventId).IsEqualTo(first);
+    await Assert.That(unmarked.SnapshotVersion).IsEqualTo(1);
+    await Assert.That(unmarked.ArchivedThroughVersion).IsNull();
+    await Assert.That(marked!.ArchivedThroughVersion).IsEqualTo(1L);
   }
 
   /// <summary>Puts an event in the stream at an explicit version, with a commit sequence of its own.</summary>

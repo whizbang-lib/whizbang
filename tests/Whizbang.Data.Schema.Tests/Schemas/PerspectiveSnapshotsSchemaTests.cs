@@ -28,7 +28,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectColumnsAsync() {
     var columns = PerspectiveSnapshotsSchema.Table.Columns;
 
-    await Assert.That(columns).Count().IsEqualTo(8);
+    await Assert.That(columns).Count().IsEqualTo(9);
 
     var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -72,6 +72,12 @@ public class PerspectiveSnapshotsSchemaTests {
     await Assert.That(snapshotVersion.Nullable).IsTrue()
       .Because("rows written before migration 209 record no version, and both readers treat a null as a "
              + "snapshot they cannot place rather than guessing at its position");
+
+    // #1738 — how far an archive of the stream reaches, when one covers the snapshot. Nullable: most snapshots are not
+    // covered, and migration 271 adds it to existing tables without rewriting a row.
+    var archivedThrough = columns.First(c => c.Name == "archived_through_version");
+    await Assert.That(archivedThrough.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
+    await Assert.That(archivedThrough.Nullable).IsTrue();
   }
 
   [Test]

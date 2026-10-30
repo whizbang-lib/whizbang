@@ -132,6 +132,44 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
       .Because("the snapshot genuinely records no version, and the result says so rather than inventing one");
   }
 
+  /// <summary>
+  /// The rewind's snapshot floor carries how far an archive of the stream reaches when one covers the snapshot, so the
+  /// rewind reads through the archive from it; a snapshot nothing archived carries no mark (#1738).
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  [Test]
+  public async Task GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var streamId = Guid.NewGuid();
+    var (first, second, third) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    await _commitAsync(connection, first, streamId);
+    await _commitAsync(connection, second, streamId);
+    await _commitAsync(connection, third, streamId);
+    await _placeAsync(connection, first, version: 1, commitSequence: 1);
+    await _placeAsync(connection, second, version: 2, commitSequence: 2);
+    await _placeAsync(connection, third, version: 3, commitSequence: 3);
+    await _snapshotAsync(connection, streamId, second, version: 2, commitSequence: 2);
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+
+    var unmarked = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, third, CancellationToken.None);
+    await using (var mark = connection.CreateCommand()) {
+      mark.CommandText = "UPDATE wh_perspective_snapshots SET archived_through_version = 2 WHERE stream_id = @sid";
+      mark.Parameters.AddWithValue("sid", streamId);
+      await mark.ExecuteNonQueryAsync();
+    }
+    var marked = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, third, CancellationToken.None);
+
+    await Assert.That(unmarked!.SnapshotEventId).IsEqualTo(second);
+    await Assert.That(unmarked.SnapshotVersion).IsEqualTo(2);
+    await Assert.That(unmarked.ArchivedThroughVersion).IsNull().Because("the control: nothing archived covers the snapshot");
+    await Assert.That(marked!.ArchivedThroughVersion).IsEqualTo(2L);
+    await Assert.That(marked.SnapshotData.RootElement.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Object);
+    await Assert.That(await store.GetSnapshotFloorAsync(streamId, _perspectiveName, first, CancellationToken.None)).IsNull()
+      .Because("the floor follows the stream order the selection always used: no snapshot sits before the first event");
+  }
+
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != ConnectionState.Open) {
