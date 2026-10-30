@@ -110,7 +110,7 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     await using var reader = CreateDbContext();
     await Assert.That(await reader.Set<MessageDeduplicationRecord>().AnyAsync(r => r.MessageId == messageId)).IsTrue()
       .Because("the append always flushed the shared context's pending changes, and callers may rely on it");
-    int[] expectedVersions = [0];
+    int[] expectedVersions = [1];  // a new stream starts at version 1 (#1913)
     await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(expectedVersions);
   }
 
@@ -138,9 +138,9 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(streamId, _envelope());
-    int[] expectedVersions = [0];
+    int[] expectedVersions = [1];
     await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(expectedVersions)
-      .Because("the re-run function still appends; direct appends number from 0 as before");
+      .Because("the re-run function still appends; a new stream starts at version 1 (#1913)");
   }
 
   // ===== Helpers =====

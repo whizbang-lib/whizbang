@@ -192,11 +192,11 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "real-event");
     await eventStore.AppendAsync(streamId, envelope);
-    await _seedRawEnvelopeRowAsync(streamId, 1, "null");
+    await _seedRawEnvelopeRowAsync(streamId, 2, "null");  // after the real event, at 1 (#1913)
 
     // Both rows exist in the table
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(1);
+    await Assert.That(lastSequence).IsEqualTo(2);
 
     // Act - Deserialize returns null for the literal-null row, failing the pattern match
     var events = await _readBySequenceAsync(eventStore, streamId);
@@ -215,7 +215,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     var envelope2 = _createEnvelope(streamId, "event-2");
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);
-    await _seedRawEnvelopeRowAsync(streamId, 2, "null");
+    await _seedRawEnvelopeRowAsync(streamId, 3, "null");  // after the real events, at 1 and 2 (#1913)
 
     // Act - fromEventId null short-circuits the UUIDv7 filter for every real row,
     // while the null-deserializing row fails the pattern match and is skipped
