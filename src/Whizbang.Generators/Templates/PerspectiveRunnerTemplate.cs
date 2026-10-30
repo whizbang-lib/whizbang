@@ -1627,7 +1627,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var resurrected = false;
     var purgedEventsSkipped = 0;
     PerspectiveScope? lastScope = null;
-    var rowChanged = false;  // True once this replay actually wrote or purged the row
     // The replay FRONTIER — max event id / max local commit_sequence across everything
     // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
     // event's stamp: after a replay everything at or below the frontier IS applied (that is
@@ -1833,6 +1832,54 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         .Last();
     } // closes while (true)
 
+    return await _finishReplayAsync(new ReplayOutcome {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      RowVersion = rowVersion,
+      ReplayFromEventId = replayFromEventId,
+      EventsProcessed = eventsProcessed,
+      PendingPurge = pendingPurge,
+      PurgeEventId = purgeEventId,
+      UpdatedModel = updatedModel,
+      ProducedByApply = producedByApply,
+      LastSuccessfulEventId = lastSuccessfulEventId,
+      LastSuccessfulEventType = lastSuccessfulEventType,
+      LastSuccessfulEventAt = lastSuccessfulEventAt,
+      LastScope = lastScope,
+      Resurrected = resurrected,
+      StartedPurged = startedPurged,
+      PurgedEventsSkipped = purgedEventsSkipped,
+      FrontierEventId = frontierEventId,
+      FrontierCommitSequence = frontierCommitSequence,
+    }, cancellationToken);
+  }
+
+  /// <summary>
+  /// The single write that ends a replay (#1869): the row, or its purge, at the replay's frontier, then the snapshot
+  /// that follows every rewind that applied something. Both replays end here, the full fold and an overwrite-only
+  /// perspective's last-event apply, so the two write a row the same way.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _finishReplayAsync(ReplayOutcome outcome, CancellationToken cancellationToken) {
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    var rowVersion = outcome.RowVersion;
+    var replayFromEventId = outcome.ReplayFromEventId;
+    var eventsProcessed = outcome.EventsProcessed;
+    var pendingPurge = outcome.PendingPurge;
+    var purgeEventId = outcome.PurgeEventId;
+    var updatedModel = outcome.UpdatedModel;
+    var producedByApply = outcome.ProducedByApply;
+    var lastSuccessfulEventId = outcome.LastSuccessfulEventId;
+    var lastSuccessfulEventType = outcome.LastSuccessfulEventType;
+    var lastSuccessfulEventAt = outcome.LastSuccessfulEventAt;
+    var lastScope = outcome.LastScope;
+    var resurrected = outcome.Resurrected;
+    var startedPurged = outcome.StartedPurged;
+    var purgedEventsSkipped = outcome.PurgedEventsSkipped;
+    var frontierEventId = outcome.FrontierEventId;
+    var frontierCommitSequence = outcome.FrontierCommitSequence;
+    var rowChanged = false;  // True once this replay actually wrote or purged the row
+
     // Single atomic write at the end — lenses see pre-replay data until this point.
     // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
     // meaning is "everything at or below is applied", and a frontier below the stored floor
@@ -1926,6 +1973,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       RowChanged = rowChanged,
       EventsProcessed = eventsProcessed
     };
+  }
+
+  /// <summary>What a replay folded, for the write that ends it (<see cref="_finishReplayAsync"/>).</summary>
+  private sealed class ReplayOutcome {
+    public Guid StreamId { get; set; }
+    public string PerspectiveName { get; set; } = string.Empty;
+    public global::Whizbang.Core.Perspectives.PerspectiveRowVersion RowVersion { get; set; }
+    public Guid? ReplayFromEventId { get; set; }
+    public int EventsProcessed { get; set; }
+    public bool PendingPurge { get; set; }
+    public Guid? PurgeEventId { get; set; }
+    public __MODEL_TYPE_NAME__? UpdatedModel { get; set; }
+    public bool ProducedByApply { get; set; }
+    public Guid? LastSuccessfulEventId { get; set; }
+    public string? LastSuccessfulEventType { get; set; }
+    public DateTime? LastSuccessfulEventAt { get; set; }
+    public PerspectiveScope? LastScope { get; set; }
+    public bool Resurrected { get; set; }
+    public bool StartedPurged { get; set; }
+    public int PurgedEventsSkipped { get; set; }
+    public Guid? FrontierEventId { get; set; }
+    public long? FrontierCommitSequence { get; set; }
   }
 
   public async Task BootstrapSnapshotAsync(
