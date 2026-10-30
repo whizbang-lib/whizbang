@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -31,11 +30,23 @@ public partial class SharedRegistryResetIsolationTests {
   [GeneratedRegex(@"\[NotInParallel\((""EFCorePostgresTests""|\[[^\]]*""EFCorePostgresTests""[^\]]*\])\)\]")]
   private static partial Regex _holdsTheSharedKey();
 
-  private static string _thisFile([CallerFilePath] string path = "") => path;
+  // The build maps source paths (CallerFilePath reads "/_/..." in CI), so the project is found from the test
+  // assembly's location instead: walk up to the repository root, then into this project's folder.
+  private static string _projectDirectory() {
+    var dir = AppContext.BaseDirectory;
+    while (dir is not null) {
+      var candidate = Path.Combine(dir, "tests", "Whizbang.Data.EFCore.Postgres.Tests");
+      if (Directory.Exists(Path.Combine(dir, "src", "Whizbang.Core")) && Directory.Exists(candidate)) {
+        return candidate;
+      }
+      dir = Path.GetDirectoryName(dir);
+    }
+    throw new InvalidOperationException("Could not locate the whizbang repository root from AppContext.BaseDirectory");
+  }
 
   [Test]
   public async Task EveryTestThatResetsASharedRegistry_HoldsTheDatabaseTestsKeyAsync() {
-    var projectDirectory = Path.GetDirectoryName(Path.GetDirectoryName(_thisFile()))!;
+    var projectDirectory = _projectDirectory();
     var sources = Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
       .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
         && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
