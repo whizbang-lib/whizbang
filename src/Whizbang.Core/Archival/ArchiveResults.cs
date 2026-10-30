@@ -25,6 +25,19 @@ public static class ArchiveStatus {
   /// <summary><c>debug_mode</c> keeps every event hot for forensics.</summary>
   public const string DEBUG_SKIPPED = "debug_skipped";
 
+  /// <summary>
+  /// A prefix through a version below 1 (#1738). A prefix always removes version 1, so an archived stream always shows a
+  /// gap at its start and a read from the start sees it without asking the archive. Nothing moved.
+  /// </summary>
+  public const string NOT_PAST_FIRST_VERSION = "not_past_first_version";
+
+  /// <summary>
+  /// A prefix that reaches the newest snapshot a perspective holds for the stream (#1738). The snapshot's event and
+  /// everything after it stay hot, so a rewind to a perspective's latest snapshot never needs the archive. Refused, not
+  /// shortened: nothing moved, and the caller asks again below the snapshot.
+  /// </summary>
+  public const string SNAPSHOT_IN_RANGE = "snapshot_in_range";
+
   /// <summary>The archived events are back in the hot store and the stream is active again.</summary>
   public const string RESTORED = "restored";
 

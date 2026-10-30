@@ -272,6 +272,22 @@ public interface IWorkCoordinator {
       : Task.CompletedTask;
 
   /// <summary>
+  /// Replaces the stored append-to-archived policy of every stream type with <paramref name="policies"/> (#1738): a type
+  /// not listed loses its row and refuses again. The write paths read the stored policy, because a background write is
+  /// refused inside the store, where this process's options cannot reach. The maintenance worker calls this on every
+  /// tick, before the sweep's idle gate, so a policy is in force soon after a start even on a busy service.
+  /// </summary>
+  /// <param name="policies">Every configured stream type and its policy, each type at most once.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the policies are stored. The default stores nothing: an engine without an
+  /// archive has no archived streams to apply them to.</returns>
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:SyncPolicies_ThroughTheCoordinator_StoresTheConfiguredSetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  Task SyncStreamTypePoliciesAsync(IReadOnlyList<Whizbang.Core.Archival.StreamTypePolicy> policies, CancellationToken cancellationToken = default)
+    => Task.CompletedTask;
+
+  /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.

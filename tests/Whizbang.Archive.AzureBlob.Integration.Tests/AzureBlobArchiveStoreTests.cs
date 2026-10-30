@@ -498,8 +498,8 @@ public class AzureBlobArchiveStoreTests {
       .Because("the versions were seen downstream, so the tombstone outlives the archive");
     await using var connection = await _openAsync();
     var reuse = await Assert.That(() => _executeAsync(connection,
-        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version) " +
-        $"VALUES ('{Guid.CreateVersion7()}', '{stream}', '{stream}', 'Order', '{LEDGER}', 5)"))
+        $"SELECT wh_append_event('{Guid.CreateVersion7()}', '{stream}', '{stream}', 'Order', '{LEDGER}', " +
+        "'{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())"))
       .Throws<PostgresException>();
     await Assert.That(reuse!.SqlState).IsEqualTo("WHA01");
   }
