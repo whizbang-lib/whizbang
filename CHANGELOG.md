@@ -843,7 +843,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[StreamId]` property, as WHIZ006 and the documentation already said it did. A caller that set only the inherited
   property on such a type and relied on it being the stream id now gets the derived property's value (often empty), so
   its messages route to a different stream; set the derived property, or remove its `[StreamId]` when the inherited one
-  is meant (Fixes #1893)
+  is meant. **Behavior change:** a derived type that declares its own `[StreamId]` (plain or `Override = true`) no
+  longer inherits its base type's `[GenerateStreamId]`. The generation policy follows the stream id, so such a type is
+  not auto-generated, where before the base's policy applied and the minted id was written into the derived property;
+  declare `[GenerateStreamId]` on the derived type to keep auto-generation. A derived type with no `[StreamId]` of its
+  own still inherits the base's stream id and its `[GenerateStreamId]` (Fixes #1893)
 - **Serializer options cached against the registry generation no longer miss a registration made while they were
   built.** Registering a context, converter or type-info modifier advanced `JsonContextRegistry.Generation` before the
   entry was in the registry. A build on another thread in that window read the new generation, missed the entry, and

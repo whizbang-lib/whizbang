@@ -21,6 +21,10 @@ namespace Whizbang.Generators;
 /// How many base types the event has. The generated dispatch checks run deepest first, so a base type's check never
 /// matches a derived instance ahead of the derived type's own check (#1893).
 /// </param>
+/// <param name="DeclinesInheritedGenerate">
+/// True if the event declares its own [StreamId] and no [GenerateStreamId] while a base type's policy generates. It
+/// gets an explicit "do not generate" policy case, so it does not inherit the base's [GenerateStreamId] (#1893).
+/// </param>
 /// <docs>extending/attributes/streamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdInfoTests.cs:StreamIdInfo_ValueEquality_ComparesFieldsAsync</tests>
@@ -34,7 +38,8 @@ public sealed record StreamIdInfo(
     bool OnlyIfEmpty = false,
     bool IsPropertyInitOnly = false,
     Location? PropertyLocation = null,
-    int InheritanceDepth = 0
+    int InheritanceDepth = 0,
+    bool DeclinesInheritedGenerate = false
 );
 
 /// <summary>
@@ -65,6 +70,10 @@ public sealed record EventWithoutStreamIdInfo(
 /// How many base types the command has. The generated dispatch checks run deepest first, so a base type's check never
 /// matches a derived instance ahead of the derived type's own check (#1893).
 /// </param>
+/// <param name="DeclinesInheritedGenerate">
+/// True if the command declares its own [StreamId] and no [GenerateStreamId] while a base type's policy generates. It
+/// gets an explicit "do not generate" policy case, so it does not inherit the base's [GenerateStreamId] (#1893).
+/// </param>
 /// <docs>extending/attributes/streamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs</tests>
 public sealed record CommandStreamIdInfo(
@@ -76,5 +85,6 @@ public sealed record CommandStreamIdInfo(
     bool OnlyIfEmpty = false,
     bool IsPropertyInitOnly = false,
     Location? PropertyLocation = null,
-    int InheritanceDepth = 0
+    int InheritanceDepth = 0,
+    bool DeclinesInheritedGenerate = false
 );
