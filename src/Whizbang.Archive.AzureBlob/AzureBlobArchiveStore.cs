@@ -167,7 +167,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       }
       await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
-    await _deleteObjectsAsync(streamId, objects, cancellationToken).ConfigureAwait(false);
+    // The manifest rows' removal queued the objects (269); delete them now, under the stream's lock. One that cannot be
+    // deleted stays queued for the maintenance step.
+    _ = await _drainAsync(streamId, int.MaxValue, cancellationToken).ConfigureAwait(false);
     LogRestore(_logger, streamId, result.Status, result.EventsRestored, objects.Count);
     return result;
   }
@@ -189,7 +191,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       }
       await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
-    await _deleteObjectsAsync(streamId, objects, cancellationToken).ConfigureAwait(false);
+    _ = await _drainAsync(streamId, int.MaxValue, cancellationToken).ConfigureAwait(false);
     var deleted = tableEvents + objects.Sum(o => (long)o.EventCount);
     LogDelete(_logger, streamId, deleted, objects.Count);
     return deleted;
@@ -284,6 +286,12 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     }
     await _executeAsync(connection, transaction, $"DELETE FROM {_prefix}wh_event_archive WHERE stream_id = $1", streamId,
       cancellationToken).ConfigureAwait(false);
+    // The same events archived again write the same object names. An earlier restore may have queued those names for
+    // deletion; they are live again, so they leave the queue in this transaction, under the stream's lock.
+    await using var dequeue = new NpgsqlCommand(
+      $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE locator = ANY($1)", connection, transaction);
+    dequeue.Parameters.AddWithValue(objects.Select(o => o.Locator).ToArray());
+    _ = await dequeue.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────
@@ -322,7 +330,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // The object, checked against its manifest row before a byte of it is decoded.
   private async Task<IReadOnlyList<ArchiveChunkLine>> _downloadAsync(Guid streamId, ManifestRow row, CancellationToken cancellationToken) {
-    var (client, compression) = _objectClient(row);
+    var (client, compression) = _objectClient(row.Locator);
     var bytes = (await client.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
     var sha256 = ArchiveChunk.Sha256(bytes);
     if (bytes.LongLength != row.ByteLength || !string.Equals(sha256, row.Sha256, StringComparison.Ordinal)) {
@@ -332,14 +340,97 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   // An object in this store's container, or in the container its locator names (the setting may have changed since).
-  private (BlobClient Client, ArchiveCompression Compression) _objectClient(ManifestRow row) {
-    if (!ArchiveChunk.TryReadObjectLocator(row.Locator, out var container, out var name, out var compression)) {
-      throw new InvalidDataException($"The archive manifest names '{row.Locator}', which is not an object this store wrote.");
+  private (BlobClient Client, ArchiveCompression Compression) _objectClient(string locator) {
+    if (!ArchiveChunk.TryReadObjectLocator(locator, out var container, out var name, out var compression)) {
+      throw new InvalidDataException($"The archive manifest names '{locator}', which is not an object this store wrote.");
     }
     var containerClient = string.Equals(container, _container.Name, StringComparison.Ordinal)
       ? _container
       : _container.GetParentBlobServiceClient().GetBlobContainerClient(container);
     return (containerClient.GetBlobClient(name), compression);
+  }
+
+  // ── Deleting objects no manifest row names ───────────────────────────────────────────────────────
+
+  /// <summary>
+  /// Deletes up to <paramref name="maxObjects"/> due objects from the deletion queue (<c>wh_archive_object_deletions</c>,
+  /// migration 269): objects a restore, a delete or a stream purge stopped naming. A row goes once storage confirms the
+  /// object is gone (a missing object counts); a failed delete stays queued, counts the attempt and waits one minute,
+  /// doubling to at most an hour, before the next try. An object whose stream is being archived right now is left for a
+  /// later run.
+  /// </summary>
+  /// <param name="maxObjects">The most objects this call deletes.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many objects were confirmed deleted.</returns>
+  /// <docs>fundamentals/events/archive-store#purging-a-stream-archived-to-blob</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync</tests>
+  public Task<int> DeleteQueuedObjectsAsync(int maxObjects, CancellationToken cancellationToken = default) {
+    ArgumentOutOfRangeException.ThrowIfLessThan(maxObjects, 1);
+    return _drainAsync(streamId: null, maxObjects, cancellationToken);
+  }
+
+  private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
+    var due = new List<(string Locator, Guid StreamId)>();
+    await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
+      await using var command = new NpgsqlCommand(
+        $"SELECT locator, stream_id FROM {_prefix}wh_archive_object_deletions " +
+        "WHERE next_attempt_at <= NOW() AND ($1::uuid IS NULL OR stream_id = $1) ORDER BY next_attempt_at, locator LIMIT $2",
+        connection);
+      command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)streamId ?? DBNull.Value });
+      command.Parameters.AddWithValue(maxObjects);
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        due.Add((reader.GetString(0), reader.GetGuid(1)));
+      }
+    }
+    var deleted = 0;
+    foreach (var (locator, stream) in due) {
+      if (await _deleteQueuedAsync(locator, stream, cancellationToken).ConfigureAwait(false)) {
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  // One queued object, under its stream's lock: a write that uploads an object of the same name holds that lock until its
+  // manifest row (and the dequeue) commit, so a live object is never deleted. A busy lock, or a row a write already took
+  // back, leaves the object for a later run without counting an attempt.
+  private async Task<bool> _deleteQueuedAsync(string locator, Guid streamId, CancellationToken cancellationToken) {
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    await using (var claim = new NpgsqlCommand(
+        "SELECT pg_try_advisory_xact_lock(hashtext($2)) " +
+        $"AND EXISTS (SELECT 1 FROM {_prefix}wh_archive_object_deletions WHERE locator = $1)", connection, transaction)) {
+      claim.Parameters.AddWithValue(locator);
+      claim.Parameters.AddWithValue(STREAM_LOCK_PREFIX + streamId.ToString("D"));
+      if (!(bool)(await claim.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) {
+        return false;
+      }
+    }
+    string sql;
+    var confirmed = false;
+    string? error = null;
+    try {
+      // DeleteIfExists: an object that is already gone counts as deleted.
+      _ = await _objectClient(locator).Client.DeleteIfExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      confirmed = true;
+      sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE locator = $1";
+    } catch (RequestFailedException ex) {
+      error = ex.Message;
+      LogObjectNotDeleted(_logger, ex, locator, streamId);
+      sql = $"UPDATE {_prefix}wh_archive_object_deletions SET attempts = attempts + 1, last_error = $2, " +
+        "next_attempt_at = NOW() + LEAST(interval '1 minute' * power(2, attempts), interval '1 hour') WHERE locator = $1";
+    }
+    await using (var record = new NpgsqlCommand(sql, connection, transaction)) {
+      record.Parameters.AddWithValue(locator);
+      if (error is not null) {
+        record.Parameters.AddWithValue(error);
+      }
+      _ = await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    return confirmed;
   }
 
   // ── Restoring and deleting ───────────────────────────────────────────────────────────────────────────
@@ -395,18 +486,6 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     return new ArchiveRestoreResult(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2));
   }
 
-  // After the commit: the manifest no longer names these objects, so one that cannot be removed now is unreachable
-  // garbage, reported and never retried by the caller (the archive itself is already restored or deleted).
-  private async Task _deleteObjectsAsync(Guid streamId, List<ManifestRow> objects, CancellationToken cancellationToken) {
-    foreach (var row in objects) {
-      try {
-        _ = await _objectClient(row).Client.DeleteIfExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-      } catch (RequestFailedException ex) {
-        LogObjectNotDeleted(_logger, ex, row.Locator, streamId);
-      }
-    }
-  }
-
   private static async Task _executeAsync(
       NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, Guid streamId, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -442,14 +521,14 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   static partial void LogWrite(ILogger logger, Guid streamId, long? throughVersion, string status, long eventsArchived, int objects);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Restore of stream {StreamId} from Azure Blob: {Status}, {EventsRestored} event(s) back in the hot store, {Objects} object(s) removed")]
+    Message = "Restore of stream {StreamId} from Azure Blob: {Status}, {EventsRestored} event(s) back in the hot store, {Objects} object(s) queued for deletion")]
   static partial void LogRestore(ILogger logger, Guid streamId, string status, long eventsRestored, int objects);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Azure Blob archive of stream {StreamId} deleted: {EventsDeleted} event(s) in {Objects} object(s); its tombstone stays")]
+    Message = "Azure Blob archive of stream {StreamId} deleted: {EventsDeleted} event(s), {Objects} object(s) queued for deletion; its tombstone stays")]
   static partial void LogDelete(ILogger logger, Guid streamId, long eventsDeleted, int objects);
 
   [LoggerMessage(Level = LogLevel.Warning,
-    Message = "Archive object {Locator} of stream {StreamId} could not be removed; the manifest no longer names it, so it is unreachable and can be deleted by hand")]
+    Message = "Archive object {Locator} of stream {StreamId} could not be deleted; it stays queued and is retried after a backoff")]
   static partial void LogObjectNotDeleted(ILogger logger, Exception exception, string locator, Guid streamId);
 }

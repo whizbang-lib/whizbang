@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Archival;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Archive.AzureBlob;
@@ -38,7 +39,10 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(configure);
     services.AddOptions<AzureBlobArchiveOptions>().Configure(configure);
     services.RemoveAll<IArchiveStore>();
-    services.AddSingleton<IArchiveStore>(_create);
+    services.TryAddSingleton(_create);
+    services.AddSingleton<IArchiveStore>(sp => sp.GetRequiredService<AzureBlobArchiveStore>());
+    // Deletes the objects a purge (or a restore or delete whose own deletion failed) left queued (269).
+    services.AddScoped<IMaintenanceStep>(sp => new ArchiveObjectDeletionStep(sp.GetRequiredService<AzureBlobArchiveStore>()));
     return services;
   }
 
