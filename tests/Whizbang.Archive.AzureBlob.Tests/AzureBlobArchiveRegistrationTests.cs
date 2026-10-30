@@ -11,6 +11,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Archive.AzureBlob.Tests;
@@ -60,6 +61,39 @@ public class AzureBlobArchiveRegistrationTests {
       .Because("replaced, not added beside: nothing can resolve the table store by accident");
     await Assert.That(control.GetRequiredService<IArchiveStore>()).IsTypeOf<TableStoreStandIn>()
       .Because("the control: without the package the driver's store is what resolves");
+  }
+
+  [Test]
+  public async Task Registration_AddsTheObjectDeletionStep_OnlyWithThePackageAsync() {
+    var withPackage = new ServiceCollection();
+    _driver(withPackage);
+    withPackage.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    var driverOnly = new ServiceCollection();
+    _driver(driverOnly);
+    await using var provider = withPackage.BuildServiceProvider();
+    await using var control = driverOnly.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+
+    var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().ToList();
+
+    await Assert.That(steps).Count().IsEqualTo(1);
+    await Assert.That(steps[0]).IsTypeOf<ArchiveObjectDeletionStep>();
+    await Assert.That(steps[0].Name).IsEqualTo("archive-object-deletion");
+    await Assert.That(provider.GetRequiredService<IArchiveStore>()).IsSameReferenceAs(provider.GetRequiredService<AzureBlobArchiveStore>())
+      .Because("the step drains the queue of the one store the service archives through");
+    await Assert.That(control.GetServices<IMaintenanceStep>()).IsEmpty()
+      .Because("the table store keeps no objects outside the database, so a service without the package has no such step");
+  }
+
+  [Test]
+  public async Task Step_And_Drain_RefuseMissingOrEmptyArgumentsAsync() {
+    var store = new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions());
+
+    await Assert.That(() => new ArchiveObjectDeletionStep(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new ArchiveObjectDeletionStep(store).RunAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
+    await Assert.That(() => store.DeleteQueuedObjectsAsync(0)).Throws<ArgumentOutOfRangeException>()
+      .Because("a drain of nothing is a caller's mistake, not a no-op");
+    await Assert.That(ArchiveObjectDeletionStep.BATCH_SIZE).IsEqualTo(100);
   }
 
   [Test]

@@ -178,6 +178,25 @@ public class AzureBlobArchiveStoreTests {
     return names;
   }
 
+  private static readonly IServiceProvider _noServices = new ServiceCollection().BuildServiceProvider();
+
+  // The stream's queued object deletions: locator and attempts.
+  private Task<List<string>> _queuedAsync(Guid stream) => _rowsAsync(
+    "SELECT concat_ws('|', locator, attempts) FROM wh_archive_object_deletions WHERE stream_id = @s ORDER BY locator", stream);
+
+  // The stream's one queued row: attempts, whether the next try waits at most a minute, whether it waits at all, the error.
+  private async Task<string> _waitAsync(Guid stream) => (await _rowsAsync(
+    "SELECT concat_ws('|', attempts, next_attempt_at <= NOW() + interval '1 minute', next_attempt_at > NOW(), last_error) " +
+    "FROM wh_archive_object_deletions WHERE stream_id = @s", stream)).Single();
+
+  private async Task _dueNowAsync(Guid stream) {
+    await using var connection = await _openAsync();
+    await using var command = new NpgsqlCommand(
+      "UPDATE wh_archive_object_deletions SET next_attempt_at = NOW() - interval '1 second' WHERE stream_id = @s", connection);
+    command.Parameters.AddWithValue("s", stream);
+    _ = await command.ExecuteNonQueryAsync();
+  }
+
   private Task<List<string>> _tombstoneAsync(Guid stream) => _rowsAsync(
     "SELECT concat_ws('|', state, COALESCE(archive_locator, '<none>'), last_version) FROM wh_stream_lifecycle WHERE stream_id = @s", stream);
 
@@ -437,6 +456,7 @@ public class AzureBlobArchiveStoreTests {
       .IsEquivalentTo([ids[^1].ToString()]).Because("the parked cursor returns where it was");
     await Assert.That(await _manifestAsync(stream)).IsEmpty();
     await Assert.That(await _objectsAsync()).IsEmpty().Because("a restored archive's objects are removed after the commit");
+    await Assert.That(await _queuedAsync(stream)).IsEmpty().Because("each deleted object leaves the queue once storage confirms it");
     await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo(["Active|<none>|5"]);
     await Assert.That(again.Status).IsEqualTo(ArchiveStatus.NOTHING_ARCHIVED).Because("a restore is idempotent");
   }
@@ -499,22 +519,125 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _manifestAsync(stream)).IsEmpty();
     await Assert.That(await _objectsAsync()).IsEquivalentTo(objects).Because("the delete really failed");
     await Assert.That(logger.Messages).Contains(m => m.Level == LogLevel.Warning && m.Text.Contains(objects[0], StringComparison.Ordinal))
-      .Because("an object left behind is named, so an operator can remove it");
+      .Because("an object that could not be deleted is named in the log");
+    await Assert.That(await _queuedAsync(stream)).IsEquivalentTo([$"azure-blob://{_containerName}/{objects[0]}?codec=brotli&format=1|1"])
+      .Because("it stays queued, with the failed attempt counted, for the maintenance step to retry");
   }
 
   [Test]
-  public async Task Purge_AStreamArchivedToBlob_TakesItsManifestRowsAsync() {
+  public async Task Purge_QueuesTheObjects_AndTheStepDeletesThemAsync() {
     var (stream, _) = await _seedAsync(3);
-    _ = await _store(maxEventsPerChunk: 10).WriteAsync(ArchiveBatch.WholeStream(stream));
+    var store = _store(maxEventsPerChunk: 2);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var locators = (await _manifestAsync(stream)).Select(m => m.Split('|')[3] + "|0").ToList();
 
     _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
       new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+    var queued = await _queuedAsync(stream);
+    var objectsBeforeTheStep = await _objectsAsync();
+    await new ArchiveObjectDeletionStep(store).RunAsync(_noServices, CancellationToken.None);
 
     await Assert.That(await _manifestAsync(stream)).IsEmpty()
       .Because("a purged stream must never be restored from an object a manifest row still names");
-    await Assert.That(await _readAllAsync(_store(), stream)).IsEmpty();
-    await Assert.That(await _objectsAsync()).Count().IsEqualTo(1)
-      .Because("the purge runs in the database and cannot reach blob storage; the object is unreachable, not removed");
+    await Assert.That(queued).IsEquivalentTo(locators)
+      .Because("the purge queued every object its manifest rows named, container and name, in its own transaction");
+    await Assert.That(objectsBeforeTheStep).Count().IsEqualTo(2).Because("the purge itself cannot reach blob storage");
+    await Assert.That(await _objectsAsync()).IsEmpty().Because("the maintenance step deletes the queued objects");
+    await Assert.That(await _queuedAsync(stream)).IsEmpty().Because("and clears each row once storage confirmed the delete");
+  }
+
+  [Test]
+  public async Task Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var logger = new ListLogger();
+    var failing = _store(maxEventsPerChunk: 10, fault: new FaultObjectDeletes(), logger: logger);
+    var healthy = _store(maxEventsPerChunk: 10);
+    _ = await healthy.WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+
+    var firstFailure = await failing.DeleteQueuedObjectsAsync(10);
+    var firstWait = await _waitAsync(stream);
+    var notDueYet = await healthy.DeleteQueuedObjectsAsync(10);
+    await _dueNowAsync(stream);
+    _ = await failing.DeleteQueuedObjectsAsync(10);
+    var secondWait = await _waitAsync(stream);
+    await _dueNowAsync(stream);
+    var retried = await healthy.DeleteQueuedObjectsAsync(10);
+
+    await Assert.That(firstFailure).IsEqualTo(0);
+    await Assert.That(firstWait).IsEqualTo("1|t|t|injected: the delete failed")
+      .Because("the failed attempt is counted, its error kept, and the next try waits about a minute");
+    await Assert.That(notDueYet).IsEqualTo(0).Because("a row waiting out its backoff is not retried early");
+    await Assert.That(secondWait).IsEqualTo("2|f|t|injected: the delete failed")
+      .Because("the wait doubles: the second retry waits more than a minute (and at most two)");
+    await Assert.That(retried).IsEqualTo(1).Because("once due, the retry deletes the object");
+    await Assert.That(await _objectsAsync()).IsEmpty();
+    await Assert.That(await _queuedAsync(stream)).IsEmpty();
+    await Assert.That(logger.Messages.Count(m => m.Level == LogLevel.Warning)).IsEqualTo(2)
+      .Because("each failed delete is logged with the object it could not delete");
+  }
+
+  [Test]
+  public async Task Step_AnObjectAlreadyGone_CountsAsDeletedAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var store = _store(maxEventsPerChunk: 10);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+    _ = await _container().GetBlobClient((await _objectsAsync()).Single()).DeleteAsync();
+
+    var deleted = await store.DeleteQueuedObjectsAsync(10);
+
+    await Assert.That(deleted).IsEqualTo(1).Because("storage answering 'not found' confirms the object is gone");
+    await Assert.That(await _queuedAsync(stream)).IsEmpty();
+  }
+
+  [Test]
+  public async Task Step_AnObjectWhoseStreamIsBeingArchived_IsLeftForALaterRun_WithoutCountingAnAttemptAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var store = _store(maxEventsPerChunk: 10);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+    int whileLocked;
+    await using (var holder = await _openAsync()) {
+      await using var transaction = await holder.BeginTransactionAsync();
+      await using var lockStream = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtext('wh_event_store:' || @p))", holder, transaction);
+      lockStream.Parameters.AddWithValue("p", stream.ToString());
+      _ = await lockStream.ExecuteNonQueryAsync();
+      whileLocked = await store.DeleteQueuedObjectsAsync(10);
+    }
+    var queuedWhileLocked = await _queuedAsync(stream);
+
+    var afterwards = await store.DeleteQueuedObjectsAsync(10);
+
+    await Assert.That(whileLocked).IsEqualTo(0).Because("a write holding the stream's lock may be uploading this same object");
+    await Assert.That(queuedWhileLocked.Single()).EndsWith("|0").Because("waiting for the lock is not a failed attempt");
+    await Assert.That(afterwards).IsEqualTo(1);
+    await Assert.That(await _objectsAsync()).IsEmpty();
+  }
+
+  [Test]
+  public async Task Restore_ThenArchiveTheSameEventsAgain_KeepsTheLiveObject_OutOfTheQueueAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var hot = await _hotAsReadAsync(stream);
+    var failing = _store(maxEventsPerChunk: 10, fault: new FaultObjectDeletes());
+    var healthy = _store(maxEventsPerChunk: 10);
+    _ = await healthy.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var name = (await _objectsAsync()).Single();
+    _ = await failing.RestoreAsync(stream);
+    var queuedAfterRestore = await _queuedAsync(stream);
+
+    _ = await healthy.WriteAsync(ArchiveBatch.WholeStream(stream));
+    await new ArchiveObjectDeletionStep(healthy).RunAsync(_noServices, CancellationToken.None);
+
+    await Assert.That(queuedAfterRestore).Count().IsEqualTo(1).Because("the restore's own delete failed, so the object was queued");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo([name])
+      .Because("archiving the same events again writes the same name, which takes it back out of the queue");
+    await Assert.That(await _queuedAsync(stream)).IsEmpty();
+    await Assert.That(await _readAllAsync(healthy, stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the step must never delete an object a manifest row names");
   }
 
   // ── The production caller ──────────────────────────────────────────────────────────────────────────
