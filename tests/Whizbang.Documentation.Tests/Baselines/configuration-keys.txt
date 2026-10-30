@@ -223,6 +223,7 @@ Whizbang:Schema:Reconcile:Drop:*
 Whizbang:Schema:Reconcile:DropAfterFleetConverged
 Whizbang:Schema:Reconcile:Mode
 Whizbang:Schema:Reconcile:Pins:*
+Whizbang:SchemaInitialization:DispatchMaxWait
 Whizbang:SchemaInitialization:InitRetryDelay
 Whizbang:SchemaInitialization:MigrationTimeout
 Whizbang:SchemaInitialization:NonBlockingSchemaInit

@@ -113,12 +113,12 @@ public abstract partial class Dispatcher(
     string FilePath,
     int LineNumber);
 
-  // Increment 6, the write seam: a dispatch needs the event store and the outbox, which Migrate
-  // provides — so dispatch refuses while the schema gate is closed. Resolved lazily from the
+  // The write seam: a dispatch needs the event store and the outbox, which Migrate provides, so a
+  // dispatch made while the schema gate is closed waits for it (#1877). Resolved lazily from the
   // service provider (never a ctor param: generated dispatcher subclasses chain base(...)
-  // positionally, and test fixtures without a gate stay ungated). Volatile-cached after first look.
-  private ISchemaReadyGate? _schemaReadyGateCache;
-  private bool _schemaReadyGateResolved;
+  // positionally, and test fixtures without a gate stay ungated). Cached after the first look.
+  private SchemaReadyDispatchDeferral? _schemaDeferral;
+  private bool _schemaDeferralResolved;
 
   /// <summary>
   /// Refuses a dispatch whose caller has no security context, before any handler runs or anything is
@@ -148,22 +148,90 @@ public abstract partial class Dispatcher(
     throw new SecurityContextRequiredException(messageType);
   }
 
-  private void _throwIfSchemaNotReady() {
-    if (!_schemaReadyGateResolved) {
+  /// <summary>
+  /// The deferral a dispatch must wait on, or <see langword="null"/> when it may run now: the migration has
+  /// completed, the host has no schema gate, or the provider is already disposed (shutdown teardown, where the
+  /// dispatch fails on disposal anyway).
+  /// </summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
+  private SchemaReadyDispatchDeferral? _pendingSchemaDeferral() {
+    if (!_schemaDeferralResolved) {
       try {
-        _schemaReadyGateCache = (ISchemaReadyGate?)serviceProvider.GetService(typeof(ISchemaReadyGate));
-        _schemaReadyGateResolved = true;
+        _schemaDeferral = SchemaReadyDispatchDeferral.Resolve(serviceProvider);
+        _schemaDeferralResolved = true;
       } catch (ObjectDisposedException) {
-        // Shutdown teardown: the dispatcher promises graceful handling of a disposed provider,
-        // and refusing a dispatch that is about to fail on disposal anyway adds nothing.
-        return;
+        return null;
       }
     }
-    if (_schemaReadyGateCache is { IsReady: false }) {
-      throw new WhizbangNotReadyException(
-        "dispatch refused: the schema is not ready (Migrate has not completed). Writes need the "
-        + "event store and outbox the migration provides; they resume when it does.");
-    }
+    return _schemaDeferral is { IsReady: false } deferral ? deferral : null;
+  }
+
+  /// <summary>
+  /// Defers a dispatch made before the migration completes until it does (#1877): completes at once when the
+  /// dispatch may run, otherwise waits on the schema gate, bounded by
+  /// <see cref="SchemaInitializationOptions.DispatchMaxWait"/> and the caller's token.
+  /// </summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_DeferredPastTheMaxWait_ThrowsNotReadyBeforeRunningAnythingAsync</tests>
+  private ValueTask _awaitSchemaReadyAsync(CancellationToken cancellationToken)
+    => _pendingSchemaDeferral() is { } deferral ? deferral.WaitAsync(cancellationToken) : default;
+
+  // The synchronous local-invoke entries return their ValueTask without an async state machine on the hot
+  // path, so a deferred call takes one of these: it waits for the migration and then re-enters the same
+  // entry, which finds the schema ready and runs as it always does.
+
+  /// <summary>Runs <c>LocalInvokeAsync&lt;TResult&gt;(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<TResult> _localInvokeAfterMigrationAsync<TResult>(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await LocalInvokeAsync<TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs <c>LocalInvokeAsync(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask _localInvokeVoidAfterMigrationAsync(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    await LocalInvokeAsync(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs the typed result-returning local invoke once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<TResult> _localInvokeInternalAfterMigrationAsync<TMessage, TResult>(
+      SchemaReadyDispatchDeferral deferral, TMessage message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await _localInvokeAsyncInternal<TMessage, TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs the typed void local invoke once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask _localInvokeInternalVoidAfterMigrationAsync<TMessage>(
+      SchemaReadyDispatchDeferral deferral, TMessage message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    await _localInvokeAsyncInternal(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs <c>LocalInvokeWithReceiptAsync&lt;TResult&gt;(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<InvokeResult<TResult>> _localInvokeWithReceiptAfterMigrationAsync<TResult>(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await LocalInvokeWithReceiptAsync<TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
   }
 
   // Issue #491: receptor discovery is source-only, so this dispatcher's generated tables cover
@@ -1570,7 +1638,7 @@ public abstract partial class Dispatcher(
     }
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchTypeNeedsContext(messageType);
     // The caller's context is the one the receptor sees, as on a local invoke (#1410 follow-up)
     MessageContextAccessor.CurrentContext = context;
@@ -1791,8 +1859,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeAfterMigrationAsync<TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
 
@@ -1891,8 +1961,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeVoidAfterMigrationAsync(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
 
@@ -2166,8 +2238,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeInternalAfterMigrationAsync<TMessage, TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2212,8 +2286,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeInternalVoidAfterMigrationAsync<TMessage>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2528,8 +2604,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(message);
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
@@ -2578,8 +2654,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2872,8 +2948,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeWithReceiptAfterMigrationAsync<TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2906,8 +2984,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public async ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(message);
     options.CancellationToken.ThrowIfCancellationRequested();
     var cascade = _cascadeContextFactory.NewRoot();
@@ -3955,7 +4033,7 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(CancellationToken.None).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
@@ -4075,7 +4153,7 @@ public abstract partial class Dispatcher(
     using var timeoutDisposal = timeoutScope;
     options.CancellationToken.ThrowIfCancellationRequested();
 
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData!.GetType();
@@ -4227,8 +4305,8 @@ public abstract partial class Dispatcher(
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     // A cascade with a source envelope continues a flow that was already admitted; only a new one is checked
     if (sourceEnvelope is null) {
       _throwIfLocalDispatchNeedsContext(message);
@@ -5354,13 +5432,13 @@ public abstract partial class Dispatcher(
       DispatchPolicy callPolicy,
       DispatchOptions options,
       Func<Dispatcher, object, DispatchModes?, BatchCopy?, CancellationToken, Task<IDeliveryReceipt>> runLocally) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
     // The caller's token and timeout cover the whole batch, as they cover a single dispatch
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options.CancellationToken;
     cancellationToken.ThrowIfCancellationRequested();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     // A Routed<T> in a batch is honored as on a single call (#1395): each message is decided, run and
     // written under its own route
     var routes = _unwrapBatchRoutes(messages);

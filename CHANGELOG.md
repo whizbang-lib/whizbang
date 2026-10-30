@@ -533,6 +533,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A dispatch made before the migration completes waits for it instead of being refused.** A send, publish,
+  local invoke or cascade that arrives while the schema is not ready used to fail at once with
+  `WhizbangNotReadyException: dispatch refused: the schema is not ready (Migrate has not completed)`, so a startup seed
+  or a request served during the migration failed. It now waits on the schema-ready gate's own signal and runs when the
+  migration completes, logging once that dispatch is deferred until the migration completes. The wait honors the
+  caller's cancellation token and is bounded by the new `Whizbang:SchemaInitialization:DispatchMaxWait`
+  (`SchemaInitializationOptions.DispatchMaxWait`, default five minutes), after which the dispatch fails with
+  `WhizbangNotReadyException` as before; `00:00:00` restores the immediate refusal. Holding the whole application until
+  the migration completes stays opt-in, with `NonBlockingSchemaInit = false` (Fixes #1877)
+
 - **Per-message debug logging and by-name type lookups no longer allocate (#1756).** With debug logging off, the
   dispatcher's tag-processing step and the perspective worker's per-batch description cost nothing (tag processing
   30-41 ns and 32-88 B down to 3-5 ns and 0 B; a 16-group batch description 414 ns and 1,752 B down to 1.2 ns and 0 B).
