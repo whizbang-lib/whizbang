@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Archival;
@@ -25,7 +26,10 @@ namespace Whizbang.Data.Postgres;
 /// never holds back another's restore.
 /// </para>
 /// <para>
-/// It runs in the maintenance cycle, so under the maintainer duty when role assignment manages it.
+/// It runs in the maintenance cycle, so under the maintainer duty when role assignment manages it. It resolves the
+/// database connection (<see cref="PostgresArchiveConnection"/>) and the <see cref="IArchiveStore"/> from the provider
+/// each run is handed, as the other maintenance steps do, so building the step (enumerating the maintenance steps) needs
+/// neither: a host whose context has no Postgres data source can still list its steps.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#restore-requests</docs>
@@ -40,28 +44,17 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
   /// </summary>
   public const int BATCH_SIZE = 20;
 
-  private readonly PostgresArchiveConnection _database;
-  private readonly IArchiveStore _store;
   private readonly TimeProvider _timeProvider;
   private readonly ILogger _logger;
-  private readonly string _prefix;
 
   /// <summary>Creates the step.</summary>
-  /// <param name="database">How the step reaches the service's database (the requests).</param>
-  /// <param name="store">The archive store that restores a stream.</param>
   /// <param name="timeProvider">The clock the request times are written from.</param>
   /// <param name="logger">Logs each restore's outcome.</param>
-  public ArchiveRestoreRequestStep(
-      PostgresArchiveConnection database, IArchiveStore store, TimeProvider timeProvider, ILogger<ArchiveRestoreRequestStep> logger) {
-    ArgumentNullException.ThrowIfNull(database);
-    ArgumentNullException.ThrowIfNull(store);
+  public ArchiveRestoreRequestStep(TimeProvider timeProvider, ILogger<ArchiveRestoreRequestStep> logger) {
     ArgumentNullException.ThrowIfNull(timeProvider);
     ArgumentNullException.ThrowIfNull(logger);
-    _database = database;
-    _store = store;
     _timeProvider = timeProvider;
     _logger = logger;
-    _prefix = database.Schema is null ? string.Empty : SqlText.Identifier(database.Schema) + ".";
   }
 
   /// <inheritdoc />
@@ -69,10 +62,13 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
 
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
-    foreach (var streamId in await _claimAsync(cancellationToken).ConfigureAwait(false)) {
+    ArgumentNullException.ThrowIfNull(services);
+    var database = services.GetRequiredService<PostgresArchiveConnection>();
+    var store = services.GetRequiredService<IArchiveStore>();
+    foreach (var streamId in await _claimAsync(database, cancellationToken).ConfigureAwait(false)) {
       string? failure;
       try {
-        var result = await _store.RestoreAsync(streamId, cancellationToken).ConfigureAwait(false);
+        var result = await store.RestoreAsync(streamId, cancellationToken).ConfigureAwait(false);
         failure = string.Equals(result.Status, ArchiveStatus.RESTORED, StringComparison.Ordinal) ? null : result.Status;
       } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
         throw;
@@ -86,15 +82,18 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
       }
       // A nothing_archived for a stream another restore already put back was completed by that restore's SQL, so the
       // request is no longer open and this fails nothing.
-      if (await _failAsync(streamId, failure, cancellationToken).ConfigureAwait(false)) {
+      if (await _failAsync(database, streamId, failure, cancellationToken).ConfigureAwait(false)) {
         LogRestoreFailed(_logger, streamId, failure);
       }
     }
   }
 
-  private async Task<List<Guid>> _claimAsync(CancellationToken cancellationToken) {
-    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
-    await using var command = new NpgsqlCommand($"SELECT stream_id FROM {_prefix}wh_claim_archive_restore_requests($1, $2)", connection);
+  private static string _prefix(PostgresArchiveConnection database) =>
+    database.Schema is null ? string.Empty : SqlText.Identifier(database.Schema) + ".";
+
+  private async Task<List<Guid>> _claimAsync(PostgresArchiveConnection database, CancellationToken cancellationToken) {
+    await using var connection = await database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand($"SELECT stream_id FROM {_prefix(database)}wh_claim_archive_restore_requests($1, $2)", connection);
     command.Parameters.AddWithValue(BATCH_SIZE);
     command.Parameters.AddWithValue(_timeProvider.GetUtcNow());
     var claimed = new List<Guid>();
@@ -105,9 +104,9 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
     return claimed;
   }
 
-  private async Task<bool> _failAsync(Guid streamId, string error, CancellationToken cancellationToken) {
-    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
-    await using var command = new NpgsqlCommand($"SELECT {_prefix}wh_fail_archive_restore_request($1, $2, $3)", connection);
+  private async Task<bool> _failAsync(PostgresArchiveConnection database, Guid streamId, string error, CancellationToken cancellationToken) {
+    await using var connection = await database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand($"SELECT {_prefix(database)}wh_fail_archive_restore_request($1, $2, $3)", connection);
     command.Parameters.AddWithValue(streamId);
     command.Parameters.AddWithValue(error);
     command.Parameters.AddWithValue(_timeProvider.GetUtcNow());

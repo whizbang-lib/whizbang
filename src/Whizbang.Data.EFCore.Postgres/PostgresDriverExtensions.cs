@@ -319,8 +319,6 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/archive-store#restore-requests</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
           sp => new ArchiveRestoreRequestStep(
-            sp.GetRequiredService<PostgresArchiveConnection>(),
-            sp.GetRequiredService<global::Whizbang.Core.Archival.IArchiveStore>(),
             sp.GetService<TimeProvider>() ?? TimeProvider.System,
             sp.GetService<ILogger<ArchiveRestoreRequestStep>>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ArchiveRestoreRequestStep>.Instance)));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a

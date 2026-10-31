@@ -483,8 +483,6 @@ public static class ServiceCollectionExtensions {
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
       sp => new ArchiveRestoreRequestStep(
-        sp.GetRequiredService<PostgresArchiveConnection>(),
-        sp.GetRequiredService<global::Whizbang.Core.Archival.IArchiveStore>(),
         sp.GetService<TimeProvider>() ?? TimeProvider.System,
         sp.GetService<ILogger<ArchiveRestoreRequestStep>>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ArchiveRestoreRequestStep>.Instance)));
     // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path

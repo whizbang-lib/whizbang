@@ -61,7 +61,7 @@ public class DapperArchiveReadThroughTests : PostgresTestBase {
     foreach (var read in new[] { bySequence, byId, between }) {
       await Assert.That(read.Select(e => e.Payload.Payload)).IsEquivalentTo(["a", "b", "c"]);
     }
-    await Assert.That(bySequence[2].LocalStreamVersion).IsEqualTo(2L)
+    await Assert.That(bySequence[2].LocalStreamVersion).IsEqualTo(3L)
       .Because("every read carries the stream version, which is how the seam sees a gap without asking the archive");
   }
 

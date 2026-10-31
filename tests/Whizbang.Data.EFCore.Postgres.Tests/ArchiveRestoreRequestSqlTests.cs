@@ -215,7 +215,7 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
     var first = await _autoRestoreStreamWithADeadLetterAsync(conn);
     var second = await _autoRestoreStreamWithADeadLetterAsync(conn);
 
-    await _step(_store()).RunAsync(new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+    await _runStepAsync(_store());
 
     foreach (var stream in new[] { first, second }) {
       await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Restored|<none>");
@@ -230,7 +230,7 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
     var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
     _ = await _store().DeleteAsync(stream);
 
-    await _step(_store()).RunAsync(new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+    await _runStepAsync(_store());
 
     await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Failed|nothing_archived")
       .Because("the tombstone stays Archived with nothing to restore from; the error is the store's status, a state, not a message");
@@ -244,7 +244,7 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
     var fine = await _autoRestoreStreamWithADeadLetterAsync(conn);
     var store = new ThrowingForOneStreamArchiveStore(_store(), throwing);
 
-    await _step(store).RunAsync(new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+    await _runStepAsync(store);
 
     await Assert.That(await _requestErrorAsync(conn, throwing)).IsEqualTo("Failed|InvalidOperationException: the blob container is unreachable");
     await Assert.That(await _requestErrorAsync(conn, fine)).IsEqualTo("Restored|<none>")
@@ -268,9 +268,15 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
 
   private PostgresTableArchiveStore _store() => new(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync);
 
-  private ArchiveRestoreRequestStep _step(IArchiveStore store) =>
-    new(new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null),
-      store, new FakeTimeProvider(_t0.AddHours(2)), NullLogger<ArchiveRestoreRequestStep>.Instance);
+  // One maintenance cycle of the step, handed the connection and the store as the maintenance worker's scope hands them.
+  private async Task _runStepAsync(IArchiveStore store) {
+    var services = new ServiceCollection();
+    services.AddSingleton(new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null));
+    services.AddSingleton(store);
+    await using var provider = services.BuildServiceProvider();
+    var step = new ArchiveRestoreRequestStep(new FakeTimeProvider(_t0.AddHours(2)), NullLogger<ArchiveRestoreRequestStep>.Instance);
+    await step.RunAsync(provider, CancellationToken.None);
+  }
 
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
