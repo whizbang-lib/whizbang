@@ -3,7 +3,9 @@
 
 # The licenses of the tools the pipeline runs and does not build itself: every remote action and reusable
 # workflow (by owner/repo, any version), every dotnet tool in a tool manifest and every dotnet tool a workflow
-# installs (by package id, any version), and every GitHub release binary a workflow downloads (by owner/repo). The source of truth for .github/scripts/Test-PipelineToolLicenses.ps1,
+# installs (by package id, any version), every GitHub release binary a workflow downloads (by owner/repo), and
+# every container image a workflow runs (container:, services: image:, uses: docker://, docker run; by image
+# name without tag or digest). The source of truth for .github/scripts/Test-PipelineToolLicenses.ps1,
 # run by Test · Pipeline scripts, which fails on a tool this list does not name and on an entry nothing uses.
 #
 #   <kind>  <id>  <SPDX license>  [exception]  # why the pipeline uses it
@@ -11,7 +13,9 @@
 # Allowed without review: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, PostgreSQL. Anything else needs the
 # "exception" marker and a reason saying why no permissively licensed tool will do, reviewed by a build admin
 # (CODEOWNERS). Strong copyleft (AGPL, GPL, SSPL) is refused even as an exception: a release was canceled when
-# dependency review refused the AGPL-3.0 secret scanner at the last step.
+# dependency review refused the AGPL-3.0 secret scanner at the last step. The one precise exception is a container
+# image run unmodified and only in CI, which ships nothing; it must also be named in the script's
+# $CopyleftContainerExceptions, and today only fsfe/reuse is.
 #
 # Licenses here are read from each project's repository or NuGet package. When a tool moves a major version,
 # check its license again; .github/scripts/Compare-PipelineToolLicenses.ps1 compares this list with the
@@ -53,4 +57,5 @@ release-binary  sigstore/gitsign    Apache-2.0   # keyless signing of release ta
 
 # Reviewed exceptions
 dotnet-tool  dotnet-sonarscanner  LGPL-3.0-only  exception  # SonarScanner for .NET, the only client for the required SonarCloud check; run unmodified and never distributed, so LGPL places no obligation on the project
+container    fsfe/reuse  GPL-3.0-or-later  exception  # the REUSE tool behind Gate · License headers (Apache-2.0 AND CC0-1.0 AND CC-BY-SA-4.0 AND GPL-3.0-or-later); run unmodified from its image pinned by digest, only in CI, and nothing it contains ships; accepted on 2026-10-31 (#1938)
 dotnet-tool  dotnet-coverage  LicenseRef-Microsoft-dotnet-coverage  exception  # Microsoft's coverage collector and merger (proprietary, free to use, including in CI); the coverage gate merges its binary reports and no open-source tool reads them

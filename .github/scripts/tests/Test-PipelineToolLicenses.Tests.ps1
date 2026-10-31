@@ -47,8 +47,8 @@ Describe 'Read-ToolLicenseList' {
     $dir = New-TempDirectory
     try {
       $path = Join-Path $dir 'l.txt'
-      Set-Content -LiteralPath $path -Value @('action a/b MIT # x', 'dotnet-tool t MIT # y', 'release-binary c/d MIT # z')
-      @(Read-ToolLicenseList -Path $path | ForEach-Object Kind) | Should -Be @('action', 'dotnet-tool', 'release-binary')
+      Set-Content -LiteralPath $path -Value @('action a/b MIT # x', 'dotnet-tool t MIT # y', 'release-binary c/d MIT # z', 'container e/f MIT # w')
+      @(Read-ToolLicenseList -Path $path | ForEach-Object Kind) | Should -Be @('action', 'dotnet-tool', 'release-binary', 'container')
     } finally { Remove-Item -Recurse -Force -LiteralPath $dir -ErrorAction SilentlyContinue }
   }
 
@@ -144,6 +144,36 @@ Describe 'Get-ReleaseDownload' {
   }
 }
 
+Describe 'Get-ContainerImage' {
+  It 'finds the image, without tag or digest, of every way a workflow runs a container' -TestCases @(
+    @{ Text = '        run: docker run --rm -v "$PWD":/data:ro fsfe/reuse:6.2.0@sha256:85462a75c0f8efda09ddd190b92816b70e7662577c8427429e11e1b9f25a992e lint'; Expected = 'fsfe/reuse' }
+    @{ Text = 'docker run -e A=1 --name x --network=host -w /src ghcr.io/Owner/Tool:1.2 --flag'; Expected = 'ghcr.io/owner/tool' }
+    @{ Text = 'docker run --rm localhost:5000/img'; Expected = 'localhost:5000/img' }
+    @{ Text = '      - uses: docker://alpine:3.20 # pinned'; Expected = 'alpine' }
+    @{ Text = "        uses: 'docker://ghcr.io/a/b@sha256:abc'"; Expected = 'ghcr.io/a/b' }
+    @{ Text = '    container: node:20-bookworm'; Expected = 'node' }
+    @{ Text = '        image: postgres:17@sha256:0123'; Expected = 'postgres' }
+    @{ Text = "        image: 'rabbitmq:4-management'"; Expected = 'rabbitmq' }
+  ) {
+    param($Text, $Expected)
+    Get-ContainerImage -Text $Text | Should -Be $Expected
+  }
+
+  It 'finds nothing in a comment, a block container: key, or a line that runs no container' -TestCases @(
+    @{ Text = '# docker run --rm fsfe/reuse lint' }
+    @{ Text = '    container:' }
+    @{ Text = '    steps:' }
+    @{ Text = 'docker build -t x .' }
+  ) {
+    param($Text)
+    @(Get-ContainerImage -Text $Text).Count | Should -Be 0
+  }
+
+  It 'returns an image it cannot resolve as written, so an unlisted expression fails the check' {
+    Get-ContainerImage -Text '    container: ${{ matrix.image }}' | Should -Be '${{'
+  }
+}
+
 Describe 'Get-PipelineTool' {
   It 'finds every remote action in workflows and composite actions, local actions excluded, and every tool' {
     $root = New-FixtureRepository -WorkflowLines @(
@@ -157,6 +187,8 @@ Describe 'Get-PipelineTool' {
       '      - run: |',
       '          dotnet tool install --global trx2junit --version 2.1.0',
       '          curl -sSfL -o g.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/g.tgz',
+      '      - run: docker run --rm fsfe/reuse:6.2.0 lint',
+      '  s:', '    container:', '      image: node:20', '    services:', '      db:', '        image: postgres:17',
       '  b:', '    uses: ./.github/workflows/reusable.yml',
       '  c:', '    uses: other-org/shared/.github/workflows/w.yml@0123456') -ListLines @()
     try {
@@ -168,6 +200,7 @@ Describe 'Get-PipelineTool' {
       ($tools | Where-Object Id -EQ 'trx2junit').Source | Should -BeLike '*w.yml:11'
       @($tools | Where-Object Kind -EQ 'release-binary' | ForEach-Object Id) | Should -Be @('gitleaks/gitleaks')
       ($tools | Where-Object Kind -EQ 'release-binary').Source | Should -BeLike '*w.yml:12'
+      @($tools | Where-Object Kind -EQ 'container' | ForEach-Object Id | Sort-Object) | Should -Be @('alpine', 'fsfe/reuse', 'node', 'postgres')
       ($tools | Where-Object Id -EQ 'some.tool').Source | Should -BeLike '*dotnet-tools.json'
     } finally { Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction SilentlyContinue }
   }
@@ -236,6 +269,26 @@ Describe 'Get-ToolLicenseViolation' {
 
   It 'fails a tool whose kind differs from the entry with its id' {
     @(Get-ToolLicenseViolation -Tools @(Tool 'dotnet-tool' 'a/b') -List @(Entry 'action' 'a/b' 'MIT')).Count | Should -BeGreaterThan 0
+  }
+
+  It 'passes strong copyleft only on the one CI-only container run unmodified, marked as an exception' {
+    $list = @(Entry 'container' 'fsfe/reuse' 'Apache-2.0 AND GPL-3.0-or-later' $true 'run unmodified')
+    @(Get-ToolLicenseViolation -Tools @(Tool 'container' 'fsfe/reuse') -List $list).Count | Should -Be 0
+  }
+
+  It 'fails strong copyleft on that container without the exception marker' {
+    $v = @(Get-ToolLicenseViolation -Tools @(Tool 'container' 'fsfe/reuse') -List @(Entry 'container' 'fsfe/reuse' 'GPL-3.0-or-later'))
+    $v.Count | Should -Be 1
+    $v[0] | Should -BeLike '*fsfe/reuse*strong copyleft*'
+  }
+
+  It 'fails strong copyleft on any other container, exception or not' -TestCases @(
+    @{ Exception = $false }; @{ Exception = $true }
+  ) {
+    param($Exception)
+    $v = @(Get-ToolLicenseViolation -Tools @(Tool 'container' 'other/image') -List @(Entry 'container' 'other/image' 'AGPL-3.0' $Exception))
+    $v.Count | Should -Be 1
+    $v[0] | Should -BeLike '*other/image*strong copyleft*'
   }
 
   It 'fails a strong-copyleft license, even when it is marked as an exception' -TestCases @(
@@ -314,6 +367,28 @@ Describe 'The script' {
     } finally { Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction SilentlyContinue }
   }
 
+  It 'fails a fixture that runs a container image the list does not name' {
+    $root = New-FixtureRepository -WorkflowLines ($BaseWorkflow + '      - run: docker run --rm someone/scanner:1.0 scan') -ListLines $BaseList
+    try {
+      $out = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '..' 'Test-PipelineToolLicenses.ps1') -RepositoryRoot $root 2>&1
+      $LASTEXITCODE | Should -Be 1
+      ($out -join "`n") | Should -BeLike '*::error::container someone/scanner is not in*'
+    } finally { Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction SilentlyContinue }
+  }
+
+  It 'passes the REUSE image only as the listed exception' -TestCases @(
+    @{ Marker = 'exception'; Exit = 0 }
+    @{ Marker = ''; Exit = 1 }
+  ) {
+    param($Marker, $Exit)
+    $root = New-FixtureRepository -WorkflowLines ($BaseWorkflow + '      - run: docker run --rm -v "$PWD":/data:ro fsfe/reuse:6.2.0@sha256:85462a75 lint') `
+      -ListLines ($BaseList + "container  fsfe/reuse  GPL-3.0-or-later  $Marker  # license headers, run unmodified")
+    try {
+      $out = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '..' 'Test-PipelineToolLicenses.ps1') -RepositoryRoot $root 2>&1
+      $LASTEXITCODE | Should -Be $Exit -Because ($out -join "`n")
+    } finally { Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction SilentlyContinue }
+  }
+
   It 'fails a fixture whose dependency review allow list admits strong copyleft' {
     $root = New-FixtureRepository -WorkflowLines $BaseWorkflow -ListLines $BaseList
     try {
@@ -335,14 +410,20 @@ Describe 'This repository' {
     @($Tools | Where-Object Kind -EQ 'action').Count | Should -BeGreaterThan 50
     @($Tools | Where-Object Kind -EQ 'dotnet-tool').Count | Should -BeGreaterThan 5
     @($Tools | Where-Object Kind -EQ 'release-binary').Count | Should -BeGreaterThan 1
+    @($Tools | Where-Object Kind -EQ 'container').Count | Should -BeGreaterThan 0
   }
 
   It 'lists every pipeline tool under an allowed license or a reviewed exception, and nothing unused' {
     @(Get-ToolLicenseViolation -Tools $Tools -List $List) | Should -BeNullOrEmpty
   }
 
-  It 'excepts exactly the two reviewed tools: the SonarCloud scanner and the Microsoft coverage tool' {
-    @($List | Where-Object Exception | ForEach-Object Id | Sort-Object) | Should -Be @('dotnet-coverage', 'dotnet-sonarscanner')
+  It 'excepts exactly the three reviewed tools: the SonarCloud scanner, the Microsoft coverage tool and the REUSE image' {
+    @($List | Where-Object Exception | ForEach-Object Id | Sort-Object) | Should -Be @('dotnet-coverage', 'dotnet-sonarscanner', 'fsfe/reuse')
+  }
+
+  It 'lets strong copyleft in only for the REUSE container, the one reviewed CI-only image run unmodified' {
+    @($List | Where-Object { Test-StrongCopyleft -License $_.License } | ForEach-Object { "$($_.Kind) $($_.Id)" }) | Should -Be @('container fsfe/reuse')
+    @($script:CopyleftContainerExceptions) | Should -Be @('fsfe/reuse')
   }
 
   It 'keeps strong copyleft off the dependency review allow list' {

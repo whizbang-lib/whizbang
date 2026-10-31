@@ -16,7 +16,9 @@
       - every tool in the dotnet tool manifests (.config/dotnet-tools.json, dotnet-tools.json);
       - every "dotnet tool install" or "dotnet tool update" in a workflow or composite action;
       - every GitHub release asset a workflow or composite action downloads (owner/repo), such as the
-        secret scanner and the OSV scanner binaries.
+        secret scanner and the OSV scanner binaries;
+      - every container image a workflow or composite action runs (container:, services: image:,
+        uses: docker://, docker run), by name without tag or digest.
 
     Each must be named in .github/pipeline-tool-licenses.txt with its SPDX license and the reason it is
     used. The list is the source of truth, so the check needs no network access; refresh it from the
@@ -24,8 +26,9 @@
 
     Allowed licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, PostgreSQL. Any other license passes
     only when its entry carries the "exception" marker and a reason, a change CODEOWNERS gives to
-    build-admins. Strong copyleft (AGPL, GPL, SSPL, any version) never passes, exception or not: changing
-    that is a change to this script. The check also fails a list entry that nothing uses, an entry with no
+    build-admins. Strong copyleft (AGPL, GPL, SSPL, any version) never passes, with one precise exception: a
+    container image run unmodified, only in CI, named in $CopyleftContainerExceptions in this script and marked
+    'exception' in the list (today only fsfe/reuse). Adding another is a change to this script. The check also fails a list entry that nothing uses, an entry with no
     reason, an exception marker on a license that needs none, and a strong-copyleft license on the
     dependency review allow list (.github/dependency-review-config.yml).
 
@@ -55,7 +58,11 @@ $ErrorActionPreference = 'Stop'
 
 # The licenses a pipeline tool may carry without a reviewed exception.
 $script:AllowedToolLicenses = @('MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'PostgreSQL')
-$script:ToolKinds = @('action', 'dotnet-tool', 'release-binary')
+$script:ToolKinds = @('action', 'dotnet-tool', 'release-binary', 'container')
+# The only tools strong copyleft may pass for: container images run unmodified, only in CI, shipping nothing,
+# and each still needs its list entry marked 'exception' with the reason. Adding one is a change to this script.
+#   fsfe/reuse: the REUSE tool behind Gate · License headers (GPL-3.0-or-later), accepted on 2026-10-31 (#1938).
+$script:CopyleftContainerExceptions = @('fsfe/reuse')
 
 function Read-ToolLicenseList {
   <#
@@ -130,6 +137,43 @@ function Get-ReleaseDownload {
   }
 }
 
+function Get-ContainerImage {
+  <#
+  .SYNOPSIS
+      The lowercase image name, without tag or digest, a line runs: "uses: docker://<image>", a job's
+      "container: <image>", an "image: <image>" (a container or service block), or "docker run [options] <image>".
+      An image that is an expression comes back as written, so it matches no entry and fails the check.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+  if ($Text -match '^\s*#') { return }
+  $image = $null
+  if ($Text -match 'uses:\s*[''"]?docker://([^''"\s#]+)') {
+    $image = $Matches[1]
+  } elseif ($Text -match '^\s*(?:-\s*)?(?:container|image):\s*[''"]?([^''"\s#]+)') {
+    $image = $Matches[1]
+  } elseif ($Text -match '\bdocker\s+run\s+(.*)$') {
+    # The options that take a separate value; any other option is a switch, and --name=value is one token.
+    $withValue = @('-v', '--volume', '-e', '--env', '--env-file', '-w', '--workdir', '--name', '-p', '--publish', '--network',
+      '--entrypoint', '-u', '--user', '--platform', '--mount', '-l', '--label', '--add-host', '--cpus', '-m', '--memory',
+      '--pull', '--shm-size', '--ulimit', '--cap-add', '--cap-drop', '--tmpfs', '--hostname', '-h', '--device', '--gpus')
+    $tokens = @(($Matches[1] -split '(&&|\|\||;|\||\s#)')[0] -split '\s+' | Where-Object { $_ -and $_ -ne '\' })
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+      if ($tokens[$i].StartsWith('-')) {
+        if ($withValue -contains $tokens[$i]) { $i++ }
+        continue
+      }
+      $image = $tokens[$i]
+      break
+    }
+  }
+  if (-not $image) { return }
+  $image = $image -replace '@.*$', ''
+  $slash = $image.LastIndexOf('/')
+  $colon = $image.LastIndexOf(':')
+  if ($colon -gt $slash) { $image = $image.Substring(0, $colon) }
+  return $image.ToLowerInvariant()
+}
+
 function Get-PipelineTool {
   <# .SYNOPSIS Every third-party tool the pipeline runs: Kind (action or dotnet-tool), Id and Source (where). #>
   param([Parameter(Mandatory)][string]$RepositoryRoot)
@@ -161,6 +205,8 @@ function Get-PipelineTool {
       foreach ($repo in @(Get-ReleaseDownload -Text $line)) {
         [pscustomobject]@{ Kind = 'release-binary'; Id = $repo; Source = "$($file.FullName):$number" }
       }
+      $image = Get-ContainerImage -Text $line
+      if ($image) { [pscustomobject]@{ Kind = 'container'; Id = $image; Source = "$($file.FullName):$number" } }
     }
   }
 }
@@ -188,7 +234,10 @@ function Get-ToolLicenseViolation {
     $name = "$($entry.Kind) $($entry.Id) ($($entry.License), line $($entry.Line))"
     if (-not $entry.Reason) { "$name has no reason; say why the pipeline uses it after a #." }
     if (Test-StrongCopyleft -License $entry.License) {
-      "$name is strong copyleft, which no pipeline tool may carry, exception or not. Replace the tool."
+      $reviewed = $entry.Kind -eq 'container' -and $entry.Exception -and ($script:CopyleftContainerExceptions -contains $entry.Id)
+      if (-not $reviewed) {
+        "$name is strong copyleft, which no pipeline tool may carry; the only exceptions are the CI-only containers run unmodified in Test-PipelineToolLicenses.ps1 ($($script:CopyleftContainerExceptions -join ', ')), marked 'exception'. Replace the tool."
+      }
     } elseif ($script:AllowedToolLicenses -notcontains $entry.License -and -not $entry.Exception) {
       "$name is not one of $($script:AllowedToolLicenses -join ', '); replace it, or mark it 'exception' with the reason, for a build admin to review."
     } elseif ($script:AllowedToolLicenses -contains $entry.License -and $entry.Exception) {
