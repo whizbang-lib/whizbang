@@ -533,10 +533,32 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     /// Stops what the claim loop hands to the perspective worker, so a test can read a row the next apply would
     /// rewrite. <see cref="ResumeHandOffs"/> lets every held hand-off through.
     /// </summary>
-    public Task StopHandOffsAsync(CancellationToken ct) {
-      _ = ct;
-      HandOff.Hold();
-      return Task.CompletedTask;
+    /// <remarks>
+    /// Holding the gate is not enough on its own (#1917). A stream handed off just before the hold (a re-offer queued
+    /// behind a drain still running, #987) is still in the worker's queue, and drained after a migration has made its
+    /// row due it applies the waiting event before the test reads the converted row. So the stop also puts a marker
+    /// in the worker's queue behind everything already there and completes once the worker has finished the batch
+    /// that took it. With one drain consumer the worker takes its queue in order and finishes each batch before
+    /// taking the next, so everything handed off before the stop has then been processed.
+    /// </remarks>
+    public async Task StopHandOffsAsync(CancellationToken ct) {
+      await HandOff.HoldAsync();
+      var marker = (Guid)TrackedGuid.New();
+      var batchDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      // The worker records the marker as it takes it, before it processes the batch that holds it, on the same flow
+      // that raises the batch's end; the first batch end that finds the marker taken is that batch's.
+      void onBatchDone() {
+        if (WorkerDrain.Taken.Snapshot().Contains(marker)) {
+          batchDone.TrySetResult();
+        }
+      }
+      PerspectiveWorker.OnBatchCycleComplete += onBatchDone;
+      try {
+        await WorkerDrain.HandOffAsync(marker, ct);
+        await batchDone.Task.WaitAsync(_signalDeadline, ct);
+      } finally {
+        PerspectiveWorker.OnBatchCycleComplete -= onBatchDone;
+      }
     }
 
     /// <summary>Lets every hand-off <see cref="StopHandOffsAsync"/> held through.</summary>
@@ -650,15 +672,73 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
   /// rewrite. Open until <see cref="Hold"/>; <see cref="Release"/> lets every held hand-off through.
   /// </summary>
   private sealed class HandOffGate {
+    private readonly Lock _lock = new();
     private TaskCompletionSource? _held;
+    private TaskCompletionSource? _passed;
+    private int _passing;
 
-    public bool IsOpen => Volatile.Read(ref _held) is null;
+    /// <summary>
+    /// Holds the gate, and completes once no hand-off is part way through it: a hand-off that found the gate open
+    /// before the hold has reached the worker's queue when this completes, so nothing slips past a hold after it.
+    /// </summary>
+    public Task HoldAsync() {
+      lock (_lock) {
+        _held ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_passing == 0) {
+          return Task.CompletedTask;
+        }
+        _passed ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _passed.Task;
+      }
+    }
 
-    public void Hold() => Volatile.Write(ref _held, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+    public void Release() {
+      TaskCompletionSource? held;
+      lock (_lock) {
+        held = _held;
+        _held = null;
+      }
+      held?.TrySetResult();
+    }
 
-    public void Release() => Interlocked.Exchange(ref _held, null)?.TrySetResult();
+    /// <summary>Enters the gate for one hand-off, waiting while it is held.</summary>
+    public async ValueTask EnterAsync(CancellationToken ct) {
+      while (true) {
+        Task held;
+        lock (_lock) {
+          if (_held is null) {
+            _passing++;
+            return;
+          }
+          held = _held.Task;
+        }
+        await held.WaitAsync(ct);
+      }
+    }
 
-    public Task PassAsync(CancellationToken ct) => Volatile.Read(ref _held)?.Task.WaitAsync(ct) ?? Task.CompletedTask;
+    /// <summary>Enters the gate for one hand-off if it is open.</summary>
+    public bool TryEnter() {
+      lock (_lock) {
+        if (_held is not null) {
+          return false;
+        }
+        _passing++;
+        return true;
+      }
+    }
+
+    /// <summary>Leaves the gate once the hand-off is in the worker's queue (or failed to get there).</summary>
+    public void Exit() {
+      TaskCompletionSource? passed = null;
+      lock (_lock) {
+        _passing--;
+        if (_passing == 0) {
+          passed = _passed;
+          _passed = null;
+        }
+      }
+      passed?.TrySetResult();
+    }
   }
 
   /// <summary>The claim loop's side of the perspective work channel, passing each write through the gate.</summary>
@@ -666,11 +746,24 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     public System.Threading.Channels.ChannelReader<PerspectiveWork> Reader => inner.Reader;
 
     public async ValueTask WriteAsync(PerspectiveWork work, CancellationToken ct = default) {
-      await gate.PassAsync(ct);
-      await inner.WriteAsync(work, ct);
+      await gate.EnterAsync(ct);
+      try {
+        await inner.WriteAsync(work, ct);
+      } finally {
+        gate.Exit();
+      }
     }
 
-    public bool TryWrite(PerspectiveWork work) => gate.IsOpen && inner.TryWrite(work);
+    public bool TryWrite(PerspectiveWork work) {
+      if (!gate.TryEnter()) {
+        return false;
+      }
+      try {
+        return inner.TryWrite(work);
+      } finally {
+        gate.Exit();
+      }
+    }
 
     public void Complete() => inner.Complete();
   }
@@ -680,11 +773,24 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     public System.Threading.Channels.ChannelReader<Guid> Reader => inner.Reader;
 
     public async ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
-      await gate.PassAsync(cancellationToken);
-      await inner.WriteAsync(streamId, cancellationToken);
+      await gate.EnterAsync(cancellationToken);
+      try {
+        await inner.WriteAsync(streamId, cancellationToken);
+      } finally {
+        gate.Exit();
+      }
     }
 
-    public bool TryWrite(Guid streamId) => gate.IsOpen && inner.TryWrite(streamId);
+    public bool TryWrite(Guid streamId) {
+      if (!gate.TryEnter()) {
+        return false;
+      }
+      try {
+        return inner.TryWrite(streamId);
+      } finally {
+        gate.Exit();
+      }
+    }
 
     public bool IsInFlight(Guid streamId) => inner.IsInFlight(streamId);
 

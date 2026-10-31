@@ -967,6 +967,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buffers. The test now counts the event store's own block reads and sequential scans in the session's transaction
   statistics, puts its session through a reset on purpose, and checks that the measure sees a pass over the store
   (Fixes #1916)
+- **The stored-form recovery test no longer reads a row the recovery already rewrote.** It held the claim loop's
+  hand-offs before the stored-form migration and then read the converted row, but a stream handed off just before the
+  hold (a re-offer queued behind a drain still running) stayed in the worker's queue; drained after the migration had
+  made its row due, it applied the waiting event first, and the read found `Created` instead of `123`. Stopping the
+  hand-offs now waits for any hand-off part way through the gate, then puts a marker behind everything in the worker's
+  queue and completes once the worker has finished the batch that took it; a guard pauses the worker with a stream
+  queued and checks the stop waits for it (Fixes #1917)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of
