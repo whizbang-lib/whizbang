@@ -98,6 +98,8 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   /// <summary>Reports each array of records in the models a perspective projects, once per property.</summary>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AModelTwoPerspectivesProject_IsReportedOnceAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AModelFromAnotherAssembly_IsReportedAtThePerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnInterfaceExtendingAPerspectiveInterface_IsNotAPerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AStructPerspectivesModel_IsReportedAsync</tests>
   private static void _analyzePerspective(SymbolAnalysisContext context, ConcurrentDictionary<ISymbol, byte> reported) {
     var perspective = (INamedTypeSymbol)context.Symbol;
     if (perspective.TypeKind is not (TypeKind.Class or TypeKind.Struct)) {

@@ -325,4 +325,34 @@ public class PerspectiveModelArrayAnalyzerTests {
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("LedgerProjection");
     await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("'Tags'");
   }
+
+  /// <summary>
+  /// An interface that extends a perspective interface projects nothing itself, so its model is not reported through
+  /// it; the type that implements it is the perspective.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AnInterfaceExtendingAPerspectiveInterface_IsNotAPerspectiveAsync() {
+    var source = _source("  public Tag[] Tags { get; set; } = [];").Replace(
+      "public class LedgerProjection : IPerspectiveFor<LedgerModel, Noted> {\n  public LedgerModel Apply(LedgerModel currentData, Noted eventData) => currentData;\n}",
+      "public interface ILedgerProjection : IPerspectiveFor<LedgerModel, Noted> { }",
+      StringComparison.Ordinal);
+
+    await Assert.That(source).Contains("public interface ILedgerProjection")
+      .Because("the fixture must hold the interface and no implementing type, or the silence proves nothing");
+    await Assert.That(await _whiz200Async(source)).IsEmpty();
+  }
+
+  /// <summary>A struct can be a perspective too (a record struct included), so its model is reported.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("public struct LedgerProjection")]
+  [Arguments("public readonly record struct LedgerProjection")]
+  public async Task AStructPerspectivesModel_IsReportedAsync(string declaration) {
+    var source = _source("  public Tag[] Tags { get; set; } = [];").Replace(
+      "public class LedgerProjection", declaration, StringComparison.Ordinal);
+
+    await Assert.That(source).Contains(declaration);
+    await Assert.That(await _whiz200Async(source)).Count().IsEqualTo(1);
+  }
 }
