@@ -110,8 +110,13 @@ public static class MappedPathDiscovery {
       return;
     }
 
-    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()
-        .Where(PolymorphicModelDiscovery.IsAnalyzableProperty)) {
+    // A guard rather than Where(IsAnalyzableProperty): the method group would share one cached delegate, and its
+    // first-call branch, with _findUnmappable, so which walk ran first in a process decided what coverage this line
+    // showed. Generators prefer the allocation-free loop anyway (see .editorconfig, S3267).
+    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
+      if (!PolymorphicModelDiscovery.IsAnalyzableProperty(property)) {
+        continue;
+      }
       var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
       var nested = _walkedType(property, here, found);
       if (nested is not null) {
