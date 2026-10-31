@@ -5,9 +5,9 @@ namespace Whizbang.Core.Perspectives;
 
 #pragma warning disable S2326 // Unused type parameters should be removed
 #pragma warning disable S2436 // Reduce the number of type parameters in the generic type
-// TModel and TEvent1-TEvent20 are intentionally declared at the interface level to document
+// TModel and TEvent1-TEvent50 are intentionally declared at the interface level to document
 // which model and event types are valid. The runtime implementation enforces type constraints.
-// Supporting up to 20 event types allows complex event handling scenarios while maintaining type safety.
+// Supporting up to 50 event types allows complex event handling scenarios while maintaining type safety.
 
 /// <summary>
 /// Base marker interface for single-stream perspectives.
