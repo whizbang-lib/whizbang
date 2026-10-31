@@ -752,6 +752,11 @@ release. Until then, packs still compare with the previous stable and the old su
 so nothing fails; the PR only stops them from piling up. From 1.0 a break needs a new major as well as a
 suppression.
 
+When you check the move locally, start from a clean `obj`: package validation is incremental, and its
+`Microsoft.NET.ApiCompat.ValidatePackage.semaphore` under `obj/Release/<tfm>/` does not track the baseline
+version, so re-packing an already-packed tree after changing only the baseline skips validation and reports
+success. CI always starts clean.
+
 ## Gotchas & invariants (for future edits)
 
 - **Never** make the printed/preview version differ from what publishes. If you change one version
