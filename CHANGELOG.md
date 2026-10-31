@@ -960,6 +960,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database of the shared test cluster (every advisory lock holder, and every holder of one key) now end only their own
   database's, which is what made three tests in other shards fail with that exception when the shards ran together;
   a guard fails any test whose backend termination does not name its database or a backend it was handed (Fixes #1915)
+- **The digest-epoch lane-discovery cost test no longer fails when several test processes share the cluster.** It
+  measured the closure call's whole shared buffers, which include every catalog page a session reads to rebuild its
+  caches; test processes on one machine share one PostgreSQL cluster, their schema passes overflow its invalidation
+  queue, and a session that falls behind is reset, so a call reading the same few store pages counted about 1,570
+  buffers. The test now counts the event store's own block reads and sequential scans in the session's transaction
+  statistics, puts its session through a reset on purpose, and checks that the measure sees a pass over the store
+  (Fixes #1916)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of
