@@ -81,7 +81,7 @@ public sealed partial class PostgresTableArchiveStore(
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
       "SELECT event_id, stream_id, version, event_type, event_data::text, metadata::text, scope::text, " +
-      "aggregate_id, aggregate_type, created_at, flags " +
+      "aggregate_id, aggregate_type, created_at, flags, commit_sequence, origin_service_id, origin_commit_sequence " +
       $"FROM {_prefix}{ARCHIVE_TABLE} WHERE stream_id = $1 AND version >= $2 ORDER BY version",
       connection);
     command.Parameters.AddWithValue(streamId);
@@ -100,6 +100,10 @@ public sealed partial class PostgresTableArchiveStore(
         AggregateType = _textOrNull(reader, 8),
         CreatedAt = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
         Flags = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+        // #1738: the event's commit positions, so a read through the archive orders it with the hot events as before.
+        CommitSequence = reader.IsDBNull(11) ? null : reader.GetInt64(11),
+        OriginServiceId = reader.IsDBNull(12) ? null : reader.GetGuid(12),
+        OriginCommitSequence = reader.IsDBNull(13) ? null : reader.GetInt64(13),
       };
     }
   }

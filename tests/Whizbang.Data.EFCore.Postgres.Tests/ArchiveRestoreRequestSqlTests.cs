@@ -160,6 +160,20 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
       .Because("the restored stream holds version 1 again, and the redriven event takes the next version");
   }
 
+  [Test]
+  public async Task Purge_RemovesTheStreamsRestoreRequest_WithItsLifecycleRowAsync() {
+    await using var conn = await _openAsync();
+    var purged = await _autoRestoreStreamWithADeadLetterAsync(conn);
+    var kept = await _autoRestoreStreamWithADeadLetterAsync(conn);
+
+    await _executeAsync(conn, "SELECT * FROM wh_purge_streams(ARRAY[@s]::uuid[], false, gen_random_uuid(), 0, 'test', 'purge')", ("s", purged));
+
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_archive_restore_requests WHERE stream_id = @s", ("s", purged)))
+      .IsEqualTo(0L).Because("a purged stream is never restored, so its request goes with its lifecycle row");
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_archive_restore_requests WHERE stream_id = @s", ("s", kept)))
+      .IsEqualTo(1L);
+  }
+
   // ===== The policy table =====
 
   [Test]

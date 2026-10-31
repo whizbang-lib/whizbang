@@ -33,7 +33,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// The server's execution time from <c>EXPLAIN ANALYZE</c> is reported beside them and gates nothing.
 /// </para>
 /// <para>
-/// Measured numbers are recorded on the docs page (archive-store#what-the-append-policy-costs).
+/// Measured (three alternating rounds, medians): existing streams (50 streams, 10 events each) 32,211 blocks and 64.4 ms with 266's probe, 32,237 blocks and 61.8 ms with 271's; new streams (500, one event each) 36,578 blocks and 68.4 ms before, 36,306 blocks and 67.3 ms after; the probe itself reads 2 blocks for either shape. The whole-chain differences are within the round-to-round spread. Recorded on the docs page
+/// (archive-store#what-the-append-policy-costs).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#what-the-append-policy-costs</docs>

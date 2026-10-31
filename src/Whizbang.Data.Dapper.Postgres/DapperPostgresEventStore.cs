@@ -28,7 +28,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 #pragma warning disable CS9113 // Primary constructor parameters are unread - retained for backward compatibility
-public class DapperPostgresEventStore(
+public partial class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions,
@@ -209,7 +209,8 @@ public class DapperPostgresEventStore(
       es.event_type AS EventType,
       eb.event_data::text AS EventData,
       eb.metadata::text AS Metadata,
-      es.scope::text AS Scope
+      es.scope::text AS Scope,
+      es.version AS Version
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
@@ -220,7 +221,8 @@ public class DapperPostgresEventStore(
   /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
-    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope
+    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
+           es.version AS Version
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId
@@ -389,7 +391,8 @@ public class DapperPostgresEventStore(
       return @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId
@@ -399,7 +402,8 @@ public class DapperPostgresEventStore(
     return @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
@@ -449,8 +453,49 @@ public class DapperPostgresEventStore(
       ScopeJson = row.Scope
     };
 
-    return _adapter.FromJsonb<TMessage>(jsonb);
+    var envelope = _adapter.FromJsonb<TMessage>(jsonb);
+    // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+    // without asking the archive.
+    envelope.LocalStreamVersion = row.Version;
+    return envelope;
   }
+
+  /// <summary>
+  /// Decodes stored rows the way this store's polymorphic read does (#1738): the archive seam decodes archived rows with
+  /// it, so an archived event comes back exactly as the hot read returns it. A row of a type the reader does not fold is
+  /// skipped, as the drain skips it; a row that cannot be read is logged and skipped, so one bad row never fails the batch.
+  /// </summary>
+  /// <param name="streamEvents">The stored rows.</param>
+  /// <param name="eventTypes">The event types the reader folds.</param>
+  /// <returns>The decoded events, in the order given, each carrying its row's commit sequence.</returns>
+  /// <docs>fundamentals/events/archive-store#read-through</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_DecodesAStoredRow_AndSkipsATypeTheReaderDoesNotFoldAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowThatCannotBeRead_IsSkipped_AndTheRestAreKeptAsync</tests>
+  public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    ArgumentNullException.ThrowIfNull(streamEvents);
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
+    foreach (var raw in streamEvents) {
+      if (!EventTypeMatchingHelper.TryResolveType(typeMap, raw.EventType, out var concreteType)) {
+        continue;
+      }
+      try {
+        var jsonb = new JsonbPersistenceModel { DataJson = raw.EventData, MetadataJson = raw.Metadata ?? "{}", ScopeJson = raw.Scope };
+        var eventData = _deserializeEventData(jsonb, concreteType);
+        var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
+        StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
+        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+        envelope.LocalCommitSequence = raw.CommitSequence;
+        results.Add(envelope);
+      } catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+        LogStoredRowUnreadable(logger, ex, raw.EventId, raw.EventType);
+      }
+    }
+    return results;
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Stored event {EventId} of type {EventType} could not be read and was skipped")]
+  static partial void LogStoredRowUnreadable(ILogger logger, Exception exception, Guid eventId, string eventType);
 
   /// <summary>
   /// Deserializes an EventRow into a polymorphic MessageEnvelope using type resolution from the type map.

@@ -153,7 +153,12 @@ internal static class WorkCoordinatorFlushHelper {
       }
 
       if (outboxToStore.Length > 0) {
-        await coordinator.StoreOutboxMessagesAsync(outboxToStore, partitionCount, ct).ConfigureAwait(false);
+        // #1738: a flush its caller awaits, refused because a stream it appends to is archived under a type that restores
+        // on append, restores the stream and stores the same write once more. The archive store is resolved only then.
+        await Whizbang.Core.Archival.ArchivedStreamAutoRestore.RunAsync(
+          () => coordinator.StoreOutboxMessagesAsync(outboxToStore, partitionCount, ct),
+          () => _archiveStore(ctx, scopedProvider),
+          ct).ConfigureAwait(false);
       }
 
       if (ctx.InboxMessages.Length > 0) {
@@ -229,6 +234,19 @@ internal static class WorkCoordinatorFlushHelper {
     }
 
     return _empty;
+  }
+
+  // The archive store an AutoRestore refusal restores through: the flush scope's, or one resolved from a scope of its own
+  // on the coordinator-supplied path. The store is a singleton, so the scope that resolved it can end at once.
+  private static Whizbang.Core.Archival.IArchiveStore? _archiveStore(FlushContext ctx, IServiceProvider? scopedProvider) {
+    if (scopedProvider is not null) {
+      return scopedProvider.GetService<Whizbang.Core.Archival.IArchiveStore>();
+    }
+    if (ctx.ScopeFactory is null) {
+      return null;
+    }
+    using var scope = ctx.ScopeFactory.CreateScope();
+    return scope.ServiceProvider.GetService<Whizbang.Core.Archival.IArchiveStore>();
   }
 
   private static int _resolvePartitionCount(IServiceProvider? scopedProvider, WorkCoordinatorOptions fallback) {

@@ -264,7 +264,43 @@ duty) deletes them with confirm-then-clear and backoff retries. Open: no access-
 
 ### S9. Read-through, restore, and the append-to-archived policy
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S7.
+**Status (2026-10-30):** implemented on `feat/1738-archive-read-through` (#1738), migration
+`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, also reserved, are unused). Owner decisions of 2026-10-30 on
+#1738, as built:
+
+- **Read-through by gap detection** (`ArchiveAwareEventStoreDecorator`, innermost in the event store's decorator chain
+  on both drivers when an `IArchiveStore` is registered; `Whizbang:Archive:ReadThrough`, default `true`). A read from the
+  start (a sequence read from 0 or 1, an id or between-read with no starting event, the rebuild) asks the archive only
+  when the hot read shows a gap (no hot event, or a first hot version above 1); a resumed read never does. Every driver
+  read now carries `LocalStreamVersion`; archived rows are decoded by the driver's `DeserializeStreamEvents` (now
+  implemented on the Dapper store) and carry their commit positions (`ArchivedEvent.CommitSequence`,
+  `OriginServiceId`, `OriginCommitSequence`). The readers that seemed to bypass `IEventStore` (the replay reader, the
+  collective replay applier, the runner's rewind and rebuild) all resolve the decorated store, so they read through.
+  Measured: a resumed read issues the same statements as before; a from-the-start read of an archived stream one more.
+- **Archive rules** in `wh_archive_stream`: a prefix through a version below 1 is refused (`not_past_first_version`);
+  one reaching any perspective's newest snapshot is refused (`snapshot_in_range`, refused rather than clamped so the
+  caller gets exactly what it asked for or nothing).
+- **Snapshots record archived data**: `wh_perspective_snapshots.archived_through_version`, set on the covered snapshots
+  by every archive, cleared by every restore; the rewind reads through the archive from a marked snapshot
+  (`IEventStore.ReadPolymorphicThroughArchiveAsync`, `IPerspectiveSnapshotStore.GetSnapshotFloorAsync`); a marked snapshot
+  with no version is not used (full replay through the gap).
+- **Append-to-archived policy** per stream type (`Whizbang:StreamLifecycle:Types:<StreamType>:AppendToArchived`, default
+  `Refuse`; `NewGeneration` is not an enum value and fails startup naming #1734), stored in `wh_stream_type_policies`
+  on every maintenance tick before the idle gate. 262's whole-batch `WHA01` trigger is dropped; every write path refuses
+  per event after the seal's check, one probe of the new `idx_stream_lifecycle_closed` (sealed or archived streams)
+  replacing the seal's probe. Refuse: `StreamArchivedException` (`WHA01`) / dead letter `StreamArchived` (26).
+  AutoRestore: inline restore and one retry (`WHA02`) for direct and awaited writes; background writes dead-lettered
+  `AwaitingRestore` (27), held by a `wh_archive_restore_requests` row (Pending, Restoring, Restored, Failed) queued in the
+  same transaction; `ArchiveRestoreRequestStep` (maintenance, both drivers) restores through `IArchiveStore`; any
+  restore completes the request and makes its dead letters due for the recovery worker (policy `AfterRestore`); a
+  failure holds them for review with the error.
+
+Left for later: NewGeneration (#1734, S5); the Dapper driver has no dead-letter recovery service, so on Dapper an
+`AwaitingRestore` dead letter becomes due but nothing redrives it until that service exists. Docs:
+`archive-store.md#read-through`, `#appending-to-an-archived-stream`, `#restore-requests`, `rewind.md`, `rebuild.md`
+(docs branch `docs/1738`).
+
+Original slice text:
 
 - **Change.** `IEventStore.ReadAsync` (`IEventStore.cs:177,189`), rewind and
   `PerspectiveRebuilder` consult the tombstone and stream from the archive when the requested range

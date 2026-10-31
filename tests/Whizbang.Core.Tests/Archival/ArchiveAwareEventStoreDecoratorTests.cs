@@ -111,6 +111,21 @@ public class ArchiveAwareEventStoreDecoratorTests {
   }
 
   [Test]
+  public async Task AReadFromTheStart_OfALegacyStreamThatStartsAtZero_ArchivedThroughOne_ReadsThroughTheGapAsync() {
+    // A stream appended before new streams started at version 1 begins at 0; a prefix archive takes 0 and 1.
+    var archive = new ArchiveFake();
+    archive.Add(_stream, 0, 1);
+    var hot = new HotStore();
+    hot.Add(_stream, 2, 3);
+    var store = new ArchiveAwareEventStoreDecorator(hot, archive, readThrough: true);
+
+    await Assert.That((await _listAsync(store.ReadPolymorphicAsync(_stream, null, _types))).Select(_n)).IsEquivalentTo([0, 1, 2, 3]);
+    await Assert.That((await _listAsync(store.ReadAsync<ArchiveProbeEvent>(_stream, fromSequence: 0))).Select(_n)).IsEquivalentTo([0, 1, 2, 3]);
+    await Assert.That(archive.Reads).IsEqualTo(2)
+      .Because("a first hot version past 1 is a gap whether the stream started at 0 or at 1");
+  }
+
+  [Test]
   public async Task AReadFromTheStart_OfAStreamArchivedWhole_ReturnsTheWholeArchiveAsync() {
     var hot = new HotStore();
     var archive = new ArchiveFake();

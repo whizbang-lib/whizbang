@@ -198,6 +198,12 @@ public partial class ScopedWorkCoordinatorStrategy(
       // the refusal; a sealed stream refuses the same write every time, so it is withdrawn as above.
       _queues.Clear();
       throw;
+    } catch (Whizbang.Core.Archival.StreamArchivedException) {
+      // #1738: refused because a stream it appends to is archived, under Refuse, or under AutoRestore once the restore
+      // and the one retry did not put it back. The same write is refused until someone restores the stream, so it is
+      // withdrawn as above.
+      _queues.Clear();
+      throw;
     }
 
     // Clear queues after successful flush

@@ -265,7 +265,9 @@ public abstract class DapperEventStoreBase : IEventStore {
       MessageId = MessageId.From(messageId),
       Payload = payload,
       Hops = hops,
-      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #1738: the stream version, when the read selects it, which is how the archive seam sees a gap at a stream's start.
+      LocalStreamVersion = row.Version,
     };
   }
 

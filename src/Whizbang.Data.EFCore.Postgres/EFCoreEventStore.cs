@@ -256,7 +256,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -304,7 +307,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -495,7 +501,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 
@@ -571,7 +578,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 

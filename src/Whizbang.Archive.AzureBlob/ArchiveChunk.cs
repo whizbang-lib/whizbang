@@ -41,6 +41,9 @@ internal sealed record ArchiveChunkLine(
       AggregateType = AggregateType,
       CreatedAt = CreatedAt,
       Flags = Flags,
+      CommitSequence = CommitSequence,
+      OriginServiceId = OriginServiceId,
+      OriginCommitSequence = OriginCommitSequence,
     };
 }
 
