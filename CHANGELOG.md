@@ -938,12 +938,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Gitleaks (MIT) as a pinned, checksum-verified release binary over the full git history, failing on any
   finding; it matches patterns rather than verifying credentials with their provider, so reviewed placeholders
   are listed by exact value in `.github/gitleaks.toml` and single historical findings by fingerprint in
-  `.github/gitleaksignore`, and an inline `gitleaks:allow` silences nothing. A new pipeline-script check
-  (`.github/scripts/Test-PipelineToolLicenses.ps1`, run by `Test · Pipeline scripts`) fails a pull request that
-  uses an action, a dotnet tool or a downloaded release binary not listed with its license in
-  `.github/pipeline-tool-licenses.txt`; MIT, Apache-2.0, BSD and PostgreSQL pass, anything else needs a
-  reviewed exception, and strong copyleft (AGPL, GPL, SSPL) never passes, in that list or on the dependency
-  review allow list.
+  `.github/gitleaksignore` (two example Pushover recipient keys from history, accepted, #1938), and an inline
+  `gitleaks:allow` silences nothing. A new pipeline-script check (`.github/scripts/Test-PipelineToolLicenses.ps1`,
+  run by `Test · Pipeline scripts`) fails a pull request that uses an action, a dotnet tool, a downloaded release
+  binary or a container image (`container:`, `services:`, `uses: docker://`, `docker run`) not listed with its
+  license in `.github/pipeline-tool-licenses.txt`; MIT, Apache-2.0, BSD and PostgreSQL pass, anything else needs
+  a reviewed exception. Strong copyleft (AGPL, GPL, SSPL) never passes on the dependency review allow list, and in
+  the pipeline only for a container image run unmodified in CI that the script names: today only the REUSE image
+  behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
