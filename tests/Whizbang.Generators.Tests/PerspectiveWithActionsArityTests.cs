@@ -62,9 +62,10 @@ public class PerspectiveWithActionsArityTests {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "WidePerspectiveRunner.g.cs");
     await Assert.That(runner).IsNotNull();
+    var iface = $"global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<global::TestNamespace.Model, {string.Join(", ", events.Select(static e => $"global::TestNamespace.Evt{e}"))}>";
     foreach (var i in events) {
       await Assert.That(runner).Contains($"case global::TestNamespace.Evt{i} typedEvent:");
-      await Assert.That(runner).Contains($"var result_Evt{i} = perspective.Apply(currentModel!, typedEvent);");
+      await Assert.That(runner).Contains($"var result_Evt{i} = (({iface})perspective).Apply(currentModel!, typedEvent);");
     }
   }
 }

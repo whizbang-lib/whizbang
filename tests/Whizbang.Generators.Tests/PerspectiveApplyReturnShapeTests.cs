@@ -160,16 +160,14 @@ public class PerspectiveApplyReturnShapeTests {
   }
 
   /// <summary>
-  /// The generator keeps classifying the shapes WHIZ115 rejects. They build only when the error is suppressed, and then
-  /// the runner still wraps them as before, so suppressed code keeps its behavior and the generator never fails on it.
+  /// A shape only a suppressed WHIZ115 allows is never what runs: the runner calls Apply through the interface that
+  /// lists the event (#1936), so the interface's implementation runs and the class's own method is ignored.
   /// </summary>
   [Test]
-  [Arguments("public ModelAction Apply(Order current, OrderStatusChanged @event) => ModelAction.Purge;",
-    "return (currentModel, perspective.Apply(currentModel!, typedEvent));")]
-  [Arguments("public (Order?, ModelAction) Apply(Order current, OrderStatusChanged @event) => (null, ModelAction.Purge);",
-    "return perspective.Apply(currentModel!, typedEvent);")]
+  [Arguments("public ModelAction Apply(Order current, OrderStatusChanged @event) => ModelAction.Purge;")]
+  [Arguments("public (Order?, ModelAction) Apply(Order current, OrderStatusChanged @event) => (null, ModelAction.Purge);")]
   [RequiresAssemblyFiles]
-  public async Task AShapeOnlyASuppressedWhiz115Allows_StillGeneratesItsRunnerCaseAsync(string apply, string expectedCase) {
+  public async Task AShapeOnlyASuppressedWhiz115Allows_IsNeverWhatTheRunnerCallsAsync(string apply) {
     var source = PREAMBLE + $$"""
         public class OrderProjection : IPerspectiveFor<Order, OrderStatusChanged> {
           {{apply}}
@@ -180,7 +178,7 @@ public class PerspectiveApplyReturnShapeTests {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "OrderProjectionRunner.g.cs");
 
-    await Assert.That(runner).IsNotNull();
-    await Assert.That(runner).Contains(expectedCase);
+    await Assert.That(runner).Contains(
+      "return (((global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestApp.Order, global::TestApp.OrderStatusChanged>)perspective).Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
   }
 }

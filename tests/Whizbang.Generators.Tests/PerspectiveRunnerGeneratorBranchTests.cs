@@ -79,8 +79,7 @@ public class PerspectiveRunnerGeneratorBranchTests {
   }
 
   /// <summary>
-  /// An Apply implemented explicitly is not found by its name, so the generator has no return
-  /// shape for its event and uses the default: the method returns the model.
+  /// An Apply implemented explicitly is called through the interface that declares it (#1936), which returns the model.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -106,12 +105,12 @@ public class PerspectiveRunnerGeneratorBranchTests {
       """, "ExplicitPerspective");
 
     await Assert.That(runner).Contains(
-      "return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+      "return (((global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestNamespace.OrderModel, global::TestNamespace.OrderCreated>)perspective).Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
   }
 
   /// <summary>
-  /// When some Apply methods are visible and one is explicit, the visible ones keep their shape
-  /// and the explicit one falls back to returning the model.
+  /// Explicit and implicit implementations are called the same way: through the interface that lists the event, which
+  /// declares the return the case unpacks (#1936).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -135,9 +134,9 @@ public class PerspectiveRunnerGeneratorBranchTests {
         [StreamId] public Guid Id { get; init; }
       }
 
-      public class MixedPerspective : IPerspectiveFor<OrderModel, OrderCreated, OrderDeleted> {
+      public class MixedPerspective : IPerspectiveFor<OrderModel, OrderCreated>, IPerspectiveWithActionsFor<OrderModel, OrderDeleted> {
         OrderModel IPerspectiveFor<OrderModel, OrderCreated>.Apply(OrderModel currentData, OrderCreated @event) => currentData;
-        public ModelAction Apply(OrderModel currentData, OrderDeleted @event) => ModelAction.Delete;
+        public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeleted @event) => ModelAction.Delete;
       }
       """, "MixedPerspective");
 
@@ -148,10 +147,10 @@ public class PerspectiveRunnerGeneratorBranchTests {
     var created = runner[createdAt..deletedAt];
     var deleted = runner[deletedAt..];
 
-    await Assert.That(deleted).Contains("return (currentModel, perspective.Apply(currentModel!, typedEvent));")
-      .Because("the visible Apply returns an action, so the current model is kept and its action returned");
+    await Assert.That(deleted).Contains("var result_OrderDeleted = ((global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<global::TestNamespace.OrderModel, global::TestNamespace.OrderDeleted>)perspective).Apply(currentModel!, typedEvent);")
+      .Because("the with-actions interface declares ApplyResult, whose model and action the case unpacks");
     await Assert.That(created).Contains(
-      "return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+      "return (((global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestNamespace.OrderModel, global::TestNamespace.OrderCreated>)perspective).Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
   }
 
   /// <summary>

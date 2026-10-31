@@ -111,40 +111,32 @@ internal enum StreamIdErrorType {
 }
 
 /// <summary>
-/// Maps an event type to the return type of its Apply method.
-/// Used for generating correct handling code for different return patterns.
+/// How the runner calls one event's Apply: through the interface that lists the event, and what that interface
+/// declares Apply returns (#1936).
 /// </summary>
 /// <param name="EventTypeName">Fully qualified event type name</param>
-/// <param name="ReturnType">Type of return value from Apply method</param>
+/// <param name="ReturnType">The return the interface declares for the event's Apply</param>
+/// <param name="InterfaceName">The fully qualified interface the runner casts the perspective to before calling Apply</param>
 internal sealed record EventReturnTypeInfo(
     string EventTypeName,
-    ApplyReturnType ReturnType
+    ApplyReturnType ReturnType,
+    string InterfaceName
 );
 
 /// <summary>
-/// Specifies the return type pattern of an Apply method for code generation.
+/// The return an interface declares for Apply, which decides how the runner unpacks it.
 /// </summary>
 /// <remarks>
-/// <see cref="Model"/>, <see cref="NullableModel"/> and <see cref="ApplyResult"/> are the shapes the interfaces declare.
-/// <see cref="Action"/> and <see cref="Tuple"/>, and an <see cref="ApplyResult"/> for an <c>IPerspectiveFor</c> event,
-/// are errors since #1936 (WHIZ115). They are still classified so code that suppresses the error keeps its runner and
-/// the generator never fails on it.
+/// The runner calls Apply through the interface (#1936), so the result is always the interface's declared return:
+/// the model for <c>IPerspectiveFor</c> and <c>IGlobalPerspectiveFor</c>, <c>ApplyResult&lt;TModel&gt;</c> for
+/// <c>IPerspectiveWithActionsFor</c>. A class's own <c>Apply</c> with another return (a bare <c>ModelAction</c>, the
+/// tuple) is never what runs, and WHIZ115 reports it.
 /// </remarks>
-/// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs:AShapeOnlyASuppressedWhiz115Allows_StillGeneratesItsRunnerCaseAsync</tests>
 internal enum ApplyReturnType {
-  /// <summary>Returns TModel - standard update pattern</summary>
+  /// <summary>The interface's Apply returns TModel: the model, with no action.</summary>
   Model,
 
-  /// <summary>Returns TModel? - nullable means null = no change</summary>
-  NullableModel,
-
-  /// <summary>Returns ModelAction - action only (Delete, Purge)</summary>
-  Action,
-
-  /// <summary>Returns (TModel?, ModelAction) - tuple with optional model and action</summary>
-  Tuple,
-
-  /// <summary>Returns ApplyResult&lt;TModel&gt; - full flexibility wrapper</summary>
+  /// <summary>The interface's Apply returns ApplyResult&lt;TModel&gt;: a model and an action.</summary>
   ApplyResult
 }
 
