@@ -401,6 +401,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A rewind of an `[OverwriteOnly]` perspective applies only the stream's last event.** Some perspectives fold
+  nothing: each `Apply` builds the row from its event alone, so the row is the last event's. The runner did not know,
+  and a late event, an event below the row's position, a refused write or a row waking after eviction replayed the whole
+  stream, holding every event's body in memory to produce a row only the last one decides. Streams of hundreds of large
+  events replayed side by side were enough to exhaust a service's memory. A perspective now declares it with
+  `[OverwriteOnly]` (never inferred). Its rewind reads the stream as before but keeps only the last event in the order a
+  full replay folds it (origin order, stream order, commit order or id order, chosen the same way; the new
+  `LastInReplayOrder`), applies that one to an empty model, and writes through the same write the full replay ends with,
+  snapshot included. The events before it are counted, never held or applied, and no receptor runs for them: a rewind
+  rebuilds state, it does not re-deliver events. The rewind folds the stream in full instead, and writes the same row a
+  full replay always wrote, when the last event cannot decide the row alone: the stream holds an event whose `Apply`
+  returns an action or an `ApplyResult` (it can purge), the last `Apply` returns no model or throws, or the stream starts
+  purged. Each catch-up pass over events appended during the rewind applies its own last event. The new analyzer
+  warning WHIZ108 reports an `Apply` of a marked perspective that reads its current model (Fixes #1869)
+- **An `Apply` can tell a stream's first event from the event itself: `ApplyContext.Current.IsFirstEventInStream`.**
+  The runner never passes `Apply` a null model (a stream with no row gets an empty one), so `current is null` never
+  detected a stream's first event, and row state is the wrong signal anyway: a purge, an eviction, a rebuild or a replay
+  changes it. The new fact is decided by the event's position in its stream, so a live apply, a rewind, a rebuild and a
+  replay reach the same answer. A stream's first event is the one at version 1, or at version 0 for a stream whose
+  numbering began there (a version-1 event of a stream that also holds a version 0 is not first). Every read a
+  perspective folds from carries it (`MessageEnvelope.IsFirstInLocalStream`): the polymorphic read on both Postgres
+  drivers and the in-memory store, and the live drain, whose `get_stream_events` returns `out_first_in_stream`
+  (migration 264, one unique-index probe per stream, made for version-1 rows only; `StreamEventData.IsFirstInStream`).
+  A store that does not record stream positions reports no first event. `ApplyContext.Enter` sets the fact for a unit
+  test that calls an `Apply` directly. The new analyzer warning WHIZ107 reports an `Apply` that tests its current model
+  for null (`is null`, `is not null`, `== null`, `!= null`) and points at the new fact (Fixes #1878)
 - **A saga can end in one commit or rollback signal (#1613).** A `[Saga]` marked `[SignalsOutcome]` publishes exactly
   one `SagaCommittedEvent` or `SagaRolledBackEvent` per run on its own stream, whichever path ends it: `Completed`
   commits; `Failed`, `Abandoned` and (by default) `CompletedWithFailures` roll back, the last overridable with
@@ -572,6 +598,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A new stream starts at version 1 on every write path (#1913).** A direct append (`IEventStore.AppendAsync`: system
+  events, compaction, direct use) numbered a stream it created from 0, while the outbox and inbox paths number from 1,
+  and the in-memory and Sqlite stores also started at 0. Every path now starts a new stream at 1: migration 267 changes
+  `wh_append_event` (the 266 definition otherwise unchanged) to insert at `COALESCE(MAX(version), 0) + 1` on both
+  Postgres drivers, and the in-memory and Sqlite stores follow. **Contract change:** the event store contract now
+  expects a new stream's sequences to run 1, 2, 3 (it expected 0, 1, 2), so `GetLastSequenceAsync` after three appends
+  returns 3 and `ReadAsync(fromSequence: 3)` returns the third event; a stream with no events still reports -1. Existing
+  streams keep their numbering: a stream that began at 0 continues from its highest version, and
+  `ApplyContext.Current.IsFirstEventInStream` still names its version 0 as its first event. The ledger records
+  migrations by file name, so a database that already applied 268 and 269 applies 267 when it arrives (Fixes #1913)
 - **A dispatch made before the migration completes waits for it instead of being refused.** A send, publish,
   local invoke or cascade that arrives while the schema is not ready used to fail at once with
   `WhizbangNotReadyException: dispatch refused: the schema is not ready (Migrate has not completed)`, so a startup seed

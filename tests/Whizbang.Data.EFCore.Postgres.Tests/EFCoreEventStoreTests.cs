@@ -118,9 +118,10 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       .ToListAsync();
 
     await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events[0].Version).IsEqualTo(0);
-    await Assert.That(events[1].Version).IsEqualTo(1);
-    await Assert.That(events[2].Version).IsEqualTo(2);
+    // A new stream starts at version 1 on every write path (#1913).
+    await Assert.That(events[0].Version).IsEqualTo(1);
+    await Assert.That(events[1].Version).IsEqualTo(2);
+    await Assert.That(events[2].Version).IsEqualTo(3);
   }
 
   [Test]
@@ -220,8 +221,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     // Act
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
 
-    // Assert
-    await Assert.That(lastSequence).IsEqualTo(4);
+    // Assert - five events on a new stream run 1..5 (#1913)
+    await Assert.That(lastSequence).IsEqualTo(5);
   }
 
   /// <summary>
@@ -885,7 +886,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var records = await context.Set<EventStoreRecord>().Where(e => e.StreamId == streamId).ToListAsync();
     await Assert.That(records).Count().IsEqualTo(1);
     await Assert.That(records[0].StreamId).IsEqualTo(streamId);
-    await Assert.That(records[0].Version).IsEqualTo(0);
+    await Assert.That(records[0].Version).IsEqualTo(1);  // a new stream starts at version 1 (#1913)
   }
 
   [Test]
@@ -1061,13 +1062,13 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       await eventStore.AppendAsync(streamId, envelope);
     }
 
-    // Act - Read from sequence 3 onwards
+    // Act - Read from sequence 4 onwards (a new stream starts at 1, #1913)
     var events = new List<MessageEnvelope<OrderCreatedEvent>>();
-    await foreach (var evt in eventStore.ReadAsync<OrderCreatedEvent>(streamId, fromSequence: 3)) {
+    await foreach (var evt in eventStore.ReadAsync<OrderCreatedEvent>(streamId, fromSequence: 4)) {
       events.Add(evt);
     }
 
-    // Assert - Should return events at sequence 3 and 4
+    // Assert - Should return events at sequence 4 and 5
     await Assert.That(events).Count().IsEqualTo(2);
     await Assert.That(events[0].Payload.CustomerName).IsEqualTo("Customer 3");
     await Assert.That(events[1].Payload.CustomerName).IsEqualTo("Customer 4");

@@ -26,7 +26,8 @@ public interface IEventStore {
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.
-  /// Events are ordered by sequence number within each stream.
+  /// Events are ordered by sequence number within each stream. A new stream starts at sequence 1, as on the outbox and
+  /// inbox paths; an existing stream continues from its highest sequence, whatever it started at (#1913).
   /// Generic for AOT compatibility - allows compile-time type information for JSON serialization.
   /// </summary>
   /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
@@ -38,6 +39,7 @@ public interface IEventStore {
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ANewStream_StartsAtVersionOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>

@@ -241,6 +241,33 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
       .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }
 
+  /// <summary>
+  /// The read says which event is the first in its stream, from the event's position (#1878): version 1, or version 0
+  /// for a stream whose numbering began there. A version-1 event of a stream that also holds a version 0 is not first,
+  /// even when the read starts after the version 0 and never returns it.
+  /// </summary>
+  [Test]
+  [Arguments(0)]
+  [Arguments(1)]
+  public async Task ReadPolymorphicAsync_MarksOnlyTheEventAtTheStreamsFirstPositionAsFirstAsync(int firstVersion) {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var ids = new List<Guid>();
+    for (var i = 0; i < 3; i++) {
+      var eventId = (Guid)TrackedGuid.New();
+      ids.Add(eventId);
+      await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, $"e{i}"), _metadataJson(eventId),
+        version: firstVersion + i, eventId: eventId);
+    }
+
+    var whole = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)]);
+    var afterFirst = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], ids[0]);
+
+    await Assert.That(whole.Select(e => e.IsFirstInLocalStream)).IsEquivalentTo([true, false, false], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(afterFirst.Select(e => e.IsFirstInLocalStream)).IsEquivalentTo([false, false], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a version-1 event of a stream that also holds a version 0 is not first, read alone or not");
+  }
+
   // ========================================
   // READ POLYMORPHIC: HOPS ARMS
   // ========================================

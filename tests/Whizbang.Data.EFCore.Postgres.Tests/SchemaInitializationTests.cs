@@ -321,6 +321,64 @@ public class SchemaInitializationTests : EFCoreTestBase {
       .Because("the ledger must record WHY an unchanged-hash migration executed again.");
   }
 
+  /// <summary>
+  /// A migration added below a database's highest applied one still runs (#1913). The ledger records each file by
+  /// name, so a database that has applied 268 and 269 and never saw 267 applies 267 when it arrives, and ends on
+  /// 267's direct append: a new stream starts at version 1. A fresh database ends on it too.
+  /// </summary>
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_ADatabaseAlreadyPast267_StillApplies267_AndANewStreamStartsAtOneAsync() {
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await Assert.That(await _directAppendStartsAtAsync(connection)).IsEqualTo(1)
+      .Because("a fresh database ends on 267's direct append");
+
+    // The database as it stood before 267 existed: 268 and 269 applied, 267 never seen, 266's direct append live.
+    await using (var back = new NpgsqlCommand("""
+        DO $$
+        DECLARE v_def TEXT;
+        BEGIN
+          SELECT pg_get_functiondef(p.oid) INTO v_def FROM pg_proc p
+          WHERE p.proname = 'wh_append_event' AND p.pronamespace = 'public'::regnamespace;
+          EXECUTE replace(v_def, 'stream_id = p_stream_id), 0) + 1', 'stream_id = p_stream_id), -1) + 1');
+        END $$;
+        DELETE FROM wh_schema_migrations WHERE file_name LIKE '267\_%';
+        """, connection)) {
+      await back.ExecuteNonQueryAsync();
+    }
+    await using (var applied = new NpgsqlCommand(
+        "SELECT COUNT(*) FROM wh_schema_migrations WHERE file_name LIKE '268\\_%' OR file_name LIKE '269\\_%'", connection)) {
+      await Assert.That((long)(await applied.ExecuteScalarAsync())!).IsEqualTo(2L)
+        .Because("the database has applied the migrations numbered above 267");
+    }
+    await Assert.That(await _directAppendStartsAtAsync(connection)).IsEqualTo(0)
+      .Because("before 267 a direct append started a new stream at 0");
+
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    await Assert.That(await _directAppendStartsAtAsync(connection)).IsEqualTo(1)
+      .Because("267 runs although 268 and 269 already have: the ledger fills a gap by file name");
+    await using var ledger = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE file_name LIKE '267\\_%'", connection);
+    await Assert.That((long)(await ledger.ExecuteScalarAsync())!).IsEqualTo(1L);
+  }
+
+  /// <summary>The version a direct append gives a new stream's first event, inside a transaction that is rolled back.</summary>
+  private static async Task<int> _directAppendStartsAtAsync(NpgsqlConnection connection) {
+    await using var tx = await connection.BeginTransactionAsync();
+    await using var cmd = new NpgsqlCommand("""
+      SELECT wh_append_event(gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'Tests.Numbering',
+        'Tests.Numbering.Happened, Tests', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, NOW())
+      """, connection, tx);
+    var version = Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    await tx.RollbackAsync();
+    return version;
+  }
+
   [Test]
   public async Task EnsureWhizbangDatabaseInitialized_TracksPerspectivedIndividuallyAsync() {
     // Arrange

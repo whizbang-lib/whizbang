@@ -171,6 +171,8 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
     await Assert.That(rows[0].Attempts).IsEqualTo(0)
       .Because("no out_attempts column -- the DLQ attempts check must default to zero (a no-op), " +
                "not an exception that stalls the whole drain");
+    await Assert.That(rows[0].IsFirstInStream).IsFalse()
+      .Because("no out_first_in_stream column (before 264) -- an event whose position the read does not know is never first");
   }
 
   [Test]

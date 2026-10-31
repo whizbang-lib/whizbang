@@ -133,14 +133,14 @@ public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
     // Assert - two INSERT attempts were made (failed + retried)
     await Assert.That(executor.EventStoreInsertAttempts).IsEqualTo(2);
 
-    // Both rows exist: the injected conflict row at sequence 0 and the retried row at sequence 1
+    // Both rows exist: the injected conflict row at sequence 1 (a new stream starts at 1, #1913) and the retried row at 2
     var events = await _readBySequenceAsync(eventStore, streamId);
     await Assert.That(events).Count().IsEqualTo(2);
     await Assert.That(events[0].MessageId).IsEqualTo(envelope.MessageId);
     await Assert.That(events[1].MessageId).IsEqualTo(envelope.MessageId);
 
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(1);
+    await Assert.That(lastSequence).IsEqualTo(2);
   }
 
   [Test]
@@ -229,9 +229,9 @@ public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
-    // Both rows landed in the event store
+    // Both rows landed in the event store, at 1 and 2 (#1913)
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(1);
+    await Assert.That(lastSequence).IsEqualTo(2);
 
     // Act - polymorphic read with both types registered in JsonOptions
     var events = await _readPolymorphicAsync(eventStore, streamId, null, [typeof(TestEvent), typeof(TestResponse)]);

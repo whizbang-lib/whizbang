@@ -38,6 +38,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// compile in the generated file.
   /// </summary>
   private static string _csharpBool(bool value) => value ? "true" : "false";
+
+  /// <summary>The marker of an overwrite-only perspective (#1869).</summary>
+  private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
+
+  /// <summary>The generated predicate's head; its body names the events whose Apply decides the row alone (#1869).</summary>
+  private const string DECIDES_THE_ROW_ALONE = "private static bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => ";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <summary>
@@ -206,6 +212,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
     var unconditionalPurges = _extractUnconditionalPurgeEventTypes(classSymbol, eventTypes);
+    var (isOverwriteOnly, overwriteDecisive) = _extractOverwriteOnly(classSymbol, eventReturnTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -266,7 +273,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamGroupSpec: streamGroupSpec,
             ModelCopy: modelCopy,
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
-            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null),
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
+            IsOverwriteOnly: isOverwriteOnly,
+            OverwriteDecisiveEventTypes: overwriteDecisive),
         Warning: null
     );
   }
@@ -286,6 +295,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             Location: classDeclaration.Identifier.GetLocation()
         )
     );
+  }
+
+  /// <summary>
+  /// #1869: whether the perspective is marked [OverwriteOnly] (explicit; the generator never infers it), and the events
+  /// whose Apply can decide its row alone. Its rewind applies only the stream's last event, which decides the row alone
+  /// only when its Apply returns the model (or null for no change): an Apply returning an action or an ApplyResult can
+  /// purge. Null when none can, including for every unmarked perspective.
+  /// </summary>
+  private static (bool IsOverwriteOnly, string[]? DecisiveEventTypes) _extractOverwriteOnly(
+      INamedTypeSymbol classSymbol, EventReturnTypeInfo[] eventReturnTypes) {
+    if (!classSymbol.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE))) {
+      return (false, null);
+    }
+    string[] decisive = [.. eventReturnTypes
+        .Where(static r => r.ReturnType is ApplyReturnType.Model or ApplyReturnType.NullableModel)
+        .Select(static r => r.EventTypeName)
+        .Distinct(System.StringComparer.Ordinal)];
+    return (true, decisive.Length > 0 ? decisive : null);
   }
 
   /// <summary>
@@ -534,6 +561,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes
           ? $"private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};"
           : "private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;");
+    result = TemplateUtilities.ReplaceRegion(result, "OVERWRITE_ONLY",
+        $"private static readonly bool _isOverwriteOnly = {_csharpBool(perspective.IsOverwriteOnly)};\n"
+        + DECIDES_THE_ROW_ALONE
+        + (perspective.OverwriteDecisiveEventTypes is { Length: > 0 } decisive
+          ? $"@event is {string.Join(" or ", decisive)};"
+          : "false;"));
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
         $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps

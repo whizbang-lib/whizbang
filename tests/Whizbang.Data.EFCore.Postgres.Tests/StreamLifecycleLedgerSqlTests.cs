@@ -263,8 +263,8 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
     await Assert.That(afterFirst.Tenant).IsEqualTo("tenant-d");
     await Assert.That(afterFirst.FirstAppendedAt).IsEqualTo(_t0);
     await Assert.That(afterFirst.LastAppendedBucket).IsEqualTo(_hour12);
-    await Assert.That(afterFirst.LastVersion).IsEqualTo(0L).Because("a direct append numbers a new stream from 0");
-    await Assert.That(afterSecond.LastVersion).IsEqualTo(1L);
+    await Assert.That(afterFirst.LastVersion).IsEqualTo(1L).Because("a direct append numbers a new stream from 1 (#1913)");
+    await Assert.That(afterSecond.LastVersion).IsEqualTo(2L);
     await Assert.That(afterSecond.StreamType).IsEqualTo("Whizbang.Tests.LedgerAggregate");
     await Assert.That(afterSecond.Tenant).IsEqualTo("tenant-d");
     await Assert.That(afterSecond.LastAppendedBucket).IsEqualTo(_hour13);

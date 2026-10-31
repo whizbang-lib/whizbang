@@ -70,7 +70,7 @@ public class InMemoryEventStoreReplayOrderTests {
 
     var read = await _readAsync(store, streamId, null);
 
-    long?[] expected = [0, 1, 2, 3];
+    long?[] expected = [1, 2, 3, 4];  // a new stream starts at version 1 (#1913)
     await Assert.That(read.Select(e => e.LocalStreamVersion)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }

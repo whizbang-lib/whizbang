@@ -54,7 +54,9 @@ internal sealed record PerspectiveInfo(
     string? StreamGroupSpec = null,
     Whizbang.Generators.Shared.Models.ModelCopyInfo? ModelCopy = null,
     EquatableArray<string>? MemberDefaults = null,
-    EquatableArray<string>? UnconditionalPurgeEventTypes = null
+    EquatableArray<string>? UnconditionalPurgeEventTypes = null,
+    bool IsOverwriteOnly = false,
+    EquatableArray<string>? OverwriteDecisiveEventTypes = null
 );
 
 /// <summary>

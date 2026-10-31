@@ -66,6 +66,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;
   #endregion
 
+  #region OVERWRITE_ONLY
+  // Generated (#1869): true for a perspective marked [OverwriteOnly], whose every Apply builds the row from its event
+  // alone, so a rewind applies only the stream's last event (_replayLastEventOnlyAsync). False for every other one.
+  private static readonly bool _isOverwriteOnly = false;
+  // Generated: the events whose Apply returns the model, the only kind that can decide the row alone. An Apply that
+  // returns an action or an ApplyResult can purge, and a stream holding such an event is replayed in full.
+  private static bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;
+  #endregion
+
   /// <summary>
   /// The event types this perspective folds. The resurrection-on-wake probe asks the event store
   /// about these only (issue #696): history of other contracts on a shared stream is not a reaped
@@ -350,6 +359,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// How many times one batch is re-read and re-applied when its write is refused because the row moved.
   /// </summary>
   private const int MAX_ROW_CONFLICT_ATTEMPTS = 5;
+
+  /// <summary>
+  /// How many catch-up passes a rewind makes over events appended while it applies, before it stops and leaves the
+  /// rest to the next claim (v0.688).
+  /// </summary>
+  private const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;
 
   /// <summary>
   /// One read-fold-write attempt of <see cref="RunWithEventsAsync"/>. Throws
@@ -732,7 +747,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // A purged stream stays purged (issue #1027): an event after the purge is skipped, not applied to an
         // empty model, unless its Apply returns Resurrect. The checkpoint still advances past a skipped event.
         if (pendingPurge) {
-          var resurrection = TryResurrect(perspective, streamId, @event);
+          var resurrection = TryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
           lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
@@ -769,7 +784,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         __MODEL_TYPE_NAME__? appliedModel;
         global::Whizbang.Core.Perspectives.ModelAction action;
         try {
-          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
         } catch (Exception applyEx) {
           _logger.LogError(
               applyEx,
@@ -1127,12 +1142,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Applies an event to the model using the perspective's synchronous Apply method.
   /// AOT-compatible: uses switch statement instead of reflection.
   /// Apply methods are pure functions that return new model state and optional action.
+  /// The event's facts (<see cref="global::Whizbang.Core.Perspectives.ApplyContext"/>) are current for the Apply and
+  /// restored when it returns or throws (#1878).
   /// </summary>
   /// <returns>Tuple of (model, action) where action indicates Delete/Purge/None.</returns>
   private (__MODEL_TYPE_NAME__?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEvent(
       __PERSPECTIVE_CLASS_NAME__ perspective,
       __MODEL_TYPE_NAME__? currentModel,
-      IEvent @event) {
+      IEvent @event,
+      bool isFirstEventInStream) {
+
+    using var applyContext = global::Whizbang.Core.Perspectives.ApplyContext.Enter(isFirstEventInStream);
 
     // AOT-compatible switch on event type (no reflection)
     // Generator produces one case per event type the perspective handles
@@ -1159,9 +1179,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private __MODEL_TYPE_NAME__? TryResurrect(
       __PERSPECTIVE_CLASS_NAME__ perspective,
       Guid streamId,
-      IEvent @event) {
+      IEvent @event,
+      bool isFirstEventInStream) {
     try {
-      var (model, action) = ApplyEvent(perspective, CreateEmptyModel(streamId), @event);
+      var (model, action) = ApplyEvent(perspective, CreateEmptyModel(streamId), @event, isFirstEventInStream);
       return action == global::Whizbang.Core.Perspectives.ModelAction.Resurrect ? model : null;
     } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
       _logger.LogDebug(
@@ -1621,7 +1642,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var resurrected = false;
     var purgedEventsSkipped = 0;
     PerspectiveScope? lastScope = null;
-    var rowChanged = false;  // True once this replay actually wrote or purged the row
     // The replay FRONTIER — max event id / max local commit_sequence across everything
     // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
     // event's stamp: after a replay everything at or below the frontier IS applied (that is
@@ -1645,6 +1665,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
+    // An overwrite-only perspective (#1869): every Apply builds the row from its event alone, so the last event decides
+    // the row and the rewind applies only it. It answers null when the last event cannot decide alone (a purge-capable
+    // event in the stream, an Apply that returns no model or throws), and the full fold below runs instead. A stream
+    // that starts purged is folded in full, because only the fold knows when an Apply resurrects it.
+    // <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
+    if (_isOverwriteOnly && !startedPurged
+        && await _replayLastEventOnlyAsync(streamId, perspectiveName, perspective, rowVersion, replayFromEventId, eventTypes, cancellationToken)
+          is { } lastEventOnly) {
+      return lastEventOnly;
+    }
+
     // v0.688 — Rewind catch-up loop (a production forensic fix). The original
     // implementation read events ONCE here and applied that fixed list. Events
     // appended to the stream during the in-memory apply window were silently
@@ -1661,7 +1692,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
-    const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;
     var rewindCatchUpIterations = 0;
     var anchorEventId = replayFromEventId;
 
@@ -1721,7 +1751,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // A purged stream stays purged: skip the event unless its Apply returns Resurrect. The frontier still
       // moves past a skipped event, so the cursor never re-flags it as a straggler.
       if (pendingPurge) {
-        var resurrection = TryResurrect(perspective, streamId, @event);
+        var resurrection = TryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
         lastSuccessfulEventId = envelope.MessageId.Value;
         lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
@@ -1742,7 +1772,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__? appliedModel;
       global::Whizbang.Core.Perspectives.ModelAction action;
       try {
-        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
       } catch (Exception applyEx) {
         _logger.LogError(
             applyEx,
@@ -1826,6 +1856,54 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         .OrderBy(id => id.ToString("D"), StringComparer.Ordinal)
         .Last();
     } // closes while (true)
+
+    return await _finishReplayAsync(new ReplayOutcome {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      RowVersion = rowVersion,
+      ReplayFromEventId = replayFromEventId,
+      EventsProcessed = eventsProcessed,
+      PendingPurge = pendingPurge,
+      PurgeEventId = purgeEventId,
+      UpdatedModel = updatedModel,
+      ProducedByApply = producedByApply,
+      LastSuccessfulEventId = lastSuccessfulEventId,
+      LastSuccessfulEventType = lastSuccessfulEventType,
+      LastSuccessfulEventAt = lastSuccessfulEventAt,
+      LastScope = lastScope,
+      Resurrected = resurrected,
+      StartedPurged = startedPurged,
+      PurgedEventsSkipped = purgedEventsSkipped,
+      FrontierEventId = frontierEventId,
+      FrontierCommitSequence = frontierCommitSequence,
+    }, cancellationToken);
+  }
+
+  /// <summary>
+  /// The single write that ends a replay (#1869): the row, or its purge, at the replay's frontier, then the snapshot
+  /// that follows every rewind that applied something. Both replays end here, the full fold and an overwrite-only
+  /// perspective's last-event apply, so the two write a row the same way.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _finishReplayAsync(ReplayOutcome outcome, CancellationToken cancellationToken) {
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    var rowVersion = outcome.RowVersion;
+    var replayFromEventId = outcome.ReplayFromEventId;
+    var eventsProcessed = outcome.EventsProcessed;
+    var pendingPurge = outcome.PendingPurge;
+    var purgeEventId = outcome.PurgeEventId;
+    var updatedModel = outcome.UpdatedModel;
+    var producedByApply = outcome.ProducedByApply;
+    var lastSuccessfulEventId = outcome.LastSuccessfulEventId;
+    var lastSuccessfulEventType = outcome.LastSuccessfulEventType;
+    var lastSuccessfulEventAt = outcome.LastSuccessfulEventAt;
+    var lastScope = outcome.LastScope;
+    var resurrected = outcome.Resurrected;
+    var startedPurged = outcome.StartedPurged;
+    var purgedEventsSkipped = outcome.PurgedEventsSkipped;
+    var frontierEventId = outcome.FrontierEventId;
+    var frontierCommitSequence = outcome.FrontierCommitSequence;
+    var rowChanged = false;  // True once this replay actually wrote or purged the row
 
     // Single atomic write at the end — lenses see pre-replay data until this point.
     // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
@@ -1920,6 +1998,114 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       RowChanged = rowChanged,
       EventsProcessed = eventsProcessed
     };
+  }
+
+  /// <summary>
+  /// The rewind of an overwrite-only perspective (#1869): reads the stream as the full replay reads it, keeps only the
+  /// last event in the order the full replay folds it (<see cref="global::Whizbang.Core.Perspectives.LastInReplayOrder"/>),
+  /// applies that one to an empty model, and writes the row through the same write the full replay ends with. The
+  /// events before it are read and counted, never held or applied, and no receptor runs for them. Each catch-up pass over
+  /// events appended meanwhile does the same. Returns null when the last event cannot decide the row alone, before
+  /// anything is written, and the caller folds the stream in full.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
+  private async Task<PerspectiveCursorCompletion?> _replayLastEventOnlyAsync(
+      Guid streamId,
+      string perspectiveName,
+      __PERSPECTIVE_CLASS_NAME__ perspective,
+      global::Whizbang.Core.Perspectives.PerspectiveRowVersion rowVersion,
+      Guid? replayFromEventId,
+      Type[] eventTypes,
+      CancellationToken cancellationToken) {
+    var outcome = new ReplayOutcome {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      RowVersion = rowVersion,
+      ReplayFromEventId = replayFromEventId,
+      LastSuccessfulEventId = replayFromEventId,
+    };
+    var anchorEventId = replayFromEventId;
+    for (var pass = 1; ; pass++) {
+      if (pass > MAX_REWIND_CATCH_UP_ITERATIONS) {
+        _logger.LogWarning(
+            "Rewind for {PerspectiveName} stream {StreamId} hit MAX_REWIND_CATCH_UP_ITERATIONS ({Max}); breaking: sustained append rate exceeds apply rate, projection may still trail event-store HEAD until next claim cycle",
+            perspectiveName, streamId, MAX_REWIND_CATCH_UP_ITERATIONS);
+        break;
+      }
+      var read = new global::Whizbang.Core.Perspectives.LastInReplayOrder(static e => e.GetCurrentScope()?.Scope is not null);
+      Guid? readUpTo = null;
+      await foreach (var envelope in _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken)) {
+        if (!DecidesTheRowAlone(envelope.Payload)) {
+          return null;
+        }
+        read.Offer(envelope);
+        (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
+        readUpTo = _laterId(readUpTo, envelope.MessageId.Value);
+      }
+      if (read.Count == 0) {
+        break;
+      }
+      var last = read.Last!;
+      if (_applyAlone(perspective, streamId, last) is not { } applied) {
+        return null;
+      }
+      outcome.UpdatedModel = applied;
+      outcome.ProducedByApply = true;
+      outcome.EventsProcessed += read.Count;
+      outcome.LastSuccessfulEventId = last.MessageId.Value;
+      outcome.LastSuccessfulEventType = last.Payload.GetType().FullName ?? last.Payload.GetType().Name;
+      outcome.LastSuccessfulEventAt = last.Hops is { Count: > 0 } ? last.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+      outcome.LastScope = read.LastMatching?.GetCurrentScope()?.Scope ?? outcome.LastScope;
+      anchorEventId = readUpTo;
+      _logger.LogDebug(
+          "Overwrite-only rewind of {PerspectiveName} stream {StreamId}: applied the last of {EventCount} event(s) read",
+          perspectiveName, streamId, read.Count);
+    }
+    return await _finishReplayAsync(outcome, cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies an overwrite-only stream's last event to an empty model (#1869). Null when the Apply returns no model or
+  /// throws: the row is then the events before it, which only the full fold applies (and logs, for a throw).
+  /// </summary>
+  private __MODEL_TYPE_NAME__? _applyAlone(__PERSPECTIVE_CLASS_NAME__ perspective, Guid streamId, MessageEnvelope<IEvent> envelope) {
+    try {
+      return ApplyEvent(perspective, CreateEmptyModel(streamId), envelope.Payload, envelope.IsFirstInLocalStream).Item1;
+    } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
+      _logger.LogDebug(
+          applyEx,
+          "Apply of {EventType} threw on the last event of overwrite-only stream {StreamId}; the stream is replayed in full",
+          envelope.Payload.GetType().Name,
+          streamId);
+      return null;
+    }
+  }
+
+  /// <summary>The later of two event ids by their canonical text, the catch-up anchor's order.</summary>
+  private static Guid _laterId(Guid? current, Guid candidate) =>
+      current is { } held && string.CompareOrdinal(held.ToString("D"), candidate.ToString("D")) >= 0 ? held : candidate;
+
+  /// <summary>What a replay folded, for the write that ends it (<see cref="_finishReplayAsync"/>).</summary>
+  private sealed class ReplayOutcome {
+    public Guid StreamId { get; set; }
+    public string PerspectiveName { get; set; } = string.Empty;
+    public global::Whizbang.Core.Perspectives.PerspectiveRowVersion RowVersion { get; set; }
+    public Guid? ReplayFromEventId { get; set; }
+    public int EventsProcessed { get; set; }
+    public bool PendingPurge { get; set; }
+    public Guid? PurgeEventId { get; set; }
+    public __MODEL_TYPE_NAME__? UpdatedModel { get; set; }
+    public bool ProducedByApply { get; set; }
+    public Guid? LastSuccessfulEventId { get; set; }
+    public string? LastSuccessfulEventType { get; set; }
+    public DateTime? LastSuccessfulEventAt { get; set; }
+    public PerspectiveScope? LastScope { get; set; }
+    public bool Resurrected { get; set; }
+    public bool StartedPurged { get; set; }
+    public int PurgedEventsSkipped { get; set; }
+    public Guid? FrontierEventId { get; set; }
+    public long? FrontierCommitSequence { get; set; }
   }
 
   public async Task BootstrapSnapshotAsync(
