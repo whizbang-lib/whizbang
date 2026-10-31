@@ -19,7 +19,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveUnlistedApplyTests.cs</tests>
-/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDecoyApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDuplicateApplyTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -44,20 +44,21 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ114: Error - an explicit interface <c>Apply</c> sits next to an ordinary <c>Apply</c> with the same parameters,
-  /// so the runner, which calls the perspective's own <c>Apply</c>, never runs the explicit one.
+  /// WHIZ114: Error - two <c>Apply</c> methods handle the same event: an explicit interface implementation and another
+  /// <c>Apply</c> with the same parameters. The runner calls <c>Apply</c> through the interface (#1936), so the other
+  /// one never runs.
   /// </summary>
   /// <docs>operations/diagnostics/whiz114</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDecoyApplyTests.cs:AnExplicitApplyHiddenByAnOrdinaryApply_IsAnErrorAtTheExplicitOneAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDecoyApplyTests.cs:AnExplicitApplyHiddenByAnOrdinaryApplyWithTheSameReturn_IsStillADecoyAsync</tests>
-  public static readonly DiagnosticDescriptor HiddenExplicitApply = new(
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDuplicateApplyTests.cs:TheApplyBesideAnExplicitInterfaceApply_IsAnErrorAtTheOneThatNeverRunsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDuplicateApplyTests.cs:TheApplyBesideAnExplicitInterfaceApply_NeverRuns_WhateverItReturnsAsync</tests>
+  public static readonly DiagnosticDescriptor DuplicateApplyForEvent = new(
       id: "WHIZ114",
-      title: "Explicit interface Apply never runs",
-      messageFormat: "The explicit implementation of {0}.Apply for '{1}' on perspective '{2}' never runs: the runner calls the perspective's own Apply for '{1}', which returns '{3}'. Keep one Apply per event, returning what the interface declares, and remove the explicit implementation.",
+      title: "Two Apply methods handle the same event",
+      messageFormat: "'{0}' has an explicit interface Apply and another Apply for '{1}'. The runner calls the interface's implementation ('{2}'), so '{3}' never runs. Keep one Apply per event.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "When a perspective declares an ordinary Apply and an explicit interface Apply with the same parameters, the generated runner calls the ordinary one, so the explicit one is a decoy that satisfies the compiler and never runs. It often does the opposite of the real handler (keeps the row the real one purges). Return what the interface declares from one Apply; IPerspectiveWithActionsFor with ApplyResult<TModel> covers delete and purge."
+      description: "When a perspective declares an explicit interface Apply and another Apply with the same parameters, the generated runner calls the interface's implementation, so the other Apply is dead code that looks like the handler. The two often disagree (one keeps the row the other purges). Keep one Apply per event and return what the interface declares; IPerspectiveWithActionsFor with ApplyResult<TModel> covers delete and purge."
   );
 
   /// <summary>
@@ -70,7 +71,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor UndeclaredApplyReturn = new(
       id: "WHIZ115",
       title: "Apply returns a shape its interface does not declare",
-      messageFormat: "Apply{0} for '{1}' on perspective '{2}' returns '{3}', but the interface that lists '{1}' declares '{4}', so this Apply is not the interface's and compiles only beside an explicit implementation that never runs. Return '{4}'. To delete or purge, list '{1}' under IPerspectiveWithActionsFor<{5}, ...> and return ApplyResult<{5}>: 'return ModelAction.Purge;' converts implicitly.",
+      messageFormat: "Apply{0} for '{1}' on perspective '{2}' returns '{3}', but the interface that lists '{1}' declares '{4}', so this Apply is not the interface's: it compiles only beside an explicit implementation, which is the Apply the runner calls, so this one never runs. Return '{4}'. To delete or purge, list '{1}' under IPerspectiveWithActionsFor<{5}, ...> and return ApplyResult<{5}>: 'return ModelAction.Purge;' converts implicitly.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -97,7 +98,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    [ApplyForUnlistedEvent, HiddenExplicitApply, UndeclaredApplyReturn, EventWithNoDeclaredApply];
+    [ApplyForUnlistedEvent, DuplicateApplyForEvent, UndeclaredApplyReturn, EventWithNoDeclaredApply];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -140,7 +141,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
             TypeNameUtilities.MinimallyQualified(model)));
       }
     }
-    _reportHiddenExplicitApplies(context, perspective, applies);
+    _reportDuplicateApplies(context, perspective, applies);
     _reportEventsWithNoDeclaredApply(context, perspective, contract);
   }
 
@@ -172,27 +173,33 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// WHIZ114: every explicit interface <c>Apply</c> of the perspective that an ordinary <c>Apply</c> with the same
-  /// parameters hides from the runner, whatever either returns.
+  /// WHIZ114: every Apply (own or inherited) that has the same parameters as an explicit interface Apply of the
+  /// perspective, whatever either returns. The runner calls the interface's implementation, so the other one never
+  /// runs; it is reported where it is declared, or at the perspective when it is inherited.
   /// </summary>
-  private static void _reportHiddenExplicitApplies(
+  private static void _reportDuplicateApplies(
       SymbolAnalysisContext context, INamedTypeSymbol perspective, List<(IMethodSymbol Method, bool Inherited)> applies) {
     var explicitApplies = perspective.GetMembers().OfType<IMethodSymbol>()
       .Where(static m => m.MethodKind == MethodKind.ExplicitInterfaceImplementation
         && m.ExplicitInterfaceImplementations[0].Name == PerspectiveContract.APPLY);
     foreach (var explicitApply in explicitApplies) {
-      // A match has the ordinary Apply's two parameters, so the explicit one has an event to name.
-      if (applies.Select(static a => a.Method).FirstOrDefault(o => _sameParameters(o, explicitApply)) is { } ordinary) {
+      // A match has the other Apply's two parameters, so the explicit one has an event to name.
+      foreach (var (other, inherited) in applies.Where(a => _sameParameters(a.Method, explicitApply))) {
         context.ReportDiagnostic(Diagnostic.Create(
-            HiddenExplicitApply,
-            explicitApply.Locations[0],
-            TypeNameUtilities.MinimallyQualified(explicitApply.ExplicitInterfaceImplementations[0].ContainingType),
-            TypeNameUtilities.MinimallyQualified(explicitApply.Parameters[1].Type),
+            DuplicateApplyForEvent,
+            _location(other, perspective, inherited),
             perspective.Name,
-            TypeNameUtilities.MinimallyQualified(ordinary.ReturnType)));
+            TypeNameUtilities.MinimallyQualified(explicitApply.Parameters[1].Type),
+            $"{TypeNameUtilities.MinimallyQualified(explicitApply.ExplicitInterfaceImplementations[0].ContainingType)}.Apply",
+            _signature(other, inherited)));
       }
     }
   }
+
+  /// <summary>An Apply as a reader finds it: its return and parameter types, and where an inherited one comes from.</summary>
+  private static string _signature(IMethodSymbol apply, bool inherited) =>
+    $"{TypeNameUtilities.MinimallyQualified(apply.ReturnType)} Apply({TypeNameUtilities.MinimallyQualified(apply.Parameters[0].Type)}, {TypeNameUtilities.MinimallyQualified(apply.Parameters[1].Type)})"
+    + _inheritedFrom(apply, inherited);
 
   private static bool _sameParameters(IMethodSymbol a, IMethodSymbol b) =>
     a.Parameters.Select(static p => p.Type).SequenceEqual(b.Parameters.Select(static p => p.Type), SymbolEqualityComparer.Default);

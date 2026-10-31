@@ -12,7 +12,8 @@ namespace Whizbang.Generators.Tests;
 /// WHIZ115 (#1936): an <c>Apply</c> for a routed event returns what the interface that lists the event declares,
 /// <c>TModel</c> for <c>IPerspectiveFor</c> and <c>ApplyResult&lt;TModel&gt;</c> for <c>IPerspectiveWithActionsFor</c>.
 /// Any other shape (bare <c>ModelAction</c>, the <c>(TModel?, ModelAction)</c> tuple, the other family's return) can
-/// only compile next to an explicit interface implementation that never runs, so it is an error that names the fix.
+/// only compile next to an explicit interface implementation, which is the Apply the runner calls, so the class's own
+/// never runs; it is an error that names the fix.
 /// </summary>
 /// <tests>Whizbang.Generators/Analyzers/PerspectiveContractAnalyzer.cs</tests>
 [Category("Analyzers")]
@@ -117,7 +118,7 @@ public class PerspectiveApplyReturnShapeTests {
         """;
 
     await Assert.That(await ReportedAsync(source, ID)).IsEmpty()
-      .Because("the return matches an interface that lists the event; the explicit one is WHIZ114's to report");
+      .Because("the return matches an interface that lists the event; the two Apply methods for the event are WHIZ114's to report");
   }
 
   [Test]

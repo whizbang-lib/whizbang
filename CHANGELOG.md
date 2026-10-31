@@ -431,8 +431,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Apply(TModel, E)` (own or inherited, any accessibility) for an event no interface on the class lists for that model;
   **WHIZ113**, a method with an `Apply`'s parameters and return whose name is one slip away from `Apply` (within one edit
   ignoring case, or starting with `Apply` or `Applie`, or ending with `Apply`) that nothing in the perspective calls;
-  **WHIZ114**, an explicit interface `Apply` beside an ordinary `Apply` with the same parameters, which the runner calls
-  instead; **WHIZ115**, an `Apply` whose return is not what the interface listing its event declares (`TModel` for
+  **WHIZ114**, two `Apply` methods for the same event, an explicit interface implementation and another with the same
+  parameters: the runner calls the interface's implementation, so the other never runs, and it is reported; **WHIZ115**, an `Apply` whose return is not what the interface listing its event declares (`TModel` for
   `IPerspectiveFor`, `ApplyResult<TModel>` for `IPerspectiveWithActionsFor`; a `TModel?` return implements `TModel
   Apply` and is accepted); and **WHIZ116**, a method carrying `[CollectiveApplyFor]` that does not match the collective
   handler shape, or an `ICollectiveApplyFor<TModel, TEvent>.Apply` implementation without the attribute, both left out
@@ -643,10 +643,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **An `Apply` that returns a shape its interface does not declare, or an explicit interface `Apply` hidden by an
-  ordinary one, now fails the build (#1936).** A perspective could return a bare `ModelAction`, the
+- **An `Apply` that returns a shape its interface does not declare, or a second `Apply` beside an explicit interface
+  `Apply` for the same event, now fails the build (#1936).** A perspective could return a bare `ModelAction`, the
   `(TModel?, ModelAction)` tuple or `ApplyResult<TModel>` for an event `IPerspectiveFor` lists, which compiled only beside
-  an explicit `TModel Apply` implementation that never ran (WHIZ115, WHIZ114). **Upgrade:** list each such event under
+  an explicit `TModel Apply` implementation (WHIZ115, WHIZ114). The runner used to call the class's own `Apply`; it now
+  calls the interface's implementation, so that `Apply` would never run. **Upgrade:** list each such event under
   `IPerspectiveWithActionsFor<TModel, ...>`, return `ApplyResult<TModel>` from its `Apply`, and delete the explicit
   implementation. `ApplyResult<TModel>` converts implicitly from the model, from `ModelAction` and from the tuple, so
   `return ModelAction.Purge;` and `return (model, ModelAction.Delete);` stay one line. One class may implement
