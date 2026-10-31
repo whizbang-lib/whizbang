@@ -96,18 +96,18 @@ public class DapperArchiveReadThroughTests : PostgresTestBase {
     var stream = Guid.CreateVersion7();
     await driver.AppendAsync(stream, new PostgresRetryTestEvent { StreamId = stream, Payload = "kept" });
     await using var conn = new NpgsqlConnection(ConnectionString);
-    var stored = await conn.QuerySingleAsync<(string EventType, string EventData, string Metadata)>(
+    var (eventType, eventData, metadata) = await conn.QuerySingleAsync<(string EventType, string EventData, string Metadata)>(
       "SELECT es.event_type, eb.event_data::text, eb.metadata::text FROM wh_event_store es " +
       "JOIN wh_event_body eb ON eb.event_id = es.event_id WHERE es.stream_id = @stream", new { stream });
 
     var decoded = driver.DeserializeStreamEvents([
       new StreamEventData {
-        StreamId = stream, EventId = Guid.CreateVersion7(), EventType = stored.EventType, EventData = "{not json",
-        Metadata = stored.Metadata, EventWorkId = Guid.Empty,
+        StreamId = stream, EventId = Guid.CreateVersion7(), EventType = eventType, EventData = "{not json",
+        Metadata = metadata, EventWorkId = Guid.Empty,
       },
       new StreamEventData {
-        StreamId = stream, EventId = good, EventType = stored.EventType, EventData = stored.EventData,
-        Metadata = stored.Metadata, EventWorkId = Guid.Empty,
+        StreamId = stream, EventId = good, EventType = eventType, EventData = eventData,
+        Metadata = metadata, EventWorkId = Guid.Empty,
       },
     ], [typeof(PostgresRetryTestEvent)]);
 
