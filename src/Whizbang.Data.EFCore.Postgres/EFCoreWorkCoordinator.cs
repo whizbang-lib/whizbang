@@ -4367,16 +4367,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partition_count", NpgsqlTypes.NpgsqlDbType.Integer) { Value = partitionCount });
       // The reader is closed before the ring so the ring can use the same connection.
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
-        while (await reader.ReadAsync(cancellationToken)) {
-          if (reader.GetBoolean(1)) {
-            continue;
-          }
-          var skippedId = reader.GetGuid(0);
-          // The store echoes exactly the ids it was given; an unknown id here is a schema bug worth a loud failure.
-          var messageType = messages.First(m => m.MessageId == skippedId).MessageType;
-          _metrics?.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", messageType));
-          _logOutboxEmissionDeduplicated(_logger, skippedId, messageType);
-        }
+        await _reportDeduplicatedOutboxRowsAsync(reader, messages, cancellationToken);
       }
       // #720: ring after the store. Inside an ambient transaction the queued rows commit with it and
       // the ring below finds nothing yet; the next hot call on this connection rings them.
@@ -4462,6 +4453,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// names the row for forensics.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreOutboxEmissionDedupTests.cs</tests>
+  /// <summary>
+  /// Counts and logs each row <c>store_outbox_messages</c> skipped because the same message id already existed: with
+  /// deterministic emission identity a skipped row is the republish a retry would have produced.
+  /// </summary>
+  /// <remarks>The store echoes exactly the ids it was given, so an unknown id here is a schema bug worth a loud failure.</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreOutboxEmissionDedupTests.cs</tests>
+  private async Task _reportDeduplicatedOutboxRowsAsync(
+      System.Data.Common.DbDataReader reader, OutboxMessage[] messages, CancellationToken cancellationToken) {
+    while (await reader.ReadAsync(cancellationToken)) {
+      if (reader.GetBoolean(1)) {
+        continue;
+      }
+      var skippedId = reader.GetGuid(0);
+      var messageType = messages.First(m => m.MessageId == skippedId).MessageType;
+      _metrics?.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", messageType));
+      _logOutboxEmissionDeduplicated(_logger, skippedId, messageType);
+    }
+  }
+
   private static void _logOutboxEmissionDeduplicated(ILogger? logger, Guid messageId, string messageType) {
     if (logger is null) {
       return;

@@ -136,10 +136,12 @@ jobs:
           # file that maps the deterministic /_/ source paths in its pdbs back to the checkout.
           # Without it the coverage collector finds none of an assembly's sources, skips the
           # assembly, and writes an empty report while every test still passes; upload-artifact
-          # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so a test
-          # job that checks out elsewhere (a team machine, Windows, macOS) rewrites it first with
-          # .github/scripts/Update-CoverageSourceRoots.ps1. The only other hidden files under these
-          # paths are obj/'s generated AssemblyAttributes sources.
+          # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so every
+          # test job that downloads the build rewrites it first with
+          # .github/scripts/Update-CoverageSourceRoots.ps1, whatever runner it lands on: a GitHub-hosted
+          # build and Blacksmith suites check out at different paths (#1948), and
+          # TestSuiteSourceRoots.Tests.ps1 fails a suite that skips it. The only other hidden files
+          # under these paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true
 
       # Per-suite slices. Every test job downloaded the whole build above (about 2.4 GB) though an

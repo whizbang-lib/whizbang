@@ -59,6 +59,13 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
 
+      # The build's coverage source-root mappings name the build machine's checkout; a runner that
+      # checked out anywhere else would collect empty reports. Point them here.
+      - name: Point coverage at this checkout
+        if: inputs.artifact-name != ''
+        shell: pwsh
+        run: ./.github/scripts/Update-CoverageSourceRoots.ps1
+
       - name: Cache NuGet packages
         if: inputs.artifact-name == ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
