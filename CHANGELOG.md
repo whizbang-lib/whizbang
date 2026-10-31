@@ -952,6 +952,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is, so `T[]` round-trips on both drivers with no change to the model; rows the atomic upsert wrote before still
   read. An array of primitives stays a mapped value. Declaring the member as `List<T>` keeps the document mapped and
   its fields indexable (Fixes #1910)
+- **WHIZ200 now reports what #1910 changed, and only where it applies.** It reported every array, primitives
+  included, in any type named `...Model` with a `[StreamId]` property, said arrays break change tracking, and fired in
+  projects that never use the Entity Framework driver. It now reports an array of records at any depth of a model a
+  perspective projects (including a global perspective), at the property and by its path, saying the model is stored
+  as one opaque document whose fields cannot be indexed and that `List<T>`, `IList<T>` or `ImmutableList<T>` keep it
+  mapped; arrays of primitives are not reported, and a project that does not reference the Entity Framework driver is
+  not analyzed. It stays a Warning, turned off for a project with the new build property
+  `WhizbangOpaqueArrayWarning=false` (default on) and for one property with `#pragma warning disable WHIZ200` or
+  `[SuppressMessage("Whizbang.ModelValidation", "WHIZ200:...")]` (#1910)
 - **A schema step whose connection is lost raises the lost connection, so the initializer retries it.** The step
   runner asked the step's transaction for its connection outside the rollback's handler; once a lost connection had
   ended the transaction that raised `ObjectDisposedException: NpgsqlTransaction` in place of the step's own failure,

@@ -10,6 +10,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 // A perspective in a context of its own whose model holds arrays of records, top level and inside a collection
 // element, so the schema pass, the model configuration and the read are all the generated ones (#1910).
+// WHIZ200 says such a model is stored as one opaque document, which is exactly what these tests read back.
+#pragma warning disable WHIZ200
 
 /// <summary>A record held in an array.</summary>
 public sealed record ArrayedTag(Guid TagId, string Label);

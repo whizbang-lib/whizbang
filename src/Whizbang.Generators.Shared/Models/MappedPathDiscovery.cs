@@ -87,6 +87,60 @@ public static class MappedPathDiscovery {
     return _findUnmappable(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty);
   }
 
+  /// <summary>
+  /// Every array of records in the model's graph: each array property whose element is not a primitive, at any depth,
+  /// with its member path. Each one alone makes the model stored opaquely (<see cref="UnmappableMember"/> names the
+  /// first); WHIZ200 reports them all, each at its own property.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The array properties and their paths, such as <c>Groups.Tags</c>, in declaration order.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsInsideACollectionElement_IsReportedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsUnderANestedObject_IsReportedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfPrimitives_IsNotReportedAsync</tests>
+  public static IReadOnlyList<(IPropertySymbol Property, string Path)> ArraysOfRecords(INamedTypeSymbol modelType) {
+    var found = new List<(IPropertySymbol Property, string Path)>();
+    _collectArraysOfRecords(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty, found);
+    return found;
+  }
+
+  private static void _collectArraysOfRecords(
+      INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited, string path, List<(IPropertySymbol Property, string Path)> found) {
+    if (!visited.Add(type)) {
+      return;
+    }
+
+    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()
+        .Where(PolymorphicModelDiscovery.IsAnalyzableProperty)) {
+      var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+      var nested = _walkedType(property, here, found);
+      if (nested is not null) {
+        _collectArraysOfRecords(nested, visited, here, found);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Records the property when it is an array of records, and returns the type the walk continues into: an array's or a
+  /// collection's element, or the property's own type, unless it is a primitive.
+  /// </summary>
+  private static INamedTypeSymbol? _walkedType(
+      IPropertySymbol property, string here, List<(IPropertySymbol Property, string Path)> found) {
+    if (property.Type is IArrayTypeSymbol array) {
+      var element = array.ElementType as INamedTypeSymbol;
+      if (element is not null && _isPrimitive(element)) {
+        return null;
+      }
+      found.Add((property, here));
+      return element;
+    }
+
+    if (property.Type is not INamedTypeSymbol propertyType) {
+      return null;
+    }
+    var walked = _collectionElement(propertyType) ?? propertyType;
+    return _isPrimitive(walked) ? null : walked;
+  }
+
   private static string? _findUnmappable(
       INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited, string path) {
     if (!visited.Add(type)) {

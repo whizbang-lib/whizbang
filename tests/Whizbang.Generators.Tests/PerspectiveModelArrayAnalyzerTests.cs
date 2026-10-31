@@ -269,4 +269,60 @@ public class PerspectiveModelArrayAnalyzerTests {
     await Assert.That(reported).Count().IsEqualTo(1);
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("Others");
   }
+
+  /// <summary>An array whose element is itself an array is stored opaquely as well, so it is reported.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AnArrayOfArrays_IsReportedAsync() {
+    await Assert.That(await _whiz200Async(_source("  public int[][] Grid { get; set; } = [];"))).Count().IsEqualTo(1);
+  }
+
+  /// <summary>A member whose type is not a named type (dynamic) is not walked into and is not reported.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AMemberThatIsNotANamedType_IsNotReportedAsync() {
+    await Assert.That(await _whiz200Async(_source("  public dynamic? Extra { get; set; }"))).IsEmpty();
+  }
+
+  /// <summary>
+  /// A model of another project has no source in this compilation to report at (here an IDE's project reference, whose
+  /// source belongs to another compilation), so the warning is reported at the perspective that projects it, still
+  /// naming the property, and the analyzer does not fail trying to report outside its compilation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AModelFromAnotherAssembly_IsReportedAtThePerspectiveAsync() {
+    var models = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+      using System;
+      namespace Models;
+      public sealed record Tag(Guid TagId, string Label);
+      public class LedgerModel {
+        public Tag[] Tags { get; set; } = [];
+      }
+      """).WithAssemblyName("Models");
+    var compilation = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+        using Models;
+        namespace TestApp;
+        public record Noted([property: StreamId] Guid Id) : IEvent;
+        public class LedgerProjection : IPerspectiveFor<LedgerModel, Noted> {
+          public LedgerModel Apply(LedgerModel currentData, Noted eventData) => currentData;
+        }
+        """)
+      .AddReferences(models.ToMetadataReference(), CSharpCompilation.Create("Whizbang.Data.EFCore.Postgres").ToMetadataReference());
+
+    var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.ToString()).ToList();
+    await Assert.That(errors).IsEmpty().Because("the perspective has to bind to the referenced model");
+
+    var all = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelArrayAnalyzer>(
+      compilation, globalOptions: MSBuildGlobalOptions.For());
+    var reported = all.Where(d => d.Id == "WHIZ200").ToList();
+
+    await Assert.That(all.Where(d => d.Id == "AD0001")).IsEmpty().Because("an analyzer failure would hide the warning");
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(_locatedAt(reported[0])).IsEqualTo("LedgerProjection");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("'Tags'");
+  }
 }
