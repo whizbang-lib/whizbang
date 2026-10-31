@@ -506,11 +506,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       lastSegment = segments[^2];
     }
 
-    // Remove common suffixes (case-insensitive)
-    // Use regex for case-insensitive replacement (netstandard2.0 doesn't have String.Replace with StringComparison)
-    // Timeout added to prevent ReDoS attacks (S6444)
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+    // Remove common suffixes (case-insensitive), by a scan: a regular expression's match timeout is wall-clock time,
+    // and losing it on a loaded build machine makes the generator emit nothing (#1942).
+    lastSegment = NamingConventionUtilities.RemoveAllIgnoringCase(lastSegment, "Worker");
+    lastSegment = NamingConventionUtilities.RemoveAllIgnoringCase(lastSegment, "Service");
 
     // Convert to lowercase
     return lastSegment.ToLowerInvariant();

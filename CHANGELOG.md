@@ -1008,6 +1008,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The perspective schema generator no longer emits nothing on a heavily loaded build machine.** It read the managed
+  index and constraint names out of each table's DDL with two regular expressions under a one-second match timeout,
+  which measures elapsed time rather than work, so a generator thread descheduled for a second threw
+  `RegexMatchTimeoutException` and the whole `PerspectiveSchemas.g.sql.cs` was dropped; the two Entity Framework
+  generators carried the same hazard in the schema-name derivation. All three are now scans with nothing to time out,
+  checked against the expressions they replace, and a guard fails any generator source that uses a regular
+  expression. The generator test helper now fails naming the file it was asked for, with the generator's exception,
+  when a generator threw, instead of answering null (Fixes #1942)
 - **A test's scratch database is created and dropped whatever the load on the shared test container.**
   `PerTestDatabaseFactory` issued `CREATE DATABASE` and `DROP DATABASE ... WITH (FORCE)` with Npgsql's default
   30-second command timeout, and the vector extension tests issued their own the same way, so beside another shard's

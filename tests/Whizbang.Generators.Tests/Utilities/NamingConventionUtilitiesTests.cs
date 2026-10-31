@@ -173,6 +173,32 @@ public class NamingConventionUtilitiesTests {
 
   #endregion
 
+  #region RemoveAllIgnoringCase Tests
+
+  [Test]
+  public async Task RemoveAllIgnoringCase_RemovesEveryOccurrenceInAnyCaseAsync() {
+    await Assert.That(NamingConventionUtilities.RemoveAllIgnoringCase("WorkerInventoryWORKERworker", "Worker"))
+      .IsEqualTo("Inventory");
+  }
+
+  [Test]
+  public async Task RemoveAllIgnoringCase_MakesOnePass_SoARemovalThatJoinsAnotherIsKeptAsync() {
+    // As Regex.Replace did: what a removal leaves behind is not searched again.
+    await Assert.That(NamingConventionUtilities.RemoveAllIgnoringCase("WorWorkerker", "Worker")).IsEqualTo("Worker");
+  }
+
+  [Test]
+  public async Task RemoveAllIgnoringCase_WithoutAnOccurrence_ReturnsTheInputAsync() {
+    await Assert.That(NamingConventionUtilities.RemoveAllIgnoringCase("Inventory", "Service")).IsEqualTo("Inventory");
+  }
+
+  [Test]
+  public async Task RemoveAllIgnoringCase_WithAnEmptyToken_ReturnsTheInputAsync() {
+    await Assert.That(NamingConventionUtilities.RemoveAllIgnoringCase("Inventory", "")).IsEqualTo("Inventory");
+  }
+
+  #endregion
+
   #region StripCommonSuffixes Tests
 
   [Test]
