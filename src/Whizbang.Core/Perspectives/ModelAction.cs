@@ -11,16 +11,19 @@ namespace Whizbang.Core.Perspectives;
 /// <strong>Usage Pattern:</strong>
 /// </para>
 /// <para>
-/// This enum is returned from Apply methods (directly or via <see cref="ApplyResult{TModel}"/>)
-/// to indicate the lifecycle action for the perspective model.
+/// An Apply returns an action through <see cref="ApplyResult{TModel}"/>, the return
+/// <see cref="IPerspectiveWithActionsFor{TModel, TEvent1}"/> declares. <see cref="ApplyResult{TModel}"/> converts
+/// implicitly from a <see cref="ModelAction"/>, so <c>return ModelAction.Purge;</c> is a complete Apply body. List the
+/// events that delete or purge under <c>IPerspectiveWithActionsFor</c>; one class may implement it alongside
+/// <c>IPerspectiveFor</c>, each any number of times.
 /// </para>
 /// <para>
 /// <strong>Delete vs Purge:</strong>
 /// </para>
 /// <para>
-/// <c>Delete</c> performs a soft delete by setting the model's <c>DeletedAt</c> timestamp,
-/// preserving the row for audit purposes. The model must have a <c>DateTimeOffset? DeletedAt</c>
-/// property for this to work.
+/// <c>Delete</c> keeps the row: the runner stores the model returned with the action, or the current model when none
+/// is returned. It sets nothing on the model; to record when the row was deleted, set a field such as
+/// <c>DeletedAt</c> on the model you return.
 /// </para>
 /// <para>
 /// <c>Purge</c> performs a hard delete by removing the row from the database entirely.
@@ -28,11 +31,15 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <example>
-/// <para><strong>Returning ModelAction from Apply:</strong></para>
+/// <para><strong>Returning an action from Apply:</strong></para>
 /// <code>
-/// public class OrderPerspective : IPerspectiveFor&lt;OrderView, OrderCanceled&gt; {
-///   public ModelAction Apply(OrderView current, OrderCanceled @event) {
-///     return ModelAction.Delete;  // Soft delete - sets DeletedAt
+/// public class OrderPerspective :
+///     IPerspectiveFor&lt;OrderView, OrderPlaced&gt;,
+///     IPerspectiveWithActionsFor&lt;OrderView, OrderCanceled&gt; {
+///   public OrderView Apply(OrderView current, OrderPlaced @event) =&gt; current with { Status = "Placed" };
+///
+///   public ApplyResult&lt;OrderView&gt; Apply(OrderView current, OrderCanceled @event) {
+///     return ModelAction.Delete;  // Keeps the row; converts implicitly to ApplyResult&lt;OrderView&gt;
 ///   }
 /// }
 /// </code>
@@ -48,10 +55,10 @@ public enum ModelAction {
   None = 0,
 
   /// <summary>
-  /// Soft delete - set the model's <c>DeletedAt</c> timestamp.
-  /// The row remains in the database but is marked as deleted.
-  /// Requires the model to have a <c>DateTimeOffset? DeletedAt</c> property.
+  /// Soft delete - keep the row, with the model returned alongside the action or the current model.
+  /// The runner sets nothing on the model: a timestamp such as <c>DeletedAt</c> is the Apply's to set.
   /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
   Delete = 1,
 
   /// <summary>

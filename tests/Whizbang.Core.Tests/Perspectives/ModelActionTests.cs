@@ -3,6 +3,7 @@
 
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
@@ -72,5 +73,48 @@ public class ModelActionTests {
 
     // Assert - should have exactly None, Delete, Purge, Resurrect
     await Assert.That(values.Length).IsEqualTo(4);
+  }
+
+  // The documented example (ModelAction's <example>): an action is returned through the interface-declared
+  // ApplyResult<TModel>, converted implicitly, and Delete sets nothing on the model (#1936).
+
+  internal sealed record OrderView {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = "";
+    public DateTimeOffset? DeletedAt { get; init; }
+  }
+
+  internal sealed record OrderPlaced : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  internal sealed record OrderCanceled : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  internal sealed class OrderPerspective :
+      IPerspectiveFor<OrderView, OrderPlaced>,
+      IPerspectiveWithActionsFor<OrderView, OrderCanceled> {
+    public OrderView Apply(OrderView current, OrderPlaced @event) => current with { Status = "Placed" };
+
+    public ApplyResult<OrderView> Apply(OrderView current, OrderCanceled @event) {
+      return ModelAction.Delete;
+    }
+  }
+
+  [Test]
+  public async Task TheDocumentedExample_ReturnsDeleteThroughTheInterfaceDeclaredShape_AndSetsNothingAsync() {
+    var perspective = new OrderPerspective();
+    var current = new OrderView { OrderId = TrackedGuid.New().Value, Status = "Placed" };
+
+    var result = perspective.Apply(current, new OrderCanceled { OrderId = current.OrderId });
+
+    await Assert.That(result.Action).IsEqualTo(ModelAction.Delete);
+    await Assert.That(result.Model).IsNull()
+      .Because("Delete returns no model, so the runner keeps the current one; nothing stamps DeletedAt on it");
+    await Assert.That(current.DeletedAt).IsNull();
   }
 }
