@@ -103,6 +103,28 @@ public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
       """);
   }
 
+  /// <summary>
+  /// Holds a transaction open on <paramref name="conn"/> while another session commits enough catalog changes to
+  /// overflow the shared invalidation queue, so <paramref name="conn"/>'s session is reset when its transaction ends.
+  /// </summary>
+  private async Task _fallBehindTheInvalidationQueueAsync(NpgsqlConnection conn) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await using (var hold = new NpgsqlCommand("SELECT 1", conn, tx)) {
+      await hold.ExecuteScalarAsync();
+    }
+    await using var other = await _openAsync();
+    await _execAsync(other, """
+      DO $$
+      BEGIN
+        FOR i IN 1..1500 LOOP
+          EXECUTE format('CREATE TABLE invalidation_flood_%s (id int)', i);
+          EXECUTE format('DROP TABLE invalidation_flood_%s', i);
+        END LOOP;
+      END $$;
+      """);
+    await tx.CommitAsync();
+  }
+
   private static async Task<int> _closeAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT close_digest_epochs(NOW(), 3600, 1000)";
@@ -133,6 +155,12 @@ public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
     var closed = await _closeAsync(conn);
     await Assert.That(closed).IsGreaterThan(0)
       .Because("the first call has to fold the settled epochs, or the measured call below has nothing it skips");
+
+    // Every test process on the machine shares the cluster, and their schema passes flood its invalidation queue
+    // while this session is busy (#1916). A session that falls that far behind is told to reset, and rebuilds every
+    // catalog cache and cached plan on its next statement. The test puts this session in that state itself: other
+    // sessions' DDL fills the queue while this one holds a transaction open.
+    await _fallBehindTheInvalidationQueueAsync(conn);
 
     var plan = await QueryPlan.CaptureAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 1000)");
 
