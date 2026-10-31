@@ -17,6 +17,7 @@ namespace Whizbang.Generators.Utilities;
 /// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveUnlistedApplyTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs</tests>
 internal sealed class PerspectiveContract {
   internal const string APPLY = "Apply";
   private const string EVENT_INTERFACE = "Whizbang.Core.IEvent";
@@ -52,6 +53,10 @@ internal sealed class PerspectiveContract {
     }
     listed.UnionWith(events);
   }
+
+  /// <summary>Every (model, event) pair an interface on the perspective lists, marker interfaces included.</summary>
+  internal IEnumerable<(ITypeSymbol Model, ITypeSymbol Event)> RoutedEvents =>
+    _routed.SelectMany(static pair => pair.Value.Select(eventType => (pair.Key, eventType)));
 
   /// <summary>Whether <paramref name="type"/> is one of the perspective's models.</summary>
   internal bool HasModel(ITypeSymbol type) => _routed.ContainsKey(type);

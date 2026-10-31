@@ -21,6 +21,7 @@ namespace Whizbang.Generators.Analyzers;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveUnlistedApplyTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDecoyApplyTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Perspectives";
@@ -76,9 +77,27 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
       description: "IPerspectiveFor declares TModel Apply(TModel, TEvent) and IPerspectiveWithActionsFor declares ApplyResult<TModel> Apply(TModel, TEvent). ApplyResult<TModel> converts implicitly from the model, from ModelAction and from the (TModel?, ModelAction) tuple, and one class may implement both families any number of times, so every outcome has an interface-declared shape. A TModel? return implements TModel Apply (nullability does not take part in matching), so it is accepted."
   );
 
+  /// <summary>
+  /// WHIZ117: Error - an event is listed only through a custom marker interface that extends <c>IPerspectiveBase</c>
+  /// without declaring an <c>Apply</c> for it, so it counts as routed while no interface-declared <c>Apply</c> handles
+  /// it. Custom marker interfaces may be supported in a future release.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz117</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByAMarkerWithNoApply_IsAnErrorAtThePerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventAMarkerAndADeclaringInterfaceBothList_IsNotReportedAsync</tests>
+  public static readonly DiagnosticDescriptor EventWithNoDeclaredApply = new(
+      id: "WHIZ117",
+      title: "Event is listed only by an interface that declares no Apply for it",
+      messageFormat: "Perspective '{0}' lists '{1}' for model '{2}' only through a marker interface that declares no Apply for it, so nothing strongly typed handles the event. List '{1}' under IPerspectiveFor<{2}, ...>, IPerspectiveWithActionsFor<{2}, ...> or IGlobalPerspectiveFor<{2}, TPartitionKey, ...>, which declare its Apply. Custom marker interfaces may be supported in a future release.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "IPerspectiveBase and an interface that extends it without declaring Apply only mark the events a perspective handles. Such an event is counted as routed (it is registered and associated with the perspective), yet no interface-declared Apply exists for it, so nothing the compiler checks handles it. Every event needs an interface that declares its Apply. Support for custom marker interfaces may come in a future release."
+  );
+
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    [ApplyForUnlistedEvent, HiddenExplicitApply, UndeclaredApplyReturn];
+    [ApplyForUnlistedEvent, HiddenExplicitApply, UndeclaredApplyReturn, EventWithNoDeclaredApply];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -122,6 +141,22 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
       }
     }
     _reportHiddenExplicitApplies(context, perspective, applies);
+    _reportEventsWithNoDeclaredApply(context, perspective, contract);
+  }
+
+  /// <summary>
+  /// WHIZ117: every event the perspective lists only through a marker interface that declares no Apply for it.
+  /// </summary>
+  private static void _reportEventsWithNoDeclaredApply(
+      SymbolAnalysisContext context, INamedTypeSymbol perspective, PerspectiveContract contract) {
+    foreach (var (model, eventType) in contract.RoutedEvents.Where(r => contract.DeclaredReturns(r.Model, r.Event).Count == 0)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          EventWithNoDeclaredApply,
+          perspective.Locations[0],
+          perspective.Name,
+          TypeNameUtilities.MinimallyQualified(eventType),
+          TypeNameUtilities.MinimallyQualified(model)));
+    }
   }
 
   /// <summary>
