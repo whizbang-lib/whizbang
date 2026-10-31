@@ -1,0 +1,56 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+# The licenses of the tools the pipeline runs and does not build itself: every remote action and reusable
+# workflow (by owner/repo, any version), every dotnet tool in a tool manifest and every dotnet tool a workflow
+# installs (by package id, any version), and every GitHub release binary a workflow downloads (by owner/repo). The source of truth for .github/scripts/Test-PipelineToolLicenses.ps1,
+# run by Test · Pipeline scripts, which fails on a tool this list does not name and on an entry nothing uses.
+#
+#   <kind>  <id>  <SPDX license>  [exception]  # why the pipeline uses it
+#
+# Allowed without review: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, PostgreSQL. Anything else needs the
+# "exception" marker and a reason saying why no permissively licensed tool will do, reviewed by a build admin
+# (CODEOWNERS). Strong copyleft (AGPL, GPL, SSPL) is refused even as an exception: a release was canceled when
+# dependency review refused the AGPL-3.0 secret scanner at the last step.
+#
+# Licenses here are read from each project's repository or NuGet package. When a tool moves a major version,
+# check its license again; .github/scripts/Compare-PipelineToolLicenses.ps1 compares this list with the
+# GitHub and NuGet APIs.
+
+# GitHub's own actions
+action       actions/attest-build-provenance    MIT   # build provenance for released packages
+action       actions/cache                      MIT   # dependency and build caches
+action       actions/checkout                   MIT   # repository checkout
+action       actions/create-github-app-token    MIT   # the release app's installation token
+action       actions/dependency-review-action   MIT   # Gate · Dependency review
+action       actions/download-artifact          MIT   # artifacts between jobs
+action       actions/github-script              MIT   # small API calls from workflows
+action       actions/setup-dotnet               MIT   # .NET SDK setup
+action       actions/upload-artifact            MIT   # artifacts between jobs
+action       github/codeql-action               MIT   # CodeQL analysis and SARIF upload
+
+# Third-party actions (also in .github/allowed-actions.txt)
+action       codecov/codecov-action             MIT          # coverage and test-result upload
+action       docker/login-action                Apache-2.0   # the CI image mirror's registry login
+action       gittools/actions                   MIT          # version calculation (gitversion/setup)
+action       nick-fields/retry                  MIT          # the .NET setup retry
+action       nuget/login                        Apache-2.0   # trusted publishing to nuget.org (OIDC)
+action       ossf/scorecard-action              Apache-2.0   # OpenSSF Scorecard
+action       softprops/action-gh-release        MIT          # GitHub release creation
+
+# dotnet tools
+dotnet-tool  cyclonedx                          Apache-2.0   # package SBOMs (package-sbom action)
+dotnet-tool  dotnet-ef                          MIT          # EF Core migrations, local development
+dotnet-tool  dotnet-reportgenerator-globaltool  Apache-2.0   # coverage reports
+dotnet-tool  dotnet-stryker                     Apache-2.0   # mutation testing
+dotnet-tool  roslynator.dotnet.cli              Apache-2.0   # analyzer sweep
+dotnet-tool  trx2junit                          MIT          # test results for the PR test report
+
+# Release binaries, downloaded at a pinned version and checked against a pinned SHA-256
+release-binary  gitleaks/gitleaks   MIT          # secret scanning (security-secrets.yml)
+release-binary  google/osv-scanner  Apache-2.0   # dependency vulnerability scan (security-supply-chain.yml)
+release-binary  sigstore/gitsign    Apache-2.0   # keyless signing of release tags (signed-tag action)
+
+# Reviewed exceptions
+dotnet-tool  dotnet-sonarscanner  LGPL-3.0-only  exception  # SonarScanner for .NET, the only client for the required SonarCloud check; run unmodified and never distributed, so LGPL places no obligation on the project
+dotnet-tool  dotnet-coverage  LicenseRef-Microsoft-dotnet-coverage  exception  # Microsoft's coverage collector and merger (proprietary, free to use, including in CI); the coverage gate merges its binary reports and no open-source tool reads them

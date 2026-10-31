@@ -490,6 +490,9 @@ pull request, and every pull request is reviewed against the same standard.
   dependency a package ships is under a license on the allow list in `.github/dependency-review-config.yml`
   (**Gate · Dependency review** for npm and GitHub Actions; NuGetAudit at restore and the license check at
   pack for NuGet). A license outside the list needs a reviewed exception in that file;
+- every tool the pipeline runs (actions, dotnet tools, downloaded release binaries) is named with its license
+  in `.github/pipeline-tool-licenses.txt` (**Test · Pipeline scripts**). A pull request that adds a tool adds
+  its line; strong copyleft (AGPL, GPL, SSPL) is refused even as an exception;
 - `dotnet format` makes no changes, and every file states its copyright and license (**Gate · License headers**,
   `reuse lint`): a source file in any language starts with the two-line header
   (`Copyright (c) whizbang-lib contributors.` then `SPDX-License-Identifier: MIT`, in that language's comment
