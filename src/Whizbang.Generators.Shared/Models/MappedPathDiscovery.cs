@@ -163,6 +163,7 @@ public static class MappedPathDiscovery {
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayInsideACollectionElementIsNamedByItsPathAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfPrimitivesIsNotReportedAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfArraysIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AMemberThatIsNotANamedType_IsNotReportedAsync</tests>
   private static string? _judgeProperty(
       IPropertySymbol property, HashSet<INamedTypeSymbol> visited, string path) {
     var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";

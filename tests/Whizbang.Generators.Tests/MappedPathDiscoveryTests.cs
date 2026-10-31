@@ -345,4 +345,16 @@ public class MappedPathDiscoveryTests {
 
     await Assert.That(member).IsEqualTo("Items");
   }
+
+  /// <summary>
+  /// A member whose type is not a named type once arrays are set aside (a dynamic member) has no members to walk and
+  /// nothing the mapped path must construct, so it leaves the model mapped.
+  /// </summary>
+  [Test]
+  public async Task AMemberThatIsNotANamedType_IsNotReportedAsync() {
+    var member = _unmappableMembers("  public dynamic? Extra { get; init; }");
+
+    await Assert.That(member).IsNull()
+      .Because("only an array or a named type can hold something the mapped path cannot construct");
+  }
 }
