@@ -14,6 +14,7 @@ public class MSBuildGlobalOptionsTests {
   public async Task Declared_ListsEveryPropertyThePackagesMakeVisibleAsync() {
     await Assert.That(MSBuildGlobalOptions.Declared).IsEquivalentTo([
       "WhizbangCollectiveIndexWarning",
+      "WhizbangOpaqueArrayWarning",
       "WhizbangMaxIdentifierLength",
       "WhizbangStripTableNameSuffixes",
       "WhizbangTableNameSuffixesToStrip",
