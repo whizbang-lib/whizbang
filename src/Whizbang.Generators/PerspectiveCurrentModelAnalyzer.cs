@@ -43,6 +43,7 @@ public class PerspectiveCurrentModelAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   /// <docs>operations/diagnostics/whiz108</docs>
   /// <tests>tests/Whizbang.Generators.Tests/OverwriteOnlyAnalyzerTests.cs:AnOverwriteOnlyApplyThatReadsItsCurrentModel_IsWarnedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/OverwriteOnlyAnalyzerTests.cs:AnOverwriteOnlyApplyThatPassesItsModelToAMethod_IsWarned_ButNameofIsNotAReadAsync</tests>
   public static readonly DiagnosticDescriptor OverwriteOnlyApplyReadsCurrentModel = new(
       id: "WHIZ108",
       title: "An overwrite-only perspective's Apply must not read its current model",
@@ -55,7 +56,7 @@ public class PerspectiveCurrentModelAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    ImmutableArray.Create(ApplyTestsCurrentModelForNull, OverwriteOnlyApplyReadsCurrentModel);
+    [ApplyTestsCurrentModelForNull, OverwriteOnlyApplyReadsCurrentModel];
 
   private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
 
