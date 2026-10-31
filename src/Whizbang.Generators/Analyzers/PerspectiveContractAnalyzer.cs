@@ -20,6 +20,7 @@ namespace Whizbang.Generators.Analyzers;
 /// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveUnlistedApplyTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDecoyApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Perspectives";
@@ -58,8 +59,26 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
       description: "When a perspective declares an ordinary Apply and an explicit interface Apply with the same parameters, the generated runner calls the ordinary one, so the explicit one is a decoy that satisfies the compiler and never runs. It often does the opposite of the real handler (keeps the row the real one purges). Return what the interface declares from one Apply; IPerspectiveWithActionsFor with ApplyResult<TModel> covers delete and purge."
   );
 
+  /// <summary>
+  /// WHIZ115: Error - an <c>Apply</c> for a routed event returns something the interface that lists the event does not
+  /// declare (a bare <c>ModelAction</c>, the <c>(TModel?, ModelAction)</c> tuple, or the other family's return).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz115</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs:ABareModelActionReturn_ForAnIPerspectiveForEvent_IsAnErrorNamingTheFixAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs:ANullableModelReturn_ImplementsTheInterface_AndIsNotReportedAsync</tests>
+  public static readonly DiagnosticDescriptor UndeclaredApplyReturn = new(
+      id: "WHIZ115",
+      title: "Apply returns a shape its interface does not declare",
+      messageFormat: "Apply{0} for '{1}' on perspective '{2}' returns '{3}', but the interface that lists '{1}' declares '{4}', so this Apply is not the interface's and compiles only beside an explicit implementation that never runs. Return '{4}'. To delete or purge, list '{1}' under IPerspectiveWithActionsFor<{5}, ...> and return ApplyResult<{5}>: 'return ModelAction.Purge;' converts implicitly.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "IPerspectiveFor declares TModel Apply(TModel, TEvent) and IPerspectiveWithActionsFor declares ApplyResult<TModel> Apply(TModel, TEvent). ApplyResult<TModel> converts implicitly from the model, from ModelAction and from the (TModel?, ModelAction) tuple, and one class may implement both families any number of times, so every outcome has an interface-declared shape. A TModel? return implements TModel Apply (nullability does not take part in matching), so it is accepted."
+  );
+
   /// <inheritdoc/>
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [ApplyForUnlistedEvent, HiddenExplicitApply];
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+    [ApplyForUnlistedEvent, HiddenExplicitApply, UndeclaredApplyReturn];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -79,7 +98,10 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
     foreach (var (apply, inherited) in applies) {
       var model = apply.Parameters[0].Type;
       var eventType = apply.Parameters[1].Type;
-      if (contract.HasModel(model) && PerspectiveContract.IsEvent(eventType) && !contract.Routes(model, eventType)) {
+      if (!contract.HasModel(model) || !PerspectiveContract.IsEvent(eventType)) {
+        continue;
+      }
+      if (!contract.Routes(model, eventType)) {
         context.ReportDiagnostic(Diagnostic.Create(
             ApplyForUnlistedEvent,
             _location(apply, perspective, inherited),
@@ -87,9 +109,31 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
             perspective.Name,
             TypeNameUtilities.MinimallyQualified(eventType),
             TypeNameUtilities.MinimallyQualified(model)));
+      } else if (_undeclaredReturn(contract, apply) is { } declared) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            UndeclaredApplyReturn,
+            _location(apply, perspective, inherited),
+            _inheritedFrom(apply, inherited),
+            TypeNameUtilities.MinimallyQualified(eventType),
+            perspective.Name,
+            TypeNameUtilities.MinimallyQualified(apply.ReturnType),
+            declared,
+            TypeNameUtilities.MinimallyQualified(model)));
       }
     }
     _reportHiddenExplicitApplies(context, perspective, applies);
+  }
+
+  /// <summary>
+  /// What the interfaces declare for <paramref name="apply"/>'s event when its return is none of it, or null when it
+  /// returns a declared shape or no interface declares an Apply for the event. Nullability does not take part, as it
+  /// does not in matching an interface member.
+  /// </summary>
+  private static string? _undeclaredReturn(PerspectiveContract contract, IMethodSymbol apply) {
+    var declared = contract.DeclaredReturns(apply.Parameters[0].Type, apply.Parameters[1].Type);
+    return declared.Count == 0 || declared.Any(r => SymbolEqualityComparer.Default.Equals(r, apply.ReturnType))
+      ? null
+      : string.Join("' or '", declared.Select(TypeNameUtilities.MinimallyQualified).Distinct(System.StringComparer.Ordinal));
   }
 
   /// <summary>

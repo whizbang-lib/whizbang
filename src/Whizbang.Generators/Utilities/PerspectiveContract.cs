@@ -16,6 +16,7 @@ namespace Whizbang.Generators.Utilities;
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveUnlistedApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs</tests>
 internal sealed class PerspectiveContract {
   internal const string APPLY = "Apply";
   private const string EVENT_INTERFACE = "Whizbang.Core.IEvent";
@@ -23,9 +24,11 @@ internal sealed class PerspectiveContract {
   private const string APPLY_RESULT = "Whizbang.Core.Perspectives.ApplyResult<TModel>";
 
   private readonly Dictionary<ITypeSymbol, HashSet<ITypeSymbol>> _routed;
+  private readonly List<IMethodSymbol> _declaredApplies;
 
-  private PerspectiveContract(Dictionary<ITypeSymbol, HashSet<ITypeSymbol>> routed) {
+  private PerspectiveContract(Dictionary<ITypeSymbol, HashSet<ITypeSymbol>> routed, List<IMethodSymbol> declaredApplies) {
     _routed = routed;
+    _declaredApplies = declaredApplies;
   }
 
   /// <summary>The contract of <paramref name="perspective"/>: its models and the events each one is routed.</summary>
@@ -38,7 +41,8 @@ internal sealed class PerspectiveContract {
       // TypeArguments: [0] the model, [1] the partition key, [2..] the events.
       _route(routed, global.TypeArguments[0], global.TypeArguments.Skip(2));
     }
-    return new PerspectiveContract(routed);
+    List<IMethodSymbol> declared = [.. perspective.AllInterfaces.SelectMany(static i => i.GetMembers(APPLY)).OfType<IMethodSymbol>()];
+    return new PerspectiveContract(routed, declared);
   }
 
   private static void _route(Dictionary<ITypeSymbol, HashSet<ITypeSymbol>> routed, ITypeSymbol model, IEnumerable<ITypeSymbol> events) {
@@ -55,6 +59,17 @@ internal sealed class PerspectiveContract {
   /// <summary>Whether an interface on the perspective lists <paramref name="eventType"/> for <paramref name="model"/>.</summary>
   internal bool Routes(ITypeSymbol model, ITypeSymbol eventType) =>
     _routed.TryGetValue(model, out var listed) && listed.Contains(eventType);
+
+  /// <summary>
+  /// The returns the perspective's interfaces declare for an <c>Apply</c> taking <paramref name="model"/> and
+  /// <paramref name="eventType"/>: the model for <c>IPerspectiveFor</c>, <c>ApplyResult&lt;TModel&gt;</c> for
+  /// <c>IPerspectiveWithActionsFor</c>. Empty when only a marker such as <c>IPerspectiveBase</c> lists the event, which
+  /// declares no <c>Apply</c> to judge by.
+  /// </summary>
+  internal List<ITypeSymbol> DeclaredReturns(ITypeSymbol model, ITypeSymbol eventType) =>
+    [.. _declaredApplies
+      .Where(m => m.Parameters.Select(static p => p.Type).SequenceEqual([model, eventType], SymbolEqualityComparer.Default))
+      .Select(static m => m.ReturnType)];
 
   /// <summary>Whether <paramref name="type"/> is an event: it implements <c>IEvent</c>.</summary>
   internal static bool IsEvent(ITypeSymbol type) =>

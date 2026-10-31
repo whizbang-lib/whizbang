@@ -122,6 +122,13 @@ internal sealed record EventReturnTypeInfo(
 /// <summary>
 /// Specifies the return type pattern of an Apply method for code generation.
 /// </summary>
+/// <remarks>
+/// <see cref="Model"/>, <see cref="NullableModel"/> and <see cref="ApplyResult"/> are the shapes the interfaces declare.
+/// <see cref="Action"/> and <see cref="Tuple"/>, and an <see cref="ApplyResult"/> for an <c>IPerspectiveFor</c> event,
+/// are errors since #1936 (WHIZ115). They are still classified so code that suppresses the error keeps its runner and
+/// the generator never fails on it.
+/// </remarks>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveApplyReturnShapeTests.cs:AShapeOnlyASuppressedWhiz115Allows_StillGeneratesItsRunnerCaseAsync</tests>
 internal enum ApplyReturnType {
   /// <summary>Returns TModel - standard update pattern</summary>
   Model,
