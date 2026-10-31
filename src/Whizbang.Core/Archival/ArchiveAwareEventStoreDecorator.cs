@@ -41,7 +41,7 @@ namespace Whizbang.Core.Archival;
 /// <param name="readThrough">Whether reads from the start read through the archive (<c>Whizbang:Archive:ReadThrough</c>).</param>
 /// <docs>fundamentals/events/archive-store#read-through</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveReadThroughIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs</tests>
 public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveStore archive, bool readThrough)
     : ForwardingEventStoreDecorator(inner) {
