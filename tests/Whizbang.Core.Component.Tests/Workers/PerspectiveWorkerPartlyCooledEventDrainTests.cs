@@ -240,15 +240,15 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
       return inner.SignalPerspectiveComplete(eventId, perspectiveName);
     }
 
-    public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source,
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source,
       Guid? streamId = null, Type? perspectiveType = null) =>
-      inner.BeginTracking(eventId, envelope, entryStage, source, streamId, perspectiveType);
-    public ILifecycleTracking? GetTracking(Guid eventId) => inner.GetTracking(eventId);
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) =>
-      inner.ExpectCompletionsFrom(eventId, sources);
-    public ValueTask SignalSegmentCompleteAsync(Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider,
-      CancellationToken ct) => inner.SignalSegmentCompleteAsync(eventId, source, scopedProvider, ct);
-    public void AbandonTracking(Guid eventId) => inner.AbandonTracking(eventId);
+      inner.BeginTracking(path, eventId, envelope, entryStage, source, streamId, perspectiveType);
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => inner.GetTracking(path, eventId);
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) =>
+      inner.ExpectCompletionsFrom(path, eventId, sources);
+    public ValueTask SignalSegmentCompleteAsync(LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider,
+      CancellationToken ct) => inner.SignalSegmentCompleteAsync(path, eventId, source, scopedProvider, ct);
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) => inner.AbandonTracking(path, eventId);
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) =>
       inner.ExpectPerspectiveCompletions(eventId, perspectiveNames);
     public bool AreAllPerspectivesComplete(Guid eventId) => inner.AreAllPerspectivesComplete(eventId);

@@ -935,6 +935,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A local dispatch of an event this process also projects no longer ends the projection's lifecycle.** The
+  dispatcher's local PostLifecycle and the perspective worker tracked an event under one key, the event id, so a local
+  dispatch of an event the worker was projecting took the worker's entry, completed it with its own PostLifecycle and
+  removed it with the event's perspective gate; PostAllPerspectives and the projection's PostLifecycle then never fired
+  for that event in that process. The outbox publish worker and the transport consumers shared the same key space.
+  Lifecycle tracking is now keyed by path and event id: `ILifecycleCoordinator.BeginTracking`, `GetTracking`,
+  `AbandonTracking`, `ExpectCompletionsFrom` and `SignalSegmentCompleteAsync` take a `LifecycleTrackingPath`
+  (`LocalDispatch`, `Perspective`, `Outbox`, `Inbox`), each path's entry has its own stage guard and its own end, and
+  the perspective gate ends only with the perspective path's entry (Fixes #1918)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of

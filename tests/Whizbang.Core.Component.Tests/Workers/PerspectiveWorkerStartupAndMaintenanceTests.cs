@@ -223,20 +223,20 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public int CleanupReturnValue { get; set; }
 
     public ILifecycleTracking BeginTracking(
-        Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage,
+        LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage,
         MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
       var stages = AdvancedByEvent.GetOrAdd(eventId, _ => []);
       return new SpyTracking(eventId, stages, ThrowOnAdvanceFor.Contains(eventId));
     }
 
-    public ILifecycleTracking? GetTracking(Guid eventId) => null;
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) { }
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => null;
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }
     public ValueTask SignalSegmentCompleteAsync(
-        Guid eventId, PostLifecycleCompletionSource source,
+        LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source,
         IServiceProvider scopedProvider, CancellationToken ct) => ValueTask.CompletedTask;
     public ConcurrentQueue<Guid> Abandoned { get; } = new();
     private readonly System.Threading.Channels.Channel<Guid> _abandonedSignal = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
-    public void AbandonTracking(Guid eventId) {
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) {
       Abandoned.Enqueue(eventId);
       _abandonedSignal.Writer.TryWrite(eventId);
     }

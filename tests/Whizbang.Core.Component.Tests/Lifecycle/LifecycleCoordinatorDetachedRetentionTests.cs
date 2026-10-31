@@ -59,11 +59,11 @@ public class LifecycleCoordinatorDetachedRetentionTests {
     await using var provider = _provider(invoker);
     var coordinator = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance);
     Guid eventId = TrackedGuid.New();
-    var tracking = coordinator.BeginTracking(eventId, _envelope(eventId), LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+    var tracking = coordinator.BeginTracking(LifecycleTrackingPath.LocalDispatch, eventId, _envelope(eventId), LifecycleStage.PostLifecycleDetached, MessageSource.Local);
     await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, provider, cancellationToken);
     await invoker.Started.Task.WaitAsync(cancellationToken);
 
-    coordinator.AbandonTracking(eventId);
+    coordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
     await Assert.That(coordinator.RetainedDetachedTaskCount).IsEqualTo(1)
       .Because("a detached stage still running when its entry ends is kept so a drain can await it");
 
@@ -81,11 +81,11 @@ public class LifecycleCoordinatorDetachedRetentionTests {
     await using var provider = _provider(invoker);
     var coordinator = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance);
     Guid eventId = TrackedGuid.New();
-    var tracking = coordinator.BeginTracking(eventId, _envelope(eventId), LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+    var tracking = coordinator.BeginTracking(LifecycleTrackingPath.LocalDispatch, eventId, _envelope(eventId), LifecycleStage.PostLifecycleDetached, MessageSource.Local);
     await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, provider, cancellationToken);
     await tracking.DrainDetachedAsync();
 
-    coordinator.AbandonTracking(eventId);
+    coordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
 
     await Assert.That(coordinator.RetainedDetachedTaskCount).IsEqualTo(0)
       .Because("there is nothing left to drain for a stage that already finished");

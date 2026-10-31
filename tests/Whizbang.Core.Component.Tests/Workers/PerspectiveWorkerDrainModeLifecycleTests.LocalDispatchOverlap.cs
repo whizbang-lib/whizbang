@@ -107,7 +107,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     // PrePerspective and both perspectives reported, so only its terminal stages are left.
     var dispatcher = new OverlapDispatcher(provider, eventId => {
       var projected = _createEnvelope(eventId, new AlphaEvent("projected"));
-      lc.BeginTracking(eventId, projected, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
+      lc.BeginTracking(LifecycleTrackingPath.Perspective, eventId, projected, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
       lc.ExpectPerspectiveCompletions(eventId, [FIRST_PERSPECTIVE, SECOND_PERSPECTIVE]);
       lc.SignalPerspectiveComplete(eventId, FIRST_PERSPECTIVE);
       lc.SignalPerspectiveComplete(eventId, SECOND_PERSPECTIVE);

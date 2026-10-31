@@ -3894,10 +3894,10 @@ public abstract partial class Dispatcher(
     if (_lifecycleCoordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+        LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
-      _lifecycleCoordinator.AbandonTracking(eventId);
+      _lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
       return;
     }
 

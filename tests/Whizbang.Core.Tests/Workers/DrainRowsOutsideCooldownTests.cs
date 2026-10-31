@@ -34,15 +34,15 @@ public class DrainRowsOutsideCooldownTests {
       return false;
     }
 
-    public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source,
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source,
       Guid? streamId = null, Type? perspectiveType = null) => throw new NotSupportedException();
-    public ILifecycleTracking? GetTracking(Guid eventId) => null;
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) {
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => null;
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) {
       // Not reached: the rows filter only signals perspective completions.
     }
-    public ValueTask SignalSegmentCompleteAsync(Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider,
+    public ValueTask SignalSegmentCompleteAsync(LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider,
       CancellationToken ct) => ValueTask.CompletedTask;
-    public void AbandonTracking(Guid eventId) {
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) {
       // Not reached: the rows filter only signals perspective completions.
     }
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) {
