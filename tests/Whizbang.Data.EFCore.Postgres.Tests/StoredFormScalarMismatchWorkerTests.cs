@@ -189,9 +189,9 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var recovered = pipeline.Applied.WaitAsync(items => items.Contains(poisoned), cancellationToken, fromNow: true);
     var completed = pipeline.Completed.WaitAsync(items => items.Contains(failingWork), cancellationToken);
     // The commit that converts the row also makes its retry due, and the apply that recovers the stream rewrites
-    // the row. Held from before the migration, nothing the claim loop takes reaches the worker until the converted
+    // the row. Stopped from before the migration, nothing the claim loop takes reaches the worker until the converted
     // row has been read, so the read sees the conversion and not the recovery.
-    pipeline.HandOff.Hold();
+    await pipeline.StopHandOffsAsync(cancellationToken);
     await StoredFormMigrationSql.DeclareAsync(() => new NpgsqlConnection(ConnectionString), schema, [migration], cancellationToken);
     var notices = new NoticeLogger();
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
@@ -207,7 +207,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var status = await StoredFormMigrationJournal.ReadAsync(conn, schema, [migration], cancellationToken);
     await Assert.That(status.Single().State).IsEqualTo(StoredFormMigrationState.Applied);
     await Assert.That(status.Single().RowsConverted).IsEqualTo(1L);
-    pipeline.HandOff.Release();
+    pipeline.ResumeHandOffs();
 
     // No clock is moved: the migration brought the parked stream's retry forward, so the claim loop picks it up,
     // reads the converted document, applies the waiting event and recovers, well inside its 60-second backoff.
@@ -219,6 +219,36 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     await Assert.That(await _pendingRowExistsAsync(conn, failingWork, cancellationToken)).IsFalse();
     await Assert.That((await pipeline.Health.ReportAsync(cancellationToken)).State).IsEqualTo(ComponentState.Operational)
       .Because("a stream that reads again is forgotten by the stored-forms health component");
+  }
+
+  /// <summary>
+  /// #1917: stopping the hand-offs covers what was already handed off. A stream the claim loop handed to the worker
+  /// just before the stop (a re-offer queued behind a drain still running, #987) is still in the worker's queue, and
+  /// if it is drained after the migration has made its row due, it applies the waiting event before the test reads the
+  /// converted row. The stop therefore completes only once everything handed off before it has been processed.
+  /// </summary>
+  [Test]
+  [Timeout(180_000)]
+  public async Task StopHandOffs_CompletesOnlyOnceEverythingAlreadyHandedOffIsProcessedAsync(CancellationToken cancellationToken) {
+    await using var pipeline = _composePipeline(maxFailures: 10, claimBatchSize: 100, drainConsumers: 1);
+    await using var conn = await _openAsync(cancellationToken);
+    await pipeline.StartAsync(conn, cancellationToken);
+    var reoffered = (Guid)TrackedGuid.New();
+
+    // The worker is busy elsewhere while a re-offered stream sits in its queue, already past the hand-off.
+    pipeline.WorkerDrain.Pause();
+    await pipeline.WorkerDrain.HandOffAsync(reoffered, cancellationToken);
+    var stopped = pipeline.StopHandOffsAsync(cancellationToken);
+
+    await Assert.That(stopped.IsCompleted).IsFalse()
+      .Because("a stop that returns while a stream it let through is still queued lets that stream apply after it");
+
+    pipeline.WorkerDrain.Resume();
+    await stopped;
+
+    await Assert.That(pipeline.WorkerDrain.Taken.Snapshot()).Contains(reoffered)
+      .Because("the stop completed once the worker had taken, and finished, what was queued before it");
+    pipeline.ResumeHandOffs();
   }
 
   [Test]
@@ -363,6 +393,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var instanceProvider = new ServiceInstanceProvider(config);
     var harness = new PerspectiveWorkerTestHarness();
     var handOff = new HandOffGate();
+    var workerDrain = new WorkerDrainChannel(harness.DrainChannel);
 
     var claims = new Recorder<HashSet<Guid>>();
     var failures = new Recorder<MessageFailure>();
@@ -441,7 +472,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       perspectiveCompletionChannel: new WriteThroughCompletionChannel(scopeFactory, completed),
       failureChannel: new WriteThroughFailureChannel(scopeFactory, failures),
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
-      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveDrainChannel: workerDrain,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: new RecordingDeadLetterStore(scopeFactory, deadLetters),
@@ -460,6 +491,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       MeterListener = meterListener,
       Health = new StoredFormHealthSource(registry),
       HandOff = handOff,
+      WorkerDrain = workerDrain,
       Claims = claims,
       Failures = failures,
       Applied = applied,
@@ -478,6 +510,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     public required MeterListener MeterListener { get; init; }
     public required StoredFormHealthSource Health { get; init; }
     public required HandOffGate HandOff { get; init; }
+    public required WorkerDrainChannel WorkerDrain { get; init; }
     public required Recorder<HashSet<Guid>> Claims { get; init; }
     public required Recorder<MessageFailure> Failures { get; init; }
     public required Recorder<Guid> Applied { get; init; }
@@ -495,6 +528,19 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       await PerspectiveWorker.StartAsync(ct);
       await PerspectiveWorker.StartupScanComplete.WaitAsync(_signalDeadline, ct);
     }
+
+    /// <summary>
+    /// Stops what the claim loop hands to the perspective worker, so a test can read a row the next apply would
+    /// rewrite. <see cref="ResumeHandOffs"/> lets every held hand-off through.
+    /// </summary>
+    public Task StopHandOffsAsync(CancellationToken ct) {
+      _ = ct;
+      HandOff.Hold();
+      return Task.CompletedTask;
+    }
+
+    /// <summary>Lets every hand-off <see cref="StopHandOffsAsync"/> held through.</summary>
+    public void ResumeHandOffs() => HandOff.Release();
 
     /// <summary>Commits one event per entry, each on its stream, and returns the event ids in order.</summary>
     public async Task<List<Guid>> CommitAsync(NpgsqlConnection conn, IReadOnlyList<(Guid StreamId, decimal Amount)> events, CancellationToken ct) {
@@ -645,6 +691,83 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     public void MarkDraining(Guid streamId) => inner.MarkDraining(streamId);
 
     public void MarkDrained(Guid streamId) => inner.MarkDrained(streamId);
+  }
+
+  /// <summary>
+  /// The worker's side of the drain channel. It records every stream the worker takes, and a test can pause the worker's
+  /// reads to hold a stream in the queue, then hand one off directly, as the claim loop does past the gate.
+  /// </summary>
+  private sealed class WorkerDrainChannel(IPerspectiveDrainChannel inner) : IPerspectiveDrainChannel {
+    private readonly PausableReader _reader = new(inner.Reader);
+
+    public Recorder<Guid> Taken => _reader.Taken;
+
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _reader;
+
+    public void Pause() => _reader.Pause();
+
+    public void Resume() => _reader.Resume();
+
+    /// <summary>Puts a stream in the worker's queue as a hand-off already past the gate does.</summary>
+    public ValueTask HandOffAsync(Guid streamId, CancellationToken ct) => inner.WriteAsync(streamId, ct);
+
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => inner.WriteAsync(streamId, cancellationToken);
+
+    public bool TryWrite(Guid streamId) => inner.TryWrite(streamId);
+
+    public bool IsInFlight(Guid streamId) => inner.IsInFlight(streamId);
+
+    public void MarkDraining(Guid streamId) => inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) => inner.MarkDrained(streamId);
+
+    /// <summary>Reads through to the queue unless paused; a paused reader takes nothing and waits for the resume.</summary>
+    private sealed class PausableReader(System.Threading.Channels.ChannelReader<Guid> queue) : System.Threading.Channels.ChannelReader<Guid> {
+      private readonly Lock _lock = new();
+      private TaskCompletionSource? _paused;
+
+      public Recorder<Guid> Taken { get; } = new();
+
+      public void Pause() {
+        lock (_lock) {
+          _paused ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+      }
+
+      public void Resume() {
+        TaskCompletionSource? paused;
+        lock (_lock) {
+          paused = _paused;
+          _paused = null;
+        }
+        paused?.TrySetResult();
+      }
+
+      public override bool TryRead(out Guid item) {
+        lock (_lock) {
+          if (_paused is not null) {
+            item = Guid.Empty;
+            return false;
+          }
+        }
+        if (!queue.TryRead(out item)) {
+          return false;
+        }
+        Taken.Add(item);
+        return true;
+      }
+
+      public override async ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
+        Task? paused;
+        lock (_lock) {
+          paused = _paused?.Task;
+        }
+        if (paused is not null) {
+          await paused.WaitAsync(cancellationToken);
+        }
+        return await queue.WaitToReadAsync(cancellationToken);
+      }
+    }
   }
 
   /// <summary>Reports each failure to the coordinator before returning, then records it.</summary>
