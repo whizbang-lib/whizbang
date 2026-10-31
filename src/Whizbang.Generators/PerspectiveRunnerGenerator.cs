@@ -183,12 +183,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var isFullHistory = classSymbol.GetAttributes().Any(
         static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "FullHistoryAttribute" or "FullHistory");
 
-    // #1869: a perspective marked [OverwriteOnly] builds its row from each event alone, and says so; the generator never
-    // infers it. Its rewind applies only the stream's last event, which can decide the row alone only when its Apply
-    // returns the model (or null for no change): an Apply returning an action or an ApplyResult can purge.
-    var isOverwriteOnly = classSymbol.GetAttributes().Any(
-        static a => TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE));
-
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -218,12 +212,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
     var unconditionalPurges = _extractUnconditionalPurgeEventTypes(classSymbol, eventTypes);
-    string[] overwriteDecisive = isOverwriteOnly
-        ? [.. eventReturnTypes
-            .Where(static r => r.ReturnType is ApplyReturnType.Model or ApplyReturnType.NullableModel)
-            .Select(static r => r.EventTypeName)
-            .Distinct(System.StringComparer.Ordinal)]
-        : [];
+    var (isOverwriteOnly, overwriteDecisive) = _extractOverwriteOnly(classSymbol, eventReturnTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -286,7 +275,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             IsOverwriteOnly: isOverwriteOnly,
-            OverwriteDecisiveEventTypes: overwriteDecisive.Length > 0 ? overwriteDecisive : null),
+            OverwriteDecisiveEventTypes: overwriteDecisive),
         Warning: null
     );
   }
@@ -306,6 +295,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             Location: classDeclaration.Identifier.GetLocation()
         )
     );
+  }
+
+  /// <summary>
+  /// #1869: whether the perspective is marked [OverwriteOnly] (explicit; the generator never infers it), and the events
+  /// whose Apply can decide its row alone. Its rewind applies only the stream's last event, which decides the row alone
+  /// only when its Apply returns the model (or null for no change): an Apply returning an action or an ApplyResult can
+  /// purge. Null when none can, including for every unmarked perspective.
+  /// </summary>
+  private static (bool IsOverwriteOnly, string[]? DecisiveEventTypes) _extractOverwriteOnly(
+      INamedTypeSymbol classSymbol, EventReturnTypeInfo[] eventReturnTypes) {
+    if (!classSymbol.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE))) {
+      return (false, null);
+    }
+    string[] decisive = [.. eventReturnTypes
+        .Where(static r => r.ReturnType is ApplyReturnType.Model or ApplyReturnType.NullableModel)
+        .Select(static r => r.EventTypeName)
+        .Distinct(System.StringComparer.Ordinal)];
+    return (true, decisive.Length > 0 ? decisive : null);
   }
 
   /// <summary>
