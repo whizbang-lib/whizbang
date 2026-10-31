@@ -40,7 +40,7 @@ public class DapperArchiveAppendPolicyTests : PostgresTestBase {
       .Throws<StreamArchivedException>();
 
     await Assert.That(thrown!.StreamId).IsEqualTo(stream);
-    await Assert.That(thrown.ArchivedThroughVersion).IsEqualTo(0L);
+    await Assert.That(thrown.ArchivedThroughVersion).IsEqualTo(1L).Because("a direct append starts a new stream at version 1 (#1913)");
     await Assert.That(thrown.Policy).IsEqualTo(AppendToArchivedPolicy.Refuse);
     await Assert.That(thrown.InnerException).IsTypeOf<PostgresException>();
   }

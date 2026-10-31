@@ -42,7 +42,8 @@
 --
 -- Dependencies: 260 (wh_stream_lifecycle), 262 (wh_event_archive; last word of wh_archive_stream; the trigger dropped
 --               here), 266 (last word of store_outbox_messages, _emit_event_store_chain,
---               _emit_event_store_chain_for_inbox, wh_append_event and wh_restore_archived_stream; the seal refusal),
+--               _emit_event_store_chain_for_inbox and wh_restore_archived_stream; the seal refusal), 267 (last word of
+--               wh_append_event: a new stream starts at version 1),
 --               241 (move_to_dead_letters), 228 (_wh_inbox_dead_letter_snapshot), 209 (wh_perspective_snapshots.snapshot_version)
 -- Objects: archived_through_version, idx_stream_lifecycle_closed, wh_stream_type_policies,
 --          ck_stream_type_policies_append_to_archived, wh_archive_restore_requests, fk_archive_restore_requests_stream,
@@ -1871,8 +1872,9 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMP
   'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738).';
 
 
--- wh_append_event: last word 266, with the archived-stream refusal answered by the seal's probe. The signature is the
--- same, and the overloads are cleared first because this name has had more than one arity (README rule 5).
+-- wh_append_event: last word 267 (a new stream starts at version 1, #1913), with the archived-stream refusal answered by
+-- the seal's probe. The signature is the same, and the overloads are cleared first because this name has had more than
+-- one arity (README rule 5).
 SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
@@ -1887,6 +1889,7 @@ SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:TerminalEvent_DirectAppend_SealsTheStream_AndTheNextAppendThrowsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:DirectAppend_ToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:AppendAsync_TerminalEvent_SealsTheStream_AndTheNextAppendThrowsStreamSealedExceptionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationTests.cs:EnsureWhizbangDatabaseInitialized_ADatabaseAlreadyPast267_StillApplies267_AndANewStreamStartsAtOneAsync</tests>
 -- <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:DirectAppend_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:DirectAppend_AutoRestore_RaisesTheRestoreState_AndStoresNothingAsync</tests>
@@ -1974,7 +1977,7 @@ BEGIN
     p_aggregate_type,
     p_event_type,
     p_scope,
-    COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = p_stream_id), -1) + 1,
+    COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = p_stream_id), 0) + 1,
     p_created_at,
     COALESCE(p_flags, 0)
   RETURNING version, flags INTO v_version, v_flags;
@@ -2050,7 +2053,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_append_event(UUID, UUID, UUID, TEXT, TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ, INTEGER) IS
-'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), -1) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 228: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546). 260: keeps the stream''s wh_stream_lifecycle row (#1732). 266: refuses an append to a sealed stream, raising SQLSTATE WHS01 (StreamSealedException), and a terminal event seals its stream (#1733). 271: refuses an append to an archived stream, raising SQLSTATE WHA01 (Refuse) or WHA02 (AutoRestore) by its type''s AppendToArchived policy (StreamArchivedException, #1738).';
+'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), 0) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 228: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546). 260: keeps the stream''s wh_stream_lifecycle row (#1732). 266: refuses an append to a sealed stream, raising SQLSTATE WHS01 (StreamSealedException), and a terminal event seals its stream (#1733). 267: a new stream starts at version 1, as on the outbox and inbox paths; an existing stream continues from its highest version (#1913). 271: refuses an append to an archived stream, raising SQLSTATE WHA01 (Refuse) or WHA02 (AutoRestore) by its type''s AppendToArchived policy (StreamArchivedException, #1738).';
 
 
 -- ===========================================================================================

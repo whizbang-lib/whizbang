@@ -419,7 +419,7 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     _ = await _streamAsync(connection, stream, 3);
     _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
 
-    // The direct append numbers from the newest hot version; with nothing hot it would reuse version 0. Since 271 the
+    // The direct append numbers from the newest hot version; with nothing hot it would reuse version 1. Since 271 the
     // append itself refuses (262's statement trigger is gone), naming how far the archive reaches.
     var direct = await Assert.That(async () => await _executeAsync(connection,
         "SELECT wh_append_event(gen_random_uuid(), @id, @id, 'Agg', 'T', '{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())", stream))

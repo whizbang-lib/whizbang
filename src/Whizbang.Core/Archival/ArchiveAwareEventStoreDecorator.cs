@@ -47,8 +47,8 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
     : ForwardingEventStoreDecorator(inner) {
 
   /// <summary>
-  /// The version every prefix archive removes. A stream's first version is 0 (a direct append) or 1 (the emit chains),
-  /// so a first hot version above this one is a gap at the start of the stream.
+  /// The version every prefix archive removes. A stream's first version is 1, or 0 for a stream a direct append created
+  /// before #1913, so a first hot version above this one is a gap at the start of the stream.
   /// </summary>
   public const long FIRST_ARCHIVED_VERSION = 1;
 

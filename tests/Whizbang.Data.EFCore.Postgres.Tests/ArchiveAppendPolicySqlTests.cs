@@ -67,12 +67,12 @@ public class ArchiveAppendPolicySqlTests : EFCoreTestBase {
       .Throws<StreamArchivedException>();
 
     await Assert.That(thrown!.StreamId).IsEqualTo(stream);
-    await Assert.That(thrown.ArchivedThroughVersion).IsEqualTo(1L)
-      .Because("a directly appended stream starts at version 0, so two events end at version 1");
+    await Assert.That(thrown.ArchivedThroughVersion).IsEqualTo(2L)
+      .Because("a directly appended stream starts at version 1 (#1913), so two events end at version 2");
     await Assert.That(thrown.Policy).IsEqualTo(AppendToArchivedPolicy.Refuse)
       .Because("a stream type with no policy refuses");
     await Assert.That(thrown.Message).IsEqualTo(
-      $"Stream {stream} is archived through version 1 and refuses appends (AppendToArchived Refuse).");
+      $"Stream {stream} is archived through version 2 and refuses appends (AppendToArchived Refuse).");
     var conn = await _openAsync(context);
     await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(0L)
       .Because("nothing is hot after a whole-stream archive, and the refused append stores nothing");

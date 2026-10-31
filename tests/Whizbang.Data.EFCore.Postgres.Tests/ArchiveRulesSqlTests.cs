@@ -29,15 +29,35 @@ public class ArchiveRulesSqlTests : EFCoreTestBase {
   // ===== A prefix always removes version 1 =====
 
   [Test]
+  public async Task Prefix_ThroughAVersionBelowOne_IsRefused_OnAStreamThatStartsAtOneAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _appendDirectlyAsync(conn, stream, count: 3);
+
+    var refused = await _archiveSqlAsync(conn, stream, throughVersion: 0);
+
+    await Assert.That(refused).IsEqualTo("not_past_first_version")
+      .Because("a prefix through version 0 archives nothing of a stream that starts at 1, and keeps version 1 hot");
+    await Assert.That(await _hotVersionsAsync(conn, stream)).IsEquivalentTo([1L, 2L, 3L]);
+
+    var archived = await _store().WriteAsync(ArchiveBatch.Prefix(stream, 1));
+
+    await Assert.That(archived.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(archived.EventsArchived).IsEqualTo(1L);
+    await Assert.That(await _hotVersionsAsync(conn, stream)).IsEquivalentTo([2L, 3L]);
+  }
+
+  [Test]
   public async Task Prefix_ThroughAVersionBelowOne_IsRefused_ThroughOneIsArchivedAsync() {
     await using var conn = await _openAsync();
     var stream = (Guid)TrackedGuid.New();
-    // A directly appended stream starts at version 0.
-    for (var i = 0; i < 3; i++) {
-      await _executeAsync(conn,
-        "SELECT wh_append_event(gen_random_uuid(), @s, @s, 'Agg', 'T', '{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())",
-        ("s", stream));
-    }
+    // A stream a direct append created before new streams started at 1 (#1913) is numbered from 0.
+    await _appendDirectlyAsync(conn, stream, count: 3);
+    await _executeAsync(conn, """
+      UPDATE wh_event_store SET version = version + 1000 WHERE stream_id = @s;
+      UPDATE wh_event_store SET version = version - 1001 WHERE stream_id = @s;
+      UPDATE wh_stream_lifecycle SET last_version = last_version - 1 WHERE stream_id = @s;
+      """, ("s", stream));
 
     var refused = await _archiveSqlAsync(conn, stream, throughVersion: 0);
 
@@ -159,6 +179,14 @@ public class ArchiveRulesSqlTests : EFCoreTestBase {
     var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     return conn;
+  }
+
+  private static async Task _appendDirectlyAsync(NpgsqlConnection conn, Guid stream, int count) {
+    for (var i = 0; i < count; i++) {
+      await _executeAsync(conn,
+        "SELECT wh_append_event(gen_random_uuid(), @s, @s, 'Agg', 'T', '{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())",
+        ("s", stream));
+    }
   }
 
   private static async Task<string> _archiveSqlAsync(NpgsqlConnection conn, Guid stream, long throughVersion) {

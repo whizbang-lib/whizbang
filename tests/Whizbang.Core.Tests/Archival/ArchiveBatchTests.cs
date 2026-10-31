@@ -36,7 +36,7 @@ public class ArchiveBatchTests {
 
   [Test]
   public async Task Prefix_AcceptsVersionZero_RefusesANegativeVersionAsync() {
-    // A directly appended stream starts at version 0, so 0 is a real prefix; -1 names nothing.
+    // A stream a direct append created before #1913 starts at version 0, so 0 is a real prefix; -1 names nothing.
     await Assert.That(ArchiveBatch.Prefix(_stream, 0).ThroughVersion).IsEqualTo(0L);
     await Assert.That(() => ArchiveBatch.Prefix(_stream, -1)).Throws<ArgumentOutOfRangeException>();
   }
