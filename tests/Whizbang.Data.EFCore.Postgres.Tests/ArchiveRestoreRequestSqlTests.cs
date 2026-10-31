@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -11,6 +12,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 
@@ -251,7 +253,60 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
       .Because("one stream's failure never holds back another's restore");
   }
 
+  [Test]
+  public async Task Step_CanceledDuringARestore_StopsTheCycle_AndLeavesTheRequestForTheNextOneAsync() {
+    await using var conn = await _openAsync();
+    var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
+    using var stopping = new CancellationTokenSource();
+    var store = new CancelingArchiveStore(stopping);
+
+    await Assert.That(async () => await _runStepAsync(store, stopping.Token)).Throws<OperationCanceledException>()
+      .Because("a host stopping mid-restore stops the cycle; it is not a restore that failed");
+
+    await Assert.That(store.Restores).IsEqualTo(1);
+    await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Restoring|<none>")
+      .Because("the request is not failed: a later pass claims a leftover Restoring request again");
+  }
+
+  [Test]
+  public async Task Step_AsTheDriverRegistersIt_WritesTheRequestTimesFromTheHostsClockAsync() {
+    await using var conn = await _openAsync();
+    var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
+    _ = await _store().DeleteAsync(stream);
+    var hostNow = _t0.AddDays(3);
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("archive-restore-step-clock"));
+    services.AddSingleton<TimeProvider>(new FakeTimeProvider(hostNow));
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    await using var registered = services.BuildServiceProvider();
+    using var scope = registered.CreateScope();
+    var step = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>().OfType<ArchiveRestoreRequestStep>().Single();
+
+    await step.RunAsync(_runServices(_store()), CancellationToken.None);
+
+    await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Failed|nothing_archived");
+    await Assert.That(await _scalarAsync(conn,
+        "SELECT extract(epoch FROM updated_at)::bigint FROM wh_archive_restore_requests WHERE stream_id = @s", ("s", stream)))
+      .IsEqualTo(hostNow.ToUnixTimeSeconds()).Because("the registration hands the step the host's clock, not the system one");
+  }
+
   // =================================================================================================
+
+  // Cancels the cycle's token while a restore is running, as a host stopping mid-restore does, and observes it.
+  private sealed class CancelingArchiveStore(CancellationTokenSource stopping) : IArchiveStore {
+    public int Restores { get; private set; }
+    public Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public IAsyncEnumerable<ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public async Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) {
+      Restores++;
+      await stopping.CancelAsync();
+      cancellationToken.ThrowIfCancellationRequested();
+      return new ArchiveRestoreResult(ArchiveStatus.RESTORED, 0, 0);
+    }
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
 
   private sealed class ThrowingForOneStreamArchiveStore(IArchiveStore inner, Guid failing) : IArchiveStore {
     public Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) =>
@@ -269,13 +324,18 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
   private PostgresTableArchiveStore _store() => new(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync);
 
   // One maintenance cycle of the step, handed the connection and the store as the maintenance worker's scope hands them.
-  private async Task _runStepAsync(IArchiveStore store) {
+  private async Task _runStepAsync(IArchiveStore store, CancellationToken cancellationToken = default) {
+    await using var provider = _runServices(store);
+    var step = new ArchiveRestoreRequestStep(new FakeTimeProvider(_t0.AddHours(2)), NullLogger<ArchiveRestoreRequestStep>.Instance);
+    await step.RunAsync(provider, cancellationToken);
+  }
+
+  // The services a maintenance cycle's scope hands a step: the archive connection and the store.
+  private ServiceProvider _runServices(IArchiveStore store) {
     var services = new ServiceCollection();
     services.AddSingleton(new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null));
     services.AddSingleton(store);
-    await using var provider = services.BuildServiceProvider();
-    var step = new ArchiveRestoreRequestStep(new FakeTimeProvider(_t0.AddHours(2)), NullLogger<ArchiveRestoreRequestStep>.Instance);
-    await step.RunAsync(provider, CancellationToken.None);
+    return services.BuildServiceProvider();
   }
 
   private async Task<NpgsqlConnection> _openAsync() {
