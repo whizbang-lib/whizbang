@@ -314,6 +314,11 @@ public static class PostgresDriverExtensions {
           var database = sp.GetRequiredService<PostgresArchiveConnection>();
           return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
         });
+        // TURNKEY: the maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever
+        // archive store is registered, under the maintainer duty.
+        // <docs>fundamentals/events/archive-store#restore-requests</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
+          ArchiveRestoreRequestStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>

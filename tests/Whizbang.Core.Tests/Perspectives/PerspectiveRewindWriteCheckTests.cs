@@ -167,6 +167,130 @@ public class PerspectiveRewindWriteCheckTests {
     await Assert.That(refusal[0].Message).Contains(PERSPECTIVE_NAME);
   }
 
+  // ===== A rewind from a snapshot an archive covers reads through the archive (#1738) =====
+
+  /// <summary>
+  /// A snapshot whose stream was archived past it records how far the archive reaches. A rewind from it reads the
+  /// archived events above the snapshot's version, then the hot events after it, so the archived detail between the
+  /// snapshot and the cut is folded, not skipped (#1738).
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  [Test]
+  public async Task ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var snapshotEvent = TrackedGuid.New().Value;
+    var snapshots = new FloorSnapshotStore(snapshotEvent, 2, archivedThroughVersion: 4, _snapshotOf(new RewindCheckModel { Id = streamId, Attempts = 1 }));
+    ArchiveReadingStore? store = null;
+    var harness = new Harness(snapshots, wrap: inner => store = new ArchiveReadingStore(inner,
+      [new RewindCheckStarted { StreamId = streamId }, new RewindCheckStarted { StreamId = streamId }], firstVersion: 3));
+    var completed = await harness.AppendAsync(streamId, new RewindCheckCompleted { StreamId = streamId });
+    harness.Rows.Seed(streamId, new RewindCheckModel { Id = streamId, Attempts = 1 }, snapshotEvent);
+
+    await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, completed.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(store!.ThroughArchiveReads).IsEquivalentTo([((Guid?)snapshotEvent, 2L)])
+      .Because("the rewind asks for the archived events above the snapshot's version, then the hot ones after its event");
+    var row = harness.Rows.Row(streamId);
+    await Assert.That(row.Attempts).IsEqualTo(3).Because("the snapshot's one attempt and the two archived Started events");
+    await Assert.That(row.Completed).IsTrue();
+  }
+
+  /// <summary>The control: a snapshot nothing archived reads only the hot events after it.</summary>
+  [Test]
+  public async Task ARewindFromASnapshotNoArchiveCovers_ReadsOnlyTheHotEventsAfterItAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var snapshotEvent = TrackedGuid.New().Value;
+    var snapshots = new FloorSnapshotStore(snapshotEvent, 2, archivedThroughVersion: null, _snapshotOf(new RewindCheckModel { Id = streamId, Attempts = 1 }));
+    ArchiveReadingStore? store = null;
+    var harness = new Harness(snapshots, wrap: inner => store = new ArchiveReadingStore(inner,
+      [new RewindCheckStarted { StreamId = streamId }], firstVersion: 3));
+    var completed = await harness.AppendAsync(streamId, new RewindCheckCompleted { StreamId = streamId });
+    harness.Rows.Seed(streamId, new RewindCheckModel { Id = streamId, Attempts = 1 }, snapshotEvent);
+
+    await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, completed.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(store!.ThroughArchiveReads).IsEmpty().Because("a rewind to an unmarked snapshot never looks at the archive");
+    await Assert.That(harness.Rows.Row(streamId).Attempts).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A marked snapshot that records no version cannot say where the archive's events after it begin, so it is not used:
+  /// the rewind replays the stream from its start, which reads through the archive by its gap (#1738).
+  /// </summary>
+  [Test]
+  public async Task AMarkedSnapshotWithNoVersion_IsNotUsed_TheRewindReplaysFromTheStartAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var snapshotEvent = TrackedGuid.New().Value;
+    var snapshots = new FloorSnapshotStore(snapshotEvent, null, archivedThroughVersion: 4, _snapshotOf(new RewindCheckModel { Id = streamId, Attempts = 7 }));
+    ArchiveReadingStore? store = null;
+    var harness = new Harness(snapshots, wrap: inner => store = new ArchiveReadingStore(inner, [], firstVersion: 3));
+    var started = await harness.AppendAsync(streamId, new RewindCheckStarted { StreamId = streamId });
+    harness.Rows.Seed(streamId, new RewindCheckModel { Id = streamId, Attempts = 7 }, snapshotEvent);
+
+    await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, started.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(store!.ThroughArchiveReads).IsEmpty();
+    await Assert.That(store.FromStartReads).IsGreaterThanOrEqualTo(1).Because("the replay starts from the stream's start");
+    await Assert.That(harness.Rows.Row(streamId).Attempts).IsEqualTo(1)
+      .Because("the snapshot's model is not the starting point: the stream's one Started is folded from an empty model");
+  }
+
+  /// <summary>An event store that serves a rewind's read through the archive from a list, and counts the reads.</summary>
+  private sealed class ArchiveReadingStore(InMemoryEventStore inner, IEvent[] archived, int firstVersion)
+      : ForwardingEventStoreDecorator(inner) {
+    public List<(Guid?, long)> ThroughArchiveReads { get; } = [];
+    public int FromStartReads { get; private set; }
+
+    public override IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+        Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+      if (fromEventId is null) {
+        FromStartReads++;
+      }
+      return base.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
+    }
+
+    public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+        Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      ThroughArchiveReads.Add((fromEventId, afterVersion));
+      var version = firstVersion;
+      foreach (var payload in archived) {
+        yield return new MessageEnvelope<IEvent> {
+          MessageId = MessageId.New(),
+          Payload = payload,
+          Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UnixEpoch }],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+          LocalStreamVersion = version++,
+        };
+      }
+      await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
+        yield return envelope;
+      }
+    }
+  }
+
+  /// <summary>Holds one snapshot floor, with or without an archive mark.</summary>
+  private sealed class FloorSnapshotStore(Guid snapshotEventId, int? version, long? archivedThroughVersion, JsonDocument data)
+      : IPerspectiveSnapshotStore {
+    public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) =>
+      Task.CompletedTask;
+
+    public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult<(Guid, JsonDocument)?>((snapshotEventId, data));
+
+    public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+      GetLatestSnapshotAsync(streamId, perspectiveName, ct);
+
+    public Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+      Task.FromResult<PerspectiveSnapshotFloor?>(new PerspectiveSnapshotFloor(snapshotEventId, version, data, archivedThroughVersion));
+
+    public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult(true);
+
+    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.CompletedTask;
+  }
+
   // -------------------------------------------------------------------------------------------
 
   private sealed class Harness {
@@ -178,13 +302,17 @@ public class PerspectiveRewindWriteCheckTests {
     public VersionedOrderedStore Rows { get; } = new();
     public IPerspectiveRunner Runner { get; }
 
-    public Harness(IPerspectiveSnapshotStore? snapshots = null, List<(LogLevel Level, string Message)>? logs = null) {
+    private readonly IEventStore _store;
+
+    public Harness(IPerspectiveSnapshotStore? snapshots = null, List<(LogLevel Level, string Message)>? logs = null,
+        Func<InMemoryEventStore, IEventStore>? wrap = null) {
       var services = new ServiceCollection();
       services.AddLogging();
       services.AddSingleton<RewindCheckPerspective>();
       _provider = services.BuildServiceProvider();
       _snapshots = snapshots;
       _logs = logs ?? [];
+      _store = wrap is null ? Events : wrap(Events);
       Runner = NewRunner();
     }
 
@@ -198,7 +326,7 @@ public class PerspectiveRewindWriteCheckTests {
       var args = new object?[ctor.GetParameters().Length];
       args[0] = _provider;
       args[1] = Activator.CreateInstance(typeof(CapturingLogger<>).MakeGenericType(runnerType), _logs)!;
-      args[2] = Events;
+      args[2] = _store;
       args[3] = Rows;
       args[4] = _provider.GetRequiredService<IServiceScopeFactory>();
       args[6] = _snapshots;

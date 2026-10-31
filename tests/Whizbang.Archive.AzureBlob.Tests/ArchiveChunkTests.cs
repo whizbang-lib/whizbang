@@ -175,5 +175,10 @@ public class ArchiveChunkTests {
     await Assert.That(archived.AggregateType).IsEqualTo("Order");
     await Assert.That(archived.CreatedAt).IsEqualTo(line.CreatedAt);
     await Assert.That(archived.Flags).IsEqualTo(32);
+    // #1738: the commit positions, so a read through the archive orders the event with the hot ones as it was ordered
+    // before it was archived.
+    await Assert.That(archived.CommitSequence).IsEqualTo(line.CommitSequence);
+    await Assert.That(archived.OriginServiceId).IsEqualTo(line.OriginServiceId);
+    await Assert.That(archived.OriginCommitSequence).IsEqualTo(line.OriginCommitSequence);
   }
 }

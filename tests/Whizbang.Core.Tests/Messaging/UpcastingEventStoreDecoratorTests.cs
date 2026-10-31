@@ -74,6 +74,30 @@ public class UpcastingEventStoreDecoratorTests {
     await Assert.That(results.Single()).IsTypeOf<NewEvent>();                      // input upcast + kept
   }
 
+  /// <summary>
+  /// A rewind's read through the archive (#1738) is upcast exactly as the ordinary read is, the read widened by a type
+  /// change included: an archived event is as old as events get, so it is the likeliest to need an upcaster.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicThroughArchive_UpcastsLikeTheOrdinaryReadAsync() {
+    var recording = new RecordingStore(yield: new ForeignEvent());
+    var sut = new UpcastingEventStoreDecorator(recording, new EventUpcasterPipeline([new ForeignToNewUpcaster()]));
+    var plain = new UpcastingEventStoreDecorator(new StubStore(), _makePipeline());
+
+    var widened = new List<IEvent>();
+    await foreach (var env in sut.ReadPolymorphicThroughArchiveAsync(Guid.NewGuid(), null, 3, [typeof(NewEvent)])) {
+      widened.Add(env.Payload);
+    }
+    var upcast = new List<IEvent>();
+    await foreach (var env in plain.ReadPolymorphicThroughArchiveAsync(Guid.NewGuid(), null, 3, [typeof(OldEvent)])) {
+      upcast.Add(env.Payload);
+    }
+
+    await Assert.That(recording.LastEventTypes).Contains(typeof(ForeignEvent));
+    await Assert.That(widened.Single()).IsTypeOf<NewEvent>();
+    await Assert.That(upcast.Single()).IsTypeOf<NewEvent>();
+  }
+
   [Test]
   public async Task ReadPolymorphicAsync_TypeChangeProducesUnrequestedTarget_FiltersResultOutAsync() {
     // A multi-target upcaster: requesting NewEvent widens the read with BOTH of its source types,

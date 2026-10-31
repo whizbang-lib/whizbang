@@ -70,6 +70,14 @@ public static class PerspectiveSnapshotsSchema {
         Name: Columns.SNAPSHOT_VERSION,
         DataType: WhizbangDataType.INTEGER,
         Nullable: true
+      ),
+      // How far an archive of the stream reaches, when one covers this snapshot (#1738): a rewind from it, or a full
+      // rebuild, reads through the archive. NULL when nothing the snapshot needs is archived; a restore clears it. Mig 271
+      // adds the column on existing databases.
+      new ColumnDefinition(
+        Name: Columns.ARCHIVED_THROUGH_VERSION,
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: true
       )
     ),
     Indexes: [
@@ -108,5 +116,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string SNAPSHOT_COMMIT_SEQUENCE = "snapshot_commit_sequence";
     /// <summary>The stream version this snapshot was taken at, which is what orders it against the stream (added via mig 209).</summary>
     public const string SNAPSHOT_VERSION = "snapshot_version";
+    /// <summary>How far an archive of the stream reaches, when one covers this snapshot (#1738).</summary>
+    public const string ARCHIVED_THROUGH_VERSION = "archived_through_version";
   }
 }

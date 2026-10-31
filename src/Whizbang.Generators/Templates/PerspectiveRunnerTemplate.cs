@@ -1434,6 +1434,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     __MODEL_TYPE_NAME__? snapshotModel = null;
     JsonDocument? snapshotData = null;
     var hasSnapshot = false;
+    // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
+    long? readThroughArchiveAfterVersion = null;
     var startedAt = DateTimeOffset.UtcNow;
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
     // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
@@ -1451,18 +1453,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // it is the same wrong answer arriving one branch later: it fires exactly when the version anchor
       // declined, which is exactly when the snapshot cannot be placed in the stream. A full replay costs
       // more and reproduces the row; a wrong restore point leaves a read model nothing is pending to repair.
-      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeEventInStreamOrderAsync(
+      var snapshot = await _snapshotStore.GetSnapshotFloorAsync(
           streamId, perspectiveName, triggeringEventId, cancellationToken);
 
-      if (snapshot.HasValue) {
-        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+      // #1738: a snapshot an archive covers, but that records no version, cannot say where the archive's events after it
+      // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
+      if (snapshot is not null && snapshot.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
+        _logger.LogWarning(
+            "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
+            perspectiveName, streamId, snapshot.SnapshotEventId, triggeringEventId);
+        snapshot = null;
+      }
+
+      if (snapshot is not null) {
+        snapshotModel = FromSnapshotJson(snapshot.SnapshotData);
         if (snapshotModel is not null) {
-          replayFromEventId = snapshot.Value.SnapshotEventId;
-          snapshotData = snapshot.Value.SnapshotData;
+          replayFromEventId = snapshot.SnapshotEventId;
+          snapshotData = snapshot.SnapshotData;
           hasSnapshot = true;
+          readThroughArchiveAfterVersion = snapshot.ArchivedThroughVersion is null ? null : snapshot.SnapshotVersion;
           _logger.LogWarning(
               "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
-              perspectiveName, streamId, snapshot.Value.SnapshotEventId, snapshot.Value.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
+              perspectiveName, streamId, snapshot.SnapshotEventId, snapshot.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
         } else if (replaysWithoutAFloor) {
           _logger.LogWarning(
               "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
@@ -1531,7 +1543,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       };
     } else {
       result = await _replayCheckedAsync(
-          streamId, perspectiveName, snapshotModel, snapshotData, replayFromEventId, cancellationToken);
+          streamId, perspectiveName, snapshotModel, snapshotData, replayFromEventId, readThroughArchiveAfterVersion, cancellationToken);
     }
 
     // Fire PerspectiveRewindCompleted system event
@@ -1568,13 +1580,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__? snapshotModel,
       JsonDocument? snapshotData,
       Guid? replayFromEventId,
+      long? readThroughArchiveAfterVersion,
       CancellationToken cancellationToken) {
     for (var attempt = 1; ; attempt++) {
       // A replay that is refused restarts from the same snapshot, read again from its stored form so nothing the
       // refused replay folded carries into the next one.
       var initialModel = attempt == 1 || snapshotData is null ? snapshotModel : FromSnapshotJson(snapshotData);
       try {
-        return await RunFromModelAsync(streamId, perspectiveName, initialModel, replayFromEventId, cancellationToken);
+        return await RunFromModelAsync(streamId, perspectiveName, initialModel, replayFromEventId, readThroughArchiveAfterVersion, cancellationToken);
       } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) when (attempt < MAX_ROW_CONFLICT_ATTEMPTS) {
         _logger.LogDebug(
             conflict,
@@ -1609,6 +1622,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       string perspectiveName,
       __MODEL_TYPE_NAME__? initialModel,
       Guid? replayFromEventId,
+      long? readThroughArchiveAfterVersion,
       CancellationToken cancellationToken) {
 
     // Use provided model or create empty one (full replay from event zero)
@@ -1708,11 +1722,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // (snapshot or null=from-beginning). Subsequent passes use the last event
       // we applied, so we only pick up the delta of events appended since.
       var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-      await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
-          streamId,
-          anchorEventId,
-          eventTypes,
-          cancellationToken)) {
+      // #1738: the first pass from a snapshot an archive covers reads the archived events after it, then the hot ones; every
+      // later pass resumes after the last event applied, which is hot.
+      var read = rewindCatchUpIterations == 1 && readThroughArchiveAfterVersion is long afterVersion
+          ? _eventStore.ReadPolymorphicThroughArchiveAsync(streamId, anchorEventId, afterVersion, eventTypes, cancellationToken)
+          : _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken);
+      await foreach (var envelope in read) {
         events.Add(envelope);
       }
 

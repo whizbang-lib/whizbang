@@ -98,6 +98,11 @@ public sealed partial class MaintenanceWorker(
     }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
+    // #1738: the append-to-archived policies, on every tick and ahead of the idle gate below. A background write to an
+    // archived stream is refused inside the store, which reads the stored policy, so a policy must be in force soon after
+    // a start even on a service too busy for the sweep. One small statement, and nothing to contend with.
+    await _syncStreamTypePoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
+
     if (_housekeeping is null) {
       await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
       return;
@@ -979,6 +984,29 @@ public sealed partial class MaintenanceWorker(
       LogRetentionSettingsSyncFailed(_logger, keys ?? "none; settings not resolved", ex);
     }
   }
+
+  /// <summary>
+  /// Stores the configured append-to-archived policies, replacing the stored set. Best-effort: the write paths keep the
+  /// set already stored, so a failed write is logged with the types it left unstored and the tick goes on. Cancellation
+  /// is shutdown and propagates.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  private async Task _syncStreamTypePoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var policies = (sp.GetService<IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()?.Value
+      ?? new Whizbang.Core.Archival.StreamLifecycleOptions()).AppendToArchivedPolicies();
+    try {
+      await coordinator.SyncStreamTypePoliciesAsync(policies, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogStreamTypePolicySyncFailed(_logger, string.Join(", ", policies.Select(p => $"{p.StreamType}={p.AppendToArchived}")), ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Warning,
+    Message = "Failed to store the append-to-archived policies in wh_stream_type_policies (configured: {Policies}); the write paths keep the policies already stored until a later tick succeeds.")]
+  static partial void LogStreamTypePolicySyncFailed(ILogger logger, string policies, Exception ex);
 
   [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
     Message = "Failed to publish database-side settings to wh_settings (keys: {Keys}); the maintenance sweep keeps the values already stored. If debug retention was just enabled, completed rows may still be purged; a retention window just changed in configuration is not yet in effect.")]

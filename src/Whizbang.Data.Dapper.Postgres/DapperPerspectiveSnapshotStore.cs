@@ -82,6 +82,18 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     return (snapshotEventId, JsonDocument.Parse(snapshotJson));
   }
   /// <summary>
+  /// The rewind's snapshot floor: the snapshot <see cref="GetLatestSnapshotBeforeEventInStreamOrderAsync"/> selects, with
+  /// the archive mark that tells a rewind from it to read through the archive (#1738).
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  public async Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    return await SnapshotStreamOrderLookup.FindFloorAsync(connection, streamId, perspectiveName, beforeEventId, ct);
+  }
+
+  /// <summary>
   /// Returns the latest snapshot that lies before <paramref name="beforeEventId"/> in the stream's own
   /// order. The choice of order, and why a snapshot recording no version is refused where the event can be
   /// placed and event id order is used where it cannot, lives in

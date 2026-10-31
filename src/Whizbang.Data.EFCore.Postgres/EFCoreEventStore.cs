@@ -200,10 +200,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
       // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
       command.Parameters.Add(new NpgsqlParameter("p_flags", NpgsqlDbType.Integer) { Value = Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver) });
-      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, or as StreamSealedException
-      // for a sealed stream (#1733), with nothing stored.
-      await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
-        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken)));
+      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, as StreamSealedException
+      // for a sealed stream (#1733), or as StreamArchivedException for a stream archived whole (#1738), with nothing stored.
+      await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken))));
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
       // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(
@@ -256,7 +256,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -304,7 +307,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -495,7 +501,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 
@@ -571,7 +578,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 

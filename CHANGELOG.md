@@ -73,6 +73,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service's database. New API: `AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
   `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `ArchiveObjectDeletionStep`,
   `PostgresArchiveConnection`.
+- **Archived streams read back transparently, restore themselves on append when their type says so, and refuse an
+  append per event otherwise (#1738, WS-3 S9).** A read from the start of a stream (a load, a rebuild, a rewind with no
+  snapshot) reads archived events back when the hot store shows a gap at its start: no hot event, or a first hot
+  version above 1. The gap is seen in what the hot read already returned, so a stream never archived costs nothing more,
+  and a read that resumes after an event (perspective catch-up) never looks at the archive; measured by counting the
+  driver's statements, a resumed read issues exactly what it issued before and a from-the-start read of an archived
+  stream one more. The seam is an `IEventStore` decorator (`ArchiveAwareEventStoreDecorator`) composed innermost on both
+  drivers whenever an `IArchiveStore` is registered, so every reader that goes through the event store reads through
+  the archive; every driver read now carries `LocalStreamVersion`, and the Dapper store decodes stored rows with
+  `DeserializeStreamEvents`. `Whizbang:Archive:ReadThrough` (default `true`) turns it off. Migration 271 makes a prefix
+  archive always remove version 1 (`not_past_first_version` otherwise) and never take the newest snapshot a perspective
+  holds (`snapshot_in_range`, refused rather than shortened), and records on each covered snapshot how far the archive
+  reaches (`wh_perspective_snapshots.archived_through_version`); a rewind from a covered snapshot reads the archived
+  events above it first (`IEventStore.ReadPolymorphicThroughArchiveAsync`, `IPerspectiveSnapshotStore.GetSnapshotFloorAsync`).
+  An append to a stream archived whole is refused per event under its type's policy
+  (`Whizbang:StreamLifecycle:Types:<StreamType>:AppendToArchived`, stored in `wh_stream_type_policies` on every
+  maintenance tick): `Refuse` (default) throws `StreamArchivedException` (SQLSTATE `WHA01`) to an awaiting caller and
+  dead-letters a background write alone (`StreamArchived`, 26, held for review); `AutoRestore` restores inline and
+  retries an awaited write once (`WHA02`), and dead-letters a background write (`AwaitingRestore`, 27) held by a restore
+  request queued in the same transaction (`wh_archive_restore_requests`: Pending, Restoring, Restored, Failed). The
+  `archive-restore-requests` maintenance step (both drivers) restores queued streams through `IArchiveStore`; any restore
+  of the stream marks its request Restored and makes its dead letters due for the recovery worker, and a failed restore
+  leaves them held for review with the error. `NewGeneration` ships with #1734 and fails startup until then. 262's
+  whole-batch `WHA01` trigger is dropped. Every write path decides on one probe of a new partial index of the sealed and archived streams (`idx_stream_lifecycle_closed`) in place of the seal's probe; measured on a 500-event outbox batch with 2,000 sealed and 2,000 archived streams in the ledger, the chain costs what 266's did (existing streams 32,211 blocks / 64.4 ms before, 32,237 / 61.8 ms after; new streams 36,578 / 68.4 ms before, 36,306 / 67.3 ms after; the probe 2 blocks).
 - **The event store's `created_at` gets a BRIN index; the other BRIN candidates were measured and declined (#1745).**
   `pg_stats.correlation` was measured with each candidate seeded in its production write order
   (`BrinIndexCandidatesTests`). `wh_event_store.created_at` stays near 1 (0.98) and the startup orphaned-lifecycle

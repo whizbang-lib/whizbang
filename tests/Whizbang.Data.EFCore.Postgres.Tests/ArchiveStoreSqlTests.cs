@@ -200,6 +200,43 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Write_ThenRead_CarriesEachEventsCommitPositions_ExactlyAsTheHotStoreHeldThemAsync() {
+    // #1738: a read through the archive orders archived events with the hot ones by these positions, so they must come
+    // back as stored: an event that arrived from another service carries that service and its commit sequence there,
+    // and an event the stamper had not reached yet carries no commit sequence at all.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    var ids = await _streamAsync(connection, stream, 2);
+    var originService = Guid.CreateVersion7();
+    await using (var place = connection.CreateCommand()) {
+      place.CommandText =
+        "UPDATE wh_event_store SET commit_sequence = 41, origin_service_id = @origin, origin_commit_sequence = 9001 WHERE event_id = @received; " +
+        "UPDATE wh_event_store SET commit_sequence = NULL, origin_service_id = NULL, origin_commit_sequence = NULL WHERE event_id = @unstamped";
+      place.Parameters.AddWithValue("origin", originService);
+      place.Parameters.AddWithValue("received", ids[0]);
+      place.Parameters.AddWithValue("unstamped", ids[1]);
+      _ = await place.ExecuteNonQueryAsync();
+    }
+    var store = _store();
+
+    var written = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var read = await _readAllAsync(store, stream);
+
+    await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(read).Count().IsEqualTo(2);
+    await Assert.That(read[0].EventId).IsEqualTo(ids[0]);
+    await Assert.That(read[0].CommitSequence).IsEqualTo(41L);
+    await Assert.That(read[0].OriginServiceId).IsEqualTo(originService);
+    await Assert.That(read[0].OriginCommitSequence).IsEqualTo(9001L)
+      .Because("an event received from another service keeps that service's position, so a replay orders it as the hot read did");
+    await Assert.That(read[1].EventId).IsEqualTo(ids[1]);
+    await Assert.That(read[1].CommitSequence).IsNull().Because("an unstamped event is archived unstamped, never given a position");
+    await Assert.That(read[1].OriginServiceId).IsNull();
+    await Assert.That(read[1].OriginCommitSequence).IsNull();
+  }
+
+  [Test]
   public async Task Read_ARowArchivedBeforeTheStoreKeptEveryColumn_ReadsTheMissingOnesAsNullAsync() {
     // Rows archived by migration 085's copy have no flags; a reaped body was archived as NULL.
     await using var ctx = CreateDbContext();
@@ -419,23 +456,21 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     _ = await _streamAsync(connection, stream, 3);
     _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
 
-    // The direct append numbers from the newest hot version; with nothing hot it would reuse version 0.
+    // The direct append numbers from the newest hot version; with nothing hot it would reuse version 1. Since 271 the
+    // append itself refuses (262's statement trigger is gone), naming how far the archive reaches.
     var direct = await Assert.That(async () => await _executeAsync(connection,
         "SELECT wh_append_event(gen_random_uuid(), @id, @id, 'Agg', 'T', '{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())", stream))
       .Throws<PostgresException>();
     await Assert.That(direct!.SqlState).IsEqualTo(ARCHIVED_VERSION_REFUSED);
+    await Assert.That(direct.MessageText).Contains("archived through version 3");
+    await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(0L);
 
-    // The boundary: the last archived version itself is refused, the next one is stored.
-    var atLast = await Assert.That(async () => await _executeAsync(connection,
-        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version) " +
-        "VALUES (gen_random_uuid(), @id, @id, 'Agg', 'T', 3)", stream))
-      .Throws<PostgresException>();
-    await Assert.That(atLast!.SqlState).IsEqualTo(ARCHIVED_VERSION_REFUSED)
-      .Because("version 3 is held by the archive, so storing another event there would give the stream two version 3s");
+    // Above the archived floor: once the stream is restored, the next append takes the version after the archive's.
+    _ = await _store().RestoreAsync(stream);
     await _executeAsync(connection,
-      "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version) " +
-      "VALUES (gen_random_uuid(), @id, @id, 'Agg', 'T', 4)", stream);
-    await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(1L).Because("a version above the archived floor is new history");
+      "SELECT wh_append_event(gen_random_uuid(), @id, @id, 'Agg', 'T', '{}'::jsonb, '{}'::jsonb, NULL::jsonb, NOW())", stream);
+    await Assert.That(await _scalarAsync(connection, "SELECT MAX(version) FROM wh_event_store WHERE stream_id = @id", stream))
+      .IsEqualTo(4L).Because("a version above the archived floor is new history");
   }
 
   [Test]
@@ -445,11 +480,14 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     var stream = Guid.CreateVersion7();
     _ = await _streamAsync(connection, stream, 2);
     _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+    var refused = Guid.CreateVersion7();
 
-    var refused = await Assert.That(async () => await _commitAsync(connection, Guid.CreateVersion7(), stream)).Throws<PostgresException>();
+    await _commitAsync(connection, refused, stream);
 
-    await Assert.That(refused!.SqlState).IsEqualTo(ARCHIVED_VERSION_REFUSED);
     await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(connection,
+        "SELECT count(*) FROM wh_dead_letters WHERE source_id = @id AND failure_reason = 26", refused))
+      .IsEqualTo(1L).Because("since 271 the chain dead-letters the refused event alone instead of failing the whole batch");
 
     // The control: an ordinary stream still commits through the same chain.
     var other = Guid.CreateVersion7();
@@ -751,8 +789,12 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     var tombstone = await _tombstoneAsync(connection, stream);
     await Assert.That(tombstone!.Value.State).IsEqualTo("Archived");
     await Assert.That(tombstone.Value.Locator).IsNull().Because("there is no archive left to point at");
-    await Assert.That(async () => await _commitAsync(connection, Guid.CreateVersion7(), stream)).Throws<PostgresException>()
+    var refused = Guid.CreateVersion7();
+    await _commitAsync(connection, refused, stream);
+    await Assert.That(await _hotCountAsync(connection, stream)).IsEqualTo(0L)
       .Because("the versions were seen downstream, so they are never reused even with the archive gone");
+    await Assert.That(await _scalarAsync(connection,
+        "SELECT count(*) FROM wh_dead_letters WHERE source_id = @id AND failure_reason = 26", refused)).IsEqualTo(1L);
   }
 
   // ── Wiring ─────────────────────────────────────────────────────────────────────────────────────────

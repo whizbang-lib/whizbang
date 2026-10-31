@@ -12,6 +12,7 @@ Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk
 Whizbang:Archive:AzureBlob:ServiceUri
+Whizbang:Archive:ReadThrough
 Whizbang:AspNet:Availability:Enabled
 Whizbang:AspNet:Availability:ExemptPaths:*
 Whizbang:AspNet:Availability:Mode
@@ -300,6 +301,7 @@ Whizbang:StreamIntegrity:RepairMode
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds
 Whizbang:StreamIntegrity:RepairTopic
 Whizbang:StreamIntegrity:StartupAuditMaxJitterSeconds
+Whizbang:StreamLifecycle:Types:*:AppendToArchived
 Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow
 Whizbang:StreamRateLimiter:StaleEntryTimeout

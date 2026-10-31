@@ -130,6 +130,67 @@ public class ScopedWorkCoordinatorStrategyTests {
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].RaiseOnMixedStream).IsFalse();
   }
 
+  /// <summary>
+  /// A write refused because its stream is archived whole and its type refuses appends is withdrawn like a sealed one
+  /// (#1738).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForAnArchivedStream_DisposalDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new Whizbang.Core.Archival.StreamArchivedException(
+        "Stream x is archived through version 3", Guid.NewGuid(), 3, Whizbang.Core.Archival.AppendToArchivedPolicy.Refuse)
+    };
+    var sut = _strategy(fakeCoordinator);
+    _queueTestOutboxMessage(sut);
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<Whizbang.Core.Archival.StreamArchivedException>();
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).IsEmpty()
+      .Because("the caller has the refusal; disposal writes only work nobody flushed");
+  }
+
+  /// <summary>
+  /// An awaited write under AutoRestore restores the stream through the archive store its scope factory reaches and is
+  /// stored once more; with no scope factory there is no archive store to restore through, and the refusal reaches the
+  /// caller (#1738).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_AnAutoRestoreRefusal_RestoresThroughTheScopesArchiveStore_OrReachesTheCallerWithoutOneAsync() {
+    var stream = Guid.NewGuid();
+    var archive = new ImmediateWorkCoordinatorStrategyTests.RestoreRecordingArchiveStore();
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Archival.IArchiveStore>(archive);
+    var withScope = new FakeWorkCoordinator { FailNextStoreWith = _autoRestore(stream) };
+    var sut = new ScopedWorkCoordinatorStrategy(
+      coordinator: withScope,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
+      dependencies: new ScopedWorkCoordinatorDependencies {
+        ScopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      });
+    _queueTestOutboxMessage(sut);
+
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(archive.Restores).IsEquivalentTo([stream]);
+    await Assert.That(withScope.LastNewOutboxMessages).Count().IsEqualTo(1);
+
+    var withoutScope = new FakeWorkCoordinator { FailNextStoreWith = _autoRestore(stream) };
+    var bare = _strategy(withoutScope);
+    _queueTestOutboxMessage(bare);
+    var thrown = await Assert.That(async () => await bare.FlushAsync(WorkBatchOptions.None))
+      .Throws<Whizbang.Core.Archival.StreamArchivedException>();
+    await Assert.That(thrown!.Policy).IsEqualTo(Whizbang.Core.Archival.AppendToArchivedPolicy.AutoRestore);
+  }
+
+  private static Whizbang.Core.Archival.StreamArchivedException _autoRestore(Guid stream) =>
+    new("Stream x is archived through version 3", stream, 3, Whizbang.Core.Archival.AppendToArchivedPolicy.AutoRestore);
+
   private static ScopedWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator) =>
     new(
       coordinator: coordinator,

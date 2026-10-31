@@ -211,8 +211,9 @@ public partial class DapperWorkCoordinator(
     var json = _serializeNewOutboxMessages(messages);
 
     // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException, and
-    // (#1733) an awaited event on a sealed stream as StreamSealedException.
-    await Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
+    // (#1733) an awaited event on a sealed stream as StreamSealedException, and (#1738) one on a stream archived whole as
+    // StreamArchivedException.
+    await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
       var connection = __scope.Connection;
       var prefix = await _prefixAsync(connection, cancellationToken);
@@ -227,7 +228,7 @@ public partial class DapperWorkCoordinator(
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
-    }, logger: _logger, cancellationToken: cancellationToken)));
+    }, logger: _logger, cancellationToken: cancellationToken))));
   }
 
   /// <inheritdoc />
@@ -799,6 +800,19 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
     await Whizbang.Data.Postgres.RetentionSettingsWriter.WriteAsync(__scope.Connection, prefix + "wh_settings", settings, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveAppendPolicyTests.cs:SyncStreamTypePolicies_ThroughTheCoordinator_StoresTheConfiguredSetAsync</tests>
+  public async Task SyncStreamTypePoliciesAsync(
+      IReadOnlyList<Whizbang.Core.Archival.StreamTypePolicy> policies, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(policies);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    await Whizbang.Data.Postgres.StreamTypePolicyWriter.WriteAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.StreamTypePolicyWriter.FUNCTION_NAME, policies, cancellationToken)
       .ConfigureAwait(false);
   }
 

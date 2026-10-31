@@ -337,6 +337,25 @@ public interface IEventStore {
           "Ensure AddWhizbang() is called with IEventCompletionAwaiter enabled.");
 
   /// <summary>
+  /// The read a rewind makes from a snapshot an archive covers (#1738): the events after the snapshot, reading the
+  /// archived ones above <paramref name="afterVersion"/> back first. Every other read decides for itself whether to look
+  /// at the archive (a read from the start reads through a gap; a read that resumes after an event never does); this is
+  /// the one resumed read whose resume point may be inside the archive.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="fromEventId">The snapshot's event: the hot events after it are read.</param>
+  /// <param name="afterVersion">The snapshot's stream version: the archived events above it are read.</param>
+  /// <param name="eventTypes">The event types the reader folds.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The events after the snapshot. The default is the ordinary read after <paramref name="fromEventId"/>: a
+  /// store with no archive has nothing archived to read.</returns>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:TheInterfaceDefault_ForAStoreWithNoArchive_IsTheOrdinaryReadAsync</tests>
+  IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+      Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
+
+  /// <summary>
   /// Deserializes raw stream event data (from get_stream_events) into typed MessageEnvelope&lt;IEvent&gt;.
   /// Used by drain mode to convert batch-fetched events into the format expected by RunWithEventsAsync.
   /// AOT-compatible: uses the same type resolution and JsonSerializerOptions as ReadPolymorphicAsync.

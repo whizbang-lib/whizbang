@@ -523,20 +523,22 @@ public class StreamSealingSqlTests : EFCoreTestBase {
     await _finalizer(_t0).FinalizeAsync(streams[0], "Closed");
     await _executeAsync(conn, "ANALYZE wh_stream_lifecycle");
 
+    // The probe every write path makes since 271 (#1738): one read answering both the seal and the archive.
     await using var explain = conn.CreateCommand();
     explain.CommandText = """
       EXPLAIN (FORMAT JSON)
-      SELECT 1 FROM wh_stream_lifecycle l WHERE l.stream_id = ANY(@ids) AND l.sealed_at IS NOT NULL
+      SELECT COALESCE(bool_or(l.sealed_at IS NOT NULL), false), COALESCE(bool_or(l.sealed_at IS NULL AND l.state = 'Archived'), false)
+      FROM wh_stream_lifecycle l WHERE l.stream_id = ANY(@ids) AND (l.sealed_at IS NOT NULL OR l.state = 'Archived')
       """;
     explain.Parameters.AddWithValue("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, streams);
     var plan = (string)(await explain.ExecuteScalarAsync())!;
 
-    await Assert.That(plan).Contains("idx_stream_lifecycle_sealed")
-      .Because("the check every write makes is answered by an index as small as the number of sealed streams");
+    await Assert.That(plan).Contains("idx_stream_lifecycle_closed")
+      .Because("the check every write makes is answered by an index as small as the number of sealed and archived streams");
     await Assert.That(await _scalarAsync(conn, """
       SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-      WHERE i.indrelid = 'wh_stream_lifecycle'::regclass AND c.relname = 'idx_stream_lifecycle_sealed'
-        AND pg_get_expr(i.indpred, i.indrelid) = '(sealed_at IS NOT NULL)'
+      WHERE i.indrelid = 'wh_stream_lifecycle'::regclass AND c.relname = 'idx_stream_lifecycle_closed'
+        AND pg_get_expr(i.indpred, i.indrelid) = '((sealed_at IS NOT NULL) OR (state = ''Archived''::text))'
       """)).IsEqualTo(1L);
   }
 

@@ -575,6 +575,21 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Layer -1, innermost (#1738): the archive seam, when an archive store is registered. Reads from the start of a stream
+  /// read archived events back through its gap, and an append under AutoRestore restores the stream and retries once.
+  /// Innermost so the upcasters and every other decorator see archived events exactly as they see hot ones. A host with
+  /// no archive store gets the driver's store as it was. The archive options are always there:
+  /// <see cref="DecorateEventStoreWithSyncTracking"/> registers them with the factory that calls this.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#read-through</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
+  private static Messaging.IEventStore _withArchive(Messaging.IEventStore store, IServiceProvider sp) =>
+    sp.GetService<Whizbang.Core.Archival.IArchiveStore>() is { } archive
+      ? new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(
+          store, archive, sp.GetRequiredService<IOptions<Whizbang.Core.Archival.ArchiveOptions>>().Value.ReadThrough)
+      : store;
+
+  /// <summary>
   /// Decorates an existing <see cref="IEventStore"/> registration with Whizbang decorators.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -611,6 +626,8 @@ public static class ServiceCollectionExtensions {
     // may decorate before AddWhizbang() has run, so the registrations are made here as well.
     services.TryAddWhizbangDefaults();
     _registerPerspectiveSyncServices(services);
+    // #1738: Whizbang:Archive:ReadThrough, read by the archive seam below.
+    Whizbang.Core.Archival.ArchiveOptionsBinder.AddWhizbangArchiveOptions(services);
 
     // Remove existing registration
     services.Remove(descriptor);
@@ -641,9 +658,10 @@ public static class ServiceCollectionExtensions {
         // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
         // upcasters are registered, so non-upcasting consumers pay nothing.
         var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var archivedStore = _withArchive((Messaging.IEventStore)holder.Instance, sp);
         var innerStore = upcasterPipeline is { HasAny: true }
-            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
-            : (Messaging.IEventStore)holder.Instance;
+            ? new Messaging.UpcastingEventStoreDecorator(archivedStore, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
+            : archivedStore;
 
         // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees
         // the envelope SecurityContext builds for a message and tracks the id the store writes (#1465)
@@ -693,9 +711,10 @@ public static class ServiceCollectionExtensions {
         // read, so every outer decorator and consumer sees upcasted events). Only wrapped when
         // upcasters are registered, so non-upcasting consumers pay nothing.
         var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
+        var archivedStore = _withArchive((Messaging.IEventStore)holder.Instance, sp);
         var innerStore = upcasterPipeline is { HasAny: true }
-            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
-            : (Messaging.IEventStore)holder.Instance;
+            ? new Messaging.UpcastingEventStoreDecorator(archivedStore, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
+            : archivedStore;
 
         // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees
         // the envelope SecurityContext builds for a message and tracks the id the store writes (#1465)
