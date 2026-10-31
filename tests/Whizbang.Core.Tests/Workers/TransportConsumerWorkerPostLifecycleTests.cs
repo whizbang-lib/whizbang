@@ -361,20 +361,20 @@ public class TransportConsumerWorkerPostLifecycleTests {
     public List<LifecycleStage> AdvancedStages { get; } = [];
 
     public ILifecycleTracking BeginTracking(
-      Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage,
+      LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage,
       MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
       CapturedEntryStage = entryStage;
       return new SpyLifecycleTracking(eventId, AdvancedStages);
     }
 
-    public ILifecycleTracking? GetTracking(Guid eventId) => null;
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) { }
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => null;
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }
 
     public ValueTask SignalSegmentCompleteAsync(
-      Guid eventId, PostLifecycleCompletionSource source,
+      LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source,
       IServiceProvider scopedProvider, CancellationToken ct) => ValueTask.CompletedTask;
 
-    public void AbandonTracking(Guid eventId) { }
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) { }
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) { }
     public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) => false;
     public bool AreAllPerspectivesComplete(Guid eventId) => true;

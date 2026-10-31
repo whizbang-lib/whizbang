@@ -1052,7 +1052,7 @@ public partial class PerspectiveWorker(
     foreach (var orphan in orphaned) {
       try {
         var tracking = lifecycleCoordinator.BeginTracking(
-          orphan.EventId, orphan.Envelope,
+          LifecycleTrackingPath.Perspective, orphan.EventId, orphan.Envelope,
           LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
           orphan.StreamId);
 
@@ -1068,7 +1068,7 @@ public partial class PerspectiveWorker(
         LogReconciliationError(_logger, ex, orphan.EventId);
       } finally {
         // The replay began this entry, so it ends it, whatever the stages did: nothing else would (#1797).
-        lifecycleCoordinator.AbandonTracking(orphan.EventId);
+        lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, orphan.EventId);
       }
     }
 
@@ -2416,7 +2416,7 @@ public partial class PerspectiveWorker(
       }
 
       _ = lifecycleCoordinator.BeginTracking(
-        envelope.MessageId.Value, envelope,
+        LifecycleTrackingPath.Perspective, envelope.MessageId.Value, envelope,
         LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
 
       if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
@@ -4387,7 +4387,7 @@ public partial class PerspectiveWorker(
             if (lifecycleCoordinator is not null) {
               // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
               var tracking = lifecycleCoordinator.BeginTracking(
-                envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
+                LifecycleTrackingPath.Perspective, envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
                 MessageSource.Local, streamCtx.StreamId, runner.PerspectiveType);
 
               // Stage guard ensures these fire once per event, not once per perspective group
@@ -4946,7 +4946,7 @@ public partial class PerspectiveWorker(
         if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
           // Only a tracked event can fire: an ended one (a cooled row re-signaling it) would get an expectation
           // nothing completes and nothing sweeps (#1797).
-          if (lifecycleCoordinator.GetTracking(eventId) is not null) {
+          if (lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null) {
             lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
           }
         } else {
@@ -4973,7 +4973,7 @@ public partial class PerspectiveWorker(
       // Canceled mid-batch: every event whose gate is open ends here too. Nothing in memory finishes its stages
       // now; the missing durable completion marker replays them at the next startup (#1797).
       foreach (var eventId in batchProcessedEvents.Keys.Where(id => _isReadyToFire(id, lifecycleCoordinator))) {
-        lifecycleCoordinator.AbandonTracking(eventId);
+        lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
       }
       throw;
     }
@@ -4984,7 +4984,7 @@ public partial class PerspectiveWorker(
   /// lifecycle left in this process (a cooled row re-signaling an event whose tracking already ended).
   /// </summary>
   private static bool _isReadyToFire(Guid eventId, ILifecycleCoordinator lifecycleCoordinator) =>
-    lifecycleCoordinator.GetTracking(eventId) is not null && lifecycleCoordinator.AreAllPerspectivesComplete(eventId);
+    lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null && lifecycleCoordinator.AreAllPerspectivesComplete(eventId);
 
   /// <summary>
   /// Fires one event's PostAllPerspectives and PostLifecycle stages once its WhenAll gate is open, then ends its
@@ -5015,7 +5015,7 @@ public partial class PerspectiveWorker(
       await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
 
       // The tracking was created during PrePerspective via BeginTracking
-      var tracking = lifecycleCoordinator.GetTracking(eventId)!;
+      var tracking = lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)!;
       // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
@@ -5035,7 +5035,7 @@ public partial class PerspectiveWorker(
       LogPostLifecycleError(_logger, ex, eventId);
       coordinatorMetrics?.PostLifecycleErrors.Add(1);
     } finally {
-      lifecycleCoordinator.AbandonTracking(eventId);
+      lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
     }
   }
 

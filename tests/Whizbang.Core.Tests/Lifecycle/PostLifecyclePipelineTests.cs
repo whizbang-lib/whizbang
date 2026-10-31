@@ -80,10 +80,10 @@ public class PostLifecyclePipelineTests {
       var envelope = _createEnvelope(new TestEvent(eventId, $"local-{i}"));
 
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+        LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
     }
 
     // Assert
@@ -108,15 +108,15 @@ public class PostLifecyclePipelineTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "route-both"));
 
-    coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
-    coordinator.ExpectCompletionsFrom(eventId,
+    coordinator.BeginTracking(LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.LocalDispatch, eventId,
       PostLifecycleCompletionSource.Local,
       PostLifecycleCompletionSource.Distributed);
 
     // Act — Dispatcher signals local completion
     using var scope = provider.CreateScope();
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.LocalDispatch, eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — PostLifecycle has NOT fired yet
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(0)
@@ -124,7 +124,7 @@ public class PostLifecyclePipelineTests {
 
     // Act — distributed path completes later
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.LocalDispatch, eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOW PostLifecycle fires
     await coordinator.DrainAllDetachedAsync();
@@ -158,13 +158,13 @@ public class PostLifecyclePipelineTests {
       var envelope = _createEnvelope(new TestEvent(eventId, $"outbox-{i}"));
 
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+        LifecycleTrackingPath.Outbox, eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
       // Event published to transport — this service is done with it
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Outbox, eventId);
     }
 
     // Assert
@@ -189,15 +189,15 @@ public class PostLifecyclePipelineTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "outbox-whenall"));
 
-    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
-    coordinator.ExpectCompletionsFrom(eventId,
+    coordinator.BeginTracking(LifecycleTrackingPath.Outbox, eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Outbox, eventId,
       PostLifecycleCompletionSource.Local,
       PostLifecycleCompletionSource.Outbox);
 
     // Act — Outbox signals completion
     using var scope = provider.CreateScope();
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Outbox, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Outbox, eventId, PostLifecycleCompletionSource.Outbox, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOT yet, Local path still pending
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(0)
@@ -205,7 +205,7 @@ public class PostLifecyclePipelineTests {
 
     // Act — Local path completes
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Outbox, eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOW fires
     await coordinator.DrainAllDetachedAsync();
@@ -238,10 +238,10 @@ public class PostLifecyclePipelineTests {
       var envelope = _createEnvelope(new TestEvent(eventId, $"inbox-{i}"));
 
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+        LifecycleTrackingPath.Inbox, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
     }
 
     // Assert
@@ -266,15 +266,15 @@ public class PostLifecyclePipelineTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "inbox-whenall"));
 
-    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PostInboxDetached, MessageSource.Inbox);
-    coordinator.ExpectCompletionsFrom(eventId,
+    coordinator.BeginTracking(LifecycleTrackingPath.Inbox, eventId, envelope, LifecycleStage.PostInboxDetached, MessageSource.Inbox);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Inbox, eventId,
       PostLifecycleCompletionSource.Local,
       PostLifecycleCompletionSource.Distributed);
 
     // Act — Distributed path signals (TransportConsumer finished)
     using var scope = provider.CreateScope();
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Inbox, eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOT yet
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(0)
@@ -282,7 +282,7 @@ public class PostLifecyclePipelineTests {
 
     // Act — Local path completes
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Inbox, eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOW fires
     await coordinator.DrainAllDetachedAsync();
@@ -315,10 +315,10 @@ public class PostLifecyclePipelineTests {
       var envelope = _createEnvelope(new TestEvent(eventId, $"perspective-{i}"));
 
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+        LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
     }
 
     // Assert
@@ -343,15 +343,15 @@ public class PostLifecyclePipelineTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "perspective-whenall"));
 
-    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
-    coordinator.ExpectCompletionsFrom(eventId,
+    coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Perspective, eventId,
       PostLifecycleCompletionSource.Local,
       PostLifecycleCompletionSource.Distributed);
 
     // Act — PerspectiveWorker signals Distributed completion
     using var scope = provider.CreateScope();
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOT yet
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(0)
@@ -359,7 +359,7 @@ public class PostLifecyclePipelineTests {
 
     // Act — Local path completes (Dispatcher finished its part)
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
 
     // Assert — NOW fires
     await coordinator.DrainAllDetachedAsync();

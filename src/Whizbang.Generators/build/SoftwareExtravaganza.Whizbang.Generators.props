@@ -16,9 +16,13 @@
 
   <!-- WHIZ309 (a collective predicate on an unindexed field) is on by default. Consumers can set
        WhizbangCollectiveIndexWarning=false to turn it off for a project; a reasoned
-       [SuppressIndexAdvisory] turns it off for one perspective, model or field instead. -->
+       [SuppressIndexAdvisory] turns it off for one perspective, model or field instead.
+       WHIZ200 (an array of records stores a perspective model as one opaque document) is on by default too.
+       Consumers can set WhizbangOpaqueArrayWarning=false to turn it off for a project; #pragma warning
+       disable WHIZ200 or [SuppressMessage] turns it off for one property instead. -->
   <ItemGroup>
     <CompilerVisibleProperty Include="WhizbangCollectiveIndexWarning" />
+    <CompilerVisibleProperty Include="WhizbangOpaqueArrayWarning" />
   </ItemGroup>
 
   <!-- Every other property a generator reads must be declared here too, or a project's setting never reaches it

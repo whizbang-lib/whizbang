@@ -401,6 +401,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     await _executeAsync("""
       SELECT pg_terminate_backend(l.pid) FROM pg_locks l
        WHERE l.locktype = 'advisory' AND l.granted AND l.pid <> pg_backend_pid()
+         AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
       """, cancellationToken);
 
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse()

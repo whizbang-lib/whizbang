@@ -534,7 +534,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
 
     // Assert — check coordinator state
     var allComplete = lc.AreAllPerspectivesComplete(eventId);
-    var hasTracking = lc.GetTracking(eventId) is not null;
+    var hasTracking = lc.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null;
     var allStages = invoker.Invocations.Select(i => i.Stage.ToString()).ToList();
     var runCount = registry.RunWithEventsCallCount;
 
@@ -1055,7 +1055,7 @@ public class LifecycleCoordinatorPostAllPerspectivesIsolationTests {
     };
 
     // Act — simulate the full lifecycle: BeginTracking → Expect → Signal → AdvanceTo
-    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, Guid.NewGuid());
+    var tracking = coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, Guid.NewGuid());
 
     // Register expectations (2 perspectives)
     coordinator.ExpectPerspectiveCompletions(eventId, ["P1", "P2"]);

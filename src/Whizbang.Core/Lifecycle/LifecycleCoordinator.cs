@@ -29,13 +29,19 @@ namespace Whizbang.Core.Lifecycle;
 /// Every entry has a defined end: the path that begins tracking ends it once the lifecycle it tracks is
 /// done. <see cref="CleanupStaleTracking"/> is a safety net, not what keeps memory stable (#1797).
 /// </para>
+/// <para>
+/// Entries are keyed by <see cref="LifecycleTrackingPath"/> and event id, so an event on several paths in one
+/// process (dispatched locally, projected, published) has one entry per path, each with its own stage guard and its
+/// own end. The perspective WhenAll gate belongs to the <see cref="LifecycleTrackingPath.Perspective"/> entry and ends
+/// only with it (#1918).
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs</tests>
 public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
-  private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
-  private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
+  private readonly ConcurrentDictionary<TrackingKey, LifecycleTrackingState> _tracked = new();
+  private readonly ConcurrentDictionary<TrackingKey, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
   private readonly ConcurrentDictionary<Task, byte> _endedDetachedTasks = new();
   private readonly LifecycleCoordinatorMetrics? _metrics;
@@ -66,52 +72,57 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   internal int RetainedDetachedTaskCount => _endedDetachedTasks.Count;
 
   /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:EachPathTracksTheSameEventInAnEntryOfItsOwnAsync</tests>
   public ILifecycleTracking BeginTracking(
+    LifecycleTrackingPath path,
     Guid eventId,
     IMessageEnvelope envelope,
     LifecycleStage entryStage,
     MessageSource source,
     Guid? streamId = null,
     Type? perspectiveType = null) {
-    return _tracked.GetOrAdd(eventId,
-      id => {
+    return _tracked.GetOrAdd(new TrackingKey(path, eventId),
+      key => {
         _metrics?.ActiveTrackedEvents.Add(1);
-        return new LifecycleTrackingState(id, envelope, entryStage, source, streamId, perspectiveType, _logger) { Clock = _timeProvider };
+        return new LifecycleTrackingState(key.EventId, envelope, entryStage, source, streamId, perspectiveType, _logger) { Clock = _timeProvider };
       });
   }
 
   /// <inheritdoc/>
-  public ILifecycleTracking? GetTracking(Guid eventId) {
-    return _tracked.TryGetValue(eventId, out var state) ? state : null;
+  public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) {
+    return _tracked.TryGetValue(new TrackingKey(path, eventId), out var state) ? state : null;
   }
 
   /// <inheritdoc/>
-  public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) {
+  public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) {
     var whenAll = new WhenAllState(sources);
-    if (_whenAllStates.TryAdd(eventId, whenAll)) {
+    if (_whenAllStates.TryAdd(new TrackingKey(path, eventId), whenAll)) {
       _metrics?.PendingWhenAllStates.Add(1);
     }
   }
 
   /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:SegmentLatch_FiresPostLifecycleOnItsOwnPathsTracking_AndEndsWithItAsync</tests>
   public async ValueTask SignalSegmentCompleteAsync(
+    LifecycleTrackingPath path,
     Guid eventId,
     PostLifecycleCompletionSource source,
     IServiceProvider scopedProvider,
     CancellationToken ct) {
-    if (_whenAllStates.TryGetValue(eventId, out var whenAll)) {
+    var key = new TrackingKey(path, eventId);
+    if (_whenAllStates.TryGetValue(key, out var whenAll)) {
       // Atomically signal and check completion — returns true exactly once
       if (!whenAll.TrySignalAndComplete(source)) {
         return; // Not all paths complete yet, or already fired
       }
 
       // All paths complete — remove WhenAll state and fire PostLifecycle
-      _whenAllStates.TryRemove(eventId, out _);
+      _whenAllStates.TryRemove(key, out _);
       _metrics?.PendingWhenAllStates.Add(-1);
     }
 
     // Fire PostLifecycle stages
-    if (_tracked.TryGetValue(eventId, out var tracking)) {
+    if (_tracked.TryGetValue(key, out var tracking)) {
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct).ConfigureAwait(false);
       _metrics?.PostLifecycleFired.Add(1);
@@ -132,25 +143,30 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   }
 
   /// <inheritdoc/>
-  public void AbandonTracking(Guid eventId) {
-    if (_tracked.TryGetValue(eventId, out var state)) {
-      _end(eventId, state);
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:EndingOnePathsTracking_NeverEndsAnotherPathsTrackingOfTheSameEventAsync</tests>
+  public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) {
+    var key = new TrackingKey(path, eventId);
+    if (_tracked.TryGetValue(key, out var state)) {
+      _end(key, state);
     }
-    _releaseGates(eventId);
+    _releaseGates(key);
   }
 
   /// <summary>
-  /// Drops an event's WhenAll states. A perspective state that already completed was taken off the pending
-  /// gauge when it completed, so only an incomplete one is taken off here; the gauge never goes below the
-  /// states actually waiting.
+  /// Drops the WhenAll states one entry owns: its segment latch, and, for the perspective path's entry, the event's
+  /// perspective gate. Another path's end never drops the perspective gate, which would open it with perspectives
+  /// still to report (#1918). A perspective state that already completed was taken off the pending gauge when it
+  /// completed, so only an incomplete one is taken off here; the gauge never goes below the states actually waiting.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:EndingAnotherPathsTracking_LeavesThePerspectiveGateClosedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:EndingACompletedEvent_TakesItsPerspectiveStateOffThePendingGaugeOnlyOnceAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_EndingAnEntry_ReleasesItsSegmentAndPerspectiveGatesAsync</tests>
-  private void _releaseGates(Guid eventId) {
-    if (_whenAllStates.TryRemove(eventId, out _)) {
+  private void _releaseGates(TrackingKey key) {
+    if (_whenAllStates.TryRemove(key, out _)) {
       _metrics?.PendingWhenAllStates.Add(-1);
     }
-    if (_perspectiveStates.TryRemove(eventId, out var perspectiveState) && !perspectiveState.IsComplete) {
+    if (key.Path == LifecycleTrackingPath.Perspective
+        && _perspectiveStates.TryRemove(key.EventId, out var perspectiveState) && !perspectiveState.IsComplete) {
       _metrics?.PendingPerspectiveStates.Add(-1);
     }
   }
@@ -163,8 +179,8 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// <returns><see langword="true"/> when this call removed the entry.</returns>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorDetachedRetentionTests.cs:EndedTracking_ReleasesItsDetachedStage_OnceTheStageFinishesAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorDetachedRetentionTests.cs:EndedTracking_NeverRetainsADetachedStageThatAlreadyFinishedAsync</tests>
-  private bool _end(Guid eventId, LifecycleTrackingState state) {
-    if (!_tracked.TryRemove(new KeyValuePair<Guid, LifecycleTrackingState>(eventId, state))) {
+  private bool _end(TrackingKey key, LifecycleTrackingState state) {
+    if (!_tracked.TryRemove(new KeyValuePair<TrackingKey, LifecycleTrackingState>(key, state))) {
       return false;
     }
     foreach (var task in state.GetDetachedTasks().Where(t => !t.IsCompleted)) {
@@ -187,8 +203,8 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// <inheritdoc/>
   public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) {
     _metrics?.PerspectiveCompletionsSignaled.Add(1);
-    // Reset inactivity timer — perspectives are still arriving, keep tracking alive
-    if (_tracked.TryGetValue(eventId, out var tracking)) {
+    // Reset inactivity timer: perspectives are still arriving, keep the perspective path's tracking alive
+    if (_tracked.TryGetValue(new TrackingKey(LifecycleTrackingPath.Perspective, eventId), out var tracking)) {
       tracking.TouchActivity();
     }
     if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
@@ -228,16 +244,16 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     var cleaned = 0;
 
     // A snapshot: an entry another path ends while the sweep runs is skipped below, never counted twice.
-    foreach (var (eventId, state) in _tracked.ToArray()) {
+    foreach (var (key, state) in _tracked.ToArray()) {
       var complete = state.IsComplete;
       if (!complete && state.LastActivityUtc >= cutoff) {
         continue;
       }
-      _perspectiveStates.TryGetValue(eventId, out var perspectiveState);
-      if (!_end(eventId, state)) {
+      var perspectiveState = _perspectiveGateOf(key);
+      if (!_end(key, state)) {
         continue;
       }
-      _releaseGates(eventId);
+      _releaseGates(key);
       cleaned++;
       if (complete) {
         _metrics?.CompletedTrackingSwept.Add(1);
@@ -247,13 +263,21 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
       if (perspectiveState is { HasPartialCompletions: true }) {
         _metrics?.PartialTrackingEnded.Add(1);
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          LogPartialTrackingEnded(_logger, eventId, inactivityThreshold, perspectiveState.MissingPerspectives);
+          LogPartialTrackingEnded(_logger, key.EventId, inactivityThreshold, perspectiveState.MissingPerspectives);
         }
       }
     }
 
     return cleaned;
   }
+
+  /// <summary>The perspective gate an entry owns: the event's, for the perspective path's entry; none for another path's.</summary>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:Sweep_EndingAnotherPathsStaleEntry_LeavesThePerspectiveGateClosedAsync</tests>
+  private PerspectiveWhenAllState? _perspectiveGateOf(TrackingKey key) =>
+    key.Path == LifecycleTrackingPath.Perspective && _perspectiveStates.TryGetValue(key.EventId, out var state) ? state : null;
+
+  /// <summary>One path's entry for one event: the key every tracked entry and segment latch is held under (#1918).</summary>
+  private readonly record struct TrackingKey(LifecycleTrackingPath Path, Guid EventId);
 
   [LoggerMessage(
     Level = LogLevel.Debug,

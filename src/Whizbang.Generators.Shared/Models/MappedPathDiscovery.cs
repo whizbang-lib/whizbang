@@ -37,7 +37,8 @@ namespace Whizbang.Generators.Shared.Models;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectionMemberShapeProbeTests.cs</tests>
 public static class MappedPathDiscovery {
   /// <summary>
-  /// The collection types that cannot hold a complex element on the mapped path.
+  /// The collection types that cannot hold a complex element on the mapped path. An array of a complex element
+  /// cannot either, and is judged on its own because an array is not a named type.
   /// </summary>
   /// <remarks>
   /// Entity Framework needs to create and fill the collection while materializing a row. It manages
@@ -86,6 +87,66 @@ public static class MappedPathDiscovery {
     return _findUnmappable(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty);
   }
 
+  /// <summary>
+  /// Every array of records in the model's graph: each array property whose element is not a primitive, at any depth,
+  /// with its member path. Each one alone makes the model stored opaquely (<see cref="UnmappableMember"/> names the
+  /// first); WHIZ200 reports them all, each at its own property.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The array properties and their paths, such as <c>Groups.Tags</c>, in declaration order.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsInsideACollectionElement_IsReportedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsUnderANestedObject_IsReportedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfPrimitives_IsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsTheDocumentLeavesOut_IsNotReportedAsync</tests>
+  public static IReadOnlyList<(IPropertySymbol Property, string Path)> ArraysOfRecords(INamedTypeSymbol modelType) {
+    var found = new List<(IPropertySymbol Property, string Path)>();
+    _collectArraysOfRecords(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty, found);
+    return found;
+  }
+
+  private static void _collectArraysOfRecords(
+      INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited, string path, List<(IPropertySymbol Property, string Path)> found) {
+    if (!visited.Add(type)) {
+      return;
+    }
+
+    // A guard rather than Where(IsAnalyzableProperty): the method group would share one cached delegate, and its
+    // first-call branch, with _findUnmappable, so which walk ran first in a process decided what coverage this line
+    // showed. Generators prefer the allocation-free loop anyway (see .editorconfig, S3267).
+    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
+      if (!PolymorphicModelDiscovery.IsAnalyzableProperty(property)) {
+        continue;
+      }
+      var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+      var nested = _walkedType(property, here, found);
+      if (nested is not null) {
+        _collectArraysOfRecords(nested, visited, here, found);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Records the property when it is an array of records, and returns the type the walk continues into: an array's or a
+  /// collection's element, or the property's own type, unless it is a primitive.
+  /// </summary>
+  private static INamedTypeSymbol? _walkedType(
+      IPropertySymbol property, string here, List<(IPropertySymbol Property, string Path)> found) {
+    if (property.Type is IArrayTypeSymbol array) {
+      var element = array.ElementType as INamedTypeSymbol;
+      if (element is not null && _isPrimitive(element)) {
+        return null;
+      }
+      found.Add((property, here));
+      return element;
+    }
+
+    if (property.Type is not INamedTypeSymbol propertyType) {
+      return null;
+    }
+    var walked = _collectionElement(propertyType) ?? propertyType;
+    return _isPrimitive(walked) ? null : walked;
+  }
+
   private static string? _findUnmappable(
       INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited, string path) {
     if (!visited.Add(type)) {
@@ -104,13 +165,26 @@ public static class MappedPathDiscovery {
   }
 
   /// <summary>The unmappable member at or below this property, or null.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfAComplexElementIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayInsideACollectionElementIsNamedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfPrimitivesIsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfArraysIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AMemberThatIsNotANamedType_IsNotReportedAsync</tests>
   private static string? _judgeProperty(
       IPropertySymbol property, HashSet<INamedTypeSymbol> visited, string path) {
+    var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+
+    // An array of a complex element: Entity Framework builds a model with it, then refuses it at the first read
+    // (collection navigations cannot be arrays) and on the change tracker's snapshot (the array is of a fixed
+    // size), so it is reported here rather than left to fail at runtime (#1910). An array of primitives is a
+    // value the mapped path reads back.
+    if (property.Type is IArrayTypeSymbol array) {
+      return array.ElementType is INamedTypeSymbol arrayElement && _isPrimitive(arrayElement) ? null : here;
+    }
+
     if (property.Type is not INamedTypeSymbol propertyType) {
       return null;
     }
-
-    var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
     var element = _collectionElement(propertyType);
 
     // A collection the mapped path cannot fill, holding something other than a primitive. A

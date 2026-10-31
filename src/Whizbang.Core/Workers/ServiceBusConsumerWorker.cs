@@ -471,14 +471,14 @@ public partial class ServiceBusConsumerWorker(
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+        LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
       // Wait for detached tasks to complete before abandoning tracking
       // This ensures PostLifecycleDetached (which fires in Task.Run) completes
       // before the worker's DrainDetachedAsync returns.
       await tracking.DrainDetachedAsync();
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);

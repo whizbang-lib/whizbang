@@ -56,25 +56,25 @@ public class LifecycleCoordinatorCoverageTests {
     var provider = new ServiceCollection().BuildServiceProvider();
 
     coordinator.ExpectCompletionsFrom(
-      eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
 
     // One of the two expected segments reports in against the first latch.
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Local, provider, CancellationToken.None);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, provider, CancellationToken.None);
 
     // A second registration for the same event must be ignored rather than install a fresh latch.
     coordinator.ExpectCompletionsFrom(
-      eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
 
     // If the latch had been replaced, this second segment would leave the Dispatcher signal
     // missing and the fan-in would still be waiting; with the original latch it completes.
     await coordinator.SignalSegmentCompleteAsync(
-      eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None);
+      LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None);
 
     // Firing removes the latch, so a third signal finds nothing to fan in — the observable proof
     // that the second segment really did complete the set.
     await Assert.That(coordinator.SignalSegmentCompleteAsync(
-        eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None).AsTask())
+        LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None).AsTask())
       .ThrowsNothing()
       .Because("once the fan-in has fired its state is gone, so a late duplicate signal is a no-op "
         + "rather than an error");

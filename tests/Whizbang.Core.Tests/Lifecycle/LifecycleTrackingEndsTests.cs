@@ -54,7 +54,7 @@ public class LifecycleTrackingEndsTests {
 
   private static Guid _begin(LifecycleCoordinator coordinator) {
     Guid eventId = TrackedGuid.New();
-    coordinator.BeginTracking(eventId, _envelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, _envelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
     return eventId;
   }
 
@@ -79,7 +79,7 @@ public class LifecycleTrackingEndsTests {
 
     await Assert.That(cleaned).IsEqualTo(1)
       .Because("a partial entry no perspective has reported for within the bound can never be relied on to complete");
-    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNull();
     await Assert.That(_current(helper, PARTIAL_ENDED)).IsEqualTo(1)
       .Because("ending a partial entry means PostAllPerspectives will not fire for it, so it is counted");
     var record = logger.Collector.GetSnapshot().Single(r => r.Message.Contains(eventId.ToString(), StringComparison.Ordinal));
@@ -105,7 +105,7 @@ public class LifecycleTrackingEndsTests {
 
     await Assert.That(cleaned).IsEqualTo(0)
       .Because("each report restarts the bound, so an entry its perspectives are still reporting for is never ended early");
-    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNotNull();
     coordinator.SignalPerspectiveComplete(eventId, PERSPECTIVE_B);
     await Assert.That(coordinator.SignalPerspectiveComplete(eventId, PERSPECTIVE_C)).IsTrue()
       .Because("the kept entry still completes its WhenAll gate when the last perspective reports");
@@ -122,7 +122,7 @@ public class LifecycleTrackingEndsTests {
       .Because("the bound is read on the injected clock, which has not passed it yet");
     clock.Advance(TimeSpan.FromSeconds(2));
     await Assert.That(coordinator.CleanupStaleTracking(_bound)).IsEqualTo(1);
-    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNull();
   }
 
   [Test]
@@ -137,13 +137,13 @@ public class LifecycleTrackingEndsTests {
     await using var provider = new ServiceCollection()
       .AddSingleton<IReceptorInvoker, CompletingInvoker>()
       .BuildServiceProvider();
-    await coordinator.GetTracking(eventId)!.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
+    await coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)!.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
 
     var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromHours(1));
 
     await Assert.That(cleaned).IsEqualTo(1)
       .Because("a completed entry has nothing left to wait for; the sweep never keeps one");
-    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNull();
     await Assert.That(_current(helper, COMPLETED_SWEPT)).IsEqualTo(1)
       .Because("a completed entry reaching the sweep means a path skipped its exit, which is counted");
   }
@@ -155,11 +155,11 @@ public class LifecycleTrackingEndsTests {
     await using var provider = new ServiceCollection()
       .AddSingleton<IReceptorInvoker, CompletingInvoker>()
       .BuildServiceProvider();
-    await coordinator.GetTracking(eventId)!.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
+    await coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)!.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
 
     await Assert.That(coordinator.CleanupStaleTracking(TimeSpan.FromHours(1))).IsEqualTo(1)
       .Because("the rule holds whether or not a host registered the lifecycle metrics");
-    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNull();
   }
 
   [Test]
@@ -173,7 +173,7 @@ public class LifecycleTrackingEndsTests {
     _begin(coordinator);
     _begin(coordinator);
 
-    coordinator.AbandonTracking(first);
+    coordinator.AbandonTracking(LifecycleTrackingPath.Perspective, first);
 
     await Assert.That(_current(helper, TRACKED_ENTRIES)).IsEqualTo(2)
       .Because("the gauge reads the entries the coordinator holds right now, so a leak shows on a dashboard");
@@ -189,7 +189,7 @@ public class LifecycleTrackingEndsTests {
     coordinator.ExpectPerspectiveCompletions(eventId, [PERSPECTIVE_A]);
     coordinator.SignalPerspectiveComplete(eventId, PERSPECTIVE_A);
 
-    coordinator.AbandonTracking(eventId);
+    coordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
 
     await Assert.That(_current(helper, PENDING_PERSPECTIVES)).IsEqualTo(0)
       .Because("the state left the pending gauge when it completed; ending the event must not take it off again");
@@ -204,7 +204,7 @@ public class LifecycleTrackingEndsTests {
     var coordinator = new LifecycleCoordinator(new FakeLogger<LifecycleCoordinator>(), metrics, clock);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
     var eventId = _begin(coordinator);
-    coordinator.ExpectCompletionsFrom(eventId, PostLifecycleCompletionSource.Local);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local);
     coordinator.ExpectPerspectiveCompletions(eventId, [PERSPECTIVE_A, PERSPECTIVE_B]);
 
     clock.Advance(_bound + TimeSpan.FromSeconds(1));
@@ -254,7 +254,7 @@ public class LifecycleTrackingEndsTests {
       _fired = true;
       var message = formatter(state, exception);
       foreach (var other in Others.Where(id => !message.Contains(id.ToString(), StringComparison.Ordinal))) {
-        Coordinator!.AbandonTracking(other);
+        Coordinator!.AbandonTracking(LifecycleTrackingPath.Perspective, other);
       }
     }
   }
