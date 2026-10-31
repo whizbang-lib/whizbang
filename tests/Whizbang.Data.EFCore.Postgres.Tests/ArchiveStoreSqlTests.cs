@@ -200,6 +200,43 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Write_ThenRead_CarriesEachEventsCommitPositions_ExactlyAsTheHotStoreHeldThemAsync() {
+    // #1738: a read through the archive orders archived events with the hot ones by these positions, so they must come
+    // back as stored: an event that arrived from another service carries that service and its commit sequence there,
+    // and an event the stamper had not reached yet carries no commit sequence at all.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    var ids = await _streamAsync(connection, stream, 2);
+    var originService = Guid.CreateVersion7();
+    await using (var place = connection.CreateCommand()) {
+      place.CommandText =
+        "UPDATE wh_event_store SET commit_sequence = 41, origin_service_id = @origin, origin_commit_sequence = 9001 WHERE event_id = @received; " +
+        "UPDATE wh_event_store SET commit_sequence = NULL, origin_service_id = NULL, origin_commit_sequence = NULL WHERE event_id = @unstamped";
+      place.Parameters.AddWithValue("origin", originService);
+      place.Parameters.AddWithValue("received", ids[0]);
+      place.Parameters.AddWithValue("unstamped", ids[1]);
+      _ = await place.ExecuteNonQueryAsync();
+    }
+    var store = _store();
+
+    var written = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var read = await _readAllAsync(store, stream);
+
+    await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(read).Count().IsEqualTo(2);
+    await Assert.That(read[0].EventId).IsEqualTo(ids[0]);
+    await Assert.That(read[0].CommitSequence).IsEqualTo(41L);
+    await Assert.That(read[0].OriginServiceId).IsEqualTo(originService);
+    await Assert.That(read[0].OriginCommitSequence).IsEqualTo(9001L)
+      .Because("an event received from another service keeps that service's position, so a replay orders it as the hot read did");
+    await Assert.That(read[1].EventId).IsEqualTo(ids[1]);
+    await Assert.That(read[1].CommitSequence).IsNull().Because("an unstamped event is archived unstamped, never given a position");
+    await Assert.That(read[1].OriginServiceId).IsNull();
+    await Assert.That(read[1].OriginCommitSequence).IsNull();
+  }
+
+  [Test]
   public async Task Read_ARowArchivedBeforeTheStoreKeptEveryColumn_ReadsTheMissingOnesAsNullAsync() {
     // Rows archived by migration 085's copy have no flags; a reaped body was archived as NULL.
     await using var ctx = CreateDbContext();

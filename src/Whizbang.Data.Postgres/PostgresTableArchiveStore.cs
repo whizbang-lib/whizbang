@@ -76,6 +76,7 @@ public sealed partial class PostgresTableArchiveStore(
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveStoreSqlTests.cs:Write_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveStoreSqlTests.cs:Write_ThenRead_CarriesEachEventsCommitPositions_ExactlyAsTheHotStoreHeldThemAsync</tests>
   public async IAsyncEnumerable<ArchivedEvent> ReadAsync(
       Guid streamId, long fromVersion = 0, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
