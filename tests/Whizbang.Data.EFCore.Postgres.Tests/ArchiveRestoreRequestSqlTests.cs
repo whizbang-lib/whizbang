@@ -318,11 +318,11 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
     var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
     _ = await _store().DeleteAsync(stream);
     await using var bare = new ServiceCollection().BuildServiceProvider();
-    var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); // review-checks:allow: the system clock is what this test checks; the two reads only bound it, nothing waits on time
 
     await ArchiveRestoreRequestStep.FromServices(bare).RunAsync(_runServices(_store()), CancellationToken.None);
 
-    var after = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var after = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); // review-checks:allow: the upper bound of the same system-clock check
     await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Failed|nothing_archived")
       .Because("a host without logging still gets a step that runs; its outcome is discarded, not a failure");
     var updatedAt = await _updatedAtAsync(conn, stream);
