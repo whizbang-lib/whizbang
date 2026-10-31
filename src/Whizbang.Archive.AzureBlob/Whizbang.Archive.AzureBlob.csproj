@@ -9,8 +9,6 @@
     <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
     <WhizbangPackageTier>Application</WhizbangPackageTier>
     <WhizbangPackageArea>Event archive</WhizbangPackageArea>
-    <!-- Not on nuget.org yet: no public API baseline to compare with until its first stable release (Directory.Build.targets). -->
-    <WhizbangUnreleasedPackage>true</WhizbangUnreleasedPackage>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
