@@ -436,9 +436,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IPerspectiveFor`, `ApplyResult<TModel>` for `IPerspectiveWithActionsFor`; a `TModel?` return implements `TModel
   Apply` and is accepted); and **WHIZ116**, a method carrying `[CollectiveApplyFor]` that does not match the collective
   handler shape, or an `ICollectiveApplyFor<TModel, TEvent>.Apply` implementation without the attribute, both left out
-  of the collective registry without a word before (Fixes #1936)
-- **`IPerspectiveWithActionsFor` takes up to 50 events, the same as `IPerspectiveFor` (#1936).** It stopped at 10, so
-  moving an event that deletes or purges into it could meet a smaller cap (Fixes #1936)
+  of the collective registry without a word before; and **WHIZ117**, an event listed only through a custom interface that
+  extends `IPerspectiveBase` without declaring an `Apply` (or through `IPerspectiveBase` itself), which counted as routed
+  while no interface-declared `Apply` handled it. Custom marker interfaces may be supported in a future release (Fixes #1936)
+- **The generated perspective runner calls each event's `Apply` through the interface that lists it (#1936).** It used
+  to call `Apply` on the perspective class by name, so a perspective that implements `Apply` only explicitly did not
+  build. The call is a direct interface call, with nothing allocated, and it runs the interface's implementation,
+  explicit or not; `[MustExist]` and an `Apply` that can only purge are read off that implementation (Fixes #1936)
+- **`IPerspectiveWithActionsFor` and `IGlobalPerspectiveFor` take up to 50 events, the same as `IPerspectiveFor`
+  (#1936).** They stopped at 10 and 3, so moving an event that deletes or purges into `IPerspectiveWithActionsFor`, or
+  growing a global perspective, could meet a smaller cap (Fixes #1936)
 - **A rewind of an `[OverwriteOnly]` perspective applies only the stream's last event.** Some perspectives fold
   nothing: each `Apply` builds the row from its event alone, so the row is the last event's. The runner did not know,
   and a late event, an event below the row's position, a refused write or a row waking after eviction replayed the whole
@@ -645,7 +652,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `return ModelAction.Purge;` and `return (model, ModelAction.Delete);` stay one line. One class may implement
   `IPerspectiveFor` and `IPerspectiveWithActionsFor` side by side, each any number of times. The typed appliers that
   `GetPerspectiveAssociations<TModel, TEvent>()` hands out now call `Apply` through the interface that lists the event,
-  so a decoy could no longer make one throw `InvalidCastException`. `ModelAction`'s documentation no longer claims that
+  so a decoy could no longer make one throw `InvalidCastException`, and so does the runner: where an error above is
+  suppressed, the interface's implementation is what runs, never the class's other `Apply`. An event listed only through
+  a custom `IPerspectiveBase` marker also fails the build now (WHIZ117); list it under an interface that declares its
+  `Apply`. `ModelAction`'s documentation no longer claims that
   `Delete` sets `DeletedAt`: it keeps the row and sets nothing on the model (Fixes #1936)
 - **A new stream starts at version 1 on every write path (#1913).** A direct append (`IEventStore.AppendAsync`: system
   events, compaction, direct use) numbered a stream it created from 0, while the outbox and inbox paths number from 1,
