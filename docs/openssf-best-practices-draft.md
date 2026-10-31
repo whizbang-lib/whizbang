@@ -217,7 +217,7 @@ human review.
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `no_leaked_credentials` | Met | No valid private credentials are in the repository; TruffleHog scans every push and pull request, and GitHub secret scanning has no alerts. <https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml> |
+| `no_leaked_credentials` | Met | No valid private credentials are in the repository; Gitleaks scans the full git history on every push and pull request, and GitHub secret scanning has no alerts. <https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml> |
 
 ## Analysis
 

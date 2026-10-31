@@ -18,4 +18,3 @@ nick-fields/retry@*                   # the .NET setup retry
 nuget/login@*                         # trusted publishing to nuget.org (OIDC)
 ossf/scorecard-action@*               # OpenSSF Scorecard
 softprops/action-gh-release@*         # GitHub release creation
-trufflesecurity/trufflehog@*          # secret scanning

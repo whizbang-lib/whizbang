@@ -17,7 +17,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | PR intake | `pr-intake.yml` | PRs (`pull_request_target`), issues, comments, reviews, the merge queue, a finished CI run, a `docs-pr-changed` dispatch, schedule (daily) | The process around the gates (`.github/scripts/Invoke-PrIntake.ps1`): issue labels and commands, `/recheck`, the pipeline-owner re-check after a review and in the queue, and re-running `Gate · Review checks` when the docs pull request that satisfies it is opened, edited or reopened (sent by the docs repository's `library-review-recheck.yml`), or when a run ends that the docs pull request outlived (#1806) |
 | Dependabot lock files | `dependabot-lockfiles.yml` | Dependabot PRs into `develop` that change packages | Regenerates the NuGet lock files Dependabot leaves stale and commits them to its branch (below) |
 | CodeQL | `codeql.yml` | pushes, PRs, schedule | Static security analysis |
-| Secret Scanning | `security-secrets.yml` | pushes, PRs, dispatch | Scans for committed secrets |
+| Secret Scanning | `security-secrets.yml` | pushes, PRs, dispatch | Scans the full git history for committed secrets with Gitleaks (a pinned, checksum-verified release binary); reviewed exceptions in `.github/gitleaks.toml` and `.github/gitleaksignore` |
 | Supply Chain Security | `security-supply-chain.yml` | pushes, PRs, schedule, dispatch | Dependency vulnerability scanning |
 | OSSF Scorecard | `security-scorecard.yml` | schedule, dispatch | Repository security posture |
 | Mutation Testing | `mutation.yml` | dispatch | Stryker mutation runs (see `ai-docs/mutation-testing.md`) |

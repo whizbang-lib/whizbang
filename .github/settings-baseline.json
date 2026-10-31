@@ -32,8 +32,7 @@
         "nick-fields/retry@*",
         "nuget/login@*",
         "ossf/scorecard-action@*",
-        "softprops/action-gh-release@*",
-        "trufflesecurity/trufflehog@*"
+        "softprops/action-gh-release@*"
       ],
       "verified_allowed": true
     },

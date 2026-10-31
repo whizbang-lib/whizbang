@@ -1,0 +1,45 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+# Gitleaks configuration for the Secret Scanning workflow (security-secrets.yml).
+#
+# Gitleaks matches patterns and entropy; unlike the TruffleHog --only-verified scan it replaced, it does not
+# call the provider to check that a credential is live. It therefore also reports placeholders that look
+# like credentials. Each exception below names one exact value, says what it is, and is limited to the rule
+# that reports it; never allow a whole path, a rule or a pattern broad enough to hide a real credential.
+# A finding that is a real credential is revoked first and only then listed here (or, for a single
+# historical occurrence, in .github/gitleaksignore by fingerprint).
+#
+# The workflow runs with --ignore-gitleaks-allow, so an inline "gitleaks:allow" comment silences nothing:
+# every exception is a reviewed change to this file, which CODEOWNERS gives to build-admins.
+#
+# Run the same scan locally:
+#   gitleaks git --config .github/gitleaks.toml --gitleaks-ignore-path .github/gitleaksignore \
+#     --ignore-gitleaks-allow --redact --verbose .
+
+title = "Whizbang secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """Placeholder Azure Service Bus SharedAccessKey values in the transport tests: base64 of \
+'unit-test-key', 'probekey' and 'test-key-not-real', in connection strings to sb://unit-test.example, \
+sb://localhost:1 and sb://whizbang-test.servicebus.windows.net."""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^(dW5pdC10ZXN0LWtleQ==|cHJvYmVrZXk=|dGVzdC1rZXktbm90LXJlYWw=)$''']
+
+[[allowlists]]
+description = """Identifiers that are not credentials: the partition key 'partition-key-1' in the perspective \
+store tests and the RabbitMQ routing key 'partition-2.order-12345' in a removed infrastructure doc."""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^(partition-key-1|partition-2\.order-12345)$''']
+
+[[allowlists]]
+description = """The transport metadata tests' sample JWT: header {"alg":"HS256","typ":"JWT"}, payload \
+{"sub":"1234567890"}, signed with no key the project or any service holds."""
+targetRules = ["jwt"]
+regexTarget = "secret"
+regexes = ['''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U$''']
