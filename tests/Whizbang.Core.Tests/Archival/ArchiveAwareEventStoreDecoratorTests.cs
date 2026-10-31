@@ -175,6 +175,41 @@ public class ArchiveAwareEventStoreDecoratorTests {
   }
 
   [Test]
+  public async Task AReadFromTheStart_PastAGap_WhoseArchiveHoldsNoReadableRow_ReturnsTheHotEvents_AndDecodesNothingAsync() {
+    var (hot, archive, store) = _archivedPrefix(archivedThrough: 2, hotThrough: 4);
+    archive.Events[0] = archive.Events[0] with { EventDataJson = null };
+    archive.Events[1] = archive.Events[1] with { EventDataJson = null };
+
+    var read = await _listAsync(store.ReadPolymorphicAsync(_stream, null, _types));
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([3, 4]);
+    await Assert.That(archive.Reads).IsEqualTo(1).Because("the gap was shown, so the archive was read");
+    await Assert.That(hot.Decodes).IsEqualTo(0)
+      .Because("an archive with no row a reader could fold hands the store underneath nothing to decode");
+  }
+
+  [Test]
+  public async Task AnArchivedRow_TheStoreDecodesUnderAnotherId_IsStillReturned_WithoutAnArchivedPositionAsync() {
+    // A store decodes the message id from the row's metadata, which for a row written that way need not match the
+    // archived row's event id: the event is still the reader's to fold, so it is kept as the store decoded it.
+    var archive = new ArchiveFake();
+    archive.Add(_stream, 1, 2);
+    var renamed = archive.Events[0].EventId;
+    var decodedAs = TrackedGuid.New().Value;
+    var hot = new HotStore { DecodedId = id => id == renamed ? decodedAs : id };
+    var store = new ArchiveAwareEventStoreDecorator(hot, archive, readThrough: true);
+
+    var read = await _listAsync(store.ReadPolymorphicAsync(_stream, null, _types));
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([1, 2]);
+    await Assert.That(read[0].MessageId.Value).IsEqualTo(decodedAs);
+    await Assert.That(read[0].LocalStreamVersion).IsNull()
+      .Because("no archived row carries that id, so there is no archived position to give it");
+    await Assert.That(read[0].LocalCommitSequence).IsEqualTo(101L).Because("the store's own decoding is kept as it was");
+    await Assert.That(read[1].LocalStreamVersion).IsEqualTo(2L).Because("a row found by its id still gets its position");
+  }
+
+  [Test]
   public async Task ABetweenRead_WithAnUpperBound_KeepsTheArchivedEventsAtOrBeforeItAsync() {
     var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 4);
     var upTo = archive.Events[1].EventId;
@@ -377,6 +412,8 @@ public class ArchiveAwareEventStoreDecoratorTests {
     public int Appends { get; private set; }
     public bool StampVersions { get; init; } = true;
     public Guid? LastFromEventId { get; private set; }
+    public int Decodes { get; private set; }
+    public Func<Guid, Guid> DecodedId { get; init; } = id => id;
 
     public static MessageEnvelope<IEvent> Envelope(int n, long? version) => new() {
       MessageId = MessageId.New(),
@@ -438,16 +475,18 @@ public class ArchiveAwareEventStoreDecoratorTests {
 
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
 
-    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
-      [.. streamEvents
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+      Decodes++;
+      return [.. streamEvents
         .Where(r => eventTypes.Any(t => t.Name == r.EventType))
         .Select(r => new MessageEnvelope<IEvent> {
-          MessageId = MessageId.From(r.EventId),
+          MessageId = MessageId.From(DecodedId(r.EventId)),
           Payload = new ArchiveProbeEvent { N = JsonElement.Parse(r.EventData).GetProperty("n").GetInt32() },
           Hops = [],
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
           LocalCommitSequence = r.CommitSequence,
         })];
+    }
 
     private static MessageEnvelope<TMessage> _typed<TMessage>(MessageEnvelope<IEvent> e) => new() {
       MessageId = e.MessageId,

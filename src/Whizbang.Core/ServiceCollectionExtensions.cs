@@ -578,14 +578,15 @@ public static class ServiceCollectionExtensions {
   /// Layer -1, innermost (#1738): the archive seam, when an archive store is registered. Reads from the start of a stream
   /// read archived events back through its gap, and an append under AutoRestore restores the stream and retries once.
   /// Innermost so the upcasters and every other decorator see archived events exactly as they see hot ones. A host with
-  /// no archive store gets the driver's store as it was.
+  /// no archive store gets the driver's store as it was. The archive options are always there:
+  /// <see cref="DecorateEventStoreWithSyncTracking"/> registers them with the factory that calls this.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#read-through</docs>
   /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
   private static Messaging.IEventStore _withArchive(Messaging.IEventStore store, IServiceProvider sp) =>
     sp.GetService<Whizbang.Core.Archival.IArchiveStore>() is { } archive
       ? new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(
-          store, archive, sp.GetService<IOptions<Whizbang.Core.Archival.ArchiveOptions>>()?.Value.ReadThrough ?? true)
+          store, archive, sp.GetRequiredService<IOptions<Whizbang.Core.Archival.ArchiveOptions>>().Value.ReadThrough)
       : store;
 
   /// <summary>
