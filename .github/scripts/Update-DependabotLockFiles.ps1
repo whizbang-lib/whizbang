@@ -17,19 +17,25 @@
     solution and for every project with a lock file the solution does not contain, then commits only
     packages.lock.json files.
 
+    The commit is made through the GitHub API (blobs, a tree, a commit, then a fast-forward of the
+    branch), never with git commit and git push. GitHub signs a commit an app creates through the API,
+    so it shows as verified and passes the develop ruleset's signed-commits rule; a commit made locally
+    and pushed is unsigned and blocks the pull request.
+
     Two steps, so the workflow can stop before it needs a token or an SDK:
 
       Credentials  Decides whether the GitHub App's Dependabot secrets are set. Writes ready=true|false to
                    GITHUB_OUTPUT. Missing secrets are a notice, never a failure: the workflow ships before
                    the app exists.
       Regenerate   Restores, and when a lock file changed, commits it as the app's bot account with a DCO
-                   sign-off and pushes to the pull request branch. Skips when the head commit is already
-                   the app's (its own push re-triggers the workflow). The app token is read from the
-                   LOCKFILE_TOKEN environment variable, never from an argument.
+                   sign-off on top of the pull request's head and moves its branch there. Skips when the
+                   head commit is already the app's (its own update re-triggers the workflow). gh reads
+                   the app token from GH_TOKEN; LOCKFILE_TOKEN must hold it too, so a missing token fails
+                   before the restore.
 
     Idempotent: a second restore over the regenerated files changes nothing, so a re-run commits nothing.
-    A push rejected because the branch moved (Dependabot rebased it while this ran) is a notice: the run
-    for the new head regenerates again.
+    A branch update refused because the branch moved (Dependabot rebased it while this ran) is a notice:
+    the run for the new head regenerates again.
 
     Exit 0 on success or skip, 1 on failure.
 
@@ -166,8 +172,9 @@ function Get-ChangedFile {
   return [pscustomobject]@{ LockFiles = @($lock); Other = @($other) }
 }
 
+# The commit message, ending with the DCO sign-off of the app's bot account.
 function Get-CommitMessage {
-  param([Parameter(Mandatory)][int]$Count)
+  param([Parameter(Mandatory)][int]$Count, [Parameter(Mandatory)]$Identity)
   return @"
 chore(deps): regenerate $Count NuGet lock file(s) for the Dependabot update
 
@@ -175,7 +182,73 @@ Dependabot updates Directory.Packages.props and the lock files of the projects t
 reference a package directly. Projects that reach it through a project reference keep
 the old version, and a locked-mode restore fails with NU1004. Regenerated with
 dotnet restore --force-evaluate by .github/workflows/dependabot-lockfiles.yml.
+
+Signed-off-by: $($Identity.Name) <$($Identity.Email)>
 "@
+}
+
+<#
+    Whether the head commit is the app's own lock-file commit, from `git log -1 --format=%an%x09%ae`.
+    GitHub sets the author of an API commit from the token, so either the name or the address matches.
+#>
+function Test-AppCommit {
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$NameAndEmail, [Parameter(Mandatory)]$Identity)
+  $name, $email = (([string]$NameAndEmail).Trim() -split "`t", 2) + @('')
+  return ($name.Trim() -ieq $Identity.Name) -or ($email.Trim() -ieq $Identity.Email)
+}
+
+<#
+    Calls the GitHub API through gh with a JSON body read from a file (a lock file in base64 is larger
+    than a command-line argument may be). Returns the parsed response, or $null with -AllowFailure.
+#>
+function Invoke-GitHubApi {
+  param(
+      [Parameter(Mandatory)][string]$Method,
+      [Parameter(Mandatory)][string]$Path,
+      [Parameter(Mandatory)]$Body,
+      [Parameter(Mandatory)][string]$What,
+      [switch]$AllowFailure
+  )
+  $file = New-TemporaryFile
+  try {
+    ConvertTo-Json -InputObject $Body -Depth 5 -Compress | Set-Content -Path $file.FullName -NoNewline
+    $out = gh api --method $Method $Path --input $file.FullName
+    if ($LASTEXITCODE -ne 0 -and $AllowFailure) { return $null }
+    Assert-ExitCode $What
+  }
+  finally { Remove-Item -LiteralPath $file.FullName -ErrorAction SilentlyContinue }
+  return (@($out) -join "`n") | ConvertFrom-Json
+}
+
+<#
+    Creates the lock-file commit on top of HeadSha through the GitHub API: a blob per changed lock file
+    (a deleted one is removed from the tree), a tree over HeadSha's, and a commit with no author or
+    committer given, so GitHub records the app's bot account and signs it. Returns the commit's sha.
+#>
+function New-LockFileCommit {
+  param(
+      [Parameter(Mandatory)][string]$Repository,
+      [Parameter(Mandatory)][string]$HeadSha,
+      [Parameter(Mandatory)][string[]]$LockFiles,
+      [Parameter(Mandatory)][string]$Message
+  )
+  $baseTree = git rev-parse "$HeadSha^{tree}"
+  Assert-ExitCode 'git rev-parse'
+  $entries = foreach ($path in $LockFiles) {
+    $sha = $null
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $path).Path))
+      $blob = Invoke-GitHubApi -Method POST -Path "repos/$Repository/git/blobs" -Body ([ordered]@{ content = $content; encoding = 'base64' }) `
+          -What "Uploading $path"
+      $sha = $blob.sha
+    }
+    [ordered]@{ path = $path; mode = '100644'; type = 'blob'; sha = $sha }
+  }
+  $tree = Invoke-GitHubApi -Method POST -Path "repos/$Repository/git/trees" `
+      -Body ([ordered]@{ base_tree = ([string]$baseTree).Trim(); tree = @($entries) }) -What 'Creating the tree'
+  $commit = Invoke-GitHubApi -Method POST -Path "repos/$Repository/git/commits" `
+      -Body ([ordered]@{ message = $Message; tree = $tree.sha; parents = @($HeadSha) }) -What 'Creating the commit'
+  return $commit.sha
 }
 
 function Write-StepOutput {
@@ -224,16 +297,15 @@ function Invoke-RegenerateStep {
       [Parameter(Mandatory)][string]$HeadRef,
       [Parameter(Mandatory)][string]$HeadSha,
       [Parameter(Mandatory)][string]$Repository,
-      [Parameter(Mandatory)][string]$Solution,
-      [Parameter(Mandatory)][string]$Token
+      [Parameter(Mandatory)][string]$Solution
   )
   $userId = gh api "users/$AppSlug%5Bbot%5D" --jq .id
   Assert-ExitCode "Looking up the user id of $AppSlug[bot]"
   $identity = Get-BotIdentity -Slug $AppSlug -UserId ([string]$userId).Trim()
 
-  $headAuthor = git log -1 --format=%ae HEAD
+  $headAuthor = git log -1 --format=%an%x09%ae HEAD
   Assert-ExitCode 'git log'
-  if (([string]$headAuthor).Trim() -ieq $identity.Email) {
+  if (Test-AppCommit -NameAndEmail ([string]$headAuthor) -Identity $identity) {
     Write-StepSummary -Text "The head commit is already $($identity.Name)'s lock-file commit; nothing to do."
     return
   }
@@ -259,24 +331,24 @@ function Invoke-RegenerateStep {
     return
   }
 
-  git add -- @($changed.LockFiles) | Out-Host
-  Assert-ExitCode 'git add'
-  git -c "user.name=$($identity.Name)" -c "user.email=$($identity.Email)" commit --signoff --quiet -m (Get-CommitMessage -Count $changed.LockFiles.Count) | Out-Host
-  Assert-ExitCode 'git commit'
+  $message = Get-CommitMessage -Count $changed.LockFiles.Count -Identity $identity
+  $commitSha = New-LockFileCommit -Repository $Repository -HeadSha $HeadSha -LockFiles @($changed.LockFiles) -Message $message
 
-  $remote = "https://x-access-token:$Token@github.com/$Repository.git"
-  git push --quiet $remote "HEAD:refs/heads/$HeadRef" | Out-Host
-  if ($LASTEXITCODE -ne 0) {
-    $remoteHead = (@(git ls-remote $remote "refs/heads/$HeadRef") -join '') -split '\s+' | Select-Object -First 1
+  # force=false: GitHub refuses the update unless the branch is still at HeadSha, the commit's parent.
+  $updated = Invoke-GitHubApi -Method PATCH -Path "repos/$Repository/git/refs/heads/$HeadRef" `
+      -Body ([ordered]@{ sha = $commitSha; force = $false }) -What "Updating $HeadRef" -AllowFailure
+  if ($null -eq $updated) {
+    $remoteHead = gh api "repos/$Repository/git/ref/heads/$HeadRef" --jq .object.sha
+    $remoteHead = if ($LASTEXITCODE -eq 0) { ([string]$remoteHead).Trim() } else { '' }
     if ($remoteHead -and $remoteHead -ne $HeadSha) {
       Write-Host "::notice title=Dependabot lock files::$HeadRef moved to $remoteHead while this ran; the run for that commit regenerates the lock files."
       return
     }
-    throw "git push to $HeadRef failed"
+    throw "Updating $HeadRef to $commitSha failed"
   }
 
   $list = ($changed.LockFiles | ForEach-Object { "- ``$_``" }) -join "`n"
-  Write-StepSummary -Text "Pushed $($changed.LockFiles.Count) regenerated lock file(s) to ${HeadRef} as $($identity.Name):`n$list"
+  Write-StepSummary -Text "Committed $($changed.LockFiles.Count) regenerated lock file(s) to ${HeadRef} as $($identity.Name) ($commitSha, signed by GitHub):`n$list"
 }
 
 # Runs one step; returns the process exit code.
@@ -292,8 +364,7 @@ function Invoke-Step {
   }
   try {
     if (-not $Token) { throw 'LOCKFILE_TOKEN is not set.' }
-    Invoke-RegenerateStep -AppSlug $AppSlug -HeadRef $HeadRef -HeadSha $HeadSha -Repository $Repository -Solution $Solution `
-        -Token $Token
+    Invoke-RegenerateStep -AppSlug $AppSlug -HeadRef $HeadRef -HeadSha $HeadSha -Repository $Repository -Solution $Solution
     return 0
   }
   catch {

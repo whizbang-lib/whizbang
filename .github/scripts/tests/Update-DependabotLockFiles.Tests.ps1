@@ -3,9 +3,9 @@
 
 #Requires -Modules Pester
 
-# The lock-file regeneration pushes to Dependabot's branches with a GitHub App token, so what it decides
-# (whether to run at all, what to restore, what to commit, as whom) is tested here; git, gh and dotnet are
-# mocked, and the restore targets come from a real .slnx and project tree on TestDrive.
+# The lock-file regeneration commits to Dependabot's branches with a GitHub App token, so what it decides
+# (whether to run at all, what to restore, what to commit, as whom, and through which API calls) is tested
+# here; git, gh and dotnet are mocked, and the restore targets and lock files are real files on TestDrive.
 
 BeforeAll {
   # Pester mocks only a command that exists, and a runner may lack these tools (a Windows machine with no Docker
@@ -27,6 +27,8 @@ BeforeAll {
     Set-Content -Path (Join-Path $root 'W.slnx') -Value '<Solution><Folder Name="/src/"><Project Path="src/In/In.csproj" /></Folder></Solution>'
     Set-Content -Path (Join-Path $root 'src/In/In.csproj') -Value '<Project />'
     Set-Content -Path (Join-Path $root 'tests/Out/Out.csproj') -Value '<Project />'
+    Set-Content -Path (Join-Path $root 'src/In/packages.lock.json') -Value '{"in":1}' -NoNewline
+    Set-Content -Path (Join-Path $root 'tests/Out/packages.lock.json') -Value '{"out":2}' -NoNewline
     return $root
   }
 
@@ -34,12 +36,21 @@ BeforeAll {
   function Reset-GitState {
     $script:GitState = @{
       LsFiles = @('src/In/packages.lock.json', 'tests/Out/packages.lock.json', 'tools/NoProject/packages.lock.json')
-      HeadAuthor = '49699333+dependabot[bot]@users.noreply.github.com'
+      HeadAuthor = "dependabot[bot]`t49699333+dependabot[bot]@users.noreply.github.com"
       Status = @(' M src/In/packages.lock.json', ' M tests/Out/packages.lock.json')
-      PushExit = 0
-      RemoteHead = $script:HeadSha
       FailOn = ''
     }
+  }
+
+  # The gh mock records every call ($script:GhCalls, the JSON body parsed) and answers from $script:GhState.
+  function Reset-GhState {
+    $script:GhCalls = [System.Collections.Generic.List[object]]::new()
+    $script:GhState = @{ RefExit = 0; RemoteHead = $script:HeadSha; RemoteExit = 0; FailOn = '' }
+  }
+
+  function Get-GhCall {
+    param([string]$Like)
+    @($script:GhCalls | Where-Object { $_.Path -like $Like })
   }
 
   function Invoke-Regenerate {
@@ -126,10 +137,24 @@ Describe 'Get-ChangedFile' {
 }
 
 Describe 'Get-CommitMessage' {
-  It 'is a conventional chore with the count and the reason' {
-    $m = Get-CommitMessage -Count 14
+  It 'is a conventional chore with the count and the reason, signed off by the app' {
+    $m = Get-CommitMessage -Count 14 -Identity (Get-BotIdentity -Slug 'wb-lockfiles' -UserId '123456')
     ($m -split "`n")[0] | Should -Be 'chore(deps): regenerate 14 NuGet lock file(s) for the Dependabot update'
     $m | Should -BeLike '*NU1004*--force-evaluate*'
+    ($m.TrimEnd() -split "`n")[-1] | Should -Be "Signed-off-by: wb-lockfiles[bot] <$AppEmail>"
+  }
+}
+
+Describe 'Test-AppCommit' {
+  BeforeAll { $script:Identity = Get-BotIdentity -Slug 'wb-lockfiles' -UserId '123456' }
+
+  It 'is <expected> for "<value>"' -ForEach @(
+      @{ value = "wb-lockfiles[bot]`tx@example.com"; expected = $true }
+      @{ value = "someone`t123456+WB-LOCKFILES[bot]@users.noreply.github.com"; expected = $true }
+      @{ value = "dependabot[bot]`t49699333+dependabot[bot]@users.noreply.github.com"; expected = $false }
+      @{ value = ''; expected = $false }
+      @{ value = 'wb-lockfiles[bot]'; expected = $true }) {
+    Test-AppCommit -NameAndEmail $value -Identity $Identity | Should -Be $expected
   }
 }
 
@@ -165,22 +190,44 @@ Describe 'Invoke-Step Credentials' {
 Describe 'Invoke-Step Regenerate' {
   BeforeEach {
     Reset-GitState
+    Reset-GhState
     $script:Repo = New-TestRepo
     Push-Location $script:Repo
     $env:GITHUB_STEP_SUMMARY = Join-Path $script:Repo 'summary.md'
 
     Mock Write-Host {}
-    Mock gh { $global:LASTEXITCODE = 0; '123456' }
     Mock dotnet { $global:LASTEXITCODE = 0 }
+    Mock gh {
+      $a = @($args | ForEach-Object { $_ })
+      $path = @($a | Where-Object { $_ -like 'users/*' -or $_ -like 'repos/*' })[0]
+      $at = [array]::IndexOf($a, '--method')
+      $method = if ($at -ge 0) { $a[$at + 1] } else { 'GET' }
+      $at = [array]::IndexOf($a, '--input')
+      $inFile = if ($at -ge 0) { $a[$at + 1] } else { $null }
+      $body = if ($inFile) { Get-Content -Raw -LiteralPath $inFile | ConvertFrom-Json } else { $null }
+      $script:GhCalls.Add([pscustomobject]@{ Method = $method; Path = $path; Body = $body; Input = $inFile })
+      $global:LASTEXITCODE = if ($script:GhState.FailOn -and $path -like "*$($script:GhState.FailOn)") { 1 } else { 0 }
+      if ($global:LASTEXITCODE -ne 0) { return }
+      switch -Wildcard ($path) {
+        'users/*' { '123456' }
+        '*/git/blobs' { '{"sha":"blob-' + $script:GhCalls.Count + '"}' }
+        '*/git/trees' { '{"sha":"tree-new"}' }
+        '*/git/commits' { '{"sha":"' + ('c' * 40) + '"}' }
+        '*/git/refs/heads/*' {
+          $global:LASTEXITCODE = $script:GhState.RefExit
+          if ($script:GhState.RefExit -eq 0) { '{"object":{"sha":"' + ('c' * 40) + '"}}' }
+        }
+        '*/git/ref/heads/*' { $global:LASTEXITCODE = $script:GhState.RemoteExit; $script:GhState.RemoteHead }
+      }
+    }
     Mock git {
-      $verb = @($args | Where-Object { $_ -in 'ls-files', 'log', 'status', 'add', 'commit', 'push', 'ls-remote' })[0]
+      $verb = @($args | Where-Object { $_ -in 'ls-files', 'log', 'status', 'rev-parse' })[0]
       $global:LASTEXITCODE = if ($verb -eq $script:GitState.FailOn) { 128 } else { 0 }
       switch ($verb) {
         'ls-files' { $script:GitState.LsFiles }
         'log' { $script:GitState.HeadAuthor }
         'status' { $script:GitState.Status }
-        'push' { $global:LASTEXITCODE = $script:GitState.PushExit }
-        'ls-remote' { "$($script:GitState.RemoteHead)`trefs/heads/dependabot/nuget/x" }
+        'rev-parse' { 'tree-base' }
       }
     }
   }
@@ -189,31 +236,69 @@ Describe 'Invoke-Step Regenerate' {
     Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
   }
 
-  It 'restores the solution and the project outside it, commits the lock files signed off as the app, and pushes' {
+  It 'restores the solution and the project outside it, and commits the lock files through the API as the app' {
     Invoke-Regenerate | Should -Be 0
 
-    Should -Invoke gh -Times 1 -Exactly -ParameterFilter { $args[1] -eq 'users/wb-lockfiles%5Bbot%5D' }
     Should -Invoke dotnet -Times 1 -Exactly -ParameterFilter { $args[1] -eq 'W.slnx' -and $args[2] -eq '--force-evaluate' }
     Should -Invoke dotnet -Times 1 -Exactly -ParameterFilter { $args[1] -eq 'tests/Out/Out.csproj' -and $args[2] -eq '--force-evaluate' }
     Should -Invoke dotnet -Times 2 -Exactly
-    Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-      # A mocked native command sees `--` consumed and an array as one argument; git itself gets both.
-      (@($args | ForEach-Object { $_ }) -join ',') -eq 'add,src/In/packages.lock.json,tests/Out/packages.lock.json'
-    }
-    Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-      $args[0] -eq '-c' -and $args[1] -eq 'user.name=wb-lockfiles[bot]' -and $args[2] -eq '-c' -and $args[3] -eq "user.email=$AppEmail" -and
-      ($args[4..6] -join ' ') -eq 'commit --signoff --quiet' -and $args[8].StartsWith('chore(deps): regenerate 2 NuGet lock file(s)')
-    }
-    Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-      $args[0] -eq 'push' -and $args[2] -eq 'https://x-access-token:tkn@github.com/o/r.git' -and $args[3] -eq 'HEAD:refs/heads/dependabot/nuget/x'
-    }
-    Get-Content -Raw $env:GITHUB_STEP_SUMMARY | Should -BeLike '*Pushed 2 regenerated lock file(s) to dependabot/nuget/x as wb-lockfiles`[bot`]*tests/Out/packages.lock.json*'
+    Should -Invoke git -Times 1 -Exactly -ParameterFilter { $args[0] -eq 'rev-parse' -and $args[1] -eq "$('a' * 40)^{tree}" }
+
+    @($script:GhCalls | ForEach-Object { "$($_.Method) $($_.Path)" }) | Should -Be @(
+        'GET users/wb-lockfiles%5Bbot%5D'
+        'POST repos/o/r/git/blobs'
+        'POST repos/o/r/git/blobs'
+        'POST repos/o/r/git/trees'
+        'POST repos/o/r/git/commits'
+        'PATCH repos/o/r/git/refs/heads/dependabot/nuget/x')
+
+    $blobs = Get-GhCall -Like '*/git/blobs'
+    $blobs.Body.encoding | Should -Be @('base64', 'base64')
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($blobs[0].Body.content)) | Should -Be '{"in":1}'
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($blobs[1].Body.content)) | Should -Be '{"out":2}'
+
+    $tree = (Get-GhCall -Like '*/git/trees')[0].Body
+    $tree.base_tree | Should -Be 'tree-base'
+    $tree.tree.path | Should -Be @('src/In/packages.lock.json', 'tests/Out/packages.lock.json')
+    $tree.tree.sha | Should -Be @('blob-2', 'blob-3')
+    $tree.tree.mode | Should -Be @('100644', '100644')
+    $tree.tree.type | Should -Be @('blob', 'blob')
+  }
+
+  It 'gives the commit no author or committer, so GitHub records the app and signs it, and signs it off' {
+    Invoke-Regenerate | Should -Be 0
+    $commit = (Get-GhCall -Like '*/git/commits')[0].Body
+    @($commit.PSObject.Properties.Name) | Should -Be @('message', 'tree', 'parents')
+    $commit.tree | Should -Be 'tree-new'
+    @($commit.parents) | Should -Be @($script:HeadSha)
+    ($commit.message -split "`n")[0] | Should -Be 'chore(deps): regenerate 2 NuGet lock file(s) for the Dependabot update'
+    $lines = $commit.message.TrimEnd() -split "`n"
+    $lines[-1] | Should -Be "Signed-off-by: wb-lockfiles[bot] <$AppEmail>"
+    $lines[-2] | Should -BeNullOrEmpty
+  }
+
+  It 'moves the branch only by fast-forward, to the new commit' {
+    Invoke-Regenerate | Should -Be 0
+    $ref = (Get-GhCall -Like '*/git/refs/heads/*')[0].Body
+    $ref.sha | Should -Be ('c' * 40)
+    $ref.force | Should -BeFalse
+    Get-Content -Raw $env:GITHUB_STEP_SUMMARY | Should -BeLike "*Committed 2 regenerated lock file(s) to dependabot/nuget/x as wb-lockfiles``[bot``] ($('c' * 40), signed by GitHub)*tests/Out/packages.lock.json*"
+  }
+
+  It 'removes a lock file the restore deleted from the tree' {
+    $script:GitState.Status = @(' M src/In/packages.lock.json', ' D gone/packages.lock.json')
+    Invoke-Regenerate | Should -Be 0
+    @(Get-GhCall -Like '*/git/blobs').Count | Should -Be 1
+    $entries = @((Get-GhCall -Like '*/git/trees')[0].Body.tree)
+    $entries[1].path | Should -Be 'gone/packages.lock.json'
+    $entries[1].sha | Should -BeNullOrEmpty
+    $entries[1].PSObject.Properties.Name | Should -Contain 'sha'
   }
 
   It 'commits nothing when every lock file is already current (a re-run is a no-op)' {
     $script:GitState.Status = @()
     Invoke-Regenerate | Should -Be 0
-    Should -Invoke git -Times 0 -ParameterFilter { $args -contains 'commit' -or $args -contains 'push' -or $args -contains 'add' }
+    @(Get-GhCall -Like 'repos/*').Count | Should -Be 0
     Get-Content -Raw $env:GITHUB_STEP_SUMMARY | Should -BeLike '*already matches the restore of 2 target(s)*'
   }
 
@@ -221,34 +306,54 @@ Describe 'Invoke-Step Regenerate' {
     $script:GitState.Status = @(' M src/In/packages.lock.json', ' M global.json')
     Invoke-Regenerate | Should -Be 0
     Should -Invoke Write-Host -ParameterFilter { $Object -like '::warning*global.json*not committed*' }
-    Should -Invoke git -Times 1 -Exactly -ParameterFilter { (@($args | ForEach-Object { $_ }) -join ',') -eq 'add,src/In/packages.lock.json' }
+    @((Get-GhCall -Like '*/git/trees')[0].Body.tree.path) | Should -Be @('src/In/packages.lock.json')
   }
 
-  It 'does nothing when the head commit is already the app''s' {
-    $script:GitState.HeadAuthor = $AppEmail.ToUpperInvariant()
+  It 'does nothing when the head commit is already the app''s, by <case>' -ForEach @(
+      @{ case = 'address'; author = "someone`t$('123456+wb-lockfiles[bot]@users.noreply.github.com'.ToUpperInvariant())" }
+      @{ case = 'name'; author = "wb-lockfiles[bot]`tother@example.com" }) {
+    $script:GitState.HeadAuthor = $author
     Invoke-Regenerate | Should -Be 0
     Should -Invoke dotnet -Times 0
-    Should -Invoke git -Times 0 -ParameterFilter { $args -contains 'push' }
+    @(Get-GhCall -Like 'repos/*').Count | Should -Be 0
     Get-Content -Raw $env:GITHUB_STEP_SUMMARY | Should -BeLike "*already wb-lockfiles``[bot``]'s lock-file commit*"
   }
 
   It 'is a notice, not a failure, when the branch moved while it ran' {
-    $script:GitState.PushExit = 1
-    $script:GitState.RemoteHead = 'b' * 40
+    $script:GhState.RefExit = 1
+    $script:GhState.RemoteHead = 'b' * 40
     Invoke-Regenerate | Should -Be 0
     Should -Invoke Write-Host -ParameterFilter { $Object -like "::notice*moved to $('b' * 40)*" }
   }
 
-  It 'fails when the push is rejected and the branch did not move' {
-    $script:GitState.PushExit = 1
+  It 'fails when the branch update is refused and the branch did not move' {
+    $script:GhState.RefExit = 1
     Invoke-Regenerate | Should -Be 1
-    Should -Invoke Write-Host -ParameterFilter { $Object -eq '::error title=Dependabot lock files::git push to dependabot/nuget/x failed' }
+    Should -Invoke Write-Host -ParameterFilter { $Object -eq "::error title=Dependabot lock files::Updating dependabot/nuget/x to $('c' * 40) failed" }
   }
 
-  It 'fails when the branch cannot be read after a rejected push' {
-    $script:GitState.PushExit = 1
-    $script:GitState.RemoteHead = ''
+  It 'fails when the branch cannot be read after a refused update' {
+    $script:GhState.RefExit = 1
+    $script:GhState.RemoteExit = 1
     Invoke-Regenerate | Should -Be 1
+  }
+
+  It 'fails, and moves no branch, when <what> fails' -ForEach @(
+      @{ suffix = 'git/blobs'; what = 'Uploading src/In/packages.lock.json' }
+      @{ suffix = 'git/trees'; what = 'Creating the tree' }
+      @{ suffix = 'git/commits'; what = 'Creating the commit' }) {
+    $script:GhState.FailOn = $suffix
+    Invoke-Regenerate | Should -Be 1
+    Should -Invoke Write-Host -ParameterFilter { $Object -like "*$what failed (exit 1)*" }
+    @(Get-GhCall -Like '*/git/refs/*').Count | Should -Be 0
+  }
+
+  It 'deletes every request body file it wrote, after a failed call too' {
+    $script:GhState.RefExit = 1
+    Invoke-Regenerate | Should -Be 1
+    $inputs = @($script:GhCalls | Where-Object { $_.Input } | ForEach-Object Input)
+    $inputs.Count | Should -Be 5
+    $inputs | Where-Object { Test-Path -LiteralPath $_ } | Should -BeNullOrEmpty
   }
 
   It 'fails when a restore fails, and says which' {
@@ -256,16 +361,16 @@ Describe 'Invoke-Step Regenerate' {
     Invoke-Regenerate | Should -Be 1
     Should -Invoke Write-Host -ParameterFilter { $Object -like '*dotnet restore W.slnx failed (exit 1)*' }
     Should -Invoke Write-Host -ParameterFilter { $Object -eq '::endgroup::' }
-    Should -Invoke git -Times 0 -ParameterFilter { $args -contains 'commit' }
+    @(Get-GhCall -Like 'repos/*').Count | Should -Be 0
   }
 
   It 'fails when the app''s user cannot be looked up' {
-    Mock gh { $global:LASTEXITCODE = 1 }
+    $script:GhState.FailOn = 'users/wb-lockfiles%5Bbot%5D'
     Invoke-Regenerate | Should -Be 1
     Should -Invoke Write-Host -ParameterFilter { $Object -like '*Looking up the user id of wb-lockfiles`[bot`] failed*' }
   }
 
-  It 'fails when git <verb> fails' -ForEach @(@{ verb = 'ls-files' }, @{ verb = 'log' }, @{ verb = 'status' }, @{ verb = 'add' }, @{ verb = 'commit' }) {
+  It 'fails when git <verb> fails' -ForEach @(@{ verb = 'ls-files' }, @{ verb = 'log' }, @{ verb = 'status' }, @{ verb = 'rev-parse' }) {
     $script:GitState.FailOn = $verb
     Invoke-Regenerate | Should -Be 1
     Should -Invoke Write-Host -ParameterFilter { $Object -like "*git $verb failed (exit 128)*" }
@@ -274,12 +379,12 @@ Describe 'Invoke-Step Regenerate' {
   It 'fails without a token' {
     Invoke-Step -Step Regenerate -AppSlug 'wb-lockfiles' -HeadRef 'h' -HeadSha 's' -Repository 'o/r' -Solution 'W.slnx' -Token '' | Should -Be 1
     Should -Invoke Write-Host -ParameterFilter { $Object -like '*LOCKFILE_TOKEN is not set*' }
-    Should -Invoke gh -Times 0
+    $script:GhCalls.Count | Should -Be 0
   }
 
   It 'fails without the pull request''s head branch' {
     Invoke-Step -Step Regenerate -AppSlug 'wb-lockfiles' -HeadRef '' -HeadSha 's' -Repository 'o/r' -Solution 'W.slnx' -Token 't' | Should -Be 1
-    Should -Invoke gh -Times 0
+    $script:GhCalls.Count | Should -Be 0
   }
 }
 

@@ -237,6 +237,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
         FROM pg_locks l
         WHERE l.locktype = 'advisory'
           AND ((l.classid::bigint << 32) | (l.objid::bigint & 4294967295)) = @key
+          AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
           AND l.pid <> pg_backend_pid()";
       kill.Parameters.AddWithValue("key", key);
       _ = await kill.ExecuteScalarAsync(cancellationToken);

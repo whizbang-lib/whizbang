@@ -38,6 +38,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// compile in the generated file.
   /// </summary>
   private static string _csharpBool(bool value) => value ? "true" : "false";
+
+  /// <summary>The marker of an overwrite-only perspective (#1869).</summary>
+  private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
+
+  /// <summary>The generated predicate's head; its body names the events whose Apply decides the row alone (#1869).</summary>
+  private const string DECIDES_THE_ROW_ALONE = "private static bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => ";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <summary>
@@ -206,6 +212,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
     var unconditionalPurges = _extractUnconditionalPurgeEventTypes(classSymbol, eventTypes);
+    var (isOverwriteOnly, overwriteDecisive) = _extractOverwriteOnly(classSymbol, eventReturnTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -266,7 +273,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamGroupSpec: streamGroupSpec,
             ModelCopy: modelCopy,
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
-            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null),
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
+            IsOverwriteOnly: isOverwriteOnly,
+            OverwriteDecisiveEventTypes: overwriteDecisive),
         Warning: null
     );
   }
@@ -286,6 +295,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             Location: classDeclaration.Identifier.GetLocation()
         )
     );
+  }
+
+  /// <summary>
+  /// #1869: whether the perspective is marked [OverwriteOnly] (explicit; the generator never infers it), and the events
+  /// whose Apply can decide its row alone. Its rewind applies only the stream's last event, which decides the row alone
+  /// only when its Apply returns the model (or null for no change): an Apply returning an action or an ApplyResult can
+  /// purge. Null when none can, including for every unmarked perspective.
+  /// </summary>
+  private static (bool IsOverwriteOnly, string[]? DecisiveEventTypes) _extractOverwriteOnly(
+      INamedTypeSymbol classSymbol, EventReturnTypeInfo[] eventReturnTypes) {
+    if (!classSymbol.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE))) {
+      return (false, null);
+    }
+    string[] decisive = [.. eventReturnTypes
+        .Where(static r => r.ReturnType is ApplyReturnType.Model or ApplyReturnType.NullableModel)
+        .Select(static r => r.EventTypeName)
+        .Distinct(System.StringComparer.Ordinal)];
+    return (true, decisive.Length > 0 ? decisive : null);
   }
 
   /// <summary>
@@ -434,29 +461,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts the StreamId property name from an event type.
-  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type: the one the generated extractor reads, or null when
+  /// the event has no [StreamId].
   /// </summary>
   private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
-    // Walk the inheritance chain: the [StreamId]-marked property may be declared on a base type
-    // (e.g. a consumer's BaseSagaItemEvent), and GetMembers() returns only declared members. Most-derived
-    // first so a re-declaration on the concrete type wins over the inherited one.
-    for (ITypeSymbol? type = eventTypeSymbol;
-        type != null && type.SpecialType != SpecialType.System_Object;
-        type = (type as INamedTypeSymbol)?.BaseType) {
-      foreach (var member in type.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"));
-
-          if (hasStreamIdAttribute) {
-            return property.Name;
-          }
-        }
-      }
-    }
-
-    return null;
+    // The [StreamId] the extractor uses (#1833): searched from the most derived type up, an override ahead of an
+    // inherited one. GetMembers() returns only declared members, so the chain is walked by StreamIdSelection.
+    return eventTypeSymbol is INamedTypeSymbol namedType ? StreamIdSelection.Select(namedType)?.Property.Name : null;
   }
 
   /// <summary>
@@ -517,12 +528,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Generate ExtractStreamId methods (one per event type with StreamId)
     var extractStreamIdMethods = _buildExtractStreamIdMethods(perspective);
 
-    // Generate the ResolveTargetStreamId switch body used by RunRebuildAsync. One arm per
-    // [StreamId]-bearing event type returns the event's post-upcast StreamId; the default keeps the
-    // event on the physical stream. When the perspective handles no [StreamId] events, the body is
-    // just the physical-stream fallback (so re-key never splits — identical to the old rebuild).
-    var resolveTargetStreamId = _buildResolveTargetStreamId(perspective);
-
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
 
@@ -536,11 +541,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "REPLAY_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "REBUILD_EVENT_TYPES", eventTypesArray.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "REKEYED_ROW_EVENT_TYPES", eventTypesArray.ToString());
     // Issue #696: the resurrection-on-wake probe carries the handled event types (static array).
     result = TemplateUtilities.ReplaceRegion(result, "HANDLED_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "RESOLVE_TARGET_STREAM_ID", resolveTargetStreamId.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
     result = TemplateUtilities.ReplaceRegion(
@@ -556,6 +561,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes
           ? $"private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};"
           : "private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;");
+    result = TemplateUtilities.ReplaceRegion(result, "OVERWRITE_ONLY",
+        $"private static readonly bool _isOverwriteOnly = {_csharpBool(perspective.IsOverwriteOnly)};\n"
+        + DECIDES_THE_ROW_ALONE
+        + (perspective.OverwriteDecisiveEventTypes is { Length: > 0 } decisive
+          ? $"@event is {string.Join(" or ", decisive)};"
+          : "false;"));
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
         $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
@@ -700,24 +711,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
     return extractStreamIdMethods;
-  }
-
-  /// <summary>
-  /// Builds the ResolveTargetStreamId body used by RunRebuildAsync.
-  /// </summary>
-  private static StringBuilder _buildResolveTargetStreamId(PerspectiveInfo perspective) {
-    var resolveTargetStreamId = new StringBuilder();
-    if (perspective.EventStreamIds != null) {
-      resolveTargetStreamId.AppendLine("    return @event switch {");
-      foreach (var eventStreamId in perspective.EventStreamIds) {
-        resolveTargetStreamId.AppendLine($"      {eventStreamId.EventTypeName} e => e.{eventStreamId.StreamIdPropertyName},");
-      }
-      resolveTargetStreamId.AppendLine("      _ => physicalStreamId,");
-      resolveTargetStreamId.AppendLine("    };");
-    } else {
-      resolveTargetStreamId.AppendLine("    return physicalStreamId;");
-    }
-    return resolveTargetStreamId;
   }
 
   /// <summary>

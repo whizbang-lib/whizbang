@@ -210,8 +210,10 @@ public partial class DapperWorkCoordinator(
 
     var json = _serializeNewOutboxMessages(messages);
 
-    // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException.
-    await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
+    // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException, and
+    // (#1733) an awaited event on a sealed stream as StreamSealedException, and (#1738) one on a stream archived whole as
+    // StreamArchivedException.
+    await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() => Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
       var connection = __scope.Connection;
       var prefix = await _prefixAsync(connection, cancellationToken);
@@ -226,7 +228,75 @@ public partial class DapperWorkCoordinator(
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
-    }, logger: _logger, cancellationToken: cancellationToken));
+    }, logger: _logger, cancellationToken: cancellationToken))));
+  }
+
+  /// <inheritdoc />
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperOutboxDeadLetterTests.cs:StoreOutboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreOutboxDeadLettersAsync(
+    OutboxMessage[] messages,
+    OutboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    await _storeUnstoredDeadLettersAsync(new UnstoredDeadLetters(
+      _serializeNewOutboxMessages(messages), messages.Length, "wh_store_outbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation), cancellationToken);
+    return true;
+  }
+
+  /// <inheritdoc />
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperInboxDeadLetterTests.cs:StoreInboxDeadLetters_WritesARecoverableDeadLetterAndALogRowPerMessageAsync</tests>
+  public async Task<bool> StoreInboxDeadLettersAsync(
+    InboxMessage[] messages,
+    InboxDeadLetterRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(request);
+    if (messages.Length == 0) {
+      return true;
+    }
+
+    await _storeUnstoredDeadLettersAsync(new UnstoredDeadLetters(
+      _serializeNewInboxMessages(messages), messages.Length, "wh_store_inbox_dead_letters",
+      (int)request.FailureReason, request.ErrorText, request.Attempts, request.InstanceId, request.Generation), cancellationToken);
+    return true;
+  }
+
+  /// <summary>The arguments of <c>wh_store_outbox_dead_letters</c> (256) and <c>wh_store_inbox_dead_letters</c> (257).</summary>
+  private sealed record UnstoredDeadLetters(
+    string MessagesJson, int Count, string Function, int FailureReason, string? ErrorText, int Attempts, Guid InstanceId, string Generation);
+
+  /// <summary>
+  /// Writes messages a batcher accepted and never stored to the dead-letter table through the given function, one
+  /// dead letter id per message (#1871, #1885).
+  /// </summary>
+  private async Task _storeUnstoredDeadLettersAsync(UnstoredDeadLetters call, CancellationToken cancellationToken) {
+    var deadLetterIds = new Guid[call.Count];
+    for (var i = 0; i < deadLetterIds.Length; i++) {
+      deadLetterIds[i] = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    await connection.ExecuteScalarAsync<int>(
+      $"SELECT {prefix}{call.Function}(@messages::jsonb, @deadLetterIds, @failureReason, @errorText, @attempts, @instanceId, @generation)",
+      new {
+        messages = call.MessagesJson,
+        deadLetterIds,
+        failureReason = call.FailureReason,
+        errorText = call.ErrorText,
+        attempts = call.Attempts,
+        instanceId = call.InstanceId,
+        generation = call.Generation
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <inheritdoc />
@@ -734,6 +804,19 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveAppendPolicyTests.cs:SyncStreamTypePolicies_ThroughTheCoordinator_StoresTheConfiguredSetAsync</tests>
+  public async Task SyncStreamTypePoliciesAsync(
+      IReadOnlyList<Whizbang.Core.Archival.StreamTypePolicy> policies, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(policies);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    await Whizbang.Data.Postgres.StreamTypePolicyWriter.WriteAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.StreamTypePolicyWriter.FUNCTION_NAME, policies, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   /// <summary>
   /// Publishes the host's debug-retention option into <c>wh_settings</c>. This engine used to inherit the no-op
   /// default, so debug retention marked rows the next sweep deleted.
@@ -1015,24 +1098,27 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<int> RenewLeasesAsync(
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorBroadTests.cs:RenewHeldLeasesAsync_ARowAnotherInstanceHolds_IsReportedAndLeftAloneAsync</tests>
+  public async Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(
     WorkCategory category,
+    Guid instanceId,
     IReadOnlyList<Guid> ids,
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
-      return 0;
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var idArray = ids is Guid[] arr ? arr : [.. ids];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    return await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}renew_leases(@Category, @Ids, @LeaseSeconds)",
-      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    // The function returns an empty array, never NULL, so the result is always a uuid[].
+    return (await connection.ExecuteScalarAsync<Guid[]>(
+      $"SELECT {prefix}wh_renew_held_leases(@Category, @InstanceId, @Ids, @LeaseSeconds)",
+      new { Category = category.ToSqlCategory(), InstanceId = instanceId, Ids = idArray, LeaseSeconds = leaseSeconds },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS))!;
   }
 
   /// <inheritdoc />

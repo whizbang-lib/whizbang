@@ -113,12 +113,12 @@ public abstract partial class Dispatcher(
     string FilePath,
     int LineNumber);
 
-  // Increment 6, the write seam: a dispatch needs the event store and the outbox, which Migrate
-  // provides — so dispatch refuses while the schema gate is closed. Resolved lazily from the
+  // The write seam: a dispatch needs the event store and the outbox, which Migrate provides, so a
+  // dispatch made while the schema gate is closed waits for it (#1877). Resolved lazily from the
   // service provider (never a ctor param: generated dispatcher subclasses chain base(...)
-  // positionally, and test fixtures without a gate stay ungated). Volatile-cached after first look.
-  private ISchemaReadyGate? _schemaReadyGateCache;
-  private bool _schemaReadyGateResolved;
+  // positionally, and test fixtures without a gate stay ungated). Cached after the first look.
+  private SchemaReadyDispatchDeferral? _schemaDeferral;
+  private bool _schemaDeferralResolved;
 
   /// <summary>
   /// Refuses a dispatch whose caller has no security context, before any handler runs or anything is
@@ -148,22 +148,90 @@ public abstract partial class Dispatcher(
     throw new SecurityContextRequiredException(messageType);
   }
 
-  private void _throwIfSchemaNotReady() {
-    if (!_schemaReadyGateResolved) {
+  /// <summary>
+  /// The deferral a dispatch must wait on, or <see langword="null"/> when it may run now: the migration has
+  /// completed, the host has no schema gate, or the provider is already disposed (shutdown teardown, where the
+  /// dispatch fails on disposal anyway).
+  /// </summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
+  private SchemaReadyDispatchDeferral? _pendingSchemaDeferral() {
+    if (!_schemaDeferralResolved) {
       try {
-        _schemaReadyGateCache = (ISchemaReadyGate?)serviceProvider.GetService(typeof(ISchemaReadyGate));
-        _schemaReadyGateResolved = true;
+        _schemaDeferral = SchemaReadyDispatchDeferral.Resolve(serviceProvider);
+        _schemaDeferralResolved = true;
       } catch (ObjectDisposedException) {
-        // Shutdown teardown: the dispatcher promises graceful handling of a disposed provider,
-        // and refusing a dispatch that is about to fail on disposal anyway adds nothing.
-        return;
+        return null;
       }
     }
-    if (_schemaReadyGateCache is { IsReady: false }) {
-      throw new WhizbangNotReadyException(
-        "dispatch refused: the schema is not ready (Migrate has not completed). Writes need the "
-        + "event store and outbox the migration provides; they resume when it does.");
-    }
+    return _schemaDeferral is { IsReady: false } deferral ? deferral : null;
+  }
+
+  /// <summary>
+  /// Defers a dispatch made before the migration completes until it does (#1877): completes at once when the
+  /// dispatch may run, otherwise waits on the schema gate, bounded by
+  /// <see cref="SchemaInitializationOptions.DispatchMaxWait"/> and the caller's token.
+  /// </summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_DeferredPastTheMaxWait_ThrowsNotReadyBeforeRunningAnythingAsync</tests>
+  private ValueTask _awaitSchemaReadyAsync(CancellationToken cancellationToken)
+    => _pendingSchemaDeferral() is { } deferral ? deferral.WaitAsync(cancellationToken) : default;
+
+  // The synchronous local-invoke entries return their ValueTask without an async state machine on the hot
+  // path, so a deferred call takes one of these: it waits for the migration and then re-enters the same
+  // entry, which finds the schema ready and runs as it always does.
+
+  /// <summary>Runs <c>LocalInvokeAsync&lt;TResult&gt;(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<TResult> _localInvokeAfterMigrationAsync<TResult>(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await LocalInvokeAsync<TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs <c>LocalInvokeAsync(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask _localInvokeVoidAfterMigrationAsync(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    await LocalInvokeAsync(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs the typed result-returning local invoke once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<TResult> _localInvokeInternalAfterMigrationAsync<TMessage, TResult>(
+      SchemaReadyDispatchDeferral deferral, TMessage message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await _localInvokeAsyncInternal<TMessage, TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs the typed void local invoke once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask _localInvokeInternalVoidAfterMigrationAsync<TMessage>(
+      SchemaReadyDispatchDeferral deferral, TMessage message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    await _localInvokeAsyncInternal(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
+  }
+
+  /// <summary>Runs <c>LocalInvokeWithReceiptAsync&lt;TResult&gt;(object, IMessageContext)</c> once the migration completes (#1877).</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
+  private async ValueTask<InvokeResult<TResult>> _localInvokeWithReceiptAfterMigrationAsync<TResult>(
+      SchemaReadyDispatchDeferral deferral, object message, IMessageContext context,
+      [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    await deferral.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    return await LocalInvokeWithReceiptAsync<TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber).ConfigureAwait(false);
   }
 
   // Issue #491: receptor discovery is source-only, so this dispatcher's generated tables cover
@@ -1005,7 +1073,7 @@ public abstract partial class Dispatcher(
     }
 
     // Process tags after successful receptor completion
-    await _processTagsIfEnabledAsync(message, eventType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(message, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     await _startLocalRunDetachedHooksAsync(message, eventType, registered, sourceEnvelope: null, copyId);
   }
@@ -1525,7 +1593,7 @@ public abstract partial class Dispatcher(
 
     // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
     await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
-    await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(message, messageType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, messageType, envelope, sourceEnvelope: null, storedId, cancellationToken);
     await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
   }
@@ -1570,7 +1638,7 @@ public abstract partial class Dispatcher(
     }
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchTypeNeedsContext(messageType);
     // The caller's context is the one the receptor sees, as on a local invoke (#1410 follow-up)
     MessageContextAccessor.CurrentContext = context;
@@ -1791,8 +1859,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeAfterMigrationAsync<TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
 
@@ -1891,8 +1961,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeVoidAfterMigrationAsync(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
 
@@ -2081,7 +2153,7 @@ public abstract partial class Dispatcher(
       }
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2129,7 +2201,7 @@ public abstract partial class Dispatcher(
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2166,8 +2238,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeInternalAfterMigrationAsync<TMessage, TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2212,8 +2286,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeInternalVoidAfterMigrationAsync<TMessage>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2317,7 +2393,7 @@ public abstract partial class Dispatcher(
         var result = await _invokeAndCascadeAsync(invoker, actualMessage, messageType, envelope, CancellationToken.None);
 
         // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(actualMessage, messageType);
+        await ProcessTagsIfEnabledAsync(actualMessage, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
@@ -2388,7 +2464,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate - zero reflection, strongly typed
         await invoker(message);
-        await _processTagsIfEnabledAsync(message, messageType);
+        await ProcessTagsIfEnabledAsync(message, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2440,7 +2516,7 @@ public abstract partial class Dispatcher(
         _envelopeRegistry!.Unregister(message);
       }
     }
-    await _processTagsIfEnabledAsync(message, messageType);
+    await ProcessTagsIfEnabledAsync(message, messageType);
 
     // Invoke PostLifecycle and ImmediateDetached lifecycle receptors after business receptor completes
     // Create a minimal envelope for lifecycle invocation
@@ -2489,7 +2565,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
         await invoker(actualMessage);
-        await _processTagsIfEnabledAsync(actualMessage, messageType);
+        await ProcessTagsIfEnabledAsync(actualMessage, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
@@ -2528,8 +2604,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(message);
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
@@ -2578,8 +2654,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2665,7 +2741,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
       await asyncInvoker(message);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
     }
   }
 
@@ -2692,7 +2768,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
     syncInvoker(message);
-    await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+    await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
   }
 
   /// <summary>
@@ -2745,7 +2821,7 @@ public abstract partial class Dispatcher(
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
 
       // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -2796,7 +2872,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -2872,8 +2948,10 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so a dispatch made before the migration completes waits for it, then runs (#1877)
+    if (_pendingSchemaDeferral() is { } deferral) {
+      return _localInvokeWithReceiptAfterMigrationAsync<TResult>(deferral, message, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
     ArgumentNullException.ThrowIfNull(message);
     _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2906,8 +2984,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public async ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(message);
     options.CancellationToken.ThrowIfCancellationRequested();
     var cascade = _cascadeContextFactory.NewRoot();
@@ -2961,7 +3039,7 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
-      await _processTagsIfEnabledAsync(message, messageType);
+      await ProcessTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -3021,7 +3099,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
-      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
+      await ProcessTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -3064,8 +3142,8 @@ public abstract partial class Dispatcher(
     // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
     // Priority 3: control-plane traffic has no ambient user by design — say so explicitly, so that a
     // scope that is simply MISSING stays a detectable fault rather than looking intentional.
-    CascadeContext.ScopeDeltaFromMessageContext(context)
-      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient())
+    HopScope.FromMessageContext(context)
+      ?? HopScope.FromAmbient()
       ?? Security.SystemScopeResolver.ForUnscoped(messageType, _declaredUnscopedTypes);
 
   /// <summary>
@@ -3419,20 +3497,31 @@ public abstract partial class Dispatcher(
   /// Propagates StreamId from the source envelope when the event's StreamId is empty.
   /// Returns the (potentially updated) streamId.
   /// </summary>
-  private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) {
-    if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-      if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-        streamId = sourceStreamId.Value;
-        if (msg is IHasStreamId hasStreamIdForCascade) {
-          hasStreamIdForCascade.StreamId = streamId;
-        } else {
-          _streamIdExtractor.SetStreamId(msg, streamId);
-        }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
-      }
+  private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) =>
+    streamId == Guid.Empty ? _inheritSourceStreamId(msg, messageType, sourceEnvelope) ?? streamId : streamId;
+
+  /// <summary>
+  /// The one rule by which a cascaded message that names no stream takes the stream of the message that caused it:
+  /// the source payload's <c>[StreamId]</c> is written onto the message (through <see cref="IHasStreamId"/> or the
+  /// generated setter) and returned; null when there is no source, no extractor, or the source names no stream. The
+  /// dispatcher's cascade, outbox and no-strategy paths each carried a copy of it.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  private Guid? _inheritSourceStreamId(object message, Type messageType, IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope is null || _streamIdExtractor is null) {
+      return null;
     }
-    return streamId;
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
+    if (sourceStreamId is not { } inherited || inherited == Guid.Empty) {
+      return null;
+    }
+    if (message is IHasStreamId hasStreamId) {
+      hasStreamId.StreamId = inherited;
+    } else {
+      _streamIdExtractor.SetStreamId(message, inherited);
+    }
+    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, sourceEnvelope.Payload.GetType().Name, messageType.Name);
+    return inherited;
   }
 
   /// <summary>
@@ -3596,7 +3685,7 @@ public abstract partial class Dispatcher(
       await _publishToForeignLookupsAsync(message, messageType, localEnvelope, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       // Tags after the handlers, as on a publish (#1410 follow-up)
-      await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+      await ProcessTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       await _invokeLocalRunPostLifecycleAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId, cancellationToken)
         .ConfigureAwait(false);
       await _startLocalRunDetachedHooksAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId).ConfigureAwait(false);
@@ -3651,39 +3740,50 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/messages/message-tags#processing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
-  /// <summary>
-  /// Invokes lifecycle receptors at the specified stages via a scoped IReceptorInvoker.
-  /// Creates a scope per invocation to ensure proper scoped dependency resolution,
-  /// full security context propagation, and event cascading.
-  /// </summary>
-  private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
-#pragma warning disable CA1848, CA1873 // Diagnostic logging using lazy-resolved logger
-    DispatcherLogger.LogDebug("_processTagsIfEnabledAsync called for {MessageType}", messageType.Name);
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorCompletingLater_IsAwaitedBeforeTheStepCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorFaulted_ReachesTheCallerAsync</tests>
+  internal ValueTask ProcessTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
+    // Runs after every dispatch, so it allocates nothing while debug is off (#1756): the log calls are
+    // source-generated and check the level before building anything, and the step completes synchronously unless
+    // the processor does not, so no async state machine is created on the common paths
+    var logger = DispatcherLogger;
+    Log.TagProcessingEntered(logger, messageType.Name);
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
-      DispatcherLogger.LogDebug("Tag processing is DISABLED - returning early");
-      return;
+      Log.TagProcessingDisabled(logger);
+      return ValueTask.CompletedTask;
     }
 
     // Skip immediate processing if using lifecycle stage mode
     if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
-      DispatcherLogger.LogDebug("TagProcessingMode is {TagProcessingMode}, not AfterReceptorCompletion - returning early", _coreOptions.TagProcessingMode);
-      return;
+      Log.TagProcessingModeSkipped(logger, _coreOptions.TagProcessingMode);
+      return ValueTask.CompletedTask;
     }
 
     // Skip if no processor is registered
     if (_messageTagProcessor is null) {
-      DispatcherLogger.LogDebug("No IMessageTagProcessor registered - returning early");
-      return;
+      Log.NoTagProcessorRegistered(logger);
+      return ValueTask.CompletedTask;
     }
 
-    DispatcherLogger.LogDebug("Calling ProcessTagsAsync at AfterReceptorCompletion...");
+    Log.TagProcessingCalling(logger);
     // Use static AsyncLocal accessor - designed for singleton services like Dispatcher
     var scope = ScopeContextAccessor.CurrentContext;
-    await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
-    DispatcherLogger.LogDebug("ProcessTagsAsync completed");
-#pragma warning restore CA1848, CA1873
+    var processing = _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
+    if (!processing.IsCompletedSuccessfully) {
+      return _awaitTagProcessingAsync(processing, logger);
+    }
+    processing.GetAwaiter().GetResult();
+    Log.TagProcessingCompleted(logger);
+    return ValueTask.CompletedTask;
+  }
+
+  // A processor that has not finished (or has failed) is awaited here, so its exception reaches the caller unchanged
+  private static async ValueTask _awaitTagProcessingAsync(ValueTask processing, ILogger logger) {
+    await processing;
+    Log.TagProcessingCompleted(logger);
   }
 
   /// <summary>
@@ -3794,10 +3894,10 @@ public abstract partial class Dispatcher(
     if (_lifecycleCoordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+        LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
-      _lifecycleCoordinator.AbandonTracking(eventId);
+      _lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
       return;
     }
 
@@ -3933,7 +4033,7 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(CancellationToken.None).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
@@ -4053,7 +4153,7 @@ public abstract partial class Dispatcher(
     using var timeoutDisposal = timeoutScope;
     options.CancellationToken.ThrowIfCancellationRequested();
 
-    _throwIfSchemaNotReady();
+    await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData!.GetType();
@@ -4205,8 +4305,8 @@ public abstract partial class Dispatcher(
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     // A cascade with a source envelope continues a flow that was already admitted; only a new one is checked
     if (sourceEnvelope is null) {
       _throwIfLocalDispatchNeedsContext(message);
@@ -4272,18 +4372,7 @@ public abstract partial class Dispatcher(
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
-    if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-      if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-        streamId = sourceStreamId.Value;
-        if (message is IHasStreamId hasStreamIdForCascade) {
-          hasStreamIdForCascade.StreamId = streamId;
-        } else {
-          _streamIdExtractor.SetStreamId(message, streamId);
-        }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
-      }
-    }
+    streamId = _cascadeStreamIdFromSourceIfNeeded(message, messageType, streamId, sourceEnvelope);
 
     // Auto-generate StreamId based on [GenerateStreamId] attribute policy, for a [StreamId] property as well
     // as IHasStreamId: the cascade used to leave a plain property empty (#1410 follow-up)
@@ -4508,22 +4597,8 @@ public abstract partial class Dispatcher(
   /// Cascades StreamId from source envelope to event when the event's StreamId is empty.
   /// This enables the pattern where [GenerateStreamId] is on the command and events inherit it.
   /// </summary>
-  private void _cascadeStreamIdToOutboxEvent<TEvent>(TEvent eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
-    if (sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData!, eventType);
-      if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
-        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-        if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-          if (eventData is IHasStreamId hasStreamId) {
-            hasStreamId.StreamId = sourceStreamId.Value;
-          } else {
-            _streamIdExtractor.SetStreamId(eventData!, sourceStreamId.Value);
-          }
-          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
-        }
-      }
-    }
-  }
+  private void _cascadeStreamIdToOutboxEvent<TEvent>(TEvent eventData, Type eventType, IMessageEnvelope? sourceEnvelope) =>
+    _propagateStreamIdFromSource(eventData!, eventType, sourceEnvelope);
 
   /// <summary>
   /// Producer-side composite fan-out (step 1.1 of the composite lifecycle). When a service publishes a
@@ -4601,19 +4676,18 @@ public abstract partial class Dispatcher(
     if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
       return null;
     }
-    // Scope honours the ShouldPropagate contract via GetSecurityFromAmbient (identical to
+    // Scope honors the ShouldPropagate contract via HopScope.FromAmbient (identical to
     // CascadeContext.ResolveHopFirstScope's ambient branch — the ONE ambient-scope rule). Do NOT re-add an
     // initiating-scope fallback here: it would bypass PropagateToOutgoingMessages=false and leak a deliberately
     // non-propagating scope onto the child hop (the divergence the audit found; the fallback was accidental
     // symmetry copied from the identity capture, never a contract decision).
-    var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = initiating.CorrelationId,
       CausationId = initiating.MessageId,
-      Scope = ambientSecurity is not null ? ScopeDelta.FromSecurityContext(ambientSecurity) : null,
+      Scope = HopScope.FromAmbient(),
     };
     return new MessageEnvelope<object> {
       MessageId = initiating.MessageId,
@@ -4794,9 +4868,9 @@ public abstract partial class Dispatcher(
       _addOutboxHop(jsonEnvelope, destination, hopMetadata, sourceEnvelope, eventType);
 
       // Build and queue the outbox message
-      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
-        ?? ExtractStreamIdFromMetadata(hopMetadata)
-        ?? messageId.Value;
+      // The stream its first hop names, or its message id: the rule the typed outbox path and every receiver use. The
+      // hop was just written from the payload's [StreamId], so this is that stream when it names one (#1798).
+      var streamId = StreamIdentity.Of(jsonEnvelope);
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
@@ -4823,27 +4897,13 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Propagates StreamId from source envelope to event when the event has no StreamId set.
   /// </summary>
-  private void _propagateStreamIdFromSource(IMessage eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
-    if (sourceEnvelope is null || _streamIdExtractor is null) {
+  private void _propagateStreamIdFromSource(object eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
+    // Nothing is read without a source to inherit from: the payload's own stream is read only when it could be replaced.
+    if (sourceEnvelope is null || _streamIdExtractor is null
+        || (_streamIdExtractor.ExtractStreamId(eventData, eventType) is { } own && own != Guid.Empty)) {
       return;
     }
-
-    var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData, eventType);
-    if (eventStreamId.HasValue && eventStreamId.Value != Guid.Empty) {
-      return;
-    }
-
-    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-    if (!sourceStreamId.HasValue || sourceStreamId.Value == Guid.Empty) {
-      return;
-    }
-
-    if (eventData is IHasStreamId hasStreamId) {
-      hasStreamId.StreamId = sourceStreamId.Value;
-    } else {
-      _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
-    }
-    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
+    _inheritSourceStreamId(eventData, eventType, sourceEnvelope);
   }
 
   /// <summary>
@@ -4957,30 +5017,6 @@ public abstract partial class Dispatcher(
   private static PerspectiveScope? _extractScope(IMessageEnvelope envelope) {
     var scopeContext = envelope.GetCurrentScope();
     return scopeContext?.Scope;
-  }
-
-  /// <summary>
-  /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
-  /// </summary>
-  /// <remarks>
-  /// Internal rather than private so the "no usable aggregate id" answer can be asserted. The only
-  /// caller passes metadata this class built, which is either null or carries a parsable id, so the
-  /// final fallback cannot fire today — it is what keeps a hop carrying someone else's metadata
-  /// shape from producing a stream id out of an unparsable string.
-  /// </remarks>
-  internal static Guid? ExtractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
-    if (metadata == null) {
-      return null;
-    }
-
-    // Try both AggregateId (generated key) and aggregateId (legacy key)
-    if ((metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement))
-        && aggIdElement.ValueKind == JsonValueKind.String
-        && Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
-      return guidValue;
-    }
-
-    return null;
   }
 
   /// <summary>
@@ -5396,13 +5432,13 @@ public abstract partial class Dispatcher(
       DispatchPolicy callPolicy,
       DispatchOptions options,
       Func<Dispatcher, object, DispatchModes?, BatchCopy?, CancellationToken, Task<IDeliveryReceipt>> runLocally) {
-    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
-    _throwIfSchemaNotReady();
     // The caller's token and timeout cover the whole batch, as they cover a single dispatch
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options.CancellationToken;
     cancellationToken.ThrowIfCancellationRequested();
+    // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
+    await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     // A Routed<T> in a batch is honored as on a single call (#1395): each message is decided, run and
     // written under its own route
     var routes = _unwrapBatchRoutes(messages);
@@ -5558,7 +5594,7 @@ public abstract partial class Dispatcher(
         _envelopeRegistry!.Unregister(eventData);
       }
     }
-    await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
+    await ProcessTagsIfEnabledAsync(eventData, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(eventData, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     await _startLocalRunDetachedHooksAsync(eventData, eventType, registered, sourceEnvelope: null, copyId);
     return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
@@ -6198,6 +6234,7 @@ public abstract partial class Dispatcher(
   /// Extracts stream_id from aggregate ID or falls back to message ID.
   /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
     MessageEnvelope<TMessage> envelope,
     TMessage payload,
@@ -6220,8 +6257,9 @@ public abstract partial class Dispatcher(
     // stores and sends, from the injected clock. A message with no QueuedAt property is returned as is.
     envelope.Payload = (TMessage)AutoPopulatePopulatorRegistry.PopulateQueued(envelope.Payload!, _timeProvider.GetUtcNow());
 
-    // Extract stream_id: try aggregate ID from first hop, fall back to message ID
-    var streamId = _extractStreamId(envelope);
+    // The stream its first hop names, or its message id: read the way every receiver reads it, so a consumer stores
+    // the message on the stream this producer stores it on (#1798).
+    var streamId = StreamIdentity.Of(envelope);
 
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
@@ -6299,27 +6337,6 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get stream ID from first hop metadata, falls back to message ID.
-  /// </summary>
-  private static Guid _extractStreamId<TMessage>(MessageEnvelope<TMessage> envelope) {
-    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility).
-    // Every outbox path builds its envelope with that hop before serializing (_createEnvelope,
-    // _createOutboxEnvelopeWithHop, the deferred-publish path), and Hops is required.
-    var firstHopMetadata = envelope.Hops[0].Metadata;
-    if (firstHopMetadata != null && firstHopMetadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    // Fall back to message ID (ensures all messages have a stream)
-    return envelope.MessageId.Value;
-  }
-
-  /// <summary>
   /// Creates hop metadata with StreamId extracted from the message using [StreamId] attribute.
   /// Returns null if no stream ID extractor is configured or no ID found.
   /// </summary>
@@ -6333,16 +6350,8 @@ public abstract partial class Dispatcher(
       return null;
     }
 
-    // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
-    // Wrap GUID string in quotes for valid JSON string value
-    // Note: Key is "AggregateId" for backward compatibility with existing envelopes
-    var jsonString = "\"" + streamId.Value + "\"";
-    using var doc = JsonDocument.Parse(jsonString);
-    var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
-
-    return new Dictionary<string, JsonElement> {
-      ["AggregateId"] = streamIdElement
-    };
+    // The one writer of the hop's stream key; StreamIdentity reads it back on every storing site (#1798).
+    return StreamIdentity.HopMetadata(streamId.Value);
   }
 
   /// <summary>
@@ -6606,5 +6615,24 @@ public abstract partial class Dispatcher(
       Level = LogLevel.Error,
       Message = "A {Stage} receptor failed for message {MessageId}. The stage is detached, so the dispatch was not failed.")]
     public static partial void DetachedStageFailed(ILogger logger, Exception exception, LifecycleStage stage, Guid messageId);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Debug, Message = "ProcessTagsIfEnabledAsync called for {MessageType}")]
+    public static partial void TagProcessingEntered(ILogger logger, string messageType);
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Debug, Message = "Tag processing is DISABLED - returning early")]
+    public static partial void TagProcessingDisabled(ILogger logger);
+
+    [LoggerMessage(EventId = 11, Level = LogLevel.Debug,
+      Message = "TagProcessingMode is {TagProcessingMode}, not AfterReceptorCompletion - returning early")]
+    public static partial void TagProcessingModeSkipped(ILogger logger, TagProcessingMode tagProcessingMode);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Debug, Message = "No IMessageTagProcessor registered - returning early")]
+    public static partial void NoTagProcessorRegistered(ILogger logger);
+
+    [LoggerMessage(EventId = 13, Level = LogLevel.Debug, Message = "Calling ProcessTagsAsync at AfterReceptorCompletion...")]
+    public static partial void TagProcessingCalling(ILogger logger);
+
+    [LoggerMessage(EventId = 14, Level = LogLevel.Debug, Message = "ProcessTagsAsync completed")]
+    public static partial void TagProcessingCompleted(ILogger logger);
   }
 }

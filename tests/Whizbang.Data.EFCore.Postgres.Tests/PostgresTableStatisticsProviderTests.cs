@@ -378,6 +378,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
 
   private const string ORDER_PLACED = "Shop.OrderPlaced, Shop";
   private const string EMBEDDING_CREATED = "Search.EmbeddingCreated, Search";
+  private const string PLACE_ORDER = "Shop.PlaceOrder, Shop";
 
   [Test]
   public async Task SampleEventTypeBytesAsync_AtAFullSample_ReportsEachTypesBytesAsync() {
@@ -395,14 +396,53 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(reported)
       .Because("the version-decorated name is the same type, so it is reported with the others rather than as a fourth series");
     var orders = stored.Where(r => r.Type.StartsWith("Shop.", StringComparison.Ordinal)).ToList();
-    await Assert.That(sample[ORDER_PLACED].SampledRows).IsEqualTo(3L);
-    await Assert.That(sample[ORDER_PLACED].MeanDataBytes).IsEqualTo(orders.Average(r => (double)r.Data));
-    await Assert.That(sample[ORDER_PLACED].MeanMetadataBytes).IsEqualTo(orders.Average(r => (double)r.Metadata));
-    await Assert.That(sample[ORDER_PLACED].EstimatedTotalBytes).IsEqualTo(orders.Sum(r => r.Data + r.Metadata))
+    await Assert.That(sample[ORDER_PLACED].Data.SampledRows).IsEqualTo(3L);
+    await Assert.That(sample[ORDER_PLACED].Data.MeanBytes).IsEqualTo(orders.Average(r => (double)r.Data));
+    await Assert.That(sample[ORDER_PLACED].Metadata.MeanBytes).IsEqualTo(orders.Average(r => (double)r.Metadata));
+    await Assert.That(sample[ORDER_PLACED].Data.EstimatedTotalBytes).IsEqualTo(orders.Sum(r => r.Data))
       .Because("a full sample reads every event, so the estimate is the stored total exactly");
+    await Assert.That(sample[ORDER_PLACED].Metadata.EstimatedTotalBytes).IsEqualTo(orders.Sum(r => r.Metadata));
     var embedding = stored.Single(r => r.Type == EMBEDDING_CREATED);
-    await Assert.That(sample[EMBEDDING_CREATED].MeanDataBytes).IsEqualTo((double)embedding.Data)
+    await Assert.That(sample[EMBEDDING_CREATED].Data.MeanBytes).IsEqualTo((double)embedding.Data)
       .Because("the size is what the row stores, after compression, which is what the disk pays for");
+  }
+
+  [Test]
+  public async Task SampleEventTypeBytesAsync_AtAFullSample_ReportsThePointerRowsAndTheOutboxMetadataAsPartsAsync() {
+    await _seedEventAsync(ORDER_PLACED, """{"orderId":"o-1"}""");
+    await _seedEventAsync(ORDER_PLACED, """{"orderId":"o-2"}""");
+    // An ephemeral event whose body was reaped: only its pointer row is left, and that row carries a wide scope.
+    await _seedEventAsync(EMBEDDING_CREATED, payload: null,
+      scope: "{\"TenantId\":\"" + new string('t', 600) + "\"}");
+    // The outbox copy of an order's metadata, written by a producer that still names the assembly version.
+    var outboxMetadata = "{\"MessageId\":\"m\",\"Hops\":[" + string.Join(',', Enumerable.Repeat("{\"Topic\":\"orders\"}", 40)) + "]}";
+    await _seedOutboxAsync("Shop.OrderPlaced, Shop, Version=2.0.0.0, Culture=neutral, PublicKeyToken=null", outboxMetadata, isEvent: true);
+    // A command waiting in the outbox is not an event, so it is no event type's bytes.
+    await _seedOutboxAsync(PLACE_ORDER, outboxMetadata, isEvent: false);
+    var pointers = await _pointerBytesAsync();
+    var outbox = await _scalarAsync("SELECT pg_column_size(metadata)::bigint FROM wh_outbox WHERE is_event");
+
+    var sample = await _provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("probe:parts", 100, 50));
+
+    await Assert.That(sample).IsNotNull();
+    await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList())
+      .IsEquivalentTo((List<string>)[EMBEDDING_CREATED, ORDER_PLACED])
+      .Because("a command in the outbox is not an event type, and the version-decorated outbox type is the same type");
+    var order = sample[ORDER_PLACED];
+    await Assert.That(order.PointerRow.SampledRows).IsEqualTo(2L);
+    await Assert.That(order.PointerRow.MeanBytes).IsEqualTo(pointers.Where(p => p.Type == ORDER_PLACED).Average(p => (double)p.Bytes))
+      .Because("the pointer part is the whole event-store row, which every event pays for");
+    await Assert.That(order.PointerRow.EstimatedTotalBytes).IsEqualTo(pointers.Where(p => p.Type == ORDER_PLACED).Sum(p => p.Bytes));
+    await Assert.That(order.OutboxMetadata).IsEqualTo(new EventPartBytes(1, outbox, outbox))
+      .Because("the metadata an outbox row carries inline is the type's, reported as its own part");
+    var embedding = sample[EMBEDDING_CREATED];
+    await Assert.That(embedding.Data.SampledRows).IsEqualTo(0L)
+      .Because("a reaped body leaves nothing in the body table to read");
+    await Assert.That(embedding.OutboxMetadata.SampledRows).IsEqualTo(0L);
+    await Assert.That(embedding.PointerRow.SampledRows).IsEqualTo(1L)
+      .Because("the pointer row outlives the body, so a type whose bodies are gone still shows what it costs");
+    await Assert.That(embedding.PointerRow.MeanBytes).IsGreaterThan(order.PointerRow.MeanBytes + 500)
+      .Because("the scope is stored on the pointer row, so a wide scope makes a wide pointer");
   }
 
   [Test]
@@ -410,7 +450,10 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await _seedEventAsync(ORDER_PLACED, """{"orderId":"o-1"}""");
     await _seedEventAsync(ORDER_PLACED, """{"orderId":"o-2"}""");
     await _seedEventAsync(EMBEDDING_CREATED, "{\"vector\":[" + string.Join(',', Enumerable.Range(0, 400)) + "]}");
+    await _seedOutboxAsync(ORDER_PLACED, """{"MessageId":"m","Hops":[]}""", isEvent: true);
     var stored = await _storedBytesAsync();
+    var pointers = await _pointerBytesAsync();
+    var outbox = await _scalarAsync("SELECT pg_column_size(metadata)::bigint FROM wh_outbox WHERE is_event");
 
     var sample = await _provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("probe:cap", 100, 1));
 
@@ -418,9 +461,11 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList())
       .IsEquivalentTo(reported)
       .Because("the largest type by bytes keeps its name; one many-times-smaller type is what other is for");
-    await Assert.That(sample[TableStatisticsOptions.OTHER_EVENT_TYPES].SampledRows).IsEqualTo(2L);
-    await Assert.That(sample.Values.Sum(t => t.EstimatedTotalBytes)).IsEqualTo(stored.Sum(r => r.Data + r.Metadata))
-      .Because("folding changes the names, never the total");
+    await Assert.That(sample[TableStatisticsOptions.OTHER_EVENT_TYPES].Data.SampledRows).IsEqualTo(2L);
+    await Assert.That(sample[TableStatisticsOptions.OTHER_EVENT_TYPES].PointerRow.SampledRows).IsEqualTo(2L);
+    await Assert.That(sample[TableStatisticsOptions.OTHER_EVENT_TYPES].OutboxMetadata.SampledRows).IsEqualTo(1L);
+    await Assert.That(sample.Values.Sum(_total)).IsEqualTo(stored.Sum(r => r.Data + r.Metadata) + pointers.Sum(p => p.Bytes) + outbox)
+      .Because("folding changes the names, never the total, in every part");
   }
 
   [Test]
@@ -576,22 +621,59 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await analyze.ExecuteNonQueryAsync();
   }
 
-  private async Task _seedEventAsync(string eventType, string payload) {
+  /// <summary>Stores an event's pointer row and, unless <paramref name="payload"/> is null (a reaped body), its body.</summary>
+  private async Task _seedEventAsync(string eventType, string? payload, string scope = "{}") {
     var eventId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     await using var connection = await _dataSource.OpenConnectionAsync();
-    await using var cmd = new NpgsqlCommand("""
-      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
-      VALUES (@evt, @stream, @stream, 'agg', @type, '{}'::jsonb, 1, NOW());
-      INSERT INTO wh_event_body (event_id, event_data, metadata)
-      VALUES (@evt, @data::jsonb, '{"MessageId":"m","Hops":[]}'::jsonb)
-      """, connection);
+    await using var cmd = new NpgsqlCommand(payload is null
+      ? """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+        VALUES (@evt, @stream, @stream, 'agg', @type, @scopeJson::jsonb, 1, NOW())
+        """
+      : """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+        VALUES (@evt, @stream, @stream, 'agg', @type, @scopeJson::jsonb, 1, NOW());
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        VALUES (@evt, @data::jsonb, '{"MessageId":"m","Hops":[]}'::jsonb)
+        """, connection);
     cmd.Parameters.AddWithValue("evt", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("type", eventType);
-    cmd.Parameters.AddWithValue("data", payload);
+    cmd.Parameters.AddWithValue("scopeJson", scope);
+    cmd.Parameters.AddWithValue("data", (object?)payload ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
   }
+
+  /// <summary>Stores an outbox row of <paramref name="messageType"/> carrying <paramref name="metadata"/> inline.</summary>
+  private async Task _seedOutboxAsync(string messageType, string metadata, bool isEvent) {
+    await using var connection = await _dataSource.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand("""
+      INSERT INTO wh_outbox (message_id, message_type, event_data, metadata, is_event, status, attempts)
+      VALUES (@id, @type, '{}'::jsonb, @metadataJson::jsonb, @eventFlag, 1, 0)
+      """, connection);
+    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
+    cmd.Parameters.AddWithValue("type", messageType);
+    cmd.Parameters.AddWithValue("metadataJson", metadata);
+    cmd.Parameters.AddWithValue("eventFlag", isEvent);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>Every event-store row's type and its whole stored width, read without sampling.</summary>
+  private async Task<List<(string Type, long Bytes)>> _pointerBytesAsync() {
+    var rows = new List<(string Type, long Bytes)>();
+    await using var connection = await _dataSource.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand("SELECT es.event_type, pg_column_size(es.*)::bigint FROM wh_event_store es", connection);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      rows.Add((reader.GetString(0), reader.GetInt64(1)));
+    }
+    return rows;
+  }
+
+  private static long _total(EventTypeBytes bytes) =>
+    bytes.Data.EstimatedTotalBytes + bytes.Metadata.EstimatedTotalBytes
+    + bytes.PointerRow.EstimatedTotalBytes + bytes.OutboxMetadata.EstimatedTotalBytes;
 
   /// <summary>Every stored event's type and the bytes its row stores, read without sampling.</summary>
   private async Task<List<(string Type, long Data, long Metadata)>> _storedBytesAsync() {

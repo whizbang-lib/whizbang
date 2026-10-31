@@ -308,6 +308,46 @@ public class EvictedRowRebuildTests {
     await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(2);
   }
 
+  [Test]
+  [Arguments("no snapshot")]
+  [Arguments("stale snapshot")]
+  [Arguments("no snapshot store")]
+  public async Task EphemeralPerspective_RewindWithNoReadableFloor_NamesTheDroppedStragglerAndLeavesRowAndCursorAsync(string floor) {
+    // #1862: the rewind is skipped by design (the bodies a replay would read are reaped), but the straggler has to be
+    // named so the worker can retire its work. Reporting "nothing replayed" alone left the work pending, and every
+    // claim found the same late event, skipped the same rewind and logged the same drop, without end.
+    var streamId = Guid.NewGuid();
+    var store = new HistoryEventStore { HandledHistory = true };
+    var earlier = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 1 });
+    var straggler = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 5 });
+    var snapshots = floor switch {
+      "no snapshot" => new KeptSnapshotStore(snapshotEventId: null, data: null),
+      "stale snapshot" => new KeptSnapshotStore(earlier.MessageId.Value, _staleSnapshotOf(new EvictionEphemeralModel { Id = streamId, Total = 40 })),
+      _ => null,
+    };
+    var rows = new InMemoryRows<EvictionEphemeralModel>();
+    await rows.UpsertAsync(streamId, new EvictionEphemeralModel { Id = streamId, Total = 10 });
+    var logs = new List<(LogLevel Level, string Message)>();
+    var runner = _runner<EvictionEphemeralPerspective, EvictionEphemeralModel>(store, rows, snapshots, logs);
+
+    var completion = await runner.RewindAndRunAsync(
+      streamId, _name<EvictionEphemeralPerspective>(), straggler.MessageId.Value, triggeringCommitSequence: 72, CancellationToken.None);
+
+    await Assert.That(completion.DroppedStragglers).IsEquivalentTo([straggler.MessageId.Value])
+      .Because("the worker retires exactly the event the runner dropped, and it can only do that if the runner names it");
+    await Assert.That(completion.LastEventId).IsEqualTo(Guid.Empty)
+      .Because("nothing was replayed, so the cursor is not moved: never backward to the straggler");
+    await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.None);
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(10)
+      .Because("the out-of-order but present model is kept; a replay over reaped bodies would corrupt it");
+    var warnings = logs.Where(l => l.Level == LogLevel.Warning).Select(l => l.Message).ToList();
+    await Assert.That(warnings).Count().IsEqualTo(1)
+      .Because("one straggler is one warning; a second one claiming a full replay that never runs misleads the reader");
+    await Assert.That(warnings[0]).Contains("Straggler dropped");
+    await Assert.That(warnings[0]).Contains(straggler.MessageId.Value.ToString())
+      .Because("the warning names the event that was dropped");
+  }
+
   // -------------------------------------------------------------------------------------------
 
   // A fixed instant: nothing here depends on the wall clock, and the hop time is never compared.

@@ -281,6 +281,34 @@ public class WorkCoordinatorFlushHelperTests {
     await Assert.That(batch.InboxWork.Count).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// On the scope path the flush resolves its coordinator from a scope of its own; an AutoRestore refusal of that write
+  /// restores the stream through the archive store the same scope holds, and the same write is stored once more (#1738).
+  /// </summary>
+  [Test]
+  public async Task ScopePath_AnAutoRestoreRefusal_RestoresThroughTheFlushScopesArchiveStore_AndStoresTheWriteOnceMoreAsync() {
+    var stream = Guid.CreateVersion7();
+    var coordinator = new CapturingWorkCoordinator {
+      FailNextStoreWith = new Whizbang.Core.Archival.StreamArchivedException(
+        "Stream x is archived through version 3", stream, 3, Whizbang.Core.Archival.AppendToArchivedPolicy.AutoRestore),
+    };
+    var archive = new ImmediateWorkCoordinatorStrategyTests.RestoreRecordingArchiveStore();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<Whizbang.Core.Archival.IArchiveStore>(archive);
+    await using var sp = services.BuildServiceProvider();
+    var message = _outbox();
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: null, scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(), outboxMessages: [message]), default);
+
+    await Assert.That(archive.Restores).IsEquivalentTo([stream]);
+    await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(2).Because("refused, then stored once the stream is back");
+    Guid[] theWrite = [message.MessageId];
+    await Assert.That(coordinator.LastStoredOutbox.Select(m => m.MessageId)).IsEquivalentTo(theWrite);
+  }
+
   [Test]
   public async Task NeitherCoordinatorNorScopeFactory_ThrowsInvalidOperationAsync() {
     await Assert.That(async () =>
@@ -529,11 +557,16 @@ public class WorkCoordinatorFlushHelperTests {
     public OutboxMessage[] LastStoredOutbox { get; private set; } = [];
     public InboxMessage[] LastStoredInbox { get; private set; } = [];
     public int LastStoredPartitionCount { get; private set; }
+    public Exception? FailNextStoreWith { get; set; }
 
     public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreOutboxCallCount++;
       LastStoredOutbox = messages;
       LastStoredPartitionCount = partitionCount;
+      if (FailNextStoreWith is { } failure) {
+        FailNextStoreWith = null;
+        return Task.FromException(failure);
+      }
       return Task.CompletedTask;
     }
 

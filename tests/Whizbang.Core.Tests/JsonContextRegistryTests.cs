@@ -193,6 +193,25 @@ public partial class JsonContextRegistryTests {
     await Assert.That(exception!.ParamName).IsEqualTo("resolver");
   }
 
+  /// <summary>
+  /// Registration stays open for the life of the process: a module initializer runs when its assembly first loads,
+  /// which can be after the first message. A name registered after lookups have run is found by the next lookup,
+  /// however the lookup table is built (#1756).
+  /// </summary>
+  [Test]
+  public async Task RegisterTypeName_AfterALookupMissed_IsFoundByTheNextLookupAsync() {
+    var typeName = $"Whizbang.Core.Tests.LateRegistered{Guid.CreateVersion7():N}, Whizbang.Core.Tests";
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    await Assert.That(JsonContextRegistry.GetTypeInfoByName(typeName, options)).IsNull();
+
+    JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), TestMessageJsonContext.Default);
+
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, options);
+    await Assert.That(typeInfo).IsNotNull()
+      .Because("a lookup made before a registration must not leave the registration invisible");
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(TestMessage));
+  }
+
   [Test]
   public async Task GetTypeInfoByName_WithRegisteredType_ReturnsJsonTypeInfoAsync() {
     // Arrange

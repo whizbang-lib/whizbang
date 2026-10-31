@@ -101,8 +101,9 @@ public static class CommitOrderStampBatch {
   /// cannot bound a call: on a store where a few thousand rows took longer than the role lease, a drain grew its batch
   /// until each call outlasted the lease, and the holder lost the role to its own lapse between calls. A short batch
   /// returns to <paramref name="configured"/> whatever it cost, as in
-  /// <see cref="Next(int, int, int, int, int?)"/>. The caller sets <paramref name="timeoutCap"/> to the halved size
-  /// when a call ran past the budget, so growth stops there until the backlog drains.
+  /// <see cref="Next(int, int, int, int, int?)"/>. A caller may pass <paramref name="timeoutCap"/> to hold growth at a
+  /// size; the stamper passes none since #1786, because only a call well inside the budget grows, and
+  /// <see cref="CommitOrderStampSizer"/> adds what a single call cannot show: when halving stopped making calls cheaper.
   /// </remarks>
   /// <param name="current">The size the last call asked for.</param>
   /// <param name="stamped">How many rows that call stamped.</param>

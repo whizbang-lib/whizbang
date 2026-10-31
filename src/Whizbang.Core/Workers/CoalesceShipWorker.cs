@@ -258,6 +258,7 @@ public sealed partial class CoalesceShipWorker(
   /// </summary>
   /// <param name="batch">The fold batch.</param>
   /// <returns>The built composite.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   public static CompositeEventBase BuildDefaultComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     return new CoalescedEventsComposite {

@@ -156,11 +156,15 @@ public class StreamIntegrityRedeliveryE2ETests {
       .Because("children enter the inbox under the ORIGINAL event ids, so dedup and the event-store " +
                "conflict skip treat re-delivery exactly like the live delivery it replaces — " +
                "convergence is idempotent by identity, not by coincidence.");
+    await Assert.That(fanout.Children.Select(c => c.StreamId).ToList()).IsEquivalentTo(new Guid?[] { streamId, streamId })
+      .Because("a repaired event is filed under the stream the origin stored it on, so the row it is about receives it.");
     await Assert.That(fanout.Children.Select(c => c.SourceServiceId).ToList())
       .IsEquivalentTo([originServiceId, originServiceId])
       .Because("children carry the ORIGIN's identity across the wire (Phase B windowed accounting).");
     await Assert.That(fanout.Children.Select(c => c.SourceCommitSequence).ToList()).IsEquivalentTo([1L, 2L])
       .Because("each child's ORIGINAL commit sequence survives the wire — a repaired window recounts as filled.");
+    await Assert.That(fanout.Children.All(c => c.RestoreIfMissing)).IsTrue()
+      .Because("the children are repair traffic: an event deduplication remembers but the event store lost is stored again (#1843).");
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────

@@ -96,10 +96,22 @@ public static class AnalyzerTestHelper {
       string source,
       (string path, string? content)[]? additionalFiles = null,
       Dictionary<string, string>? globalOptions = null)
+      where TAnalyzer : DiagnosticAnalyzer, new() =>
+    await GetDiagnosticsAsync<TAnalyzer>(CreateCompilationWithFrameworkReferences(source), additionalFiles, globalOptions);
+
+  /// <summary>
+  /// Runs <typeparamref name="TAnalyzer"/> over a compilation the test built itself, for a test that needs a reference
+  /// the default compilation does not carry (an assembly whose name an analyzer looks for, say).
+  /// </summary>
+  /// <param name="compilation">The compilation to analyze.</param>
+  /// <param name="additionalFiles">AdditionalFiles to surface to the analyzer.</param>
+  /// <param name="globalOptions">Build properties, keyed as an analyzer reads them (<c>build_property.X</c>).</param>
+  /// <returns>The analyzer's diagnostics, with those a pragma or a SuppressMessage suppresses left out.</returns>
+  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
+      Compilation compilation,
+      (string path, string? content)[]? additionalFiles = null,
+      Dictionary<string, string>? globalOptions = null)
       where TAnalyzer : DiagnosticAnalyzer, new() {
-
-    var compilation = CreateCompilationWithFrameworkReferences(source);
-
     // Create analyzer instance
     var analyzer = new TAnalyzer();
 

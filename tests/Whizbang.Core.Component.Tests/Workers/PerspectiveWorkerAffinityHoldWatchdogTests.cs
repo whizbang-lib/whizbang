@@ -41,10 +41,11 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
   private const string PERSPECTIVE = "Test.WatchdogPerspective";
 
   [Test]
-  public async Task HeldGate_IsListedWithItsPhase_AndAgesAgainstTheGivenClockAsync() {
+  [Timeout(30000)]
+  public async Task HeldGate_IsListedWithItsPhase_AndAgesAgainstTheGivenClockAsync(CancellationToken cancellationToken) {
     await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
-    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
-    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId, cancellationToken);
+    await f.Registry.Entered.Task.WaitAsync(cancellationToken);
 
     var holds = f.Worker.SnapshotAffinityHolds(TimeSpan.Zero);
     await Assert.That(holds.Count).IsEqualTo(1)
@@ -55,7 +56,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       .Because("the step is what tells an operator where the consumer is stuck");
     await Assert.That(holds[0].Path).IsEqualTo("drain");
 
-    var now = TimeProvider.System.GetUtcNow().UtcTicks;
+    var now = f.Clock.GetUtcNow().UtcTicks;
     await Assert.That(f.Worker.SnapshotAffinityHolds(TimeSpan.FromSeconds(60), now + TimeSpan.FromSeconds(30).Ticks)).IsEmpty()
       .Because("a hold younger than the threshold is normal work, not a stall");
     var old = f.Worker.SnapshotAffinityHolds(TimeSpan.FromSeconds(60), now + TimeSpan.FromSeconds(61).Ticks);
@@ -67,7 +68,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
     f.Worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
     f.Registry.Release.TrySetResult();
-    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var release = await released.Task.WaitAsync(cancellationToken);
 
     await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(f.StreamId, PERSPECTIVE, Abandoned: false))
       .Because("the apply ended on its own, so its consumer released the gate");
@@ -76,11 +77,12 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
   }
 
   [Test]
-  public async Task LongHold_IsNamedAtWarning_OncePerThresholdAsync() {
+  [Timeout(30000)]
+  public async Task LongHold_IsNamedAtWarning_OncePerThresholdAsync(CancellationToken cancellationToken) {
     await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
-    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
-    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var now = TimeProvider.System.GetUtcNow().UtcTicks;
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId, cancellationToken);
+    await f.Registry.Entered.Task.WaitAsync(cancellationToken);
+    var now = f.Clock.GetUtcNow().UtcTicks;
 
     await Assert.That(f.Worker.ReportLongAffinityHolds(now + TimeSpan.FromSeconds(30).Ticks)).IsEqualTo(0)
       .Because("under the threshold nothing is reported");
@@ -101,15 +103,16 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       .Because("and again after another threshold while the hold persists");
 
     f.Registry.Release.TrySetResult();
-    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+    await f.Coordinator.WaitForCompletionReportedAsync(cancellationToken);
   }
 
   [Test]
-  public async Task WatchdogOff_ReportsNothingAsync() {
+  [Timeout(30000)]
+  public async Task WatchdogOff_ReportsNothingAsync(CancellationToken cancellationToken) {
     await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.Zero);
-    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
-    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var now = TimeProvider.System.GetUtcNow().UtcTicks;
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId, cancellationToken);
+    await f.Registry.Entered.Task.WaitAsync(cancellationToken);
+    var now = f.Clock.GetUtcNow().UtcTicks;
 
     await Assert.That(f.Worker.ReportLongAffinityHolds(now + TimeSpan.FromHours(1).Ticks)).IsEqualTo(0)
       .Because("a zero threshold turns the watchdog off");
@@ -117,16 +120,17 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       .Because("the hold itself is still visible on demand");
 
     f.Registry.Release.TrySetResult();
-    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+    await f.Coordinator.WaitForCompletionReportedAsync(cancellationToken);
   }
 
   [Test]
-  public async Task DrainWidth_IsClampedToHalfTheGate_AndLoggedOnceAsync() {
+  [Timeout(30000)]
+  public async Task DrainWidth_IsClampedToHalfTheGate_AndLoggedOnceAsync(CancellationToken cancellationToken) {
     await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), gateMaxConcurrent: 8);
-    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
-    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId, cancellationToken);
+    await f.Registry.Entered.Task.WaitAsync(cancellationToken);
     f.Registry.Release.TrySetResult();
-    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+    await f.Coordinator.WaitForCompletionReportedAsync(cancellationToken);
 
     var clamps = f.Logger.Snapshot().Where(e => e.Level == LogLevel.Warning && e.Message.Contains("clamped", StringComparison.Ordinal)).ToList();
     await Assert.That(clamps.Count).IsEqualTo(1)
@@ -136,26 +140,28 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
   }
 
   [Test]
-  public async Task Watchdog_TicksOnTheWorkerClock_AndNamesAHoldPastTheThresholdAsync() {
+  [Timeout(30000)]
+  public async Task Watchdog_TicksOnTheWorkerClock_AndNamesAHoldPastTheThresholdAsync(CancellationToken cancellationToken) {
     var clock = new FakeTimeProvider();
     await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), timeProvider: clock);
-    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
-    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId, cancellationToken);
+    await f.Registry.Entered.Task.WaitAsync(cancellationToken);
 
     clock.Advance(TimeSpan.FromSeconds(61));
     var warning = await f.Logger
       .WaitForAsync(e => e.Level == LogLevel.Warning && e.Message.Contains("held its affinity gate", StringComparison.Ordinal))
-      .WaitAsync(TimeSpan.FromSeconds(10));
+      .WaitAsync(cancellationToken);
 
     await Assert.That(warning.Message).Contains(PERSPECTIVE)
       .Because("the periodic check runs on the worker's clock and names the hold without anyone asking");
 
     f.Registry.Release.TrySetResult();
-    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+    await f.Coordinator.WaitForCompletionReportedAsync(cancellationToken);
   }
 
   [Test]
-  public async Task SeveralHeldGates_AreListedLongestHeldFirstAsync() {
+  [Timeout(30000)]
+  public async Task SeveralHeldGates_AreListedLongestHeldFirstAsync(CancellationToken cancellationToken) {
     // An operator reading the list during a stall needs the oldest hold at the top: it is the one blocking
     // everything behind it. Two gates are held on the worker's clock, 10 s apart, and read back.
     var clock = new FakeTimeProvider();
@@ -171,13 +177,13 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       olderEntered.TrySetResult();
       await releaseOlder.Task;
     }, CancellationToken.None);
-    await olderEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await olderEntered.Task.WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(10));
     var newerHold = f.Worker.WithStreamAffinityGateAsync(newer, PERSPECTIVE, async _ => {
       newerEntered.TrySetResult();
       await releaseNewer.Task;
     }, CancellationToken.None);
-    await newerEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await newerEntered.Task.WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(1));
 
     var holds = f.Worker.SnapshotAffinityHolds(TimeSpan.Zero, clock.GetUtcNow().UtcTicks);
@@ -202,12 +208,18 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     public PerspectiveWorkerTestHarness Harness { get; } = new();
     public HoldCoordinator Coordinator { get; } = new();
     public PerspectiveWorker Worker { get; private set; } = null!;
+    /// <summary>
+    /// The worker's clock. A fake one unless a test supplies its own: the hold ages are read against it,
+    /// so a test's "now" is exact rather than a real-clock read taken some unknown time after the hold
+    /// began, and the watchdog's periodic tick fires only when a test advances it.
+    /// </summary>
+    public TimeProvider Clock { get; private set; } = null!;
     public Guid StreamId { get; } = (Guid)TrackedGuid.New();
     private readonly CancellationTokenSource _cts = new();
     private bool _stopped;
 
     public static async Task<FakeFixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
-      var f = new FakeFixture();
+      var f = new FakeFixture { Clock = timeProvider ?? new FakeTimeProvider() };
       var eventId = (Guid)TrackedGuid.New();
       f.Coordinator.StreamEventsToReturn = [
         new StreamEventData {
@@ -297,7 +309,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
             MaxWait = TimeSpan.Zero
           }
         })).Value),
-        timeProvider: timeProvider,
+        timeProvider: f.Clock,
         gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent, logger: NullLogger<WorkCoordinatorGate>.Instance) : null);
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
@@ -320,7 +332,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       // which passed on an idle machine and failed on a loaded CI runner.
       var body = Worker.ExecuteTask;
       if (body is not null) {
-        await body.WaitAsync(TimeSpan.FromSeconds(30))
+        await body.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None)
           .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       }
     }
@@ -371,14 +383,9 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<StreamEventData> StreamEventsToReturn { get; set; } = [];
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _completionReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Completion was not reported within {timeout}");
-      }
-    }
+    /// <summary>Completes when the worker reports a completion; bounded only by the test's token.</summary>
+    public Task WaitForCompletionReportedAsync(CancellationToken cancellationToken)
+      => _completionReported.Task.WaitAsync(cancellationToken);
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [], PerspectiveStreamIds = [] });

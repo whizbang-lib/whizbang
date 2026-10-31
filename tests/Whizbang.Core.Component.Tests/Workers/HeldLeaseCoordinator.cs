@@ -8,7 +8,7 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>One lease renewal made through the work coordinator.</summary>
-internal sealed record HeldLeaseRenewal(WorkCategory Category, IReadOnlyList<Guid> Ids, int LeaseSeconds, DateTimeOffset At);
+internal sealed record HeldLeaseRenewal(WorkCategory Category, Guid InstanceId, IReadOnlyList<Guid> Ids, int LeaseSeconds, DateTimeOffset At);
 
 /// <summary>
 /// A work coordinator for the outbox publisher's not-ready hold (#1606). It keeps each claimed row's lease expiry
@@ -39,6 +39,9 @@ internal sealed class HeldLeaseCoordinator(TimeProvider clock, TimeSpan claimLea
   /// </summary>
   public TaskCompletionSource? BlockRenewalsUntilCanceled { get; set; }
 
+  /// <summary>Rows another instance has re-claimed: a renewal reports them instead of renewing them (#1852).</summary>
+  public ConcurrentDictionary<Guid, bool> HeldElsewhere { get; } = new();
+
   /// <summary>Records <paramref name="messageId"/> as claimed now, with the claim lease.</summary>
   public void Claim(Guid messageId) => _expiry[messageId] = clock.GetUtcNow() + claimLease;
 
@@ -53,30 +56,30 @@ internal sealed class HeldLeaseCoordinator(TimeProvider clock, TimeSpan claimLea
     }
   }
 
-  public Task<int> RenewLeasesAsync(
-      WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
+  public Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(
+      WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
     if (BlockRenewalsUntilCanceled is { } entered) {
       entered.TrySetResult();
       return _waitForCancellationAsync(cancellationToken);
     }
     if (FailingRenewals > 0) {
       FailingRenewals--;
-      return Task.FromException<int>(new InvalidOperationException("database unreachable"));
+      return Task.FromException<IReadOnlyList<Guid>>(new InvalidOperationException("database unreachable"));
     }
     var now = clock.GetUtcNow();
-    foreach (var id in ids) {
+    foreach (var id in ids.Where(id => !HeldElsewhere.ContainsKey(id))) {
       if (_expiry.TryGetValue(id, out var expiry) && expiry <= now) {
         Lapsed.Enqueue(id);
       }
       _expiry[id] = now + TimeSpan.FromSeconds(leaseSeconds);
     }
-    Renewals.Enqueue(new HeldLeaseRenewal(category, [.. ids], leaseSeconds, now));
+    Renewals.Enqueue(new HeldLeaseRenewal(category, instanceId, [.. ids], leaseSeconds, now));
     _renewed.Writer.TryWrite(true);
-    return Task.FromResult(ids.Count);
+    return Task.FromResult<IReadOnlyList<Guid>>([.. ids.Where(HeldElsewhere.ContainsKey)]);
   }
 
-  private static async Task<int> _waitForCancellationAsync(CancellationToken cancellationToken) {
-    var canceled = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+  private static async Task<IReadOnlyList<Guid>> _waitForCancellationAsync(CancellationToken cancellationToken) {
+    var canceled = new TaskCompletionSource<IReadOnlyList<Guid>>(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var _ = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
     return await canceled.Task;
   }

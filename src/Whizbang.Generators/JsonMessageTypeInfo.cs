@@ -38,6 +38,49 @@ internal sealed record JsonMessageTypeInfo(
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync</tests>
   public string UniqueIdentifier => FullyQualifiedName.Replace("global::", "").Replace(".", "_");
+
+  /// <summary>
+  /// True when the type was discovered as a perspective model (the <c>TModel</c> of a perspective interface): its
+  /// stored form is a perspective row, derived data the startup pass rewrites (#1874).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs:Generator_RequiredMembersOfAPerspectiveModel_AreMarkedRequired_UnlessTheyAdmitNullAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs:Generator_ANestedModelAndAPolymorphicMember_AreMarkedThroughTheModelAsync</tests>
+  public bool IsPerspectiveModel { get; init; }
+
+  /// <summary>
+  /// How the generated reader treats a document missing one of the type's <see cref="PropertyInfo.IsRequired"/>
+  /// members, decided by which roots reach the type (#1874).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
+  public RequiredMemberReading RequiredMembers { get; init; }
+}
+
+/// <summary>
+/// How the generated reader treats a document missing a member the type declares required (#1874). Required is
+/// enforced on perspective rows only: events are immutable history read tolerantly and upcast, so a replay or rebuild
+/// never fails because a later change added <see langword="required"/>; new messages are protected by the compiler's
+/// <see langword="required"/> at construction.
+/// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
+internal enum RequiredMemberReading {
+  /// <summary>
+  /// The member reads as its default. Every type no perspective model reaches: events, commands, composites and
+  /// other serializable types, and the types they carry.
+  /// </summary>
+  Tolerated,
+
+  /// <summary>
+  /// The reader refuses the document with a <c>JsonException</c>. A perspective model and the types only perspective
+  /// models reach.
+  /// </summary>
+  Refused,
+
+  /// <summary>
+  /// The member reads as its default, because one JsonTypeInfo per type also reads the event or message that carries
+  /// it, and that history must stay readable; the generated module initializer declares the member to
+  /// <c>DeclaredRequiredMembers</c> so the startup check still reports perspective rows missing it, at Error.
+  /// </summary>
+  Reported,
 }
 
 /// <summary>
@@ -50,8 +93,10 @@ internal sealed record JsonMessageTypeInfo(
 /// <param name="CanWrite">True if property has a setter (init or regular). False for computed/read-only properties.</param>
 /// <param name="JsonName">The name from the property's <c>[JsonPropertyName]</c>, or <see langword="null"/> when it has none and is serialized under <paramref name="Name"/>.</param>
 /// <param name="IgnoreCondition">The <c>JsonIgnoreCondition</c> member name from a conditional <c>[JsonIgnore]</c> (for example <c>WhenWritingNull</c>), or <see langword="null"/> when the property is always written.</param>
+/// <param name="IsRequired">True when the property is declared required: a <c>required</c> or <c>[JsonRequired]</c> member whose type does not admit null. Whether a document missing it is refused depends on the declaring type's <see cref="JsonMessageTypeInfo.RequiredMembers"/>.</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPropertyNameTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
 internal sealed record PropertyInfo(
     string Name,
     string Type,
@@ -59,7 +104,8 @@ internal sealed record PropertyInfo(
     bool IsInitOnly,
     bool CanWrite,
     string? JsonName = null,
-    string? IgnoreCondition = null
+    string? IgnoreCondition = null,
+    bool IsRequired = false
 ) {
   /// <summary>The name the property is written and read under: its <c>[JsonPropertyName]</c> when present, its C# name otherwise.</summary>
   public string WireName => JsonName ?? Name;

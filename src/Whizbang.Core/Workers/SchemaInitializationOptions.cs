@@ -45,4 +45,29 @@ public sealed class SchemaInitializationOptions {
   /// </summary>
   /// <docs>data/turnkey-initialization</docs>
   public TimeSpan InitRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// How long a dispatch made before the migration completes waits for it (#1877). A send, publish or local
+  /// invoke that arrives while <see cref="ISchemaReadyGate"/> is closed is deferred until the gate opens, then
+  /// runs; the caller's cancellation token still applies. When the wait exceeds this limit the dispatch fails
+  /// with <see cref="WhizbangNotReadyException"/>, so a migration that never completes does not hang requests
+  /// forever. Default five minutes. <see cref="TimeSpan.Zero"/> refuses at once, as dispatch did before
+  /// deferral; <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits without a limit. Bound from
+  /// <c>Whizbang:SchemaInitialization:DispatchMaxWait</c>.
+  /// </summary>
+  /// <remarks>
+  /// To keep the application from serving anything until the migration completes, set
+  /// <see cref="NonBlockingSchemaInit"/> to <see langword="false"/> instead; that hold stays opt-in.
+  /// </remarks>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAZeroMaxWait_RefusesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:HoldingTheApplicationUntilMigrated_StaysOptInAsync</tests>
+  public TimeSpan DispatchMaxWait { get; set; } = DefaultDispatchMaxWait;
+
+  /// <summary>The default of <see cref="DispatchMaxWait"/>: five minutes.</summary>
+  /// <docs>operations/workers/database-readiness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  internal static readonly TimeSpan DefaultDispatchMaxWait = TimeSpan.FromMinutes(5);
 }

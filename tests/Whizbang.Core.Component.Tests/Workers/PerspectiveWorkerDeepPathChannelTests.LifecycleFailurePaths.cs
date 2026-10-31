@@ -39,7 +39,8 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class PerspectiveWorkerDeepPathChannelTests {
 
   [Test]
-  public async Task Worker_DetachedPrePerspectiveStageThrows_IsRecordedAndTheBatchStillCheckpointsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_DetachedPrePerspectiveStageThrows_IsRecordedAndTheBatchStillCheckpointsAsync(CancellationToken cancellationToken) {
     // Arrange — no ILifecycleCoordinator, so PrePerspective takes the direct-invocation fallback
     // and fires PrePerspectiveDetached as fire-and-forget. That invocation throws; everything the
     // pipeline does afterwards must be unaffected.
@@ -109,8 +110,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
 
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    await invoker.WaitForStageAsync(LifecycleStage.PostLifecycleInline, TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await invoker.WaitForStageAsync(LifecycleStage.PostLifecycleInline, cancellationToken);
     // Deterministic join on the fire-and-forget task itself — the handler under test runs inside it.
     await worker.DrainDetachedAsync();
     await cts.CancelAsync();
@@ -139,7 +140,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
-  public async Task Worker_ProcessedEventLoadThrows_ReportsTheStreamFailedInsteadOfCheckpointingAsync() {
+  [Timeout(30000)]
+  public async Task Worker_ProcessedEventLoadThrows_ReportsTheStreamFailedInsteadOfCheckpointingAsync(CancellationToken cancellationToken) {
     // Arrange — the runner completes, but the read-back of the events it just processed (the set
     // the PostPerspective receptors are handed) fails. Advancing the cursor here would skip those
     // events forever, so the failure must be recorded and re-raised, not swallowed.
@@ -208,7 +210,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
 
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -361,12 +363,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       }
     }
 
-    public Task WaitForStageAsync(LifecycleStage stage, TimeSpan timeout) {
+    public Task WaitForStageAsync(LifecycleStage stage, CancellationToken cancellationToken) {
       var tcs = _waiters.GetOrAdd(stage, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
       if (HasFired(stage)) {
         tcs.TrySetResult();
       }
-      return tcs.Task.WaitAsync(timeout);
+      return tcs.Task.WaitAsync(cancellationToken);
     }
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {

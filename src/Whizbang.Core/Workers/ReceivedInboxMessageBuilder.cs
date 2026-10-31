@@ -26,22 +26,6 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerSourceIdentityTests.cs</tests>
 internal static class ReceivedInboxMessageBuilder {
   /// <summary>
-  /// The stream a received message belongs to: the first hop's <c>AggregateId</c> (the key is historical),
-  /// or the message id when there is none, so every message has a stream.
-  /// </summary>
-  internal static Guid ExtractStreamId(IMessageEnvelope envelope) {
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-    return envelope.MessageId.Value;
-  }
-
-  /// <summary>
   /// Classifies a received message's priority through the receive hooks registered in <paramref name="scope"/>
   /// (priority step 1); without a chain the declared number's effective value is used, so a row is never stored
   /// as zero.
@@ -83,6 +67,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// <returns>The inbox row to store.</returns>
   /// <exception cref="InvalidOperationException">The stored envelope is empty or names another message.</exception>
   /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage BuildRedelivery(IServiceProvider scope, DeadLetterRedelivery redelivery) {
     var jsonOptions = scope.GetService<JsonSerializerOptions>() ?? Serialization.JsonContextRegistry.CreateCombinedOptions();
     var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -125,6 +110,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
   /// <param name="originMonitor">Counts received events with and without the producer's origin (#1029), when registered.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage Build(
       ReceivedEnvelope received,
       int priority,
@@ -133,7 +119,8 @@ internal static class ReceivedInboxMessageBuilder {
       IEphemeralModeResolver? ephemeralModeResolver,
       ReceivedOriginStampMonitor? originMonitor = null) {
     var (envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent) = received;
-    var streamId = ExtractStreamId(envelope);
+    // The stream its producer stored it on, read the way every storing site reads it (#1798).
+    var streamId = StreamIdentity.Of(envelope);
     if (isEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, guardSite, messageTypeName);
     }

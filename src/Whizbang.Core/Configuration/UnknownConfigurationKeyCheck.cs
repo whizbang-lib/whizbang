@@ -11,7 +11,7 @@ namespace Whizbang.Core.Configuration;
 /// <param name="Removed">The removed-key entry when the key was once read, else <see langword="null"/>.</param>
 /// <docs>operations/configuration/configuration-reference#unknown-keys</docs>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/UnknownConfigurationKeyCheckTests.cs</tests>
-internal sealed record UnknownConfigurationKey(string Key, RemovedConfigurationKey? Removed);
+internal sealed record UnknownConfigurationKey(string Key, RemovedConfigurationKeyEntry? Removed);
 
 /// <summary>
 /// The check of configured <c>Whizbang:*</c> keys against the keys Whizbang reads. .NET binding ignores a
@@ -40,7 +40,7 @@ internal static partial class UnknownConfigurationKeyCheck {
     ArgumentNullException.ThrowIfNull(known);
     return [.. configuration.GetSection(SECTION).AsEnumerable()
       .Where(pair => pair.Value is not null && !known.IsKnown(pair.Key))
-      .Select(pair => new UnknownConfigurationKey(pair.Key, RemovedConfigurationKeys.Find(pair.Key)))
+      .Select(pair => new UnknownConfigurationKey(pair.Key, ConfigurationManifestRegistry.FindRemovedKey(pair.Key)))
       .OrderBy(unknown => unknown.Key, StringComparer.OrdinalIgnoreCase)];
   }
 
@@ -62,9 +62,10 @@ internal static partial class UnknownConfigurationKeyCheck {
 
     var unknown = Find(configuration, known);
     foreach (var entry in unknown) {
-      if (entry.Removed is { } removed) {
-        var replacement = string.Join(", ", removed.ReplacedBy);
-        LogRemovedKey(logger, entry.Key, replacement);
+      if (entry.Removed is { ReplacedBy.Count: 0 }) {
+        LogRemovedKeyWithoutReplacement(logger, entry.Key);
+      } else if (entry.Removed is { } removed) {
+        LogRemovedKey(logger, entry.Key, string.Join(", ", removed.ReplacedBy));
       } else {
         LogUnknownKey(logger, entry.Key);
       }
@@ -85,4 +86,8 @@ internal static partial class UnknownConfigurationKeyCheck {
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "Whizbang configuration key '{Key}' was removed and has no effect. Set its replacement instead: {Replacement}")]
   private static partial void LogRemovedKey(ILogger logger, string key, string replacement);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+    Message = "Whizbang configuration key '{Key}' was removed and has no effect, and nothing replaces it. Remove it")]
+  private static partial void LogRemovedKeyWithoutReplacement(ILogger logger, string key);
 }

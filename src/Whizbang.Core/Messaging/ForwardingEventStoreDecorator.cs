@@ -69,6 +69,11 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
     Inner.GetLastSequenceAsync(streamId, cancellationToken);
 
   /// <inheritdoc />
+  public virtual IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+      Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    Inner.ReadPolymorphicThroughArchiveAsync(streamId, fromEventId, afterVersion, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
   public virtual List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
     Inner.DeserializeStreamEvents(streamEvents, eventTypes);
 

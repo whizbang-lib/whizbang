@@ -123,7 +123,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(await _throwsArgumentNullAsync(() => c.CompletePerspectiveAsync(null!, [], debugMode: false))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.CompletePerspectiveAsync([], null!, debugMode: false))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.ReportFailuresAsync(WorkCategory.Outbox, null!))).IsTrue();
-    await Assert.That(await _throwsArgumentNullAsync(() => c.RenewLeasesAsync(WorkCategory.Outbox, null!))).IsTrue();
+    await Assert.That(await _throwsArgumentNullAsync(() => c.RenewHeldLeasesAsync(WorkCategory.Outbox, (Guid)TrackedGuid.New(), null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.CommitHandlerResultAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.CommitHandlerBatchAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.FlushCompletionsAsync(null!))).IsTrue();
@@ -203,8 +203,9 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
-    var renewed = await c.RenewLeasesAsync(WorkCategory.Outbox, [msgId], leaseSeconds: 120);
-    await Assert.That(renewed).IsEqualTo(1);
+    var notHeld = await c.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, [msgId], leaseSeconds: 120);
+    await Assert.That(notHeld).IsEquivalentTo([msgId])
+      .Because("the row was stored but never claimed, so this instance does not hold it and its renewal reports it (#1852)");
 
     await c.ReportFailuresAsync(WorkCategory.Outbox, [
       new MessageFailure {

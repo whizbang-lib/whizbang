@@ -22,7 +22,9 @@ public class SlidingWindowInboxBatchStrategyStopTests {
   [Timeout(30_000)]
   public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync(CancellationToken testToken) {
     var releaseFlush = new TaskCompletionSource();
-    var flushEntered = new TaskCompletionSource();
+    var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(20);
+    var clock = new BatchWindowClock(window);
     // The token the in-flight flush was handed — the strategy's own stop token.
     var flushToken = CancellationToken.None;
     var sut = new SlidingWindowInboxBatchStrategy(
@@ -33,13 +35,16 @@ public class SlidingWindowInboxBatchStrategyStopTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(_makeMessage(), testToken);
-    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), testToken);
+    await clock.Armed(1).WaitAsync(testToken);
+    clock.Advance(window);
+    await flushEntered.Task.WaitAsync(testToken);
 
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();

@@ -427,12 +427,42 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task MeasureTableBloatAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var ratio = await coordinator.MeasureTableBloatAsync("x", Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+
+    await Assert.That(ratio).IsNull();
+  }
+
+  [Test]
+  public async Task RequestMeasuredTableRewriteAsync_WithoutProviderSupport_RecordsThePlainRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequestMeasuredTableRewriteAsync(
+      "x", new Whizbang.Core.Observability.BloatMeasurement(3.0, Whizbang.Core.Observability.BloatMeasurementMethod.Approx), 2.5);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
   public async Task VacuumWorkTablesAsync_WithoutProviderSupport_VacuumsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
     var outcomes = await coordinator.VacuumWorkTablesAsync();
 
     await Assert.That(outcomes).IsEmpty();
+  }
+
+  /// <summary>A backend that does not survey its queue indexes offers none, drops none and rebuilds none (#1746).</summary>
+  [Test]
+  public async Task QueueIndexCalls_WithoutProviderSupport_SurveyDropAndRebuildNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetQueueIndexBloatAsync()).IsEmpty();
+    await Assert.That(await coordinator.DropInvalidQueueIndexAsync("idx_x_ccnew")).IsFalse();
+    await Assert.That(await coordinator.ReindexQueueIndexAsync("idx_x")).IsNull();
   }
 
   [Test]
@@ -517,6 +547,36 @@ public class WorkCoordinatorDefaultsTests {
 
     await Assert.That(task.IsCompletedSuccessfully).IsTrue();
     await task;
+  }
+
+  [Test]
+  public async Task IntegrityProbeRepairBacklogAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityProbeRepairBacklogAsync(Guid.Empty, [], backlogCap: 10);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain admission to fall back to the per-comparison cap alone");
+  }
+
+  [Test]
+  public async Task IntegrityMarkUnhealableBatchAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkUnhealableBatchAsync(Guid.Empty, [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(result).IsNull()
+      .Because("null means the provider cannot mark buckets, so the durable ledger marks none and repair keeps asking as before");
+  }
+
+  [Test]
+  public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, null, [], []);
+
+    await Assert.That(result).IsNull()
+      .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");
   }
 
   [Test]

@@ -81,6 +81,8 @@ public sealed partial class PgSharedNotifyConnection(
   private int _resyncPending;
   private bool _isAvailable;
   private bool _aliveLockHeld;
+  // #1636: the connection opened before the alive-lock function existed, so the claim is made on a later keepalive.
+  private volatile bool _aliveLockAwaitsSchema;
   private bool _hasDedicatedConnection;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
@@ -495,23 +497,7 @@ public sealed partial class PgSharedNotifyConnection(
         // Slice 7b — acquire the session-level alive-lock so peers querying
         // is_instance_alive() / cleanup_stale_instances see this pod as alive via pg_locks
         // (sub-second detection on conn death) without waiting for the heartbeat table.
-        try {
-          await using var lockCmd = conn.CreateCommand();
-          lockCmd.CommandText = "SELECT claim_instance_alive_lock(@instanceId)";
-          lockCmd.Parameters.AddWithValue("@instanceId", _instanceProvider.InstanceId);
-          var lockResult = await lockCmd.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
-          _aliveLockHeld = ScalarResult.IsTrue(lockResult);
-          if (!_aliveLockHeld) {
-            // Uncommon: a duplicate-startup race left a previous session holding the lock.
-            // Non-fatal — the heartbeat table fallback still functions.
-            LogAliveLockNotAcquired(_logger);
-          }
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          // Migration 055 may not have run yet (pre-v0.681 schema). Treat as no-lock; the
-          // existing heartbeat path remains the liveness signal.
-          _aliveLockHeld = false;
-          LogAliveLockClaimFailed(_logger, ex);
-        }
+        await ClaimAliveLockAsync(conn, stoppingToken).ConfigureAwait(false);
 
         // Slice 33.2 — gate IsAvailable behind a real round-trip probe rather than just
         // "connection opened." Probe failure (timeout, error) means the conn is open but
@@ -618,6 +604,57 @@ public sealed partial class PgSharedNotifyConnection(
       // the outer catch and reconnect.
       await using var ping = new NpgsqlCommand("SELECT 1", conn);
       _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
+      if (_aliveLockAwaitsSchema) {
+        // #1636: the connection opened before the migration that creates the alive-lock function ran.
+        await ClaimAliveLockAsync(conn, stoppingToken).ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Raised each time this connection claims the instance's alive-lock: when it opens, or on a later keepalive when it
+  /// opened before the function that claims it existed. Must not block.
+  /// </summary>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:OnADatabaseWithoutTheFunctionYet_TheClaimWaitsQuietly_AndAKeepaliveMakesItOnceItExistsAsync</tests>
+  public event Action? OnAliveLockClaimed;
+
+  /// <summary>
+  /// Claims the alive-lock on <paramref name="conn"/>, or, when the function that claims it does not exist yet (a fresh
+  /// database, before migration 055 ran), records that the claim waits and makes it on a later keepalive (#1636).
+  /// </summary>
+  /// <remarks>
+  /// Asking the catalog first keeps a starting instance from sending the server a call it cannot resolve: the claim
+  /// used to fail with 42883 and a Warning on every fresh database, and was never made again until the connection was
+  /// replaced. Any other failure is reported and treated as no lock, as before; the heartbeat remains the signal.
+  /// </remarks>
+  internal async Task ClaimAliveLockAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+    try {
+      await using (var probe = conn.CreateCommand()) {
+        probe.CommandText = "SELECT to_regprocedure('claim_instance_alive_lock(uuid)') IS NOT NULL";
+        _aliveLockAwaitsSchema = !ScalarResult.IsTrue(await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+      }
+      if (_aliveLockAwaitsSchema) {
+        _aliveLockHeld = false;
+        LogAliveLockAwaitsSchema(_logger);
+        return;
+      }
+      await using var lockCmd = conn.CreateCommand();
+      lockCmd.CommandText = "SELECT claim_instance_alive_lock(@instanceId)";
+      lockCmd.Parameters.AddWithValue("@instanceId", _instanceProvider.InstanceId);
+      var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      _aliveLockHeld = ScalarResult.IsTrue(lockResult);
+      if (_aliveLockHeld) {
+        OnAliveLockClaimed?.Invoke();
+      } else {
+        // Uncommon: a duplicate-startup race left a previous session holding the lock.
+        // Non-fatal: the heartbeat table fallback still functions.
+        LogAliveLockNotAcquired(_logger);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Treat as no lock; the heartbeat path remains the liveness signal.
+      _aliveLockHeld = false;
+      LogAliveLockClaimFailed(_logger, ex);
     }
   }
 
@@ -809,6 +846,10 @@ public sealed partial class PgSharedNotifyConnection(
   [LoggerMessage(EventId = 101, Level = LogLevel.Warning,
     Message = "PgSharedNotifyConnection failed to claim the alive-lock; falling back to heartbeat-table liveness")]
   static partial void LogAliveLockClaimFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 102, Level = LogLevel.Debug,
+    Message = "The alive-lock function does not exist yet; PgSharedNotifyConnection claims the lock on a keepalive once the migration that creates it has run")]
+  static partial void LogAliveLockAwaitsSchema(ILogger logger);
 
   [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
     Message = "PgSharedNotifyConnection resolved the POOLED connection (key '{ConnectionStringKey}') — LISTEN/NOTIFY will not work " +

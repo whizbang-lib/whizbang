@@ -21,6 +21,8 @@ namespace Whizbang.Core.Lifecycle;
 /// <item><description>Advanced through stages by the owning worker</description></item>
 /// <item><description>Abandoned at exit points (DB persist, transport send, processing complete)</description></item>
 /// </list>
+/// <para>Each entry is one path's tracking of one event (<see cref="LifecycleTrackingPath"/>): an event on several paths in
+/// one process is tracked once per path, and a path only ever ends its own entry (#1918).</para>
 /// <para>Thread-safe. Supports concurrent tracking of multiple events.</para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
@@ -29,9 +31,10 @@ namespace Whizbang.Core.Lifecycle;
 /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_LifecycleCoordinator_IsSingletonAsync</tests>
 public interface ILifecycleCoordinator {
   /// <summary>
-  /// Begins tracking an event at the specified entry stage.
-  /// Returns a tracking handle for advancing through stages.
+  /// Begins tracking an event on one path at the specified entry stage. Returns that path's tracking handle for
+  /// advancing through stages; the same path asking again for the same event gets the same handle.
   /// </summary>
+  /// <param name="path">The path tracking the event; another path's tracking of it is a separate entry.</param>
   /// <param name="eventId">Unique event identifier.</param>
   /// <param name="envelope">The message envelope containing the payload and metadata.</param>
   /// <param name="entryStage">The lifecycle stage at which tracking begins.</param>
@@ -40,6 +43,7 @@ public interface ILifecycleCoordinator {
   /// <param name="perspectiveType">Optional perspective type being processed.</param>
   /// <returns>A tracking handle for advancing through stages.</returns>
   ILifecycleTracking BeginTracking(
+    LifecycleTrackingPath path,
     Guid eventId,
     IMessageEnvelope envelope,
     LifecycleStage entryStage,
@@ -48,46 +52,54 @@ public interface ILifecycleCoordinator {
     Type? perspectiveType = null);
 
   /// <summary>
-  /// Gets the current tracking state for an event, if tracked.
+  /// Gets one path's current tracking of an event, if that path tracks it.
   /// Enables runtime inspection of event lifecycle position.
   /// </summary>
+  /// <param name="path">The path whose tracking to look up.</param>
   /// <param name="eventId">The event ID to look up.</param>
-  /// <returns>The tracking handle if the event is currently tracked; null otherwise.</returns>
-  ILifecycleTracking? GetTracking(Guid eventId);
+  /// <returns>The tracking handle if the path currently tracks the event; null otherwise.</returns>
+  ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId);
 
   /// <summary>
   /// Registers expected completion sources for WhenAll pattern.
   /// Called at cascade time when DispatchModes determines multiple paths.
-  /// PostLifecycle fires only when all expected sources signal completion.
+  /// PostLifecycle fires only when all expected sources signal completion, on the path's tracking.
   /// </summary>
+  /// <param name="path">The path whose tracking fires PostLifecycle; the latch ends with that tracking.</param>
   /// <param name="eventId">The event ID to register completions for.</param>
   /// <param name="sources">The completion sources expected before PostLifecycle fires.</param>
-  void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources);
+  void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources);
 
   /// <summary>
   /// Signals that a processing path completed for the event.
   /// If WhenAll is active and all sources complete, fires PostLifecycle.
-  /// If no WhenAll, fires PostLifecycle immediately.
+  /// If no WhenAll, fires PostLifecycle immediately. PostLifecycle fires on the path's tracking.
   /// </summary>
+  /// <param name="path">The path whose latch is signaled and whose tracking fires PostLifecycle.</param>
   /// <param name="eventId">The event ID that completed a processing segment.</param>
   /// <param name="source">Which processing path completed.</param>
   /// <param name="scopedProvider">Scoped service provider for receptor resolution.</param>
   /// <param name="ct">Cancellation token.</param>
   ValueTask SignalSegmentCompleteAsync(
+    LifecycleTrackingPath path,
     Guid eventId,
     PostLifecycleCompletionSource source,
     IServiceProvider scopedProvider,
     CancellationToken ct);
 
   /// <summary>
-  /// Abandons tracking for an event (exit point).
-  /// Called when event leaves live processing (persisted, sent to transport, complete).
+  /// Abandons one path's tracking of an event (exit point).
+  /// Called when the event leaves that path's live processing (persisted, sent to transport, complete). Another
+  /// path's tracking of the same event is untouched; the perspective WhenAll gate ends only with the perspective
+  /// path's tracking.
   /// </summary>
+  /// <param name="path">The path whose tracking ends.</param>
   /// <param name="eventId">The event ID to stop tracking.</param>
-  void AbandonTracking(Guid eventId);
+  void AbandonTracking(LifecycleTrackingPath path, Guid eventId);
 
   /// <summary>
-  /// Registers which perspectives must complete before PostLifecycle fires.
+  /// Registers which perspectives must complete before the perspective path fires PostAllPerspectives and
+  /// PostLifecycle. The gate belongs to the <see cref="LifecycleTrackingPath.Perspective"/> tracking of the event.
   /// Tracked by exact (eventId, perspectiveName) pairs.
   /// Idempotent — calling again with the same eventId is a no-op.
   /// </summary>
@@ -114,13 +126,15 @@ public interface ILifecycleCoordinator {
   bool AreAllPerspectivesComplete(Guid eventId);
 
   /// <summary>
-  /// Removes tracking entries that have been inactive longer than the specified threshold.
-  /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
-  /// Uses a debounce-style sliding window — each stage transition and perspective signal
-  /// resets the inactivity timer, so active events are never cleaned up.
+  /// Safety net for entries no exit ended: removes every completed entry, and every entry inactive longer than
+  /// the threshold, including one some of whose expected perspectives reported while the rest never did.
+  /// Uses a debounce-style sliding window: each stage transition and perspective signal resets the inactivity
+  /// timer, so an entry still being reported for is never ended. Normal operation ends entries at their exits.
   /// </summary>
   /// <param name="inactivityThreshold">How long an entry must be inactive before cleanup.</param>
-  /// <returns>Number of stale entries removed.</returns>
+  /// <returns>Number of entries removed.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
   int CleanupStaleTracking(TimeSpan inactivityThreshold);
 }
 

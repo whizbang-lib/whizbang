@@ -17,6 +17,8 @@ namespace Whizbang.Core.Capabilities;
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+// Renamed when extension detection became the generic capability pattern.
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:PostgresExtensions:ProbeOnStartup", "Whizbang:Capabilities:ProbeOnStartup")]
 public sealed class CapabilityOptions {
   /// <summary>
   /// Whether the startup step probes every provider (<c>Whizbang:Capabilities:ProbeOnStartup</c>).

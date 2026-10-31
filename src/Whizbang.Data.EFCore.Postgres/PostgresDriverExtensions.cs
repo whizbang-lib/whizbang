@@ -201,6 +201,13 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<PhysicalColumnFillMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held
+        // before migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamLifecycleBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
@@ -297,6 +304,39 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
+        // writes through it; a blob store package registers its own IArchiveStore first and wins.
+        // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
+        // How an archive store reaches this database, shared by the table store and any store that keeps state here.
+        selector.Services.TryAddSingleton(sp =>
+          new PostgresArchiveConnection(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
+          var database = sp.GetRequiredService<PostgresArchiveConnection>();
+          return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
+        });
+        // TURNKEY: the maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever
+        // archive store is registered, under the maintainer duty.
+        // <docs>fundamentals/events/archive-store#restore-requests</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
+          ArchiveRestoreRequestStep.FromServices));
+        // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
+        // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
+        // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>
+          new PostgresStreamFinalizer(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            sp.GetService<TimeProvider>(),
+            sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+        // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
+        // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
+        selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>
+          new PostgresFanoutChildRefiler(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            sp.GetService<global::Whizbang.Core.IStreamIdExtractor>(),
+            jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+            schema: defaultSchema(sp),
+            logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
 
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
         // real fault even during a migration (the migration needs it), so this replaces a consumer's
@@ -313,8 +353,15 @@ public static class PostgresDriverExtensions {
         // TURNKEY: table statistics for OTel metrics, the same provider and collector the Dapper driver
         // registers. The provider schema-qualifies its queries: pass the model's default schema so
         // multi-schema services report THEIR tables instead of probing a bare public schema.
+        // The name the context's connection string is found under (the name passed to WithEFCore<T>(...), else "db"),
+        // which also names this database's capability scope, its PostgresOptions section and its notification key.
+        var connectionStringName = selector.ConnectionStringName
+          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+        // Statement statistics are read only while the probe found pg_stat_statements Ready on this database, the
+        // scope registered below under the connection string's name (#1754).
         selector.Services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
-          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables));
+          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables,
+          sp.GetRequiredService<Whizbang.Core.Capabilities.ICapabilityRegistry>(), connectionStringName));
 
         // Durable suppression for the findings that cycle raises. Without it the advisory remembers
         // in process memory, so every replica reports the same table independently and every
@@ -414,9 +461,8 @@ public static class PostgresDriverExtensions {
         // config when they want a different key per-environment.
         //
         // Late-binding via PostConfigure so an explicit
-        // Whizbang:Database:ConnectionStringKey in appsettings still wins.
-        var connectionStringName = selector.ConnectionStringName
-          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+        // Whizbang:Database:ConnectionStringKey in appsettings still wins. The name itself is connectionStringName,
+        // declared with the table statistics above.
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null

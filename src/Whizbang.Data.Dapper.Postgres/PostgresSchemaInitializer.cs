@@ -124,6 +124,13 @@ public sealed class PostgresSchemaInitializer {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstanceAsync</tests>
   public IServiceInstanceProvider? Instance { get; init; }
 
+  /// <summary>
+  /// The perspective tables whose stored keys are brought to their declared spelling once the tables exist (#1874):
+  /// what each table's model declares, read from the serializer's metadata. Null or empty checks nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperDeclaredNameSpellingTests.cs</tests>
+  public IReadOnlyList<Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable>? DeclaredKeyTables { get; init; }
+
   /// <summary>Told when another session holds the schema lock, before this initialization waits for it.</summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync</tests>
   public IReadOnlyList<ISchemaInitializationObserver> Observers { get; init; } = [];
@@ -168,6 +175,11 @@ public sealed class PostgresSchemaInitializer {
         }
       }
     }
+
+    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, whether or not its
+    // schema changed, except on the tables listed in perspective_storage_manual_tables (#1747). Never fatal.
+    await PerspectiveStorageParameters.ReconcileAsync(
+      connection, schema, (_perspectiveEntries ?? []).Select(e => e.Value), Logger, cancellationToken);
   }
 
   /// <summary>
@@ -190,9 +202,10 @@ public sealed class PostgresSchemaInitializer {
   /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
   private async Task _migrateAsync(
       NpgsqlConnection connection, string schemaSql, string schema, CancellationToken cancellationToken) {
-    // Execute infrastructure schema (event store, inbox, outbox, etc.)
+    // Execute infrastructure schema (event store, inbox, outbox, etc.), catalog-checked (#1636): it re-asserts every
+    // column and index at every start, and each would otherwise take its table's lock to find it already there.
     await using var command = connection.CreateCommand();
-    command.CommandText = schemaSql;
+    command.CommandText = CatalogCheckedDdl.Guard(schemaSql);
     command.CommandTimeout = 30; // 30 seconds should be plenty for schema creation
     await command.ExecuteNonQueryAsync(cancellationToken);
 
@@ -220,6 +233,15 @@ public sealed class PostgresSchemaInitializer {
 
     // The registry rows for those tables, once the tables exist (the EF Core driver's step 6).
     await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
+
+    // Stored keys an earlier release wrote under a C# name that differs from the declared [JsonPropertyName] only in
+    // case are moved to the declared name, and a required member still missing is reported (#1874). A row holding
+    // both spellings with different values stops startup.
+    if (DeclaredKeyTables is { } declaredKeyTables) {
+      await Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.ApplyAsync(
+        () => new NpgsqlConnection(_connectionString), schema, declaredKeyTables,
+        SchemaCommandTimeout.Resolve(_connectionString), Logger, cancellationToken);
+    }
 
     // And the objects that refer to a perspective's table, which can only be created now that the
     // tables are there.
@@ -596,7 +618,7 @@ public sealed class PostgresSchemaInitializer {
     var bootstrap = migrations.FirstOrDefault(m => m.Name.StartsWith("000", StringComparison.Ordinal));
     if (bootstrap != null) {
       await using var bootstrapCmd = connection.CreateCommand();
-      bootstrapCmd.CommandText = bootstrap.Sql;
+      bootstrapCmd.CommandText = CatalogCheckedDdl.Guard(bootstrap.Sql);
       bootstrapCmd.CommandTimeout = 30;
       await bootstrapCmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -641,88 +663,128 @@ public sealed class PostgresSchemaInitializer {
         continue;
       }
 
-      var isUpdate = existingHash != null;
-      // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
-      // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
-      // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
-      // pass shared, which met the contract but threw away every file that had succeeded when a later
-      // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
-      // This runner once ran them outside any transaction, and the divergence stayed invisible until
-      // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
-      // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
-      // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
-      // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
-      //
-      // The ledger write joins the transaction too, so a migration and the record saying it applied
-      // commit together or not at all. The FAILURE record is deliberately written outside it, after
-      // the rollback, because a row recorded inside the doomed transaction would roll back with it
-      // and leave the failure invisible.
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-      Exception? failure = null;
-      try {
-        await using var cmd = connection.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandTimeout = 30;
-
-        // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
-        // batched region is several commands — the marked one repeatedly, until it reports no rows —
-        // because one statement over a whole table cannot finish inside a single command once the
-        // table is large. A driver that sent the file whole would push the unsubstituted size token
-        // at the server; both drivers read the same migration files, so both have to read the marks.
-        foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
-          cmd.CommandText = segment.Sql;
-
-          if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
-            await cmd.ExecuteNonQueryAsync(cancellationToken);
-            continue;
-          }
-
-          var passes = 0;
-          while (true) {
-            var reported = await cmd.ExecuteScalarAsync(cancellationToken);
-            var rows = reported is null or DBNull
-              ? 0L
-              : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
-            if (rows <= 0) {
-              break;
-            }
-
-            if (++passes > MaxBatchPasses) {
-              throw new InvalidOperationException(
-                $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
-                + "region has to exclude the rows it already handled, or it reports the same rows "
-                + "forever.");
-            }
-          }
-        }
-
-        var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = (existingHash == hash, isUpdate) switch {
-          (true, _) => "Re-applied (redefinition closure)",
-          (false, true) => $"Updated from hash {existingHash![..8]}...",
-          _ => "First apply",
-        };
-
-        // Store previous SQL content for rollback support (functions can be re-applied)
-        var previousContent = isUpdate ? migration.Sql : null;
-        await _upsertMigrationAsync(connection,
-            new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
-            cancellationToken, transaction);
-        await transaction.CommitAsync(cancellationToken);
-      } catch (Exception ex) {
-        // Captured rather than rethrown here. A rethrow from an async catch that also awaits
-        // makes the compiler hoist this handler out of the IL catch region and rewrite
-        // `throw;` as a capture-and-throw; the brace's sequence point then lands on
-        // state-machine cleanup nothing reaches. Throwing after the block keeps the same
-        // order — roll back, record the failure, propagate — with no unreachable line.
-        failure = ex;
-        await transaction.RollbackAsync(cancellationToken);
-        // Record failure on the connection with no ambient transaction, so it survives the rollback.
-        await _recordFailureAsync(connection, migration.Name, hash, versionId, ex, cancellationToken);
+      // A deadlock is the server choosing this file's transaction as its victim (#1636): the file runs again, in
+      // place, after a short back-off, as on the EF Core driver. Any other failure, or a deadlock that keeps
+      // happening, is recorded after the rollback and halts the migration.
+      var deadlocks = 0;
+      Exception? failure;
+      while ((failure = await _applyMigrationFileAsync(
+          connection, migration, hash, existingHash, versionId, executionOrder, cancellationToken)) is not null
+          && deadlocks < MigrationDeadlockRetry.MAX_RETRIES && MigrationDeadlockRetry.AsDeadlock(failure) is { } deadlock) {
+        deadlocks++;
+        await _waitOutDeadlockAsync(migration.Name, deadlock, deadlocks, cancellationToken);
       }
 
       if (failure is not null) {
+        // Recorded on the connection with no ambient transaction, so it survives the rollback.
+        await _recordFailureAsync(connection, migration.Name, hash, versionId, failure, cancellationToken);
         ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
+      }
+    }
+  }
+
+  /// <summary>Says a migration file lost a deadlock and will run again, at Warning, then waits out the back-off.</summary>
+  private async Task _waitOutDeadlockAsync(string file, PostgresException deadlock, int deadlocks, CancellationToken cancellationToken) {
+    var delay = MigrationDeadlockRetry.Delay(deadlocks, Random.Shared);
+    if (Logger is { } logger) {
+      _logMigrationDeadlocked(logger, file, deadlock.SqlState, deadlock.MessageText,
+        delay.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s", deadlocks,
+        MigrationDeadlockRetry.MAX_RETRIES, null);
+    }
+    await Task.Delay(delay, cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies one migration file and its ledger row in a transaction of its own; on a failure, rolls it back and returns
+  /// the failure without recording it, so the caller decides between a retry and a recorded failure.
+  /// </summary>
+  private static async Task<Exception?> _applyMigrationFileAsync(
+      NpgsqlConnection connection, Core.Data.MigrationScript migration, string hash, string? existingHash, int versionId,
+      int executionOrder, CancellationToken cancellationToken) {
+    var isUpdate = existingHash != null;
+    // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
+    // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
+    // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
+    // pass shared, which met the contract but threw away every file that had succeeded when a later
+    // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
+    // This runner once ran them outside any transaction, and the divergence stayed invisible until
+    // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
+    // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
+    // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
+    // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
+    //
+    // The ledger write joins the transaction too, so a migration and the record saying it applied
+    // commit together or not at all. The FAILURE record is deliberately written outside it, after
+    // the rollback, because a row recorded inside the doomed transaction would roll back with it
+    // and leave the failure invisible.
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    Exception? failure = null;
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.Transaction = transaction;
+      cmd.CommandTimeout = 30;
+
+      // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
+      // batched region is several commands (the marked one repeatedly, until it reports no rows)
+      // because one statement over a whole table cannot finish inside a single command once the
+      // table is large. A driver that sent the file whole would push the unsubstituted size token
+      // at the server; both drivers read the same migration files, so both have to read the marks.
+      foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
+        if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
+          // Catalog-checked (#1636), as on the EF Core driver: idempotent DDL with nothing to do takes no lock.
+          cmd.CommandText = CatalogCheckedDdl.Guard(segment.Sql);
+          await cmd.ExecuteNonQueryAsync(cancellationToken);
+        } else {
+          cmd.CommandText = segment.Sql;
+          await _runBatchedRegionAsync(cmd, migration.Name, cancellationToken);
+        }
+      }
+
+      var status = isUpdate ? 2 : 1; // Updated vs Applied
+      var desc = (existingHash == hash, isUpdate) switch {
+        (true, _) => "Re-applied (redefinition closure)",
+        (false, true) => $"Updated from hash {existingHash![..8]}...",
+        _ => "First apply",
+      };
+
+      // Store previous SQL content for rollback support (functions can be re-applied)
+      var previousContent = isUpdate ? migration.Sql : null;
+      await _upsertMigrationAsync(connection,
+          new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
+          cancellationToken, transaction);
+      await transaction.CommitAsync(cancellationToken);
+    } catch (Exception ex) {
+      // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+      // makes the compiler hoist this handler out of the IL catch region and rewrite
+      // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+      // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+      // order (roll back, then hand the failure back) with no unreachable line.
+      failure = ex;
+      await transaction.RollbackAsync(cancellationToken);
+    }
+    return failure;
+  }
+
+  /// <summary>
+  /// Runs a batched region's command repeatedly until it reports no rows, failing once it has run more passes than
+  /// <see cref="MaxBatchPasses"/> allows.
+  /// </summary>
+  private static async Task _runBatchedRegionAsync(NpgsqlCommand cmd, string migrationName, CancellationToken cancellationToken) {
+    var passes = 0;
+    while (true) {
+      var reported = await cmd.ExecuteScalarAsync(cancellationToken);
+      var rows = reported is null or DBNull
+        ? 0L
+        : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
+      if (rows <= 0) {
+        break;
+      }
+
+      if (++passes > MaxBatchPasses) {
+        throw new InvalidOperationException(
+          $"Migration {migrationName} ran {passes} batches without finishing. A batched "
+          + "region has to exclude the rows it already handled, or it reports the same rows "
+          + "forever.");
       }
     }
   }
@@ -982,7 +1044,9 @@ public sealed class PostgresSchemaInitializer {
     // Check for destructive changes
     foreach (var (name, type) in oldColumns) {
       if (newColumns.TryGetValue(name, out var newType)) {
-        if (!string.Equals(newType, type, StringComparison.OrdinalIgnoreCase)) {
+        // Both sides are canonical (see _getTableColumnsAsync and _normalizeColumnType), so an alias such as
+        // TIMESTAMPTZ or VARCHAR(n) matches the spelling the database reports and only a real change differs.
+        if (!string.Equals(newType, type, StringComparison.Ordinal)) {
           return MigrationStrategy.EventReplay; // type changed
         }
       } else {
@@ -1043,9 +1107,12 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Queries information_schema.columns for a table's column names and types.
-  /// Returns empty dictionary if table does not exist.
+  /// Reads a table's column names and types from pg_attribute, each type in the canonical spelling of
+  /// <see cref="PostgresColumnType.Canonicalize"/> so it compares equal to the same type written in DDL (#1826).
+  /// <c>format_type</c> keeps the length, precision and array-ness that information_schema's <c>data_type</c>
+  /// drops. Returns an empty dictionary if the table does not exist.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs</tests>
   private static async Task<Dictionary<string, string>> _getTableColumnsAsync(
       NpgsqlConnection connection, string tableName, CancellationToken ct) {
 
@@ -1053,16 +1120,19 @@ public sealed class PostgresSchemaInitializer {
 
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema = current_schema() AND table_name = @tableName
-      ORDER BY ordinal_position";
+      SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = current_schema() AND c.relname = @tableName
+        AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attnum";
     cmd.Parameters.AddWithValue(nameof(tableName), tableName);
     cmd.CommandTimeout = 10;
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
-      result[reader.GetString(0)] = reader.GetString(1);
+      result[reader.GetString(0)] = PostgresColumnType.Canonicalize(reader.GetString(1));
     }
 
     return result;
@@ -1182,26 +1252,33 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Normalizes a SQL column type string for comparison.
-  /// Extracts the core type, handling compound types and modifiers.
+  /// The type of a DDL column definition (everything after the column name), cut at the earliest constraint
+  /// keyword and put in the canonical spelling of <see cref="PostgresColumnType.Canonicalize"/>, so it compares
+  /// equal to the type the database reports for the same column (#1826).
   /// </summary>
+  /// <remarks>
+  /// The cut is at the earliest keyword, not the first one listed: <c>UUID PRIMARY KEY DEFAULT ...</c> is
+  /// <c>uuid</c>, where cutting at <c>DEFAULT</c> because it is checked before <c>PRIMARY</c> would leave
+  /// <c>UUID PRIMARY KEY</c> and make the column look retyped.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs:AddedColumn_OnTableWithAliasedTypes_IsColumnCopyNotEventReplayAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs:SameColumnsSpelledAsAliases_IsDirectDdlAsync</tests>
   private static string _normalizeColumnType(string typeStr) {
-    // Trim and take type up to first known modifier keyword
     var normalized = typeStr.Trim();
+    var end = normalized.Length;
 
-    // Handle compound types by extracting up to first modifier
-    string[] modifiers = ["NOT", "NULL", "DEFAULT", "PRIMARY", "UNIQUE", "CHECK", "REFERENCES", "GENERATED", "CONSTRAINT"];
-
-    foreach (var modifier in modifiers) {
+    foreach (var modifier in _columnConstraintKeywords) {
       var idx = normalized.IndexOf($" {modifier}", StringComparison.OrdinalIgnoreCase);
-      if (idx > 0) {
-        normalized = normalized[..idx].Trim();
-        break;
+      if (idx > 0 && idx < end) {
+        end = idx;
       }
     }
 
-    return normalized.ToUpperInvariant();
+    return PostgresColumnType.Canonicalize(normalized[..end]);
   }
+
+  private static readonly string[] _columnConstraintKeywords =
+    ["NOT", "NULL", "DEFAULT", "PRIMARY", "UNIQUE", "CHECK", "REFERENCES", "GENERATED", "CONSTRAINT", "COLLATE"];
 
   /// <summary>
   /// Validates that a string is a safe PostgreSQL identifier (letters, digits, underscores only).
@@ -1219,6 +1296,11 @@ public sealed class PostgresSchemaInitializer {
   private static readonly Action<ILogger, string, string, string, Exception?> _logBothTablesExist = LoggerMessage.Define<string, string, string>(
     LogLevel.Warning, new EventId(1720, "PerspectiveTableRenameBlocked"),
     "The perspective table of {Model} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it");
+
+  private static readonly Action<ILogger, string, string, string, string, int, int, Exception?> _logMigrationDeadlocked =
+    LoggerMessage.Define<string, string, string, string, int, int>(
+      LogLevel.Warning, new EventId(1636, "MigrationDeadlocked"),
+      "Migration {Migration} deadlocked : {SqlState} {Error}; retrying it in {Delay} (deadlock {Deadlock} of {MaxDeadlocks})");
 
   private static readonly Action<ILogger, Exception?> _logReconcileFailed = LoggerMessage.Define(
     LogLevel.Warning, new EventId(1252, "ManagedObjectReconcileFailed"),

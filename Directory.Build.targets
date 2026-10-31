@@ -150,6 +150,10 @@
        the check would report that as an assembly identity change (CP0003) in every package. -->
   <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(IncludeBuildOutput)' != 'false' and '$(PackAsTool)' != 'true' and ('$(CI)' == 'true' or '$(WhizbangApiCheck)' == 'true')">
     <EnablePackageValidation>true</EnablePackageValidation>
-    <PackageValidationBaselineVersion>0.2624.0</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion Condition="'$(WhizbangUnreleasedPackage)' != 'true'">0.2625.0</PackageValidationBaselineVersion>
   </PropertyGroup>
+  <!-- A package with no stable release yet (WhizbangUnreleasedPackage=true in its project file) has no baseline on
+       nuget.org to download, so restore would fail (NU1101). It is still validated, against itself; after its first
+       stable release, delete the property so it is compared like every other package (docs/RELEASING.md,
+       "Public API baseline"). -->
 </Project>

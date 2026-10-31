@@ -36,6 +36,14 @@ public class EventFlagsTests {
   }
 
   [Test]
+  public async Task EventFlags_Terminal_BitPositionLockedAsync() {
+    await Assert.That(_asInt(EventFlags.Terminal)).IsEqualTo(64)
+      .Because("Bit position 6. The emit chains and wh_append_event read (flags & 64) to seal the stream that stores a terminal event (WS-3 S4); moving the bit silently stops every terminal event from sealing.");
+    await Assert.That(EventFlags.Terminal.IsStateBased()).IsFalse()
+      .Because("A terminal event ends a Sourced stream; it is replayed from the log like any other.");
+  }
+
+  [Test]
   public async Task IsStateBased_TrueForEphemeralAndCompacted_FalseOtherwiseAsync() {
     await Assert.That(EventFlags.Ephemeral.IsStateBased()).IsTrue()
       .Because("Ephemeral is StateBased (no-replay) — self-destructing.");

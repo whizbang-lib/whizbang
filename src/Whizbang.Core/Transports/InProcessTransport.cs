@@ -35,7 +35,27 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 public class InProcessTransport : ITransport {
   private readonly ConcurrentDictionary<string, List<(TransportBatchCollector<TransportMessage> collector, InProcessSubscription subscription)>> _batchSubscriptions = new();
+  private readonly TimeProvider _timeProvider;
   private bool _isInitialized;
+
+  /// <summary>Creates an in-process transport whose batch subscriptions run on the system clock.</summary>
+  /// <docs>messaging/transports/transports</docs>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/SubscribeBatchTests.cs:SubscribeBatchAsync_ReturnsActiveSubscriptionAsync</tests>
+  public InProcessTransport() : this(TimeProvider.System) {
+  }
+
+  /// <summary>
+  /// Creates an in-process transport whose batch subscriptions run their sliding window and hard max on
+  /// <paramref name="timeProvider"/>, so a test can close a batch window by moving a fake clock.
+  /// </summary>
+  /// <param name="timeProvider">The clock every batch subscription's collector runs on.</param>
+  /// <docs>messaging/transports/transports</docs>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/SubscribeBatchTests.cs:SubscribeBatchAsync_SlideWindowFlushesPartialBatchAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/SubscribeBatchTests.cs:SubscribeBatchAsync_BatchHandlerError_DoesNotLoseMessagesAsync</tests>
+  public InProcessTransport(TimeProvider timeProvider) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    _timeProvider = timeProvider;
+  }
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Component.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
@@ -108,7 +128,8 @@ public class InProcessTransport : ITransport {
 
     var collector = new TransportBatchCollector<TransportMessage>(
       batchOptions,
-      batch => batchHandler(batch, CancellationToken.None)
+      batch => batchHandler(batch, CancellationToken.None),
+      _timeProvider
     );
 
     InProcessSubscription? subscription = null;

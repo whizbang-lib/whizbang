@@ -31,10 +31,13 @@
     <PackageReference Include="Bogus" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <!-- The shared test messages compile into both test assemblies: one source, no drift. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Transports.Tests/TestMessages.cs" Link="Shared/TestMessages.cs" />
+    <!-- The fake clock that reports each timer it arms, shared with the core component tests (#1868). -->
+    <Compile Include="../Whizbang.Core.Component.Tests/Workers/ArmingClock.cs" Link="Shared/ArmingClock.cs" />
   </ItemGroup>
 </Project>

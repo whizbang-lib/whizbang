@@ -84,7 +84,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -106,7 +107,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -155,7 +157,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -168,7 +171,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -181,7 +185,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: null!,
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -193,7 +198,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: null!,
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
       .Throws<ArgumentNullException>();
   }
 
@@ -206,7 +212,22 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: null!,
-      pinnedPool: NoOpPinnedConnectionPool.Instance))
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter()))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_ThrowsOnNullInboxChannelWriterAsync() {
+    var options = Options.Create(_enabledOptions());
+    await Assert.That(() => new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -228,7 +249,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(opts),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     // Act - Start, wait for ExecuteAsync's disabled arm to actually log (the body's first
     // statement on this path), enqueue a request, then stop. Without that wait a zero-commit
@@ -269,7 +291,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -298,7 +321,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -329,7 +353,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -343,6 +368,220 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(routed.Failure.Error).IsEqualTo("unknown");
   }
 
+  // ==========================================================================
+  // #1789: a per-row commit failure is visible at Warning, with the row it names
+  // ==========================================================================
+
+  private sealed class LevelLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Entries) {
+        Entries.Add((logLevel, formatter(state, exception)));
+      }
+    }
+
+    public List<string> At(Microsoft.Extensions.Logging.LogLevel level) {
+      lock (Entries) {
+        return [.. Entries.Where(e => e.Level == level).Select(e => e.Message)];
+      }
+    }
+  }
+
+  [Test]
+  public async Task CommitFailure_IsLoggedAtWarning_WithTheMessageIdTypeAndErrorAsync() {
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var coordinator = new StubCoordinator(reqs =>
+      [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: "duplicate key value violates unique constraint")]);
+    var failures = new CapturingFailureChannel();
+    var log = new LevelLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.EnqueueAsync(_request(messageId, messageId) with { MessageType = "Contracts.Orders.OrderPlaced, Contracts" }, cts.Token);
+    // The failure is routed after it is logged, so the routed failure is the signal that the line exists.
+    _ = await failures.WaitForOneAsync(TimeSpan.FromSeconds(10));
+    await worker.StopAsync(cts.Token);
+
+    var warning = log.At(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .SingleOrDefault(m => m.Contains(messageId.ToString(), StringComparison.Ordinal));
+    await Assert.That(warning).IsNotNull()
+      .Because("a commit that failed for one row was counted only in a Debug line, so no operator ever saw it");
+    await Assert.That(warning).Contains("Contracts.Orders.OrderPlaced, Contracts")
+      .And.Contains("duplicate key value violates unique constraint");
+  }
+
+  [Test]
+  public async Task CommitFailure_ForAResultNamingNoRequest_IsStillLoggedAsync() {
+    // A result whose handler id matches no request cannot be routed to the failure channel, and was
+    // skipped without a word. It is logged so the failure is not lost along with its routing.
+    var stray = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var routed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var coordinator = new StubCoordinator(reqs => {
+      routed.TrySetResult();
+      return [new HandlerBatchResult(stray, Success: false, ErrorMessage: "orphan result")];
+    });
+    var log = new LevelLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await worker.EnqueueAsync(_request(id, id), cts.Token);
+    await routed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // StopAsync drains the flusher, so the flush that returned the stray result has finished logging.
+    await worker.StopAsync(cts.Token);
+
+    await Assert.That(log.At(Microsoft.Extensions.Logging.LogLevel.Warning)
+        .Any(m => m.Contains(stray.ToString(), StringComparison.Ordinal) && m.Contains("orphan result", StringComparison.Ordinal)))
+      .IsTrue();
+  }
+
+  [Test]
+  public async Task ManyCommitFailuresInOneFlush_LogTheFirstIndividually_ThenOneSummaryOfTheRestAsync() {
+    const int rows = 12;
+    var coordinator = new StubCoordinator(reqs =>
+      [.. reqs.Select(r => new HandlerBatchResult(r.HandlerId, Success: false, ErrorMessage: "commit refused"))]);
+    var failures = new CapturingFailureChannel();
+    var log = new LevelLogger();
+    // One flush of exactly twelve: the batch forms when the twelfth request arrives.
+    var options = new InboxHandlerWorkerOptions {
+      Enabled = true,
+      Flusher = new BatchFlusherOptions { MaxBatchSize = rows, ImmediateFlushThreshold = rows, CoalesceWindowMs = 600_000, ChannelCapacity = 100 }
+    };
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(options),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    for (var i = 0; i < rows; i++) {
+      var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+      await worker.EnqueueAsync(_request(id, id), cts.Token);
+    }
+    await worker.StopAsync(cts.Token);
+
+    var warnings = log.At(Microsoft.Extensions.Logging.LogLevel.Warning);
+    var individual = warnings.Count(m => m.Contains("commit refused", StringComparison.Ordinal));
+    await Assert.That(individual).IsEqualTo(InboxHandlerWorker.MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH)
+      .Because("a flush where every row fails must not turn into a line per row; the first few carry the detail");
+    await Assert.That(warnings.Any(m => m.Contains($"{rows - InboxHandlerWorker.MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH} more", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the rows past the cap are still counted, in one summary line");
+    await Assert.That(failures.Enqueued.Count).IsEqualTo(rows)
+      .Because("logging is capped, routing is not: every failed row still reaches the failure channel");
+  }
+
+  // ==========================================================================
+  // #1788: a row waiting for its commit stops being held once the commit flush ends
+  // ==========================================================================
+
+  private static async Task<(InboxChannelWriter Writer, Guid Id)> _heldCommitPendingAsync(InboxChannelWriter? existing = null) {
+    var writer = existing ?? new InboxChannelWriter();
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await writer.WriteAsync(new InboxWork {
+      MessageId = id,
+      Envelope = new Whizbang.Core.Observability.MessageEnvelope<System.Text.Json.JsonElement> {
+        MessageId = Whizbang.Core.ValueObjects.MessageId.From(id),
+        Payload = System.Text.Json.JsonElement.Parse("{}"),
+        Hops = [],
+        DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+          Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
+          Source = MessageSource.Inbox,
+        },
+      },
+      MessageType = "Contracts.Orders.OrderPlaced, Contracts",
+    });
+    _ = writer.TryBeginDispatch(id);
+    writer.MarkCommitPending(id);
+    writer.EndDispatch(id);
+    return (writer, id);
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task CommitFlush_ReleasesTheHeldRow_WhetherItCommittedOrNotAsync(bool success) {
+    var (writer, id) = await _heldCommitPendingAsync();
+    var coordinator = new StubCoordinator(reqs =>
+      [new HandlerBatchResult(reqs[0].HandlerId, Success: success, ErrorMessage: success ? null : "commit refused")]);
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: writer);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.EnqueueAsync(_request(id, id), cts.Token);
+    // StopAsync drains the flusher, so the flush of this request has ended when it returns.
+    await worker.StopAsync(cts.Token);
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse()
+      .Because("a committed row is gone from the store, and a failed one must be offered again; neither is held any more");
+  }
+
+  [Test]
+  public async Task DisabledCommits_ReleaseTheHeldRow_TheyRefuseAsync() {
+    var (writer, id) = await _heldCommitPendingAsync();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: writer);
+
+    await worker.EnqueueAsync(_request(id, id));
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse()
+      .Because("a refused commit will never land, so the row must not stay held waiting for it");
+  }
+
+  [Test]
+  public async Task WorkerPipeline_WiresTheInboxChannelWriterIntoTheCommitWorkerAsync() {
+    // Resolved from the real registration: a commit the worker refuses releases the row from the writer DI hands
+    // the dispatch path, which only happens when the optional dependency was actually injected.
+    var services = new ServiceCollection().AddLogging();
+    services.AddWhizbangWorkers();
+    services.Configure<InboxHandlerWorkerOptions>(o => o.Enabled = false);
+    await using var sp = services.BuildServiceProvider();
+    var writer = (InboxChannelWriter)sp.GetRequiredService<IInboxChannelWriter>();
+    var (_, id) = await _heldCommitPendingAsync(writer);
+    var worker = sp.GetRequiredService<InboxHandlerWorker>();
+
+    await worker.EnqueueAsync(_request(id, id));
+
+    await Assert.That(writer.IsInFlight(id)).IsFalse();
+  }
+
   [Test]
   public async Task EnqueueAsync_ThrowsOnNullRequestAsync() {
     var worker = new InboxHandlerWorker(
@@ -351,7 +590,8 @@ public sealed class InboxHandlerWorkerTests {
       schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
 
     await Assert.That(async () => await worker.EnqueueAsync(null!)).Throws<ArgumentNullException>();
   }

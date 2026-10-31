@@ -50,9 +50,10 @@ public class DapperSqliteEventStore(
         using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
         connection.Open();
 
-        // Get next sequence number
+        // Next sequence number: a new stream (no sequence, -1) starts at 1, as on every other write path (#1913); an
+        // existing stream continues from its highest sequence.
         var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
-        var nextSequence = lastSequence + 1;
+        var nextSequence = Math.Max(lastSequence, 0) + 1;
 
         // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
         var envelopeType = typeof(MessageEnvelope<TMessage>);

@@ -287,6 +287,25 @@ the renewal interval, 2.5 s by default) now halves the next one and caps growth 
 one past half the budget holds its size. The timeout backoff stays as the last resort. **Rule:** no
 single fenced call may outlast a renewal interval; it holds the role row for its whole duration.
 
+**A backoff must check that shrinking helps, and a stamp must not join its batch with itself (#1786).** An
+upgrade from below 046 left a whole store unstamped, with statistics that predate the columns the stamp plans on.
+205's stamp was one statement of chained CTEs; on estimates that small, and on the generic plan a long-lived
+connection settles on after five calls, the planner joined the batch's own sets by nested loop: a 1,000-row call
+removed about 999,000 rows by join filter, twice, and took 0.4 to 1.2 s on a test backlog of about 200,000 rows sharing one
+insert_xid. Separately, each call also paid a cost its size did not change (migration I/O on the same server), and
+#1327's rule halved every slow call down to one row while its cap held growth there. 247 splits the stamp into four
+statements that each have one plan (the walk with sort off; the lock matched to the prefixes by GROUP BY, not a
+join; ranks paired with version order by array position; the update by key with hash and merge joins off), 0.03 to
+0.2 s per 1,000 rows on the same backlog. `CommitOrderStampSizer` stops halving when a halved call cost at least
+three quarters of the larger one, and grows again on any call well inside the budget. **Rules:** never join two
+CTEs or unnests of a batch to each other in a hot statement (their estimates are guesses: group, sort or pair by
+position instead); never switch off a node type a statement has no alternative to, because the plan then carries
+`disable_cost` (1e10 on Postgres 17), crosses `jit_above_cost`, and pays about 0.9 s of JIT compilation per call
+(seen with `enable_nestloop = off` around a LATERAL); and before shrinking a batch again, check the last shrink
+made the call cheaper. To see a function's nested plans with row counts, use `auto_explain` on the calling
+connection (`log_nested_statements`, `log_analyze`, `log_format = json`, `log_level = notice`) and read the notices;
+`Rows Removed by Join Filter` names a quadratic join that index-entry counts do not.
+
 **Measure a function's work inside its own transaction, not from its plan.** `EXPLAIN (ANALYZE,
 BUFFERS)` of `SELECT stamp_pending_commit_sequences(…)` did not follow the walk: 910 buffers for a
 call that read 1,000 index entries and 530 for one that read 20,000. Index entries read come from

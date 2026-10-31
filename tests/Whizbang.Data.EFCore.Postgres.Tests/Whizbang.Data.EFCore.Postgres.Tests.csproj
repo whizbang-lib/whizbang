@@ -81,4 +81,9 @@
   <ItemGroup>
     <None Update="Performance\baseline.tsv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- The fake clock the outbox batcher's retry waits run on (#1871), shared with the component tests. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Core.Component.Tests/Workers/TimerAdvancingClock.cs" Link="Shared/Workers/TimerAdvancingClock.cs" />
+  </ItemGroup>
 </Project>

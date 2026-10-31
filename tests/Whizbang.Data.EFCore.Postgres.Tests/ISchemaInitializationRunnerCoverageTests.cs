@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// instead of racing. No database is used in this file.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextSchemaInitializationRunner.cs</code-under-test>
-[NotInParallel("DbContextInitializationRegistry")]
+[NotInParallel(["DbContextInitializationRegistry", "EFCorePostgresTests"])]
 [Category("Shard1")]
 public class ISchemaInitializationRunnerCoverageTests {
   private IDisposable? _restore;

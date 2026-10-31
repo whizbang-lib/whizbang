@@ -26,15 +26,29 @@ namespace Whizbang.Core.Health;
 public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
   private readonly IRoleAssignmentReader _reader;
   private readonly RoleAssignmentOptions _options;
+  private readonly IStartupStageGate? _stages;
 
   /// <summary>Creates the source.</summary>
   /// <param name="reader">Reads the assignments.</param>
   /// <param name="options">Which roles are held by assignment.</param>
-  public RoleAssignmentHealthSource(IRoleAssignmentReader reader, IOptions<RoleAssignmentOptions> options) {
+  public RoleAssignmentHealthSource(IRoleAssignmentReader reader, IOptions<RoleAssignmentOptions> options)
+    : this(reader, options, stages: null) {
+  }
+
+  /// <summary>Creates the source, reading nothing before this instance reaches the election stage (#1636).</summary>
+  /// <param name="reader">Reads the assignments.</param>
+  /// <param name="options">Which roles are held by assignment.</param>
+  /// <param name="stages">
+  /// This instance's stage gate. Before <see cref="StartupStage.Elect"/> the tables the reader reads may not exist,
+  /// so the source reports Degraded without reading them. Null reads at every probe.
+  /// </param>
+  public RoleAssignmentHealthSource(
+      IRoleAssignmentReader reader, IOptions<RoleAssignmentOptions> options, IStartupStageGate? stages) {
     ArgumentNullException.ThrowIfNull(reader);
     ArgumentNullException.ThrowIfNull(options);
     _reader = reader;
     _options = options.Value;
+    _stages = stages;
   }
 
   /// <inheritdoc />
@@ -42,6 +56,10 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
 
   /// <inheritdoc />
   public async ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
+    if (_stages?.HasReached(StartupStage.Elect) == false) {
+      return new ComponentHealth(ComponentState.Degraded,
+        "role assignments are read from the Elect stage on; this instance is in an earlier one");
+    }
     System.Collections.Generic.IReadOnlyList<RoleAssignmentSnapshot> snapshots;
     try {
       snapshots = await _reader.ReadAssignmentsAsync(cancellationToken).ConfigureAwait(false);

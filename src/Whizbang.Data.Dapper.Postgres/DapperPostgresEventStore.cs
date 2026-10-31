@@ -28,7 +28,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 #pragma warning disable CS9113 // Primary constructor parameters are unread - retained for backward compatibility
-public class DapperPostgresEventStore(
+public partial class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions,
@@ -58,8 +58,10 @@ public class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamGuardTests.cs:AppendAsync_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:AppendAsync_TerminalEvent_SealsTheStream_AndTheNextAppendThrowsStreamSealedExceptionAsync</tests>
   /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
   /// events (WHIZ133); nothing is stored.</exception>
+  /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -207,7 +209,8 @@ public class DapperPostgresEventStore(
       es.event_type AS EventType,
       eb.event_data::text AS EventData,
       eb.metadata::text AS Metadata,
-      es.scope::text AS Scope
+      es.scope::text AS Scope,
+      es.version AS Version
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
@@ -218,7 +221,8 @@ public class DapperPostgresEventStore(
   /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
-    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope
+    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
+           es.version AS Version
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId
@@ -314,12 +318,15 @@ public class DapperPostgresEventStore(
     var parameters = _buildAppendParameters(streamId, envelope, jsonb, Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver));
 
     try {
-      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException.
-      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
-        connection,
-        GetAppendSql(),
-        parameters,
-        cancellationToken: cancellationToken));
+      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException, (#1733) an
+      // append to a sealed stream as StreamSealedException, and (#1738) one to a stream archived whole as
+      // StreamArchivedException.
+      await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
+          connection,
+          GetAppendSql(),
+          parameters,
+          cancellationToken: cancellationToken))));
     } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
       // The version is assigned under the stream's lock and can no longer collide, so a unique violation is
       // the event id: this event is already stored. Retrying would only fail the same way.
@@ -384,7 +391,8 @@ public class DapperPostgresEventStore(
       return @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId
@@ -394,7 +402,8 @@ public class DapperPostgresEventStore(
     return @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
@@ -408,24 +417,31 @@ public class DapperPostgresEventStore(
   /// </summary>
   private static string _getReadInStreamOrderSql(Guid? fromEventId) =>
     fromEventId is null
-      ? @"SELECT es.event_type AS EventType,
-                 eb.event_data::text AS EventData,
-                 eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope,
-                 es.version AS Version
-          FROM wh_event_store es
-          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+      ? READ_IN_STREAM_ORDER_COLUMNS + @"
           WHERE es.stream_id = @StreamId
           ORDER BY es.version, es.event_id"
-      : @"SELECT es.event_type AS EventType,
+      : READ_IN_STREAM_ORDER_COLUMNS + @"
+          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          ORDER BY es.version, es.event_id";
+
+  /// <summary>
+  /// The replay read's columns and source. <c>IsFirstInStream</c> is decided from the event's position (#1878): version 0,
+  /// or version 1 when the stream holds no version 0, so it holds whatever the read starts after. The version-0 probe
+  /// runs for version-1 rows only (CASE evaluates its arms in order), one unique-index probe per stream.
+  /// </summary>
+  private const string READ_IN_STREAM_ORDER_COLUMNS = @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version,
+                 CASE
+                   WHEN es.version = 0 THEN TRUE
+                   WHEN es.version = 1 THEN NOT EXISTS (
+                     SELECT 1 FROM wh_event_store e0 WHERE e0.stream_id = es.stream_id AND e0.version = 0)
+                   ELSE FALSE
+                 END AS IsFirstInStream
           FROM wh_event_store es
-          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
-          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
-          ORDER BY es.version, es.event_id";
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id";
 
   /// <summary>
   /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.
@@ -437,8 +453,49 @@ public class DapperPostgresEventStore(
       ScopeJson = row.Scope
     };
 
-    return _adapter.FromJsonb<TMessage>(jsonb);
+    var envelope = _adapter.FromJsonb<TMessage>(jsonb);
+    // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+    // without asking the archive.
+    envelope.LocalStreamVersion = row.Version;
+    return envelope;
   }
+
+  /// <summary>
+  /// Decodes stored rows the way this store's polymorphic read does (#1738): the archive seam decodes archived rows with
+  /// it, so an archived event comes back exactly as the hot read returns it. A row of a type the reader does not fold is
+  /// skipped, as the drain skips it; a row that cannot be read is logged and skipped, so one bad row never fails the batch.
+  /// </summary>
+  /// <param name="streamEvents">The stored rows.</param>
+  /// <param name="eventTypes">The event types the reader folds.</param>
+  /// <returns>The decoded events, in the order given, each carrying its row's commit sequence.</returns>
+  /// <docs>fundamentals/events/archive-store#read-through</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_DecodesAStoredRow_AndSkipsATypeTheReaderDoesNotFoldAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowThatCannotBeRead_IsSkipped_AndTheRestAreKeptAsync</tests>
+  public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    ArgumentNullException.ThrowIfNull(streamEvents);
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
+    foreach (var raw in streamEvents) {
+      if (!EventTypeMatchingHelper.TryResolveType(typeMap, raw.EventType, out var concreteType)) {
+        continue;
+      }
+      try {
+        var jsonb = new JsonbPersistenceModel { DataJson = raw.EventData, MetadataJson = raw.Metadata ?? "{}", ScopeJson = raw.Scope };
+        var eventData = _deserializeEventData(jsonb, concreteType);
+        var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
+        StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
+        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+        envelope.LocalCommitSequence = raw.CommitSequence;
+        results.Add(envelope);
+      } catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+        LogStoredRowUnreadable(logger, ex, raw.EventId, raw.EventType);
+      }
+    }
+    return results;
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Stored event {EventId} of type {EventType} could not be read and was skipped")]
+  static partial void LogStoredRowUnreadable(ILogger logger, Exception exception, Guid eventId, string eventType);
 
   /// <summary>
   /// Deserializes an EventRow into a polymorphic MessageEnvelope using type resolution from the type map.
@@ -453,10 +510,11 @@ public class DapperPostgresEventStore(
     var eventData = _deserializeEventData(jsonb, concreteType);
 
     var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
-    _restoreScopeFromJson(jsonb.ScopeJson, hops);
+    StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
 
     var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
     envelope.LocalStreamVersion = row.Version;
+    envelope.IsFirstInLocalStream = row.IsFirstInStream;
     return envelope;
   }
 
@@ -539,51 +597,5 @@ public class DapperPostgresEventStore(
     }
 
     return (messageId, hops);
-  }
-
-  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson) || (hops.Count > 0 && hops[0].Scope != null)) {
-      return;
-    }
-
-    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
-    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
-    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
-    // any perspective requiring a security context rejected the event on every retry until it
-    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
-    // scope still yields none, because the emptiness check above returns first.
-    if (hops.Count == 0) {
-      hops.Add(new MessageHop {
-        Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
-        ServiceInstance = ServiceInstanceInfo.Unknown,
-      });
-    }
-
-    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
-    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
-      return;
-    }
-
-    var tenantId = _extractScopeValue(scopeDict, "t") ?? _extractScopeValue(scopeDict, "tenant_id");
-    var userId = _extractScopeValue(scopeDict, "u") ?? _extractScopeValue(scopeDict, "user_id");
-    var customerId = _extractScopeValue(scopeDict, "c");
-    var organizationId = _extractScopeValue(scopeDict, "o");
-
-    if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
-      var scope = new PerspectiveScope {
-        TenantId = tenantId,
-        UserId = userId,
-        CustomerId = customerId,
-        OrganizationId = organizationId
-      };
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-    }
-  }
-
-  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
-    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
-      ? elem.Value.GetString()
-      : null;
   }
 }

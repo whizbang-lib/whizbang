@@ -187,6 +187,41 @@ public class AzureServiceBusSubscriptionTests {
   }
 
   [Test]
+  public async Task Disconnection_AfterRaiseDisconnected_HoldsTheFirstRaisedDisconnectAsync() {
+    // A caller that attaches its handler after the disconnect hears nothing; the recorded disconnect is how it
+    // finds out (#1831). Read through the interface, as the retry helper reads it.
+    using var subscription = _subscription();
+    await Assert.That(_disconnectionOf(subscription)).IsNull();
+    SubscriptionDisconnectedEventArgs? seen = null;
+    subscription.OnDisconnected += (_, e) => seen = e;
+
+    subscription.RaiseDisconnected("connection lost", new InvalidOperationException("boom"));
+    var first = seen;
+    subscription.RaiseDisconnected("second report", exception: null);
+
+    await Assert.That(first).IsNotNull();
+    await Assert.That(_disconnectionOf(subscription)).IsSameReferenceAs(first)
+      .Because("the recorded disconnect is the first one raised");
+  }
+
+  [Test]
+  public async Task RaiseDisconnected_Twice_NotifiesTheSubscriberOnceAsync() {
+    // A processor that lost its entity reports every failed receive; the subscription is replaced once, so a second
+    // notification would start a second reconnect for the same loss (#1838).
+    var logger = new CapturingLogger();
+    using var subscription = _subscription(logger);
+    var raised = 0;
+    subscription.OnDisconnected += (_, _) => raised++;
+
+    subscription.RaiseDisconnected("entity not found", exception: null);
+    subscription.RaiseDisconnected("entity still not found", exception: null);
+
+    await Assert.That(raised).IsEqualTo(1);
+    await Assert.That(logger.Messages.Count(m => m.Contains("disconnected", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the repeat is not a new disconnect and is not reported as one");
+  }
+
+  [Test]
   public async Task RaiseDisconnected_ReportsTheReasonAsync() {
     var logger = new CapturingLogger();
     using var subscription = _subscription(logger);
@@ -256,4 +291,8 @@ public class AzureServiceBusSubscriptionTests {
 
     await Assert.That(subscription.IsActive).IsFalse();
   }
+
+  // Reads the disconnect through the interface, as the retry helper reads it (#1831).
+  private static SubscriptionDisconnectedEventArgs? _disconnectionOf<TSubscription>(TSubscription subscription)
+    where TSubscription : ISubscription => subscription.Disconnection;
 }

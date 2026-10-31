@@ -147,6 +147,19 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   [System.Text.Json.Serialization.JsonIgnore]
   public long? LocalStreamVersion { get; set; }
 
+  /// <summary>
+  /// True when the event is the first in its stream on the local store: the event at version 1, or at version 0 for a
+  /// stream whose numbering began there (a version-1 event of a stream that also holds a version 0 is not first).
+  /// Decided by the read from the event's own position, never by a perspective row, so every replay of the stream reads
+  /// the same answer; the perspective runner hands it to an <c>Apply</c> as
+  /// <see cref="Perspectives.ApplyContext.IsFirstEventInStream"/> (#1878). False when the read does not know the
+  /// event's position. NOT serialized, derived from the local rows at read time.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs:TheInMemoryStore_MarksOnlyTheStreamsFirstEventAsync</tests>
+  [System.Text.Json.Serialization.JsonIgnore]
+  public bool IsFirstInLocalStream { get; set; }
+
   /// <inheritdoc />
   [System.Text.Json.Serialization.JsonIgnore]
   public Messaging.EventFlags Flags { get; init; } = Messaging.EventFlags.None;

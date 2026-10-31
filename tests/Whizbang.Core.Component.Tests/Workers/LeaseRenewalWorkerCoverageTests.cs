@@ -37,12 +37,14 @@ public class LeaseRenewalWorkerCoverageTests {
     private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Matched => _matched.Task;
+    public LogLevel MatchedLevel { get; private set; }
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
         LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (formatter(state, exception).Contains(fragment, StringComparison.OrdinalIgnoreCase)) {
+      if (!_matched.Task.IsCompleted && formatter(state, exception).Contains(fragment, StringComparison.OrdinalIgnoreCase)) {
+        MatchedLevel = logLevel;
         _matched.TrySetResult();
       }
     }
@@ -51,11 +53,17 @@ public class LeaseRenewalWorkerCoverageTests {
   private sealed class RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<(WorkCategory Category, IReadOnlyList<Guid> Ids)> Calls { get; } = [];
 
-    Task<int> IWorkCoordinator.RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken cancellationToken) {
+    public List<Guid> RenewingInstances { get; } = [];
+
+    /// <summary>Rows another instance has re-claimed: a renewal reports them instead of renewing them (#1852).</summary>
+    public HashSet<Guid> HeldElsewhere { get; } = [];
+
+    Task<IReadOnlyList<Guid>> IWorkCoordinator.RenewHeldLeasesAsync(WorkCategory category, Guid instanceId, IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken cancellationToken) {
       lock (Calls) {
         Calls.Add((category, ids));
+        RenewingInstances.Add(instanceId);
       }
-      return Task.FromResult(ids.Count);
+      return Task.FromResult<IReadOnlyList<Guid>>([.. ids.Where(HeldElsewhere.Contains)]);
     }
   }
 
@@ -72,7 +80,8 @@ public class LeaseRenewalWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
       logger: logger,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -119,9 +128,10 @@ public class LeaseRenewalWorkerCoverageTests {
         },
       }),
       logger: NullLogger<LeaseRenewalWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1));
     // No LeaseRegistry supplied: if the disabled check were bypassed, the "no registry wired"
-    // fallback would unconditionally submit this id to RenewLeasesAsync, making the assertion
+    // fallback would unconditionally submit this id to RenewHeldLeasesAsync, making the assertion
     // below meaningful rather than accidentally true for an unrelated reason.
 
     var workId = (Guid)TrackedGuid.New();
@@ -133,5 +143,44 @@ public class LeaseRenewalWorkerCoverageTests {
 
     await Assert.That(coordinator.Calls).IsEmpty()
       .Because("a disabled worker must be a true no-op — reaching the coordinator here would mean the killswitch doesn't actually stop lease extension");
+  }
+
+  /// <summary>What breaks: a renewal names the instance renewing, so it extends only the leases that instance holds,
+  /// and the rows it did not renew (another instance re-claimed them after their leases lapsed) are logged, so a
+  /// handler still running on a row this instance lost is visible (#1852).</summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task FlushBatchAsync_RowsTheRenewalDidNotCover_AreLoggedAsync(CancellationToken testToken) {
+    var coordinator = new RecordingCoordinator();
+    var lost = (Guid)TrackedGuid.New();
+    coordinator.HeldElsewhere.Add(lost);
+    var services = new ServiceCollection()
+      .AddSingleton<IWorkCoordinator>(coordinator)
+      .BuildServiceProvider();
+    var logger = new SignalLogger(lost.ToString());
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1);
+    var worker = new LeaseRenewalWorker(
+      scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new LeaseRenewalWorkerOptions {
+        Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 },
+      }),
+      logger: logger,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      instanceProvider: instance);
+
+    await worker.StartAsync(testToken);
+    await worker.EnqueueAsync(WorkCategory.PerspectiveEvent, lost, testToken);
+    await logger.Matched.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await worker.StopAsync(testToken);
+
+    Guid[] renewing;
+    lock (coordinator.Calls) {
+      // Read under the lock the flush thread writes under.
+      renewing = [.. coordinator.RenewingInstances];
+    }
+    await Assert.That(renewing).IsEquivalentTo([instance.InstanceId])
+      .Because("a renewal that does not name its instance extends whatever lease the row has, including another instance's");
+    await Assert.That(logger.MatchedLevel).IsEqualTo(LogLevel.Warning);
   }
 }

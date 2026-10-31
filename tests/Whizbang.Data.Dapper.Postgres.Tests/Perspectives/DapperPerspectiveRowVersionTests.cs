@@ -9,6 +9,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Testing.Containers;
 
@@ -330,6 +331,93 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
       .Because("the apply computed its model from a row that has since moved, so the write must not land");
     await Assert.That(await _assignedToAsync(id, cancellationToken)).IsEqualTo("collective")
       .Because("a refused write writes nothing -- the promoted column is not half-applied either");
+  }
+
+  /// <summary>A model that opts into event-id ordering.</summary>
+  internal sealed class VersionedTestModel : IVersionedApplyTarget {
+    public string Name { get; set; } = "";
+  }
+
+  private DapperPostgresPerspectiveStore<VersionedTestModel> _versionedStore() =>
+    new(ConnectionString, TABLE, _jsonOptions);
+
+  // UUIDv7-shaped and fixed, so the order is the one written here and not the clock's.
+  private static readonly string _earlierEventId = Guid.Parse("019f0000-0000-7aaa-8000-000000000001").ToString("D");
+  private static readonly string _laterEventId = Guid.Parse("019f0001-0000-7aaa-8000-000000000001").ToString("D");
+
+  private static async Task<T> _rebuildingAsync<T>(Func<Task<T>> write) {
+    var previous = ProcessingModeAccessor.Current;
+    ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+    try {
+      return await write();
+    } finally {
+      ProcessingModeAccessor.Current = previous;
+    }
+  }
+
+  /// <summary>
+  /// A live write to a versioned model whose event id sorts below the stored one is still refused: the live apply
+  /// keeps its event-id ordering (#1819).
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task VersionedTarget_LiveWriteWithAnEarlierEventId_IsRefusedAsync(bool checkedWrite, CancellationToken cancellationToken) {
+    var store = _versionedStore();
+    var id = Guid.NewGuid();
+    await store.TryUpsertAsync(id, new VersionedTestModel { Name = "later" }, new PerspectiveScope(), false,
+      _metadata(null, _laterEventId), PerspectiveRowVersion.Unchecked, cancellationToken);
+    var version = checkedWrite ? (await store.ReadForApplyAsync(id, cancellationToken)).Version : PerspectiveRowVersion.Unchecked;
+
+    var written = await store.TryUpsertAsync(id, new VersionedTestModel { Name = "earlier" }, new PerspectiveScope(), false,
+      _metadata(null, _earlierEventId), version, cancellationToken);
+
+    await Assert.That(written).IsFalse();
+    await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("later")
+      .Because("a live event the row has already moved past is skipped, not applied backwards");
+  }
+
+  /// <summary>
+  /// A rebuild's write to a versioned model lands even when its event id sorts below the stored one: the rebuild
+  /// re-derived the row from every event, and the event id of the last one it folded by version is not a position
+  /// the row can be past (#1819).
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task VersionedTarget_RebuildWriteWithAnEarlierEventId_LandsAsync(bool checkedWrite, CancellationToken cancellationToken) {
+    var store = _versionedStore();
+    var id = Guid.NewGuid();
+    await store.TryUpsertAsync(id, new VersionedTestModel { Name = "later" }, new PerspectiveScope(), false,
+      _metadata(null, _laterEventId), PerspectiveRowVersion.Unchecked, cancellationToken);
+    var version = checkedWrite ? (await store.ReadForApplyAsync(id, cancellationToken)).Version : PerspectiveRowVersion.Unchecked;
+
+    var written = await _rebuildingAsync(() => store.TryUpsertAsync(id, new VersionedTestModel { Name = "rebuilt" },
+      new PerspectiveScope(), false, _metadata(null, _earlierEventId), version, cancellationToken));
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("rebuilt");
+  }
+
+  /// <summary>A rebuild's write on a version something else has moved past is still refused (#1819).</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task VersionedTarget_RebuildWriteOnAStaleVersion_IsStillRefusedAsync(CancellationToken cancellationToken) {
+    var store = _versionedStore();
+    var id = Guid.NewGuid();
+    await store.TryUpsertAsync(id, new VersionedTestModel { Name = "first" }, new PerspectiveScope(), false,
+      _metadata(null, _earlierEventId), PerspectiveRowVersion.Unchecked, cancellationToken);
+    var stale = (await store.ReadForApplyAsync(id, cancellationToken)).Version;
+    await store.TryUpsertAsync(id, new VersionedTestModel { Name = "collective" }, new PerspectiveScope(), false,
+      _metadata(null, _laterEventId), PerspectiveRowVersion.Unchecked, cancellationToken);
+
+    await Assert.That(async () => await _rebuildingAsync(() => store.TryUpsertAsync(id, new VersionedTestModel { Name = "stale" },
+        new PerspectiveScope(), false, _metadata(null, _laterEventId), stale, cancellationToken)))
+      .Throws<PerspectiveRowConflictException>()
+      .Because("the rebuild folded onto a row that has since moved, which the row version refuses whatever the mode");
+    await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("collective");
   }
 
 }

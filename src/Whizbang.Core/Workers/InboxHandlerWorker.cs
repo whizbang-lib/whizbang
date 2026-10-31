@@ -25,8 +25,20 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly ILogger<InboxHandlerWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
+  // #1788: rows wait here for their commit while held by the inbox channel writer; each flush releases them.
+  private readonly IInboxChannelWriter _inboxChannelWriter;
+
+  /// <summary>
+  /// How many failed rows one flush logs individually before the rest are summarized in one line (#1789).
+  /// </summary>
+  internal const int MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH = 5;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  /// <remarks>The inbox channel writer is the one the dispatch path holds rows in; each flush releases the rows it finishes (#1788).</remarks>
+  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
+  /// <docs>operations/configuration/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:InboxHandlerWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
@@ -34,7 +46,11 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     IOptions<InboxHandlerWorkerOptions> options,
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
-    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
+    IInboxChannelWriter inboxChannelWriter,
+    Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
+    TimeProvider? timeProvider = null) {
+    ArgumentNullException.ThrowIfNull(inboxChannelWriter);
+    _inboxChannelWriter = inboxChannelWriter;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(failureChannel);
@@ -45,7 +61,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger);
+    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
     // The queue depth is observable (#740): the one place dispatched-but-uncommitted work waits in memory.
     metrics?.ObserveHandlerCommitQueue(() => _flusher.Pending);
   }
@@ -62,6 +78,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     // convert a config choice into a crash loop.
     if (!_options.Enabled) {
       LogCommitsDisabledOnEnqueue(_logger, request.InboxCompletion.MessageId);
+      _inboxChannelWriter.RemoveInFlight(request.HandlerId);
       return ValueTask.CompletedTask;
     }
 
@@ -78,7 +95,21 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     return _flusher.StoppedSignal;
   }
 
+  /// <summary>
+  /// Flushes one batch, then releases its rows from the held set however the flush ended (#1788): a committed row is
+  /// gone from the store, and a row whose commit failed or never ran must be offered again by the next claim.
+  /// </summary>
   private async Task _flushBatchAsync(IReadOnlyList<HandlerCommitRequest> batch, CancellationToken ct) {
+    try {
+      await _flushCoreAsync(batch, ct);
+    } finally {
+      foreach (var request in batch) {
+        _inboxChannelWriter.RemoveInFlight(request.HandlerId);
+      }
+    }
+  }
+
+  private async Task _flushCoreAsync(IReadOnlyList<HandlerCommitRequest> batch, CancellationToken ct) {
     if (!_options.Enabled) {
       // Anything already in flight when the killswitch flipped. A bare return here dropped the batch
       // with no log at all — the rows stay unprocessed and are re-claimed until their retry budget
@@ -121,20 +152,55 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     }
     LogDiagFlushCommitted(_logger, batch.Count, successes, failures);
 
-    // Route per-handler failures to the failure flush worker for retry tracking.
+    if (failures > 0) {
+      await _routeFailuresAsync(batch, results, ct);
+    }
+  }
+
+  /// <summary>
+  /// Logs each failed row and routes it to the failure flush worker for retry tracking (#1789). The first
+  /// <see cref="MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH"/> failures are logged one per row, with the row's id, type
+  /// and error; the rest of the flush is counted in one summary line, so a flush where every row fails stays
+  /// readable. Routing is never capped. A result naming no request cannot be routed and is logged as such.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerTests.cs:CommitFailure_IsLoggedAtWarning_WithTheMessageIdTypeAndErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerTests.cs:ManyCommitFailuresInOneFlush_LogTheFirstIndividually_ThenOneSummaryOfTheRestAsync</tests>
+  private async Task _routeFailuresAsync(
+      IReadOnlyList<HandlerCommitRequest> batch, IReadOnlyList<HandlerBatchResult> results, CancellationToken ct) {
+    var logged = 0;
+    var unlogged = 0;
     foreach (var result in results) {
-      if (!result.Success) {
-        var matching = batch.FirstOrDefault(r => r.HandlerId == result.HandlerId);
-        if (matching is not null) {
-          await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
-            MessageId = matching.InboxCompletion.MessageId,
-            CompletedStatus = MessageProcessingStatus.None,
-            Error = result.ErrorMessage ?? "unknown",
-            Reason = MessageFailureReason.Unknown
-          }, ct);
-        }
+      if (result.Success) {
+        continue;
+      }
+      var error = result.ErrorMessage ?? "unknown";
+      var matching = batch.FirstOrDefault(r => r.HandlerId == result.HandlerId);
+      if (logged < MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH) {
+        _logCommitFailure(result.HandlerId, matching, error);
+        logged++;
+      } else {
+        unlogged++;
+      }
+      if (matching is not null) {
+        await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+          MessageId = matching.InboxCompletion.MessageId,
+          CompletedStatus = MessageProcessingStatus.None,
+          Error = error,
+          Reason = MessageFailureReason.Unknown
+        }, ct);
       }
     }
+    if (unlogged > 0) {
+      LogCommitFailuresSummarized(_logger, unlogged, batch.Count);
+    }
+  }
+
+  private void _logCommitFailure(Guid handlerId, HandlerCommitRequest? matching, string error) {
+    if (matching is null) {
+      LogCommitFailureWithoutRequest(_logger, handlerId, error);
+      return;
+    }
+    LogCommitFailed(_logger, matching.InboxCompletion.MessageId, matching.MessageType ?? "unknown", error);
   }
 
   /// <inheritdoc />
@@ -191,6 +257,21 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
             + "other); the in-process coordinator gate is the less likely cause and is worth ruling out "
             + "by confirming it actually has waiters before assuming it.")]
   static partial void LogFlushPhaseSlow(ILogger logger, string phase, long elapsedMs, int batchCount);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
+    Message = "InboxHandlerWorker could not commit inbox message {MessageId} ({MessageType}): {Error}. "
+            + "The row stays unprocessed and is routed to the failure channel, which records the error and schedules its retry.")]
+  static partial void LogCommitFailed(ILogger logger, Guid messageId, string messageType, string error);
+
+  [LoggerMessage(EventId = 27, Level = LogLevel.Warning,
+    Message = "InboxHandlerWorker: {Count} more commit failure(s) in a flush of {BatchCount} are not logged individually; "
+            + "each is still routed to the failure channel, which records its error on the row.")]
+  static partial void LogCommitFailuresSummarized(ILogger logger, int count, int batchCount);
+
+  [LoggerMessage(EventId = 28, Level = LogLevel.Warning,
+    Message = "InboxHandlerWorker received a commit failure for handler {HandlerId} that no request in the flush names: {Error}. "
+            + "It cannot be routed to the failure channel, so its row keeps its lease until it lapses.")]
+  static partial void LogCommitFailureWithoutRequest(ILogger logger, Guid handlerId, string error);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "InboxHandlerWorker disabled via options — handler-batch commits skipped")]
   static partial void LogDisabled(ILogger logger);

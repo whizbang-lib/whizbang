@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
@@ -30,9 +31,12 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// Previously this work ran on the <em>runtime</em> maintenance cadence, taking an ACCESS
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
-/// The maintenance cycle now only detects and records. A strategy that resolves to no rewrite, or to a strategy
-/// with no registered rewriter (<see cref="TableRewriteStrategy.PgSqueeze"/> in this version), skips with the
-/// resolution as its reason, and so does a rewriter that cannot run. <c>VACUUM FULL</c> stays behind the operator permission
+/// The maintenance cycle detects and records. A strategy that resolves to no rewrite, or to a strategy
+/// with no registered rewriter, skips with the resolution as its reason, and so does a rewriter that cannot run.
+/// <see cref="TableRewriteStrategy.PgSqueeze"/>, and <see cref="TableRewriteStrategy.PgRepack"/> with the client run in
+/// process, are left to the maintenance cycle (<see cref="OnlineTableRewriteStep"/>), which rewrites online within a
+/// per-cycle byte budget; pg_repack in <see cref="PgRepackMode.External"/> mode is skipped with the reason its rewriter
+/// gives, because an operator's job runs it. <c>VACUUM FULL</c> stays behind the operator permission
 /// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
 /// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
@@ -95,6 +99,12 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     if (plan.Strategy is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
+    if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal) || PgRepackClient.RunsInProcess(options)) {
+      // An online rewrite Whizbang runs itself is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it
+      // would be unbounded. pg_repack in External mode falls through: its rewriter cannot run, and says why.
+      return new StartupStepReport(StartupStepOutcome.Skipped,
+        $"{plan.Reason}; the maintenance cycle performs it, largest bloat first, up to {ONLINE_BUDGET_KEY} bytes per cycle");
+    }
     var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, plan.Strategy, StringComparison.Ordinal));
     if (rewriter is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped,
@@ -117,20 +127,28 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       return new StartupStepReport(StartupStepOutcome.Skipped, "no rewrites owed");
     }
 
+    // While pgstattuple is Ready, "did it shrink" is answered by pgstattuple_approx, the measurement that queued the
+    // table, rather than by the rewriter's catalog estimate (#1807).
+    var approxReady = ApproxBloatMeasurement.IsReady(_capabilities);
     var rewritten = 0;
     var leftQueued = 0;
     foreach (var candidate in candidates) {
       cancellationToken.ThrowIfCancellationRequested();
-      var after = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
-      if (after is null || after >= candidate.BloatRatio) {
-        // No improvement — leave the request in place so the next boot retries, and say so,
+      var ratio = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
+      var after = await ApproxBloatMeasurement.AfterRewriteAsync(
+        coordinator, candidate.TableName, ratio, approxReady, _logger, cancellationToken).ConfigureAwait(false);
+      var before = candidate.Method.ToValue();
+      var afterMethod = after?.Method.ToValue() ?? "none";
+      if (after is not { } measured || measured.Ratio >= candidate.BloatRatio) {
+        // No improvement: leave the request in place so the next boot retries, and say so,
         // rather than clearing it and reporting success we did not achieve.
         leftQueued++;
-        LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, after ?? -1);
+        LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, before,
+          after?.Ratio ?? -1, afterMethod);
         continue;
       }
       rewritten++;
-      LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, after.Value);
+      LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
       if (candidate.Requested) {
         await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
       }
@@ -153,12 +171,14 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   }
 
   private const string PG_SQUEEZE_EXTENSION = "pg_squeeze";
+  private const string ONLINE_BUDGET_KEY = "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
-    Message = "Rewrite step: {Table} rewritten, bloat {Before}x -> {After}x")]
-  static partial void LogRewriteDone(ILogger logger, string table, double before, double after);
+    Message = "Rewrite step: {Table} rewritten, bloat {Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})")]
+  static partial void LogRewriteDone(ILogger logger, string table, double before, string beforeMethod, double after, string afterMethod);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
-    Message = "Rewrite step: {Table} rewrite did not reduce bloat ({Before}x -> {After}x); request left queued")]
-  static partial void LogRewriteIneffective(ILogger logger, string table, double before, double after);
+    Message = "Rewrite step: {Table} rewrite did not reduce bloat ({Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})); request left queued")]
+  static partial void LogRewriteIneffective(
+      ILogger logger, string table, double before, string beforeMethod, double after, string afterMethod);
 }

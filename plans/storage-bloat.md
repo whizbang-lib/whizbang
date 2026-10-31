@@ -94,7 +94,7 @@ Each slice is one red-then-green increment and its own commit.
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
    NotAllowlisted fails startup" (WS-8 slice 3). Docs:
    `operations/configuration/configuration-reference.md` (Maintenance section).
-   **Status (2026-10-25):** done on branch `feat/1742-1750-rewrite-provisioning` (#1742). `TableRewriteStrategy`
+   **Status (2026-10-25):** shipped in PR #1772 (#1742). `TableRewriteStrategy`
    (`Auto`, `PgSqueeze`, `VacuumFull`, `None`; default `Auto`) on `MaintenanceWorkerOptions`, resolved each run by
    `TableRewriteStrategyResolver` against `AllowTableRewrite` and whether pg_squeeze is usable (Ready or Provisionable
    on every probed database), one test per cell. Per decision 1, `Auto` resolves to `VacuumFull` when permitted and
@@ -116,9 +116,23 @@ Each slice is one red-then-green increment and its own commit.
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
    Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
    bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
-   **Status (2026-10-24):** open. No pg_squeeze rewriter and no `OnlineRewriteMaxBytesPerCycle`. Depends on
-   slice 2, WS-8 slices 4 and 7, and a mirrored CI image with pg_squeeze. Decision 4 (#1671) adds the
-   managed-server privilege investigation as a prerequisite.
+   **Status (2026-10-27):** shipped in PR #1809 (#1743), except the real-server test.
+   `OnlineTableRewriteStep` (a framework `IMaintenanceStep`, so idle-gated and maintainer-only like the rest of the
+   cycle) runs only with `PgSqueeze` and pg_squeeze Ready on every probed database; it takes `Requested` candidates
+   largest ratio first (ties by name) within `OnlineRewriteMaxBytesPerCycle` (default 1 GiB; a table that does not fit
+   is deferred and a smaller one taken; one larger than the budget is never taken and says so), and clears a request
+   only when the re-measure improved. The boot `Rewrite` step now skips `PgSqueeze` and names the cycle.
+   `PgSqueezeTableRewriter` calls `IWorkCoordinator.SqueezeTableAsync`; the EF Core coordinator reads
+   `PgSqueezePrerequisites` (extension and EXECUTE, logical WAL below 19, a free slot, PK or replica identity index,
+   REPLICATION or superuser, ownership) on the rewrite's connection, logs the first unmet one, else calls
+   `squeeze.squeeze_table(schema, table, NULL, NULL, NULL)`, `ANALYZE`s and re-measures. Candidates carry
+   `SizeBytes`. Privilege investigation (decision 4) is on the storage-maintenance docs page: from pg_squeeze 1.9's
+   source, `squeeze_table` needs REPLICATION or superuser (its worker creates a logical slot as the caller, checked
+   from Postgres 15), EXECUTE is not revoked from PUBLIC, and ownership is not checked by pg_squeeze. **Not done:** an
+   integration test on a server with pg_squeeze. No test image ships it (`.github/ci-images.txt` has only
+   `pgvector/pgvector:pg17`); the SQL is covered against the shared server with a stand-in `squeeze.squeeze_table`
+   and the decision seam replaced. A real test needs a mirrored image with pg_squeeze, `shared_preload_libraries`,
+   `wal_level = logical` and free replication slots (`ai-docs/ci-image-mirror.md`).
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
@@ -129,7 +143,17 @@ Each slice is one red-then-green increment and its own commit.
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
    an external job reading the same queue). RED: the resolution matrix gains the PgRepack column.
    Docs: the storage-maintenance page (when to prefer it over pg_squeeze).
-   **Status (2026-10-24):** open. No `PgRepack` strategy. Depends on slice 2 and WS-8 slice 9.
+   **Status (2026-10-27):** shipped in PR #1809 (#1744) with WS-8 slice 9 (#1753):
+   `TableRewriteStrategy.PgRepack` carries `[RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite
+   (pg_repack)")]` and resolves to `TableRewriteStrategies.PG_REPACK` in every cell of the matrix;
+   `PgRepackTableRewriter` runs it in process, or the step reports the queue left to an external job.
+   **Status (2026-10-27):** in process, now budgeted like pg_squeeze (#1808). The boot `Rewrite` step no longer runs
+   `PgRepack` in process; it skips and names the cycle. `OnlineTableRewriteStep` is generalized over the strategy (one
+   step, not a copy): with `PgRepack` and `Mode = InProcess` it takes queued tables largest ratio first within
+   `OnlineRewriteMaxBytesPerCycle` (key kept: both are online rewrites), gated on `postgres/pg_repack` Ready on every
+   probed database and `program/pg_repack` Ready on this host (Unknown or unprobed holds it back and says why), runs
+   `PgRepackTableRewriter` (credentials in the environment), and clears only when the re-measure improved. `External`
+   is unchanged: the boot step reports the external job and the cycle does nothing, not even a scan.
 
 ### C2: autovacuum
 
@@ -155,8 +179,7 @@ Each slice is one red-then-green increment and its own commit.
    documented).
    **Status (2026-10-24):** done. #1584, closed by PR #1585. A value out of PostgreSQL's range (a scale factor
    above 100) fails the schema pass with the server's error; slice 8's range diagnostic covers these properties
-   too. Decision 3 (#1671), a `RESET` when an attribute property is removed, is not built: the generators emit
-   no `RESET`.
+   too. Decision 3 (#1671), a `RESET` when an attribute property is removed, is built by #1747.
 
 ### C3: fillfactor and event-store churn
 
@@ -171,8 +194,8 @@ Each slice is one red-then-green increment and its own commit.
    `PerspectiveTableStorageAnalyzer`), covering `FillFactor`, `ToastTupleTarget` and the three scale factors;
    the generators leave an out-of-range value out. The rewrite is queued only when the value changes on a table
    that has pages. `wh_tables_needing_rewrite` still offers a requested table only once it crosses the bloat
-   threshold, so a queued request is a hint, not a forced rewrite (#1594). The decision 3 `RESET` gap noted on
-   slice 7 applies to `FillFactor` too.
+   threshold, so a queued request is a hint, not a forced rewrite (#1594). The decision 3 `RESET` (#1747) covers
+   `FillFactor` too.
 9. **Defect 7 investigation: what updates `wh_event_store`.** Code search found these writers:
 
    | Writer | Columns | When |
@@ -213,8 +236,13 @@ Each slice is one red-then-green increment and its own commit.
     BRIN index only where correlation is near 1 and a range filter exists. The existing B-tree
     `idx_event_store_ephemeral_reap` stays: the reap needs its order. RED: a plan-shape test per added
     index (`EXPLAIN` uses it for the range query).
-    **Status (2026-10-24):** open. No migration creates a BRIN index, and no correlation measurement is
-    recorded.
+    **Status (2026-10-29):** done in code, #1745. Measured with each table seeded in its production write order
+    (`BrinIndexCandidatesTests`): `wh_event_store.created_at` 0.98 and `commit_sequence` 0.98; `wh_log.logged_at`,
+    `wh_lifecycle_completions.completed_at` and `wh_message_deduplication.first_seen_at` 1.0 while growing and 0.60,
+    0.27 and 0.81 after one retention pass at their default retention. One index qualifies: migration 258 adds
+    `idx_event_store_created_at_brin` for the startup orphaned-lifecycle window (the last thirty minutes of
+    `created_at`, which no index reached). `commit_sequence` readers need its order (B-tree); the retention tables'
+    order rotates. No index is replaced or dropped. Docs: storage-maintenance page, `#brin-indexes`.
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
     **Status (2026-10-24):** done. #1669, closed by PR #1695: `whizbang.table.unused_index_bytes` on the
@@ -228,7 +256,16 @@ Each slice is one red-then-green increment and its own commit.
     first. RED: threshold decision unit tests; integration test that a bloated index shrinks and
     that an invalid leftover is cleaned. Docs: storage-maintenance page and
     `fundamentals/workers/maintenance-steps.md`.
-    **Status (2026-10-24):** open. `src/` has no reindex task and no `ReindexBloatThreshold`.
+    **Status (2026-10-29):** done in #1746. `QueueIndexReindexStep` (a framework `IMaintenanceStep`) surveys the
+    B-tree indexes of the queue tables from the catalog through `IWorkCoordinator.GetQueueIndexBloatAsync` (size against
+    a fresh index's expected size, method `estimate`), drops every invalid `_ccnew`/`_ccold` leftover with
+    `DROP INDEX CONCURRENTLY`, then rebuilds at most one index per cycle with `REINDEX INDEX CONCURRENTLY`: the valid
+    index over `ReindexBloatThreshold` (default 3.0, 0 disables, otherwise finite and above 1, validated at start) and
+    at least 1 MiB with the most bytes to give back. Fleet-once through an `IClaimedEmissionStore` claim per window of
+    half the maintenance interval; nothing is dropped or rebuilt while `pg_stat_progress_create_index` shows a build on
+    a queue table. The queue tables were derived from the migrations: the four above plus `wh_active_streams` and
+    `wh_doorbell_queue`; `wh_message_deduplication` is excluded (a retention window never drains). pgstatindex is not
+    used: it reads the whole index, the same reads as the rebuild. EF Core driver only; no migration.
 
 ### Defect 9: idle-gate ceiling as a time
 
@@ -279,5 +316,14 @@ All decided on 2026-10-22 in #1671 (the owner accepted the recommendations).
    every ordered read.
 3. **Removed storage attributes.** The schema pass resets (`RESET`) an autovacuum or fillfactor
    setting when the attribute property that set it is removed, so the database matches the code.
+   **Status (2026-10-29):** built (#1747). Owner decision (2026-10-29): the model stays the authority by default,
+   with a database-level override. The generated schema declares the seven governed parameters (fillfactor, the six
+   autovacuum ones, `toast.` included) in a `-- @whizbang:table-storage` marker; `PerspectiveStorageParameters`
+   reconciles them at every start on both drivers (one catalog read, one `ALTER TABLE … SET, RESET` per differing
+   table, 5 s lock timeout, rewrite queued for a changed fillfactor on a table with rows), independent of the schema
+   hash. Migration 259 adds `perspective_storage_manual_tables` (comma-separated bare table names) whose tables are
+   neither set nor reset; each start logs the list and warns of ignored declared values. Restart-only by choice (no
+   maintenance-cycle path). `toast_tuple_target` and compression are not reset. Docs: physical-fields
+   `#removed-storage-settings` and `#manually-managed-tables`.
 4. **pg_squeeze privileges** on managed servers (superuser or REPLICATION) is an investigation, not a
    decision. It moves into C1.3 as a prerequisite to verify.

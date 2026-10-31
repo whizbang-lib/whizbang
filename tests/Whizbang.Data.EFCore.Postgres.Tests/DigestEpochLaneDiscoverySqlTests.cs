@@ -5,7 +5,6 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Testing;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -26,9 +25,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// is a walk of one index entry per lane, so the cost follows the number of lanes and never the number of events.
 /// </para>
 /// <para>
-/// The measure is the whole call's shared buffers, which <c>EXPLAIN (ANALYZE, BUFFERS)</c> reports including the
-/// statements the function runs. The store is sized so that one pass over it costs several times the ceiling; a
-/// call that reads it in any form fails, whatever the planner chose to read it with.
+/// The measure is the blocks the call reads from the event store, its table and every index on it, counted by the
+/// session's own statistics for the transaction the call runs in, with the number of sequential scans of the store.
+/// The store is sized so that one pass over it costs several times the ceiling; a call that reads it in any form
+/// fails, whatever the planner chose to read it with.
+/// </para>
+/// <para>
+/// It is not the whole call's shared buffers (#1916). Those include every catalog page the session reads to rebuild
+/// its caches and plans, and every test process on a machine shares one cluster whose invalidation queue their
+/// schema passes overflow: a session that falls behind is reset, and its next call read about 1,570 catalog pages
+/// while reading the same few store pages as before. The cost test puts its session in that state on purpose.
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
@@ -103,6 +109,28 @@ public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
       """);
   }
 
+  /// <summary>
+  /// Holds a transaction open on <paramref name="conn"/> while another session commits enough catalog changes to
+  /// overflow the shared invalidation queue, so <paramref name="conn"/>'s session is reset when its transaction ends.
+  /// </summary>
+  private async Task _fallBehindTheInvalidationQueueAsync(NpgsqlConnection conn) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await using (var hold = new NpgsqlCommand("SELECT 1", conn, tx)) {
+      await hold.ExecuteScalarAsync();
+    }
+    await using var other = await _openAsync();
+    await _execAsync(other, """
+      DO $$
+      BEGIN
+        FOR i IN 1..1500 LOOP
+          EXECUTE format('CREATE TABLE invalidation_flood_%s (id int)', i);
+          EXECUTE format('DROP TABLE invalidation_flood_%s', i);
+        END LOOP;
+      END $$;
+      """);
+    await tx.CommitAsync();
+  }
+
   private static async Task<int> _closeAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT close_digest_epochs(NOW(), 3600, 1000)";
@@ -134,9 +162,73 @@ public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
     await Assert.That(closed).IsGreaterThan(0)
       .Because("the first call has to fold the settled epochs, or the measured call below has nothing it skips");
 
-    var plan = await QueryPlan.CaptureAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 1000)");
+    // Every test process on the machine shares the cluster, and their schema passes flood its invalidation queue
+    // while this session is busy (#1916). A session that falls that far behind is told to reset, and rebuilds every
+    // catalog cache and cached plan on its next statement. The test puts this session in that state itself: other
+    // sessions' DDL fills the queue while this one holds a transaction open.
+    await _fallBehindTheInvalidationQueueAsync(conn);
 
-    plan.MustVisitAtMostSharedBuffers(NOTHING_TO_CLOSE_CEILING);
+    var (storeBlocks, storeSequentialScans) = await _storeReadsOfAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 1000)");
+
+    await Assert.That(storeSequentialScans).IsEqualTo(0L)
+      .Because("finding the lanes and their settled maxima never takes a pass over the event store");
+    await Assert.That(storeBlocks).IsLessThanOrEqualTo(NOTHING_TO_CLOSE_CEILING)
+      .Because("each lane costs a few index probes; one pass over the store is about 1,500 blocks");
+    await Assert.That(storeBlocks).IsGreaterThan(0L)
+      .Because("the lane probes read the store's indexes, so a measure that counted nothing would read zero");
+
+    // The measure sees a pass over the store when there is one, or the two assertions above prove nothing.
+    var (passBlocks, passScans) = await _storeReadsOfAsync(conn, "SELECT sum(octet_length(scope::text)) FROM wh_event_store");
+    await Assert.That(passScans).IsEqualTo(1L);
+    await Assert.That(passBlocks).IsGreaterThan(NOTHING_TO_CLOSE_CEILING);
+  }
+
+  /// <summary>
+  /// The blocks <paramref name="sql"/> reads from the event store and its indexes, and its sequential scans of the
+  /// store, from the session's statistics, with no parallel workers. Catalog reads, and anything another session does,
+  /// are not counted.
+  /// </summary>
+  /// <remarks>
+  /// A session's statistics accumulate until it next reports them, which it does only when idle outside a
+  /// transaction, so the counters are read before and after the statement inside one transaction and the difference
+  /// is the statement's alone.
+  /// </remarks>
+  private static async Task<(long Blocks, long SequentialScans)> _storeReadsOfAsync(NpgsqlConnection conn, string sql) {
+    await using var tx = await conn.BeginTransactionAsync();
+    // A parallel worker's reads are counted in its own statistics, not this session's, so none is used.
+    await using (var serial = new NpgsqlCommand("SET LOCAL max_parallel_workers_per_gather = 0", conn, tx)) {
+      await serial.ExecuteNonQueryAsync();
+    }
+    var (blocksBefore, scansBefore) = await _storeCountersAsync(conn, tx);
+    await using (var call = new NpgsqlCommand(sql, conn, tx)) {
+      call.CommandTimeout = 300;
+      await call.ExecuteScalarAsync();
+    }
+    var (blocksAfter, scansAfter) = await _storeCountersAsync(conn, tx);
+    await tx.CommitAsync();
+    return (blocksAfter - blocksBefore, scansAfter - scansBefore);
+  }
+
+  /// <summary>The session's pending block reads of the event store and its indexes, and its sequential scans of it.</summary>
+  private static async Task<(long Blocks, long SequentialScans)> _storeCountersAsync(NpgsqlConnection conn, NpgsqlTransaction tx) {
+    // The store itself, and its partitions if it is partitioned (pg_partition_tree returns nothing for a plain table).
+    await using var count = new NpgsqlCommand("""
+      WITH store AS (
+        SELECT 'wh_event_store'::regclass::oid AS relid
+        UNION
+        SELECT relid::oid FROM pg_partition_tree('wh_event_store'::regclass)
+      ), relations AS (
+        SELECT relid FROM store
+        UNION
+        SELECT i.indexrelid FROM pg_index i WHERE i.indrelid IN (SELECT relid FROM store)
+      )
+      SELECT COALESCE(SUM(pg_stat_get_xact_blocks_fetched(r.relid)), 0)::bigint,
+             COALESCE((SELECT SUM(pg_stat_get_xact_numscans(s.relid)) FROM store s), 0)::bigint
+      FROM relations r
+      """, conn, tx);
+    await using var reader = await count.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetInt64(0), reader.GetInt64(1));
   }
 
   /// <summary>Every lane of the store is still found: the local lane and each origin it has received from.</summary>

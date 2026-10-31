@@ -3,6 +3,8 @@
 
 using System.Diagnostics;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Diagnostics;
 
@@ -15,12 +17,35 @@ namespace Whizbang.Core.Diagnostics;
 /// It can be used by perspective sync, transport layer, health checks, and other components
 /// that need timeouts that don't trigger during debugging.
 /// </para>
+/// <para>
+/// Each pause-state subscription owns a bounded buffer of the ten most recent changes and its own
+/// read loop. A change is offered to every live subscription's buffer, so every subscriber
+/// receives every change made after it subscribed, in order, and a slow, blocked or throwing
+/// handler holds up only its own subscription. A subscriber that falls more than ten changes
+/// behind loses the oldest, so the last change it receives is always the clock's current state.
+/// </para>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
-public sealed class DebuggerAwareClock : IDebuggerAwareClock {
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockCoverageTests.cs:RunPauseStateReadLoop_ReleasedWhileACallIsInFlight_DispatchesNothingAfterItAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockCoverageTests.cs:RunPauseStateReadLoop_ReleasedByItsOwnHandler_DispatchesNothingAfterItAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockPauseFanOutTests.cs</tests>
+public sealed partial class DebuggerAwareClock : IDebuggerAwareClock {
+  /// <summary>How many undelivered changes one subscription keeps before dropping the oldest.</summary>
+  private const int PAUSE_STATE_BUFFER_CAPACITY = 10;
+
+  private static readonly BoundedChannelOptions _pauseStateBufferOptions = new(PAUSE_STATE_BUFFER_CAPACITY) {
+    FullMode = BoundedChannelFullMode.DropOldest,
+    SingleReader = true,
+    SingleWriter = false
+  };
+
   private readonly DebuggerAwareClockOptions _options;
-  private readonly Channel<bool> _pauseStateChannel;
+  private readonly ILogger _logger;
+  private readonly Lock _subscriptionsLock = new();
+  // Copy-on-write: replaced under the lock when a subscription is added or released, read without
+  // it by the sampler, so publishing a change allocates nothing and never waits on a subscriber.
+  private PauseStateSubscription[] _subscriptions = [];
   private readonly Timer? _sampler;
   private readonly Process _process;
   private TimeSpan _lastCpuSample;
@@ -38,12 +63,21 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   /// Initializes a new instance of <see cref="DebuggerAwareClock"/> with the specified options.
   /// </summary>
   /// <param name="options">Configuration options for the clock.</param>
-  public DebuggerAwareClock(DebuggerAwareClockOptions options) {
+  public DebuggerAwareClock(DebuggerAwareClockOptions options) : this(options, null) {
+  }
+
+  /// <summary>
+  /// Initializes a new instance of <see cref="DebuggerAwareClock"/> with the specified options and
+  /// a logger for the failures of pause-state handlers.
+  /// </summary>
+  /// <param name="options">Configuration options for the clock.</param>
+  /// <param name="logger">
+  /// Receives an error for each pause-state handler call that throws; <c>null</c> discards them.
+  /// </param>
+  public DebuggerAwareClock(DebuggerAwareClockOptions options, ILogger<DebuggerAwareClock>? logger) {
     ArgumentNullException.ThrowIfNull(options);
     _options = options;
-    _pauseStateChannel = Channel.CreateBounded<bool>(new BoundedChannelOptions(10) {
-      FullMode = BoundedChannelFullMode.DropOldest
-    });
+    _logger = (ILogger?)logger ?? NullLogger.Instance;
     _process = Process.GetCurrentProcess();
     _lastCpuSample = _readCpuTime();
     _lastSampleTime = _utcNow();
@@ -84,10 +118,16 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 
   /// <inheritdoc />
   public IDisposable OnPauseStateChanged(Action<bool> handler) {
-    ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(handler);
 
-    return new PauseStateSubscription(_pauseStateChannel.Reader, handler);
+    lock (_subscriptionsLock) {
+      // Checked under the lock Dispose takes, so a subscription is either added before Dispose
+      // completes every buffer or refused: none is left waiting on a buffer nothing completes.
+      ObjectDisposedException.ThrowIf(_disposed, this);
+      var subscription = new PauseStateSubscription(this, handler);
+      _subscriptions = [.. _subscriptions, subscription];
+      return subscription;
+    }
   }
 
   /// <inheritdoc />
@@ -98,26 +138,49 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 
   /// <inheritdoc />
   public void Dispose() {
-    if (_disposed) {
-      return;
+    PauseStateSubscription[] subscriptions;
+    lock (_subscriptionsLock) {
+      if (_disposed) {
+        return;
+      }
+
+      _disposed = true;
+      subscriptions = _subscriptions;
+      _subscriptions = [];
     }
 
-    _disposed = true;
     _sampler?.Dispose();
-    _pauseStateChannel.Writer.TryComplete();
+    foreach (var subscription in subscriptions) {
+      subscription.Complete();
+    }
   }
 
   /// <summary>
   /// Runs the pause-state read loop against a caller-supplied reader. Internal rather than
   /// private so the loop's faulted-channel exit can be asserted: this class only ever completes
-  /// its own channel gracefully (<c>Dispose</c> calls the parameterless <c>TryComplete</c>), so a
+  /// its own channels gracefully (<c>Dispose</c> calls the parameterless <c>TryComplete</c>), so a
   /// reader that throws <see cref="ChannelClosedException"/> is not reachable through
   /// <see cref="OnPauseStateChanged"/> — and the loop must still end quietly rather than leave an
   /// unobserved faulted task behind if a future caller ever completes it with an error.
   /// </summary>
   internal static Task RunPauseStateReadLoopAsync(
       ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct)
-    => PauseStateSubscription.ReadLoopAsync(reader, handler, ct);
+    => PauseStateSubscription.ReadLoopAsync(reader, handler, NullLogger.Instance, ct);
+
+  /// <summary>Removes a released subscription so later changes are no longer offered to it.</summary>
+  private void _release(PauseStateSubscription subscription) {
+    lock (_subscriptionsLock) {
+      // Already gone when the clock was disposed first; the filter is then a no-op.
+      _subscriptions = Array.FindAll(_subscriptions, s => !ReferenceEquals(s, subscription));
+    }
+  }
+
+  /// <summary>Offers a pause-state change to every live subscription's own buffer.</summary>
+  private void _publish(bool isPaused) {
+    foreach (var subscription in Volatile.Read(ref _subscriptions)) {
+      subscription.Offer(isPaused);
+    }
+  }
 
   private bool _shouldUseCpuSampling() {
     return _options.Mode switch {
@@ -163,7 +226,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 
     // Notify subscribers if pause state changed
     if (wasPaused != _isPaused) {
-      _pauseStateChannel.Writer.TryWrite(_isPaused);
+      _publish(_isPaused);
     }
 
     _lastCpuSample = currentCpu;
@@ -306,9 +369,13 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   }
 
   /// <summary>
-  /// Subscription to pause state changes. Reads from the channel in background and invokes the handler.
+  /// Subscription to pause state changes. Owns a bounded buffer of the latest changes and a read
+  /// loop that hands them to its handler, so a handler that is slow, blocked or throwing holds up
+  /// only its own subscription.
   /// </summary>
   private sealed class PauseStateSubscription : IDisposable {
+    private readonly DebuggerAwareClock _clock;
+    private readonly Channel<bool> _buffer;
     private readonly CancellationTokenSource _cts;
 #pragma warning disable S4487 // Field keeps background task rooted to prevent GC collection
     private readonly Task _readTask;
@@ -318,13 +385,26 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     /// <summary>
     /// Initializes a new instance of the <see cref="PauseStateSubscription"/> class.
     /// </summary>
-    /// <param name="reader">The channel reader for pause state changes.</param>
+    /// <param name="clock">The clock that offers this subscription its changes.</param>
     /// <param name="handler">The callback invoked when pause state changes.</param>
-    public PauseStateSubscription(ChannelReader<bool> reader, Action<bool> handler) {
+    public PauseStateSubscription(DebuggerAwareClock clock, Action<bool> handler) {
+      _clock = clock;
+      _buffer = Channel.CreateBounded<bool>(_pauseStateBufferOptions);
       _cts = new CancellationTokenSource();
-      _readTask = ReadLoopAsync(reader, handler, _cts.Token);
+      _readTask = ReadLoopAsync(_buffer.Reader, handler, clock._logger, _cts.Token);
     }
 
+    /// <summary>Buffers a change for this subscription; the oldest is dropped when it is full.</summary>
+    public void Offer(bool isPaused) => _buffer.Writer.TryWrite(isPaused);
+
+    /// <summary>Ends the read loop once the buffered changes are delivered (the clock was disposed).</summary>
+    public void Complete() => _buffer.Writer.TryComplete();
+
+    /// <summary>
+    /// Releases the subscription. Once this returns no further state is dispatched to the
+    /// handler; a call already running is not waited for, so releasing from inside the handler,
+    /// or from a thread the handler is waiting on, cannot deadlock.
+    /// </summary>
     public void Dispose() {
       // Guarded because Dispose must be safe to call twice: Cancel() on an already-disposed
       // source throws, and a `using` around a subscription the caller also released explicitly
@@ -335,13 +415,21 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _disposed = true;
       _cts.Cancel();
       _cts.Dispose();
+      _clock._release(this);
+      Complete();
       // Don't wait for task - it will complete when canceled
     }
 
-    internal static async Task ReadLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {
+    internal static async Task ReadLoopAsync(
+        ChannelReader<bool> reader, Action<bool> handler, ILogger logger, CancellationToken ct) {
       try {
-        await foreach (var isPaused in reader.ReadAllAsync(ct)) {
-          handler(isPaused);
+        // Not ReadAllAsync: it checks the token only while waiting, so the states already buffered
+        // when the subscription is released would still be dispatched after Dispose returned. The
+        // token is checked before every read, which also leaves those states unconsumed.
+        while (await reader.WaitToReadAsync(ct)) {
+          while (!ct.IsCancellationRequested && reader.TryRead(out var isPaused)) {
+            _dispatch(handler, isPaused, logger);
+          }
         }
       } catch (OperationCanceledException) {
         // Expected when disposed
@@ -349,5 +437,23 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
         // Expected when clock is disposed
       }
     }
+
+    /// <summary>
+    /// Calls the handler for one change. A handler that throws is logged and stays subscribed:
+    /// its failure is its own, and ending its loop would silently stop every later change.
+    /// </summary>
+    private static void _dispatch(Action<bool> handler, bool isPaused, ILogger logger) {
+      try {
+        handler(isPaused);
+      } catch (Exception ex) {
+        LogPauseStateHandlerFailed(logger, isPaused, ex);
+      }
+    }
   }
+
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Error,
+    Message = "A pause-state handler threw when told paused: {IsPaused}. The subscription stays live and receives later changes")]
+  private static partial void LogPauseStateHandlerFailed(ILogger logger, bool isPaused, Exception exception);
 }

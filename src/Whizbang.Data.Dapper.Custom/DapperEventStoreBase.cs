@@ -259,13 +259,15 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// </summary>
   private MessageEnvelope<TMessage> _buildEnvelope<TMessage>(TMessage payload, EventRow row) {
     var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType);
-    _restoreScopeFromJson(row.Scope, hops);
+    StoredScope.RestoreInto(hops, StoredScope.Read(row.Scope, JsonOptions));
 
     return new MessageEnvelope<TMessage> {
       MessageId = MessageId.From(messageId),
       Payload = payload,
       Hops = hops,
-      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #1738: the stream version, when the read selects it, which is how the archive seam sees a gap at a stream's start.
+      LocalStreamVersion = row.Version,
     };
   }
 
@@ -295,87 +297,6 @@ public abstract class DapperEventStoreBase : IEventStore {
     return (messageId, hops, dispatchContext);
   }
 
-  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (!_shouldRestoreScope(scopeJson, hops)) {
-      return;
-    }
-
-    var scopeDict = _deserializeScopeDict(scopeJson!);
-    if (scopeDict == null) {
-      return;
-    }
-
-    _applyScopeToFirstHop(scopeDict, hops);
-  }
-
-  /// <summary>
-  /// Determines whether scope restoration is needed: scope JSON must be present,
-  /// hops must exist, and the first hop must not already have a scope.
-  /// </summary>
-  private static bool _shouldRestoreScope(string? scopeJson, List<MessageHop> hops) {
-    // No hop is not a reason to discard a stored scope: an event read back from the store
-    // keeps its scope in a column and carries no envelope metadata to restore into.
-    return !string.IsNullOrEmpty(scopeJson) && (hops.Count == 0 || hops[0].Scope == null);
-  }
-
-  /// <summary>
-  /// Deserializes scope JSON into a dictionary, returning null if deserialization fails.
-  /// </summary>
-  private Dictionary<string, JsonElement?>? _deserializeScopeDict(string scopeJson) {
-    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
-    return JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
-  }
-
-  /// <summary>
-  /// Extracts scope fields from the dictionary and applies them to the first hop if any values are present.
-  /// </summary>
-  private static void _applyScopeToFirstHop(Dictionary<string, JsonElement?> scopeDict, List<MessageHop> hops) {
-    var scope = _buildPerspectiveScope(scopeDict);
-    if (scope == null) {
-      return;
-    }
-
-    // Give the restored scope somewhere to live when the event came back without hops.
-    // GetCurrentScope() walks hops, so a scope with no hop is a scope that does not exist.
-    if (hops.Count == 0) {
-      hops.Add(new MessageHop {
-        Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
-        ServiceInstance = ServiceInstanceInfo.Unknown,
-      });
-    }
-
-    hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-  }
-
-  /// <summary>
-  /// Builds a PerspectiveScope from scope dictionary values. Returns null if no scope values are present.
-  /// Supports both short keys (t, u, c, o) and long keys (tenant_id, user_id).
-  /// </summary>
-  private static PerspectiveScope? _buildPerspectiveScope(Dictionary<string, JsonElement?> scopeDict) {
-    var tenantId = _extractScopeValue(scopeDict, "t") ?? _extractScopeValue(scopeDict, "tenant_id");
-    var userId = _extractScopeValue(scopeDict, "u") ?? _extractScopeValue(scopeDict, "user_id");
-    var customerId = _extractScopeValue(scopeDict, "c");
-    var organizationId = _extractScopeValue(scopeDict, "o");
-
-    if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId) && string.IsNullOrEmpty(customerId) && string.IsNullOrEmpty(organizationId)) {
-      return null;
-    }
-
-    return new PerspectiveScope {
-      TenantId = tenantId,
-      UserId = userId,
-      CustomerId = customerId,
-      OrganizationId = organizationId
-    };
-  }
-
-  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
-    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
-      ? elem.Value.GetString()
-      : null;
-  }
-
   /// <summary>
   /// Internal row structure for Dapper mapping (3-column JSONB pattern).
   /// </summary>
@@ -386,6 +307,11 @@ public abstract class DapperEventStoreBase : IEventStore {
     public string? Scope { get; set; }
     /// <summary>The row's position in its stream (<c>wh_event_store.version</c>), when the read selects it.</summary>
     public long? Version { get; set; }
+    /// <summary>
+    /// Whether the row is the first in its stream, when the read selects it (#1878): version 0, or version 1 when the
+    /// stream holds no version 0.
+    /// </summary>
+    public bool IsFirstInStream { get; set; }
   }
 
   /// <inheritdoc />

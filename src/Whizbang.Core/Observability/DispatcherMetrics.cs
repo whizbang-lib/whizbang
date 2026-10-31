@@ -54,7 +54,7 @@ public sealed class DispatcherMetrics {
   /// <summary>_serializeToNewOutboxMessage JSON serialization duration.</summary>
   public Histogram<double> SerializationDuration { get; }
 
-  /// <summary>_processTagsIfEnabledAsync execution duration.</summary>
+  /// <summary>Dispatcher.ProcessTagsIfEnabledAsync execution duration.</summary>
   public Histogram<double> TagProcessingDuration { get; }
 
   // Throughput counters

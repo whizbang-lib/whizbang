@@ -83,6 +83,14 @@ public sealed record MessageTypeCatalogEntry(
   public bool IsCompacted { get; init; }
 
   /// <summary>
+  /// <c>true</c> when the event type carries <c>[TerminalEvent]</c> (declared on it or a base type), stamped by the
+  /// generator at compile time. Same transport-receive rationale as <see cref="IsCollective"/> for the
+  /// <c>EventFlags.Terminal</c> bit: a received terminal event seals the receiver's copy of its stream too.
+  /// </summary>
+  /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
+  public bool IsTerminal { get; init; }
+
+  /// <summary>
   /// The type's own payload limit from <c>[MaxPayloadSize]</c>, in bytes, or null when it declares none and the
   /// framework default applies. Zero or less turns the limit off for the type.
   /// </summary>

@@ -208,6 +208,55 @@ public enum MessageFailureReason {
   MixedStreamRefused = 22,
 
   /// <summary>
+  /// The outbox message was accepted by the producer-side batcher (an event a receptor returned, or one it published)
+  /// and could not be stored in the outbox: the store kept failing with a transient database failure until its
+  /// attempts ran out, failed with an error a retry cannot fix, or was abandoned by a stop past its deadline. The dead
+  /// letter holds the whole message, and recovery stores it through the outbox store as if it had just been sent
+  /// (#1871). The recorded error text is the store's last failure.
+  /// </summary>
+  /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
+  OutboxStoreFailed = 23,
+
+  /// <summary>
+  /// The inbox message was accepted by the inbox batcher and could not be stored in the inbox: the store kept failing
+  /// with a transient database failure until its attempts ran out, failed with an error a retry cannot fix, or was
+  /// abandoned by a stop past its deadline. The batcher had already accepted it, so its broker may never deliver it
+  /// again. The dead letter holds the message's envelope, and recovery stores it through the inbox store as a delivery
+  /// of the same envelope is stored (#1885). The recorded error text is the store's last failure.
+  /// </summary>
+  /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
+  InboxStoreFailed = 24,
+
+  /// <summary>
+  /// The event's stream is sealed (finalized, or ended by a terminal event), so the step that copies events into the
+  /// event store refused it and dead-lettered the row; the other events of the same write were stored. Not retried: a
+  /// sealed stream refuses the same event every time. The recorded error text is the refusal the store words for
+  /// <see cref="StreamSealedException"/>: the stream, when it was sealed and why.
+  /// </summary>
+  /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
+  StreamSealed = 25,
+
+  /// <summary>
+  /// The event's stream is archived whole and its type's <see cref="Archival.AppendToArchivedPolicy"/> is
+  /// <see cref="Archival.AppendToArchivedPolicy.Refuse"/>, so the step that copies events into the event store refused it
+  /// and dead-lettered the row; the other events of the same write were stored. Not retried: an archived stream refuses
+  /// the same event every time until it is restored. The recorded error text is the refusal the store words for
+  /// <see cref="Archival.StreamArchivedException"/>: the stream and the version its archive reaches.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
+  StreamArchived = 26,
+
+  /// <summary>
+  /// The event's stream is archived whole and its type's <see cref="Archival.AppendToArchivedPolicy"/> is
+  /// <see cref="Archival.AppendToArchivedPolicy.AutoRestore"/>: the event was dead-lettered, the stream's restore was
+  /// queued in the same transaction, and the dead letter is held by that restore request. Once a maintenance step has
+  /// restored the stream, the dead letter is made due and the recovery worker redrives it; a restore that fails leaves it
+  /// held for review with the request's error.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#restore-requests</docs>
+  AwaitingRestore = 27,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

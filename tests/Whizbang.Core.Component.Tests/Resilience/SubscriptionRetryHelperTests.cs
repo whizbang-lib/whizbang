@@ -281,9 +281,10 @@ public class SubscriptionRetryHelperTests {
     var disconnectException = new InvalidOperationException("Connection lost");
     subscription.TriggerDisconnect("Connection lost", exception: disconnectException, applicationInitiated: false);
 
-    // Wait for the reconnected subscription to be HOOKED, not merely requested. The helper marks the
-    // state Healthy after the transport call returns and only then attaches its disconnect handler,
-    // so waiting on the call itself raced the assertion below (it read Recovering on CI).
+    // Wait for the reconnected subscription to be HOOKED, not merely requested: the helper records Healthy
+    // after the transport call returns, so waiting on the call itself raced the assertion below (it read
+    // Recovering on CI). The handler is attached just before Healthy is recorded, which happens on the same
+    // flow before the helper returns, but the hook is the latest signal this transport offers.
     await transport.WaitForHookedSubscriptionCountAsync(2, TimeSpan.FromSeconds(10));
 
     // Assert - should have attempted reconnection

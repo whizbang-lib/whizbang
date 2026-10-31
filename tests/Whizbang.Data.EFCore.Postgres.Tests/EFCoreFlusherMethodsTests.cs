@@ -139,7 +139,7 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_OutboxCategory_ExtendsLeaseExpiryAsync() {
+  public async Task RenewHeldLeasesAsync_OutboxCategory_ExtendsTheHoldersLeaseExpiryAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -170,9 +170,9 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       initial = Convert.ToDateTime(await read.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    var updated = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, [msgId]);
+    var notHeld = await coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, [msgId]);
 
-    await Assert.That(updated).IsEqualTo(1);
+    await Assert.That(notHeld).IsEmpty();
 
     DateTime after;
     await using (var read = conn.CreateCommand()) {
@@ -181,5 +181,45 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       after = Convert.ToDateTime(await read.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
     }
     await Assert.That(after).IsGreaterThan(initial);
+  }
+
+  [Test]
+  public async Task RenewHeldLeasesAsync_ARowAnotherInstanceHolds_IsReportedAndLeftAloneAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = Coord(dbContext);
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var holder = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var msgId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts, created_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(),
+                @inst, NOW() + INTERVAL '5 minutes', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", holder);
+      ins.Parameters.AddWithValue("stream", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New());
+      await ins.ExecuteNonQueryAsync();
+    }
+    async Task<DateTime> leaseAsync() {
+      await using var read = conn.CreateCommand();
+      read.CommandText = "SELECT lease_expiry FROM wh_outbox WHERE message_id = @msg";
+      read.Parameters.AddWithValue("msg", msgId);
+      return Convert.ToDateTime(await read.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+    var before = await leaseAsync();
+
+    var notHeld = await coordinator.RenewHeldLeasesAsync(
+      WorkCategory.Outbox, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), [msgId], 1800);
+
+    await Assert.That(notHeld).IsEquivalentTo([msgId])
+      .Because("the row's lease belongs to another instance, so this instance's renewal reports it instead of renewing it (#1852)");
+    await Assert.That(await leaseAsync()).IsEqualTo(before)
+      .Because("a former holder's renewal must not extend the lease the current holder has");
   }
 }

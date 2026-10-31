@@ -126,7 +126,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
 
     var results = await _build(ctx).IntegrityTryBeginReportBatchAsync(
       _originId,
-      [new IntegrityReportObservation(_key(), 1, 10, 1, 5)],
+      [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)],
       DateTimeOffset.UtcNow,
       TimeSpan.FromMinutes(5));
 

@@ -20,24 +20,39 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// - Old rows &gt; MIN(cursor.last_delivered_signal_id) stay, even if past the age window
 ///   (a slow tail must not lose its rows).
 /// - Fresh rows (younger than retention) stay regardless of cursor state.
+/// - Only cursors of instances registered in wh_service_instances count (#1771).
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 [Category("Shard1")]
 public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
-  private async Task<long> _insertSignalAsync(string wireName, DateTimeOffset createdAt) {
+  /// <summary>Inserts a signal stamped <paramref name="age"/> before the database's clock, never the host's.</summary>
+  private async Task<long> _insertSignalAsync(string wireName, TimeSpan age) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(
-      "INSERT INTO wh_signals (wire_name, created_at) VALUES (@w, @c) RETURNING id", conn);
+      "INSERT INTO wh_signals (wire_name, created_at) VALUES (@w, NOW() - @age) RETURNING id", conn);
     cmd.Parameters.AddWithValue("w", wireName);
-    cmd.Parameters.AddWithValue("c", createdAt);
+    cmd.Parameters.AddWithValue(nameof(age), age);
     var id = await cmd.ExecuteScalarAsync();
     return Convert.ToInt64(id ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private async Task _upsertCursorAsync(Guid instanceId, long lastId) {
+  /// <summary>
+  /// Writes an instance's tail cursor. A cursor counts only while its instance is registered in
+  /// <c>wh_service_instances</c> (#1771), so the instance is registered too unless <paramref name="registered"/> is
+  /// false, which leaves the cursor of an instance that stopped without being reaped.
+  /// </summary>
+  private async Task _upsertCursorAsync(Guid instanceId, long lastId, bool registered = true) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
+    if (registered) {
+      await using var register = new NpgsqlCommand(@"
+        INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'utest-svc', 'utest-host', 1, NOW(), NOW(), '{}'::jsonb)
+        ON CONFLICT (instance_id) DO NOTHING;", conn);
+      register.Parameters.AddWithValue("id", instanceId);
+      await register.ExecuteNonQueryAsync();
+    }
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id, updated_at)
       VALUES (@id, @last, NOW())
@@ -68,7 +83,7 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Sweep_DeletesOldRowsBelowMinCursorAsync() {
-    var oldId = await _insertSignalAsync("utest-retention-old-42781", DateTimeOffset.UtcNow.AddDays(-14));
+    var oldId = await _insertSignalAsync("utest-retention-old-42781", TimeSpan.FromDays(14));
     await _upsertCursorAsync(Guid.NewGuid(), oldId);   // cursor is past the old row
 
     var deleted = await _createWorker().SweepOnceAsync(CancellationToken.None);
@@ -80,7 +95,7 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task Sweep_KeepsRowsAboveMinCursorEvenIfOldAsync() {
     // Row 1 is old AND unseen by all pods — kept because the min cursor is 0 (never advanced past it).
-    var oldUnseenId = await _insertSignalAsync("utest-retention-oldunseen-11322", DateTimeOffset.UtcNow.AddDays(-14));
+    var oldUnseenId = await _insertSignalAsync("utest-retention-oldunseen-11322", TimeSpan.FromDays(14));
 
     // Insert a live cursor that is at 0 — has NEVER seen anything. Retention must not delete
     // this pod's data.
@@ -95,7 +110,7 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Sweep_KeepsFreshRowsRegardlessOfCursorAsync() {
-    var freshId = await _insertSignalAsync("utest-retention-fresh-99311", DateTimeOffset.UtcNow.AddSeconds(-30));
+    var freshId = await _insertSignalAsync("utest-retention-fresh-99311", TimeSpan.FromSeconds(30));
     await _upsertCursorAsync(Guid.NewGuid(), freshId);
 
     var deleted = await _createWorker().SweepOnceAsync(CancellationToken.None);
@@ -103,6 +118,57 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
     // The delete predicate requires created_at < NOW() - 7 days, so 30 seconds ago is safe.
     await Assert.That(await _signalStillExistsAsync(freshId)).IsTrue();
     _ = deleted;
+  }
+
+  /// <summary>
+  /// Issue #1771: an instance that stopped without being reaped leaves its cursor behind. The sweep holds back only
+  /// to the cursors of instances still registered in <c>wh_service_instances</c>, the rule the partition carry
+  /// (#1758) uses, so the dead cursor no longer stops the sweep and the table no longer grows until the reap.
+  /// </summary>
+  [Test]
+  public async Task Sweep_ACursorWhoseInstanceIsNoLongerRegistered_DoesNotHoldBackTheSweepAsync() {
+    var oldId = await _insertSignalAsync("utest-retention-dead-cursor-1771", TimeSpan.FromDays(14));
+    await _upsertCursorAsync(Guid.CreateVersion7(), oldId);
+    await _upsertCursorAsync(Guid.CreateVersion7(), 0, registered: false);
+
+    var deleted = await _createWorker().SweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(deleted).IsEqualTo(1);
+    await Assert.That(await _signalStillExistsAsync(oldId)).IsFalse()
+      .Because("a cursor whose instance is no longer registered is not a live tail, so it must not hold back the sweep");
+  }
+
+  /// <summary>
+  /// Issue #1771: the other half of the rule. A registered instance's cursor still holds the sweep back, however far
+  /// behind it is, and a dead cursor past everything does not let the sweep pass it.
+  /// </summary>
+  [Test]
+  public async Task Sweep_ARegisteredInstancesCursor_StillHoldsBackTheSweepAsync() {
+    var oldId = await _insertSignalAsync("utest-retention-live-cursor-1771", TimeSpan.FromDays(14));
+    await _upsertCursorAsync(Guid.CreateVersion7(), 0);
+    await _upsertCursorAsync(Guid.CreateVersion7(), oldId, registered: false);
+
+    var deleted = await _createWorker().SweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(deleted).IsEqualTo(0);
+    await Assert.That(await _signalStillExistsAsync(oldId)).IsTrue()
+      .Because("a registered instance whose cursor has not reached the row still needs it");
+  }
+
+  /// <summary>
+  /// Issue #1771: with no registered instance at all, nothing holds a floor, and the sweep deletes nothing rather
+  /// than everything, as it did for an empty cursor table.
+  /// </summary>
+  [Test]
+  public async Task Sweep_WithOnlyCursorsOfUnregisteredInstances_DeletesNothingAsync() {
+    var oldId = await _insertSignalAsync("utest-retention-no-live-cursor-1771", TimeSpan.FromDays(14));
+    await _upsertCursorAsync(Guid.CreateVersion7(), oldId, registered: false);
+
+    var deleted = await _createWorker().SweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(deleted).IsEqualTo(0);
+    await Assert.That(await _signalStillExistsAsync(oldId)).IsTrue()
+      .Because("with no live tail the sweep has no floor, and no floor means nothing is known to be delivered");
   }
 
   /// <summary>

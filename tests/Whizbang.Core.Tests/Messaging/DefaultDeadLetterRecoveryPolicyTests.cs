@@ -94,6 +94,74 @@ public class DefaultDeadLetterRecoveryPolicyTests {
     await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
   }
 
+  /// <summary>
+  /// An event refused because its stream is sealed is refused the same way every time it is re-driven, so recovery
+  /// holds it for review instead of retrying it (WS-3 S4).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_StreamSealed_HoldsForReviewWithoutRetryAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.StreamSealed));
+    await Assert.That(result.Name).IsEqualTo("HoldForReview");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(0);
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
+  /// An archived stream whose type refuses appends refuses the same event every time it is re-driven, so recovery
+  /// holds it for review instead of retrying it (WS-3 S9, #1738).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_StreamArchived_HoldsForReviewWithoutRetryAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.StreamArchived));
+    await Assert.That(result.Name).IsEqualTo("HoldForReview");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(0);
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
+  /// A dead letter awaiting its stream's restore is held until the restore makes it due, so by the time recovery sees
+  /// it the stream is back: it is redriven, a few times quickly, and held for review once that budget is spent (#1738).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_AwaitingRestore_RedrivesSoonAfterTheRestore_ThenHoldsAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.AwaitingRestore));
+    await Assert.That(result.Name).IsEqualTo("AfterRestore");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(3);
+    await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
+  /// A message the outbox batcher could not store is re-stored by recovery, soon and often, and held for review once
+  /// that budget is spent (#1871).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_OutboxStoreFailed_RetriesAggressivelyThenHoldsAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.OutboxStoreFailed));
+    await Assert.That(result.Name).IsEqualTo("AggressiveRetry");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(5);
+    await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
+  /// A message the inbox batcher could not store is re-stored by recovery, soon and often, and held for review once
+  /// that budget is spent (#1885).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_InboxStoreFailed_RetriesAggressivelyThenHoldsAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.InboxStoreFailed));
+    await Assert.That(result.Name).IsEqualTo("AggressiveRetry");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(5);
+    await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
   [Test]
   public async Task GetPolicy_ValidationError_HoldsForReviewWithoutRetryAsync() {
     var policy = _newPolicy();

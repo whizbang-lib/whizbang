@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <tests>src/Whizbang.Core/Workers/PerspectiveWorker.cs:_processDrainModeStreamsAsync</tests>
 /// </summary>
 [NotInParallel]
-public class PerspectiveWorkerDrainModeLifecycleTests {
+public partial class PerspectiveWorkerDrainModeLifecycleTests {
 
   // ========================================
   // TEST EVENTS (two types to test filtering)
@@ -158,8 +158,11 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public List<Guid> GetEventsForPerspective(string perspectiveName) =>
       _eventsPerPerspective.GetValueOrDefault(perspectiveName, []);
 
+    /// <summary>Perspectives that never report: no runner, so the worker never signals them complete.</summary>
+    public HashSet<string> SilentPerspectives { get; } = [];
+
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
-      new CapturingPerspectiveRunner(this);
+      SilentPerspectives.Contains(perspectiveName) ? null : new CapturingPerspectiveRunner(this);
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registrations;
 
@@ -310,7 +313,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     return (worker, coordinator, registry, eventStore, invoker, lifecycleCoordinator, harness);
   }
 
-  private static async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator, PerspectiveWorkerTestHarness harness) {
+  private static async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator, PerspectiveWorkerTestHarness harness, CancellationToken cancellationToken) {
     // Wait for the FULL batch cycle to complete (including Phase 5 PostLifecycle).
     // OnBatchCycleComplete fires at the end of ProcessChannelBatchAsync — since PostLifecycle
     // is fire-and-forget, the pending PostLifecycle task is awaited AFTER that signal so
@@ -324,18 +327,18 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       }
     };
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
     // Channel-mode: pump the coordinator's drain stream IDs through the drain channel.
     foreach (var streamId in coordinator.StreamIdsToReturn) {
       await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     }
-    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await batchComplete.Task.WaitAsync(cancellationToken);
 
     // Drain the fire-and-forget PostLifecycle task so HasStage assertions observe
     // PostAllPerspectives / PostLifecycle stages after this helper returns.
     if (worker.PendingPostLifecycle is { } pending) {
-      await pending.WaitAsync(TimeSpan.FromSeconds(5));
+      await pending.WaitAsync(cancellationToken);
     }
 
     await cts.CancelAsync();
@@ -344,7 +347,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     // and a caller's assertions could read lifecycle state the worker's finally blocks had not
     // settled yet. SuppressThrowing because a body leaving through a cancellation catch settles
     // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 
@@ -353,7 +356,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   // ========================================
 
   [Test]
-  public async Task DrainMode_FiltersEventsPerPerspective_OnlyMatchingEventsPassedAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_FiltersEventsPerPerspective_OnlyMatchingEventsPassedAsync(CancellationToken cancellationToken) {
     // Arrange — two event types, two perspectives, each handles only one type
     var streamId = Guid.NewGuid();
     var alphaEventId = Guid.NewGuid();
@@ -380,7 +384,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — each perspective should only receive its matching event
     var alphaEvents = registry.GetEventsForPerspective("AlphaPerspective");
@@ -393,7 +397,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_PerspectiveWithNoMatchingEvents_SkippedAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_PerspectiveWithNoMatchingEvents_SkippedAsync(CancellationToken cancellationToken) {
     // Arrange — only AlphaEvent on the stream, BetaPerspective should not run
     var streamId = Guid.NewGuid();
     var alphaEventId = Guid.NewGuid();
@@ -417,7 +422,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — only AlphaPerspective ran, BetaPerspective was skipped
     var alphaEvents = registry.GetEventsForPerspective("AlphaPerspective");
@@ -428,7 +433,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_MultipleEventTypes_SharedPerspectiveGetsAllMatchingAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_MultipleEventTypes_SharedPerspectiveGetsAllMatchingAsync(CancellationToken cancellationToken) {
     // Arrange — one perspective handles both AlphaEvent and BetaEvent
     var streamId = Guid.NewGuid();
     var alphaEventId = Guid.NewGuid();
@@ -453,7 +459,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — CombinedPerspective gets both events
     var events = registry.GetEventsForPerspective("CombinedPerspective");
@@ -465,7 +471,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   // ========================================
 
   [Test]
-  public async Task DrainMode_PostPerspectiveInline_FiresPerPerspectivePerEventAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_PostPerspectiveInline_FiresPerPerspectivePerEventAsync(CancellationToken cancellationToken) {
     // Arrange — single event, single perspective
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -491,14 +498,15 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — PostPerspectiveInline should have fired (receptors registered via lifecycleStages)
     await Assert.That(invoker.HasStage(LifecycleStage.PostPerspectiveInline)).IsTrue();
   }
 
   [Test]
-  public async Task DrainMode_PostAllPerspectives_FiresAfterAllPerspectivesCompleteAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_PostAllPerspectives_FiresAfterAllPerspectivesCompleteAsync(CancellationToken cancellationToken) {
     // Arrange — one event handled by two perspectives
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -522,11 +530,11 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — check coordinator state
     var allComplete = lc.AreAllPerspectivesComplete(eventId);
-    var hasTracking = lc.GetTracking(eventId) is not null;
+    var hasTracking = lc.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null;
     var allStages = invoker.Invocations.Select(i => i.Stage.ToString()).ToList();
     var runCount = registry.RunWithEventsCallCount;
 
@@ -534,14 +542,15 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       .Because("Both perspectives should have run via RunWithEventsAsync");
     await Assert.That(allComplete).IsTrue()
       .Because("Both perspectives signaled complete — WhenAll should resolve");
-    await Assert.That(hasTracking).IsTrue()
-      .Because("BeginTracking was called in PrePerspective");
+    await Assert.That(hasTracking).IsFalse()
+      .Because("the event's tracking ends at its exit once PostLifecycle has fired (#1797)");
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because($"Expected PostAllPerspectivesInline (runCount={runCount}) but only saw: [{string.Join(", ", allStages)}]");
   }
 
   [Test]
-  public async Task DrainMode_PostLifecycle_FiresAfterPostAllPerspectivesAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_PostLifecycle_FiresAfterPostAllPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -562,7 +571,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — PostLifecycleInline should fire (tagged notifications)
     // Note: PostLifecycleDetached is fire-and-forget and may not complete before test ends
@@ -570,7 +579,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_FullLifecycleChain_AllStagesFireInOrderAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_FullLifecycleChain_AllStagesFireInOrderAsync(CancellationToken cancellationToken) {
     // Arrange
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -596,7 +606,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — full lifecycle chain fires (Inline stages are awaited, Detached are fire-and-forget)
     await Assert.That(invoker.HasStage(LifecycleStage.PostPerspectiveInline)).IsTrue();
@@ -605,7 +615,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_TwoEvents_BothGetFullLifecycleAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_TwoEvents_BothGetFullLifecycleAsync(CancellationToken cancellationToken) {
     // Arrange — two events, one perspective
     var streamId = Guid.NewGuid();
     var eventId1 = Guid.NewGuid();
@@ -634,7 +645,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — PostPerspectiveInline fires for EACH event (2 events × 1 perspective = 2)
     await Assert.That(invoker.CountForStage(LifecycleStage.PostPerspectiveInline)).IsEqualTo(2);
@@ -647,7 +658,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   // ========================================
 
   [Test]
-  public async Task DrainMode_ExpectationsRegisteredBeforeSignals_WhenAllResolvesAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_ExpectationsRegisteredBeforeSignals_WhenAllResolvesAsync(CancellationToken cancellationToken) {
     // Arrange — two perspectives for same event; WhenAll must resolve
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -668,14 +680,15 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — PostAllPerspectives fires (proves WhenAll resolved after both P1 and P2 signaled)
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();
   }
 
   [Test]
-  public async Task DrainMode_DuplicateRawEventIds_HandledGracefullyAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_DuplicateRawEventIds_HandledGracefullyAsync(CancellationToken cancellationToken) {
     // Arrange — same event appears twice in raw events (multiple perspective_events rows)
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -698,7 +711,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act — should NOT throw duplicate key exception
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     // Assert — processed successfully
     await Assert.That(invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue();
@@ -730,7 +743,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_PostLifecycle_IsFireAndForgetAfterBatchCompletesAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_PostLifecycle_IsFireAndForgetAfterBatchCompletesAsync(CancellationToken cancellationToken) {
     // Arrange — GatedReceptorInvoker blocks on PostLifecycleInline until test releases the gate.
     // If PostLifecycle is fire-and-forget, the batch will complete while the invoker is still blocked.
     // If PostLifecycle blocks the drain cycle, the batch would hang.
@@ -761,18 +775,18 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     worker.OnBatchCycleComplete += () => {
       if (Interlocked.Increment(ref batchCount) == 1) { batchComplete.TrySetResult(); }
     };
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
     foreach (var sid in coordinator.StreamIdsToReturn) {
       await harness.EnqueueDrainStreamAsync(sid, cts.Token);
     }
 
     // Wait for batch to finish its synchronous work (apply phase complete, PostLifecycle scheduled)
-    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await batchComplete.Task.WaitAsync(cancellationToken);
 
     // Wait for the gated invoker to actually begin — proves PostLifecycle was scheduled,
     // not skipped. Without this, the test could pass vacuously (no background work scheduled).
-    await invokerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await invokerStarted.Task.WaitAsync(cancellationToken);
 
     // Assert — PostLifecycle is backgrounded: pending task exists and is NOT completed
     // because the gated invoker is still blocked.
@@ -784,17 +798,18 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     // Release the gate and drain, then verify stages fired
     gate.TrySetResult();
-    await pending.WaitAsync(TimeSpan.FromSeconds(5));
+    await pending.WaitAsync(cancellationToken);
     await Assert.That(gatedInvoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue()
       .Because("After releasing the gate, the stage should have been recorded");
 
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 
   [Test]
-  public async Task GracefulShutdown_AwaitsPendingPostLifecycleAsync() {
+  [Timeout(30000)]
+  public async Task GracefulShutdown_AwaitsPendingPostLifecycleAsync(CancellationToken cancellationToken) {
     // Arrange — receptor that records synchronously (no blocking). The test asserts the
     // pending PostLifecycle task completed (whether by natural completion or via cancellation-
     // triggered unwind) before ExecuteAsync returns — i.e. the shutdown path awaits it.
@@ -821,10 +836,10 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       if (Interlocked.Increment(ref batchCount) == 1) { batchComplete.TrySetResult(); }
     };
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await batchComplete.Task.WaitAsync(cancellationToken);
 
     // Capture the pending PostLifecycle task reference BEFORE shutdown so we can assert on it later
     var pendingAtShutdown = worker.PendingPostLifecycle;
@@ -861,7 +876,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   // narrowed to the EFCore upsert path or the SQL chain — a useful localization.
 
   [Test]
-  public async Task DrainMode_TwoPerspectivesForSameEvent_BothCalledExactlyOnceAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_BothCalledExactlyOnceAsync(CancellationToken cancellationToken) {
     // Symmetry contract: both perspectives must receive the SAME event in their
     // RunWithEventsAsync call — exactly once, with the same event ID.
     var streamId = (Guid)TrackedGuid.New();
@@ -884,7 +900,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var (worker, coordinator, registry, _, _, _, harness) =
       _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
 
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     var alphaEventList = registry.GetEventsForPerspective("PerspectiveAlpha");
     var betaEventList = registry.GetEventsForPerspective("PerspectiveBeta");
@@ -900,7 +916,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_TwoPerspectivesForSameEvent_BothSignalCompletionToCoordinatorAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_BothSignalCompletionToCoordinatorAsync(CancellationToken cancellationToken) {
     // Both perspectives' SignalPerspectiveComplete must reach the LifecycleCoordinator.
     // This is the gate that drives PostAllPerspectives — if even one perspective doesn't
     // signal, AreAllPerspectivesComplete returns false forever and the tag never fires.
@@ -928,14 +945,15 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var (worker, coordinator, _, _, _, lc, harness) =
       _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
 
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     await Assert.That(lc.AreAllPerspectivesComplete(eventId)).IsTrue()
       .Because("Both perspectives must have called SignalPerspectiveComplete on the LifecycleCoordinator. If only one signals, the gate stays closed forever and PostAllPerspectives never fires — a production saga-loader-stuck symptom.");
   }
 
   [Test]
-  public async Task DrainMode_TwoPerspectivesForSameEvent_PostAllPerspectivesFiresExactlyOnceAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_PostAllPerspectivesFiresExactlyOnceAsync(CancellationToken cancellationToken) {
     // The lifecycle gate must wait for BOTH perspectives' SignalPerspectiveComplete before
     // firing PostAllPerspectivesInline. Tag hooks attach at this stage in a consumer's service — if it
     // fires after only ONE perspective, the tag pushes BEFORE the second perspective's row
@@ -961,7 +979,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var (worker, coordinator, _, _, invoker, lc, harness) =
       _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
 
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     await Assert.That(lc.AreAllPerspectivesComplete(eventId)).IsTrue()
       .Because("Both perspectives signaled — WhenAll resolves.");
@@ -971,7 +989,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   }
 
   [Test]
-  public async Task DrainMode_TwoStreamsTwoPerspectivesEach_EachStreamFiresPostAllPerspectivesOnceAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_TwoStreamsTwoPerspectivesEach_EachStreamFiresPostAllPerspectivesOnceAsync(CancellationToken cancellationToken) {
     // Multi-stream extension: per-event WhenAll must scope to that event — firing
     // PostAllPerspectives once per (stream, event) tuple. Catches a regression where the
     // gate state leaks across streams.
@@ -999,7 +1018,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var (worker, coordinator, _, _, invoker, _, harness) =
       _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [stream1, stream2]);
 
-    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
 
     await Assert.That(invoker.CountForStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(2)
       .Because("Two events × one fire each = exactly two PostAllPerspectivesInline invocations.");
@@ -1036,7 +1055,7 @@ public class LifecycleCoordinatorPostAllPerspectivesIsolationTests {
     };
 
     // Act — simulate the full lifecycle: BeginTracking → Expect → Signal → AdvanceTo
-    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, Guid.NewGuid());
+    var tracking = coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, Guid.NewGuid());
 
     // Register expectations (2 perspectives)
     coordinator.ExpectPerspectiveCompletions(eventId, ["P1", "P2"]);
@@ -1055,8 +1074,9 @@ public class LifecycleCoordinatorPostAllPerspectivesIsolationTests {
     await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, sp, default);
     await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, sp, default);
 
-    // Allow detached tasks to complete
-    await Task.Delay(50);
+    // The inline stages ran inside AdvanceToAsync; drain the detached ones so nothing is still running
+    // when the assertions read the invoker.
+    await tracking.DrainDetachedAsync();
 
     // Assert — invoker should have captured inline stages
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();

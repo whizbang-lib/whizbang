@@ -208,7 +208,9 @@ public class PassiveCounterDriftLockTests {
         if (!_accepting) {
           return;
         }
-        var ours = factory is not null ? factory.CreatedMeters.Contains(instrument.Meter) : instrument.Meter.Name == meterName;
+        // A factory-created meter carries the factory as its scope. Comparing that is race-free; scanning the factory's
+        // CreatedMeters is not, because a parallel test's factory can add a meter while this callback reads its list.
+        var ours = factory is not null ? ReferenceEquals(instrument.Meter.Scope, factory) : instrument.Meter.Name == meterName;
         if (!ours) {
           return;
         }

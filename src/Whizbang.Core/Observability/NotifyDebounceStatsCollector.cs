@@ -22,13 +22,19 @@ namespace Whizbang.Core.Observability;
 /// provider read failure is logged and retried next tick — a metrics hiccup must never fault the
 /// host.
 /// </remarks>
+/// <param name="scopeFactory">Creates the scope each cycle resolves its provider from.</param>
+/// <param name="metrics">The metric cache each cycle refreshes.</param>
+/// <param name="schemaReadyGate">Holds the first read until the state table exists.</param>
+/// <param name="logger">Logs a missing provider and failed reads.</param>
+/// <param name="timeProvider">The clock the interval between cycles is measured on; null is the system clock.</param>
 /// <docs>operations/observability/metrics#notify-debounce</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/NotifyDebounceStatsCollectorTests.cs</tests>
 public sealed partial class NotifyDebounceStatsCollector(
   IServiceScopeFactory scopeFactory,
   NotifyDebounceMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
-  ILogger<NotifyDebounceStatsCollector> logger
+  ILogger<NotifyDebounceStatsCollector> logger,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
 
   // Required, not optional: an optional injected interface param is silently null wherever the
@@ -38,6 +44,8 @@ public sealed partial class NotifyDebounceStatsCollector(
     ArgumentGuard.NotNull(logger);
 
   private const int COLLECTION_INTERVAL_SECONDS = 15;
+
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// Raised once every collection cycle, AFTER the metric cache has been written — so an observer
@@ -75,7 +83,7 @@ public sealed partial class NotifyDebounceStatsCollector(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromSeconds(COLLECTION_INTERVAL_SECONDS), stoppingToken);
+        await Task.Delay(TimeSpan.FromSeconds(COLLECTION_INTERVAL_SECONDS), _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

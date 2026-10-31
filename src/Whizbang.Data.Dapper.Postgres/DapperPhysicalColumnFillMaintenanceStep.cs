@@ -31,6 +31,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// bounded, and only ever fills a column where it is null, so a second instance running it would change
 /// nothing a first had not.
 /// </para>
+/// <para>
+/// The perspectives are found in the schema the Dapper work coordinator writes to: the connection string's
+/// <c>Search Path</c>, else the server's <c>current_schema()</c> (#1894). The claim is taken, and keyed, in that schema.
+/// </para>
 /// </remarks>
 /// <param name="connectionString">The database the perspectives are in.</param>
 /// <param name="logger">Optional logger.</param>
@@ -40,6 +44,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="settle">How long a move stays watched after the start that made it.</param>
 /// <docs>fundamentals/perspectives/physical-fields#rows-written-during-a-rolling-deploy</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPhysicalFieldMoveTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMaintenanceStepNamedSchemaTests.cs:ThePhysicalColumnFillStep_FillsAndClaimsInTheHostsSchemaAsync</tests>
 public sealed class DapperPhysicalColumnFillMaintenanceStep(
     string connectionString,
     ILogger<DapperPhysicalColumnFillMaintenanceStep>? logger = null,
@@ -47,10 +52,6 @@ public sealed class DapperPhysicalColumnFillMaintenanceStep(
     int batchSize = PhysicalColumnFill.DEFAULT_BATCH_SIZE,
     int maxRoundsPerRun = PhysicalColumnFill.DEFAULT_MAX_ROUNDS,
     TimeSpan? settle = null) : IMaintenanceStep {
-
-  // The Dapper driver keeps its tables in the connection's default schema.
-  private const string SCHEMA = "public";
-  private const string QUOTED_SCHEMA = "\"public\"";
 
   private readonly string _connectionString = string.IsNullOrWhiteSpace(connectionString)
     ? throw new ArgumentException("A connection string is required.", nameof(connectionString))
@@ -68,18 +69,20 @@ public sealed class DapperPhysicalColumnFillMaintenanceStep(
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    if (!await PhysicalColumnFill.AnyArmedAsync(connection, QUOTED_SCHEMA, cancellationToken).ConfigureAwait(false)) {
+    var schema = await DapperCoordinatorSchema.ResolveAsync(_connectionString, connection, cancellationToken).ConfigureAwait(false);
+    var quotedSchema = PgIdentifier.Quote(schema);
+    if (!await PhysicalColumnFill.AnyArmedAsync(connection, quotedSchema, cancellationToken).ConfigureAwait(false)) {
       return;
     }
 
-    var key = PhysicalColumnFill.ClaimKey(SCHEMA, _timeProvider.GetUtcNow());
+    var key = PhysicalColumnFill.ClaimKey(schema, _timeProvider.GetUtcNow());
     if (!await FleetClaim.TryClaimAsync(
-        services.GetService<IClaimedEmissionStore>(), connection, QUOTED_SCHEMA, key, cancellationToken)
+        services.GetService<IClaimedEmissionStore>(), connection, quotedSchema, key, cancellationToken)
         .ConfigureAwait(false)) {
       return;
     }
 
     await PhysicalColumnFill.RunAsync(
-      connection, QUOTED_SCHEMA, batchSize, maxRoundsPerRun, _settle, _logger, cancellationToken).ConfigureAwait(false);
+      connection, quotedSchema, batchSize, maxRoundsPerRun, _settle, _logger, cancellationToken).ConfigureAwait(false);
   }
 }

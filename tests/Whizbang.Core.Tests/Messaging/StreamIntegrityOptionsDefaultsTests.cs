@@ -40,6 +40,8 @@ public class StreamIntegrityOptionsDefaultsTests {
     await Assert.That(options.MaxAutoRepairRequestsPerCheckpoint).IsEqualTo(10)
       .Because("auto-repair by default is only safe because every rung is hard-capped.");
     await Assert.That(options.MaxAutoRepairRequestsPerAudit).IsEqualTo(25);
+    await Assert.That(options.MaxRepairDrainBacklog).IsEqualTo(10_000)
+      .Because("#1792: the paced drain's ledger needs a total bound, or it grows with every divergent stream across audits.");
     await Assert.That(options.MaxAutoRebuildsPerAudit).IsEqualTo(5);
     await Assert.That(options.MaxCoverageGapReportsPerAudit).IsEqualTo(100);
     await Assert.That(options.MaxDrillDownTypesPerAudit).IsEqualTo(10);

@@ -135,6 +135,45 @@ Tests: `StoredFormMigrationTests`, `StoredFormMigrationSqlTests`, `StoredFormMig
 `StoredFormAttributeTests`, and the end-to-end recovery (at once, no clock moved) in
 `StoredFormScalarMismatchWorkerTests`.
 
+## Declared JSON names (#1874)
+
+Releases before #920 wrote every property under its C# name; now the generated message context writes the declared
+`[JsonPropertyName]`. Where the two differ only in case (`"X"` stored, `"x"` declared), EF's mapped reader matches
+exactly, finds nothing and reads the default with no error. Three pieces, one per reader:
+
+- **Rewrite.** `DeclaredKeySpellingPass` (Data.Postgres) runs first in the EF stored-form phase (before the
+  app's stored-form migrations and the temporal rewrite, which address declared names) and in the Dapper schema pass
+  after the perspective tables exist. Shapes come from the readers: `DeclaredKeyShapes.ForModel` (EF model for mapped
+  columns, serializer metadata for opaque ones) and `DeclaredKeyTable.ForSerializedModels` (Dapper, model types from the
+  generated `PerspectiveDocumentModels.Register(table, typeof(Model))` module initializer). The scan walks the PK in
+  chunks (`id > $1 ORDER BY id LIMIT n`), a `jsonb_path_exists ... keyvalue() ? (@.key like_regex ... flag "i" && @.key != ...)`
+  predicate returns only candidate rows, the C# rewrite (`DeclaredKeySpellingDocument`, JsonNode, values moved as
+  parsed) produces the new text, and the UPDATE is conditioned on `xmin`. Conflicts (both spellings, different values;
+  a key matching two declared names) leave the row whole and end the pass with `StoredFormConversionBlockedException`.
+- **Settle.** `SettleAsync` (EF: after the stored-form phase, so `DefaultWhenMissing` has run) logs rows missing a
+  required member at Error and writes `declared-names:<table>:<hash>` to `wh_stored_form_migrations`, settled when the
+  pass changed nothing and nothing is missing. The hash is over `DeclaredKeyShape.Describe()`, so a model change rescans
+  once. A table this release creates empty is settled on its first check (Dapper) or its second start (EF).
+- **Reads.** `JsonContextRegistry.CreateCombinedOptions` sets `PropertyNameCaseInsensitive`: events are history and are
+  not rewritten, so the reader tolerates the old case.
+- **Required, rows only (owner decision 2026-10-29).** The message JSON context marks `required` / `[JsonRequired]`
+  members `IsRequired` (unless the type admits null; the options omit nulls when writing) only on types whose
+  `RequiredMemberReading` is `Refused`: a perspective model and the types only perspective models reach. Events,
+  commands, composites and other serializable types, and everything they carry, are `Tolerated`: a missing member
+  reads as its default, so a replay never fails because a later change added `required` (history is read tolerantly
+  and upcast; the compiler guards new messages). Reachability (`_requiredMemberReadings`) walks properties,
+  collection elements, dictionary values and polymorphic derived types from two root sets: perspective models (found
+  by either discovery path, read before dedup) and every other discovered message. A type reached from both is
+  `Reported`: one JsonTypeInfo per type serves both readers and history wins, so it is read tolerantly, and the
+  generated initializer calls `DeclaredRequiredMembers.Register(typeof(T), "<json names>")` so
+  `DeclaredKeyShape.FromSerializer` still marks the member required and the settle step still reports rows missing it.
+  A refused init-only member gets a setter that throws: System.Text.Json refuses a required property with no setter
+  even when a constructor parameter fills it, and never calls the setter of a property a parameter fills.
+
+Not handled: a stored key that differs by more than case (`Points` declared `pts`): that is a rename and needs
+`[StoredForm(PreviousName = ...)]`. EF's mapped reader cannot refuse a missing required key, and a type shared with
+an event is read tolerantly on every path; the settle step's Error is the only signal there.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:

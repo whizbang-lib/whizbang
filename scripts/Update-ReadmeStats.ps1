@@ -97,6 +97,7 @@ $tiers = [ordered]@{
       'Real-time'       = 'Push changes to connected clients.'
       'Hosting'         = 'ASP.NET Core request integration, and Aspire resources for local and cloud hosting.'
       'Message offload' = 'Move large message bodies out of the broker and database (claim check).'
+      'Event archive'   = 'Keep archived event streams outside the database, readable and restorable.'
       'Observability'   = 'OpenTelemetry integration for tagged messages.'
       'Tools'           = 'Command-line tools and editor support.'
     }

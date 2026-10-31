@@ -50,7 +50,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
-  private readonly Timer _debounceTimer;
+  private readonly ITimer _debounceTimer;
   // Removes the strategy from the host's producers once it is disposed on its own.
   private readonly IDisposable _producerRegistration;
 
@@ -113,13 +113,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
-    // Debounce timer: fires once after quiet period, not repeating
-    _debounceTimer = new Timer(
-      DebounceTimerTick,
-      state: null,
-      dueTime: Timeout.Infinite,
-      period: Timeout.Infinite
-    );
+    // Debounce timer: fires once after quiet period, not repeating. Created with the flow suppressed: the strategy is
+    // often resolved lazily inside some caller, and a tick must not run in that caller's context (#1868).
+    _debounceTimer = Whizbang.Core.Workers.AmbientFreeTask.CreateTimer(TimeProvider.System, DebounceTimerTick);
 
     // The host stops the timer and flushes what is queued while the service provider is still alive (#1721)
     _producerRegistration = _detachedWork.RegisterProducer(ct => _stopAndFlushAsync(ct));
@@ -379,8 +375,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       return;
     }
     _debounceTimer.Change(
-      dueTime: _options.IntervalMilliseconds,
-      period: Timeout.Infinite
+      dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
+      period: Timeout.InfiniteTimeSpan
     );
   }
 
@@ -390,7 +386,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   private void _triggerBatchFlush() {
     // Disable debounce timer - we're flushing now
-    _debounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
+    _debounceTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
     LogBatchSizeReached(_logger, _options.BatchSize);
 
@@ -398,14 +394,15 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // flushed. The old "background thread, no ambient context" skip was stale —
     // LifecycleInvocationHelper reconstructs each message from its envelope (trace context from
     // hops, payload deserialized, fresh scope per message) and reads no ambient state.
-    // Recorded, so the stop waits for it instead of disposing the service provider under it (#1721)
-    InFlightFlushes.Track(Task.Run(async () => {
+    // Recorded, so the stop waits for it instead of disposing the service provider under it (#1721). The batch is
+    // shared, so the flush runs without the context of the caller whose queue happened to fill it (#1868).
+    InFlightFlushes.Track(Whizbang.Core.Workers.AmbientFreeTask.Run(async () => {
       try {
         await _flushCoreAsync(FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringBatchFlush(_logger, ex);
       }
-    }));
+    }, CancellationToken.None));
   }
 
   /// <summary>
@@ -425,13 +422,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Lifecycle stages run here too (issue #485) — see the BatchSize trigger above; a quiet-period
     // flush is the common case on low-traffic services, and skipping made stage delivery a
     // function of traffic shape.
-    InFlightFlushes.Track(Task.Run(async () => {
+    InFlightFlushes.Track(Whizbang.Core.Workers.AmbientFreeTask.Run(async () => {
       try {
         await _flushCoreAsync(FlushTrigger.Debounce, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringDebounceFlush(_logger, ex);
       }
-    }));
+    }, CancellationToken.None));
   }
 
   /// <summary>

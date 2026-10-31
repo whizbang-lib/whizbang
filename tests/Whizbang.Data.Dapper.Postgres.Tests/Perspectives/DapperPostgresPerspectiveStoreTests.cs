@@ -268,5 +268,6 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
 }
 
 [JsonSerializable(typeof(DapperPostgresPerspectiveStoreTests.TestModel))]
+[JsonSerializable(typeof(DapperPerspectiveRowVersionTests.VersionedTestModel))]
 [JsonSerializable(typeof(PerspectiveScope))]
 internal sealed partial class DapperPerspectiveTestJsonContext : JsonSerializerContext;

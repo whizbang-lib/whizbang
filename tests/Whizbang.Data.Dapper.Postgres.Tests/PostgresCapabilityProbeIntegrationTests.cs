@@ -184,4 +184,24 @@ public class PostgresCapabilityProbeIntegrationTests {
       .IsEqualTo(Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME);
     await Assert.That(ServiceCollectionExtensions.ProbeDatabaseName("Host=localhost;Database=orders")).IsEqualTo("orders");
   }
+
+  [Test]
+  public async Task TheProbe_ReadsTheWalLevelAndServerVersion_ThatPgSqueezeDependsOnAsync() {
+    await using var connection = new NpgsqlConnection(_database.ConnectionString);
+    await connection.OpenAsync();
+    await using var expected = connection.CreateCommand();
+    expected.CommandText = "SELECT current_setting('wal_level'), current_setting('server_version_num')::int";
+    await using var reader = await expected.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    var walLevel = reader.GetString(0);
+    var versionNum = reader.GetInt32(1);
+    await reader.DisposeAsync();
+
+    var rows = await PostgresCapabilityProbe.ReadAsync(connection, PostgresExtensionCatalog.BuiltIn, CancellationToken.None);
+
+    await Assert.That(rows["pg_squeeze"].WalLevel).IsEqualTo(walLevel);
+    await Assert.That(rows["pg_squeeze"].ServerVersionNum).IsEqualTo(versionNum);
+    await Assert.That(versionNum).IsGreaterThanOrEqualTo(170_000)
+      .Because("the test image is Postgres 17, so a zero here means the column was not read");
+  }
 }

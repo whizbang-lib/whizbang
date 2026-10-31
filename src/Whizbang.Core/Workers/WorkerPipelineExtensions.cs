@@ -93,6 +93,9 @@ public static class WorkerPipelineExtensions {
       return services;
     }
     services.AddSingleton(WorkerPipelineRegistrationMarker.Instance);
+    // #1738: Whizbang:Archive (read-through) and Whizbang:StreamLifecycle (the append-to-archived policy per stream type),
+    // bound by hand and validated at host start.
+    Whizbang.Core.Archival.ArchiveOptionsBinder.AddWhizbangArchiveOptions(services);
     // Every worker below takes its collaborators as required constructor parameters; the defaults
     // make a pipeline composed without AddWhizbang constructible (TryAdd, so AddWhizbang's own
     // call and the host's registrations are unaffected).
@@ -190,6 +193,12 @@ public static class WorkerPipelineExtensions {
       sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
       sp.GetService<TimeProvider>()));
+    // The stage gate (#1636): what a worker registered to start at a stage waits on. It hears every stage the reporter
+    // enters, and reads the schema-ready gate for every stage up to Coordinate, which that gate opening implies.
+    services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupStageGate(sp.GetRequiredService<ISchemaReadyGate>()));
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupStageGate>(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupStageGate>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStageObserver, Whizbang.Core.Startup.StartupStageGate>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupStageGate>()));
     services.AddSingleton<IWhizbangRunControl>(sp =>
       new Whizbang.Core.Startup.StartupStageRunControl(sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Startup.StartupStageHostLifecycle>());
@@ -231,6 +240,36 @@ public static class WorkerPipelineExtensions {
     // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
       new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // pg_repack (#1753): run in process by the maintainer-duty holder, or left to an external job. In process its
+    // client is a probed prerequisite; a host that does not use it starts no process, not even to probe.
+    services.TryAddSingleton<Whizbang.Core.Processes.IExternalProcessRunner, Whizbang.Core.Processes.ExternalProcessRunner>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgRepackTableRewriter>(sp =>
+      new PgRepackTableRewriter(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<Whizbang.Core.Processes.IExternalProcessRunner>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
+        sp.GetRequiredService<ILogger<PgRepackTableRewriter>>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Capabilities.ICapabilityProvider, PgRepackClientCapabilityProvider>(sp =>
+      new PgRepackClientCapabilityProvider(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<Whizbang.Core.Processes.IExternalProcessRunner>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Capabilities.ICapabilityRequirementSource, PgRepackClientRequirementSource>(sp =>
+      new PgRepackClientRequirementSource(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // The online strategy: pg_squeeze, run from the maintenance cycle within a byte budget when TableRewriteStrategy is
+    // PgSqueeze (the step does nothing, not even a scan, for any other strategy).
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgSqueezeTableRewriter>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, OnlineTableRewriteStep>(sp =>
+      new OnlineTableRewriteStep(
+        sp.GetServices<ITableRewriter>(),
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
+        sp.GetRequiredService<ILogger<OnlineTableRewriteStep>>())));
+    // #1746: bloated indexes on the queue tables that churn to empty are rebuilt concurrently, one per cycle, fleet-once.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, QueueIndexReindexStep>(sp =>
+      new QueueIndexReindexStep(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<ILogger<QueueIndexReindexStep>>(),
+        sp.GetService<TimeProvider>())));
     // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
     // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
@@ -410,7 +449,10 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamPrefixTruncator>>(),
       sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>(),
-      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
+      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+      // An archiving truncate writes through the archive store the driver registers (WS-3 S7); none registered keeps
+      // the coordinator's own copy into wh_event_archive.
+      sp.GetService<Whizbang.Core.Archival.IArchiveStore>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
     // reusing the snapshot store + event store + the A1 prefix truncator. On-demand, like IStreamPrefixTruncator.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
@@ -451,7 +493,8 @@ public static class WorkerPipelineExtensions {
       return new InboxDeserializeCache(
         timeProvider: time,
         ttl: TimeSpan.FromMinutes(Math.Max(1, opts.TtlMinutes)),
-        maxEntries: Math.Max(1, opts.MaxEntries));
+        maxEntries: Math.Max(1, opts.MaxEntries),
+        maxBytes: Math.Max(1, opts.MaxBytes));
     });
 
     // Phase H step 9 slice 7: lease-tied cancellation infrastructure. LeaseRegistry is the
@@ -630,7 +673,9 @@ public static class WorkerPipelineExtensions {
     // #666: the integrity disable flags are only as real as this binding. The workers and
     // the checkpoint receptor all check the options; without a turnkey bind the class
     // resolved default-constructed (everything enabled) and configuration did nothing.
-    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>();
+    // #1792: MaxRepairDrainBacklog below one would admit nothing to the repair drain; fail at host start.
+    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>, Whizbang.Core.Messaging.StreamIntegrityOptionsValidator>());
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>(options => {
@@ -1003,11 +1048,24 @@ public static class WorkerPipelineExtensions {
     // batcher; override via the AddWhizbangOutboxStrategy generic extension — see
     // ImmediateOutboxBatchStrategy for the no-batching alternative.
     services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
+    // A batch the batcher cannot store is written to the dead-letter table, counted and reported to every
+    // IOutboxFlushFailureObserver, never dropped (#1871).
+    services.TryAddSingleton<OutboxFlushFailureCallback>(sp => sp.GetRequiredService<OutboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton(sp => new OutboxFlushFailureRecorder(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetService<WorkCoordinatorGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<IGenerationProvider>(),
+      sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
+      sp.GetServices<IOutboxFlushFailureObserver>(),
+      sp.GetRequiredService<ILogger<OutboxFlushFailureRecorder>>()));
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowOutboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>()));
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
@@ -1018,11 +1076,24 @@ public static class WorkerPipelineExtensions {
     // override via the AddWhizbangInboxStrategy generic extension for the immediate
     // passthrough or a custom implementation.
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
+    // A batch the inbox batcher cannot store is written to the dead-letter table, counted and reported to every
+    // IInboxFlushFailureObserver, never dropped (#1885).
+    services.TryAddSingleton<InboxFlushFailureCallback>(sp => sp.GetRequiredService<InboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton(sp => new InboxFlushFailureRecorder(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetService<WorkCoordinatorGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<IGenerationProvider>(),
+      sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
+      sp.GetServices<IInboxFlushFailureObserver>(),
+      sp.GetRequiredService<ILogger<InboxFlushFailureRecorder>>()));
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowInboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>()));
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<InboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
@@ -1090,6 +1161,10 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
+  // The caller names the batch flushes record on the gate's hold-duration metric and its saturation warning.
+  private const string OUTBOX_BATCH_FLUSH_CALLER = "OutboxBatchFlush";
+  private const string INBOX_BATCH_FLUSH_CALLER = "InboxBatchFlush";
+
   private static OutboxBulkFlushCallback _buildOutboxFlushCallback(IServiceProvider sp) {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
@@ -1100,6 +1175,8 @@ public static class WorkerPipelineExtensions {
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
     var detachedWork = sp.GetService<DetachedLifecycleWork>();
+    // AddWhizbangWorkers registers the gate (or keeps the consumer's), so it is always there.
+    var gate = sp.GetRequiredService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1142,7 +1219,11 @@ public static class WorkerPipelineExtensions {
 #pragma warning restore CA1848
       }
 
-      await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      // Each stream's batch flushes on its own worker, so a burst over many streams would otherwise open as many
+      // connections at once and overflow the pool; the store takes a slot of the process-wide gate (#1871).
+      using (await gate.AcquireAsync(ct, OUTBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+        await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      }
 
       try {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
@@ -1162,11 +1243,17 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    // AddWhizbangWorkers registers the gate (or keeps the consumer's), so it is always there.
+    var gate = sp.GetRequiredService<WorkCoordinatorGate>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      // The same cap as the outbox batches: concurrent per-stream flushes cannot open more connections than the
+      // gate allows (#1871).
+      using (await gate.AcquireAsync(ct, INBOX_BATCH_FLUSH_CALLER).ConfigureAwait(false)) {
+        await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+      }
     };
   }
 

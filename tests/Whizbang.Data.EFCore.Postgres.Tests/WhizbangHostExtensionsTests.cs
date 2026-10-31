@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/WhizbangHostExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextInitializationRegistry.cs</code-under-test>
-[NotInParallel("DbContextInitializationRegistry")]
+[NotInParallel(["DbContextInitializationRegistry", "EFCorePostgresTests"])]
 [Category("Shard3")]
 public class WhizbangHostExtensionsTests {
 

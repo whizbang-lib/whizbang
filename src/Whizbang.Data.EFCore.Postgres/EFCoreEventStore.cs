@@ -60,6 +60,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     public Guid Id { get; init; }
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
+    public bool IsFirstInStream { get; init; }
     public long? CommitSequence { get; init; }
     public Guid? OriginServiceId { get; init; }
     public long? OriginCommitSequence { get; init; }
@@ -86,6 +87,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       Id = e.Id,
       EventType = e.EventType,
       Version = e.Version,
+      // The first event in its stream (#1878): version 0, or version 1 when the stream holds no version 0. The
+      // lookup is a probe of the (stream_id, version) unique index, made for version-1 rows only.
+      IsFirstInStream = e.Version == 0
+        || (e.Version == 1 && !_context.Set<EventStoreRecord>().Any(z => z.StreamId == e.StreamId && z.Version == 0)),
       CommitSequence = e.CommitSequence,
       OriginServiceId = e.OriginServiceId,
       OriginCommitSequence = e.OriginCommitSequence,
@@ -108,8 +113,10 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:DirectAppend_ToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
   /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
   /// events (WHIZ133); nothing is stored.</exception>
+  /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -193,8 +200,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
       // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
       command.Parameters.Add(new NpgsqlParameter("p_flags", NpgsqlDbType.Integer) { Value = Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver) });
-      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, with nothing stored.
-      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken));
+      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, as StreamSealedException
+      // for a sealed stream (#1733), or as StreamArchivedException for a stream archived whole (#1738), with nothing stored.
+      await Whizbang.Data.Postgres.StreamArchivedRefusal.RunAsync(() => Whizbang.Data.Postgres.StreamSealedRefusal.RunAsync(() =>
+        Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken))));
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
       // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(
@@ -247,7 +256,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -295,7 +307,10 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // #1738: every read carries the stream version, which is how the archive seam sees a gap at the start of a stream
+        // without asking the archive.
+        LocalStreamVersion = record.Version,
       };
 
       yield return envelope;
@@ -424,6 +439,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
         // can run backward against the order the stream was written in.
         LocalStreamVersion = record.Version,
+        // Decided by the query from the event's position, whatever the read starts after (#1878).
+        IsFirstInLocalStream = record.IsFirstInStream,
         // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
         // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
         // its true position in the stream). Dropping it demotes single-origin streams to
@@ -484,7 +501,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 
@@ -560,7 +578,8 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalStreamVersion = record.Version,  // #1738: see ReadAsync
       });
     }
 
@@ -731,7 +750,9 @@ public sealed class EFCoreEventStore<TDbContext>(
       // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
       // through to the perspective runner so the idempotency filter can compare commit_sequence
       // when both sides have it (production forensic G5).
-      LocalCommitSequence = raw.CommitSequence
+      LocalCommitSequence = raw.CommitSequence,
+      // The drain query decided it from the event's position (264, #1878).
+      IsFirstInLocalStream = raw.IsFirstInStream,
     };
   }
 

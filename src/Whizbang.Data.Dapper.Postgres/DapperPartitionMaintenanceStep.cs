@@ -14,20 +14,20 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <remarks>
 /// Idle unless <c>Whizbang:Workers:Maintenance:Partitioning:Enabled</c> is true, and only on the instance holding the
-/// maintainer duty where role assignment manages it; see <c>PartitionMaintenanceStep</c> in the EF Core driver.
+/// maintainer duty where role assignment manages it; see <c>PartitionMaintenanceStep</c> in the EF Core driver. The
+/// tables are found in the schema the Dapper work coordinator writes to: the connection string's <c>Search Path</c>,
+/// else the server's <c>current_schema()</c> (#1894).
 /// </remarks>
 /// <param name="connectionString">The database the tables are in.</param>
 /// <param name="logger">The logger.</param>
 /// <param name="timeProvider">The clock partitions are created and expired against.</param>
 /// <docs>operations/infrastructure/partitioned-ledgers</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPartitionMaintenanceStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMaintenanceStepNamedSchemaTests.cs:ThePartitionStep_ConvertsTheLogInTheHostsSchemaAsync</tests>
 public sealed class DapperPartitionMaintenanceStep(
     string connectionString,
     ILogger<DapperPartitionMaintenanceStep> logger,
     TimeProvider timeProvider) : IMaintenanceStep {
-
-  // The Dapper driver keeps its tables in the connection's default schema.
-  private const string QUOTED_SCHEMA = "\"public\"";
 
   private readonly string _connectionString = string.IsNullOrWhiteSpace(connectionString)
     ? throw new ArgumentException("A connection string is required.", nameof(connectionString))
@@ -47,7 +47,8 @@ public sealed class DapperPartitionMaintenanceStep(
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    var schema = await DapperCoordinatorSchema.ResolveAsync(_connectionString, connection, cancellationToken).ConfigureAwait(false);
     await PartitionMaintenance.RunAsync(
-      connection, QUOTED_SCHEMA, plan, _timeProvider.GetUtcNow(), _logger, cancellationToken).ConfigureAwait(false);
+      connection, PgIdentifier.Quote(schema), plan, _timeProvider.GetUtcNow(), _logger, cancellationToken).ConfigureAwait(false);
   }
 }

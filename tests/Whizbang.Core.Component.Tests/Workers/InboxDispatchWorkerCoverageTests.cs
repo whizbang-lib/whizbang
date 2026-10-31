@@ -609,6 +609,69 @@ public class InboxDispatchWorkerCoverageTests {
       .Because("firing the pre-fanout hook must not short-circuit the fan-out that follows it");
   }
 
+  private static (InboxDispatchWorker Worker, RecordingInvoker Invoker) _workerWithRecordingInvoker() {
+    var invoker = new RecordingInvoker();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new PassThroughLifecycleDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
+    return (worker, invoker);
+  }
+
+  private static readonly LifecycleStage[] _triggerStages = [
+    LifecycleStage.PreInboxInline, LifecycleStage.PreInboxDetached, LifecycleStage.PostInboxInline, LifecycleStage.PostInboxDetached,
+  ];
+
+  /// <summary>
+  /// Owner decision (#1843): an event repair restores past deduplication is stored state only, so its trigger
+  /// receptors (the Pre/PostInbox stages) do not run a second time. Paired with the test below, which proves the same
+  /// harness does run them for an ordinary delivery, so this one fails if state-only stopped skipping them.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#remembered-but-missing</docs>
+  [Test]
+  public async Task StateOnlyDelivery_IsStored_ButRunsNoTriggerReceptorAsync() {
+    var (worker, invoker) = _workerWithRecordingInvoker();
+    var work = _makeWork(messageType: "Some.Restored.Event, Test");
+    ((MessageEnvelope<JsonElement>)work.Envelope).StateOnly = true;
+
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(invoker.Invoked.Any(s => _triggerStages.Contains(s))).IsFalse()
+      .Because("a restored event's reactions had their chance when deduplication first saw it");
+  }
+
+  /// <summary>The control for the test above: the same delivery without state-only runs its trigger receptors.</summary>
+  /// <docs>resilience/stream-integrity#remembered-but-missing</docs>
+  [Test]
+  public async Task OrdinaryDelivery_RunsItsTriggerReceptorsAsync() {
+    var (worker, invoker) = _workerWithRecordingInvoker();
+    var work = _makeWork(messageType: "Some.Restored.Event, Test");
+
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(invoker.Invoked.Contains(LifecycleStage.PreInboxInline)).IsTrue();
+    await Assert.That(invoker.Invoked.Contains(LifecycleStage.PostInboxInline)).IsTrue();
+  }
+
   [Test]
   public async Task NoMatchingLocalPerspective_StillFiresPostAllPerspectivesInlineAsync() {
     // A perspective registered for OTHER events must not suppress tag-notification stages for

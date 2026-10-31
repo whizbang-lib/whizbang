@@ -153,6 +153,49 @@ namespace Whizbang.Core.Tests.Workers {
         .Because("a skip is not a duplicate");
     }
 
+    // ===== Absorbed namespaces (#1776) =====
+
+    [Test]
+    public async Task AnUnconsumedEventInAnAbsorbedNamespace_IsStoredLive_SoTheEventStoreCapturesItAsync() {
+      // An absorbed namespace is persisted locally whether or not anything here consumes it yet, so a perspective
+      // added later can rebuild from it. Stored settled as having no local consumer, the claim never copies it into
+      // the event store and the event is lost to that rebuild.
+      var harness = new Harness(hasAnyConsumer: false, catalog: [typeof(OwnedShipmentEvent)],
+        absorb: [typeof(OwnedShipmentEvent).Namespace!]);
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
+
+      await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
+
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsNull()
+        .Because("an absorbed event is kept even with no local consumer, so the row is stored live for the claim to copy");
+      await Assert.That(harness.Coordinator.StoredMessages.Single(m => m.MessageId == envelope.MessageId.Value).IsEvent).IsTrue()
+        .Because("only an event row is copied into the event store");
+    }
+
+    [Test]
+    public async Task AnUnconsumedEventOutsideTheAbsorbedNamespaces_IsStillStoredSettledAsync() {
+      var harness = new Harness(hasAnyConsumer: false, catalog: [typeof(OwnedShipmentEvent)],
+        absorb: ["Some.Other.Contracts"]);
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
+
+      await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
+
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+        .Because("absorbing is namespace-scoped; an unconsumed event elsewhere is still skipped on receive");
+    }
+
+    [Test]
+    public async Task AnAbsorbedEventWithALocalConsumer_IsStoredLiveAsBeforeAsync() {
+      var harness = new Harness(hasAnyConsumer: true, catalog: [typeof(OwnedShipmentEvent)],
+        absorb: [typeof(OwnedShipmentEvent).Namespace!]);
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
+
+      await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
+
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsNull()
+        .Because("a consumed event is processed whether or not its namespace is absorbed");
+    }
+
     // ===== Helpers =====
 
     private static string _envelopeTypeOf<T>() =>
@@ -172,8 +215,10 @@ namespace Whizbang.Core.Tests.Workers {
     };
 
     /// <summary>A consumer worker over a transport that hands it one batch, and a coordinator that records each row it stores.</summary>
+    /// <param name="absorb">When set, the host's routing absorbs these namespaces and the shared discard policy is registered
+    /// over them, the way the worker pipeline registers it.</param>
     private sealed class Harness(bool hasAnyConsumer, bool ownsNamespace = false, Type[]? catalog = null,
-        Type? catalogGrowsWith = null, TransportMetrics? metrics = null) {
+        Type? catalogGrowsWith = null, TransportMetrics? metrics = null, string[]? absorb = null) {
       private readonly Type[] _catalog = catalog ?? [];
 
       public NoOpWorkCoordinator Coordinator { get; } = new();
@@ -194,6 +239,13 @@ namespace Whizbang.Core.Tests.Workers {
         var routing = new RoutingOptions();
         if (ownsNamespace) {
           routing.OwnDomains(typeof(OwnedShipmentEvent).Namespace!);
+        }
+        if (absorb is not null) {
+          routing.AbsorbNamespaces(absorb);
+          services.AddSingleton<IMessageDiscardPolicy>(sp => new MessageDiscardPolicy(
+            new ConsumerRegistry(hasAnyConsumer), NullLogger<MessageDiscardPolicy>.Instance,
+            new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME), Options.Create(routing),
+            new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
         }
         await using var provider = services.BuildServiceProvider();
 

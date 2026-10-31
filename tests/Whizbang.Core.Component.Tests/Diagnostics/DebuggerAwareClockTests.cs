@@ -811,59 +811,69 @@ public class DebuggerAwareClockTests {
   [Timeout(30000)]
   public async Task PauseStateSubscription_Dispose_StopsDeliveringNotificationsAsync(CancellationToken ct) {
     // "Disposes cleanly" only meant "did not throw". What a released subscription has to guarantee
-    // is that the handler stops being called — a handler still firing after its owner released it
-    // reaches into disposed state. The clock keeps sampling throughout, so the silence is a fact
-    // about the subscription and not about the clock having nothing to say.
+    // is that the handler stops being called: a handler still firing after release reaches into
+    // disposed state. The clock keeps changing state afterwards, so the silence is a fact about the
+    // subscription and not about the clock having nothing to say.
     //
-    // CpuTimeSource makes the pause transitions deterministic: alternating "no CPU consumed" (a
-    // wall/CPU ratio far past the frozen threshold) with "plenty consumed" flips IsPaused on every
-    // sample, so a write hits the pause channel every SamplingInterval.
-    var cpu = TimeSpan.Zero;
-    var busySample = false;
+    // The sampler timer never fires (a one-day interval); the test drives every sample itself and
+    // controls the wall clock, so each pause change happens exactly when the test makes it: a
+    // sample a second after the last one with no CPU consumed reads as paused, one 100ms later
+    // (under the 200ms floor for freeze detection) reads as running.
+    var wall = DateTimeOffset.UnixEpoch;
     var options = new DebuggerAwareClockOptions {
       Mode = DebuggerDetectionMode.CpuTimeSampling,
-      SamplingInterval = TimeSpan.FromMilliseconds(250), // > the 200ms floor for freeze detection
-      CpuTimeSource = () => {
-        busySample = !busySample;
-        if (busySample) {
-          cpu += TimeSpan.FromMilliseconds(500);
-        }
-
-        return cpu;
-      }
+      SamplingInterval = TimeSpan.FromDays(1),
+      CpuTimeSource = () => TimeSpan.Zero,
+      WallClockSource = () => wall
     };
     using var clock = new DebuggerAwareClock(options);
+    void changePauseState(bool paused) {
+      wall += paused ? TimeSpan.FromSeconds(1) : TimeSpan.FromMilliseconds(100);
+      clock.SampleCpuTime(null);
+    }
 
-    var delivered = 0;
-    var firstDelivery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var subscription = clock.OnPauseStateChanged(_ => {
-      Interlocked.Increment(ref delivered);
-      firstDelivery.TrySetResult();
+    // A subscription that stays live for the whole test: when it has received all four changes,
+    // the last three were all offered after the released handler's first call began.
+    var observedChanges = 0;
+    var allChangesObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var observer = clock.OnPauseStateChanged(_ => {
+      if (Interlocked.Increment(ref observedChanges) == 4) {
+        allChangesObserved.TrySetResult();
+      }
     });
 
-    // Control: the subscription really is live, so a later count of zero means "stopped",
-    // not "never started".
-    await firstDelivery.Task.WaitAsync(ct);
+    // The released handler's first call is held in flight, and a second change is queued behind
+    // it before the release: the interleaving in which a change the subscription had already been
+    // woken for used to reach the handler after Dispose returned.
+    var delivered = 0;
+    var firstCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var releaseFirstCall = new SemaphoreSlim(0, 1);
+    var subscription = clock.OnPauseStateChanged(_ => {
+      if (Interlocked.Increment(ref delivered) == 1) {
+        firstCallEntered.TrySetResult();
+        releaseFirstCall.Wait(ct);
+      }
+    });
+
+    // Control: the subscription really is live, so an unchanged count later means "stopped", not
+    // "never started".
+    changePauseState(paused: true);
+    await firstCallEntered.Task.WaitAsync(ct);
+    changePauseState(paused: false);
 
     // Act
     subscription.Dispose();
-    var deliveredAtDisposal = Volatile.Read(ref delivered);
+    releaseFirstCall.Release();
 
-    // Wait on the CLOCK's own state rather than a sleep: two further transitions of IsPaused prove
-    // two further writes reached the pause channel after the subscription was released.
-    var pausedAtDisposal = clock.IsPaused;
-    while (clock.IsPaused == pausedAtDisposal) {
-      await Task.Delay(10, ct);
-    }
+    // Two more changes after the release; the observer receiving all four proves they happened.
+    changePauseState(paused: true);
+    changePauseState(paused: false);
+    await allChangesObserved.Task.WaitAsync(ct);
 
-    var midpoint = clock.IsPaused;
-    while (clock.IsPaused == midpoint) {
-      await Task.Delay(10, ct);
-    }
-
-    // Assert - not one of those reached the released handler
-    await Assert.That(Volatile.Read(ref delivered)).IsEqualTo(deliveredAtDisposal)
-      .Because("a disposed subscription must stop consuming the pause channel");
+    // Assert - none reached the released handler
+    await Assert.That(Volatile.Read(ref delivered)).IsEqualTo(1)
+      .Because("a disposed subscription receives no further change, including one that was "
+        + "already queued for it when it was released");
   }
 
   [Test]

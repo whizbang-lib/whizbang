@@ -631,9 +631,13 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
       controlClass: Options.Create(new ControlClassOptions()));
 
+    // Wait on the transition asserted below, each destination's state becoming Healthy, not on the
+    // three subscribe calls: the worker records Healthy only after the call returns, so a wait on the
+    // calls can wake before the last state is written (#1830).
+    using var healthy = new SubscriptionStatusRecorder(worker);
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionsAsync(3, TimeSpan.FromSeconds(5));
+    await healthy.WhenDestinationsReachAsync(SubscriptionStatus.Healthy, 3).WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
 
     // Assert - all three should succeed with no exception

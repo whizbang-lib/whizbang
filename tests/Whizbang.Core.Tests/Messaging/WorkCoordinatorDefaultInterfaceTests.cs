@@ -93,13 +93,13 @@ public class WorkCoordinatorDefaultInterfaceTests {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+  public async Task RenewHeldLeasesAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
     IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
 
     var message = await _captureNotImplementedMessageAsync(
-      () => _coordinator.RenewLeasesAsync(WorkCategory.Outbox, ids));
+      () => _coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, (Guid)TrackedGuid.New(), ids));
 
-    await Assert.That(message).Contains("RenewLeasesAsync");
+    await Assert.That(message).Contains("RenewHeldLeasesAsync");
   }
 
   [Test]

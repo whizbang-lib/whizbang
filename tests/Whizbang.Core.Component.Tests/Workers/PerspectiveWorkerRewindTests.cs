@@ -29,16 +29,12 @@ namespace Whizbang.Core.Tests.Workers;
 ///   Normal → no lock
 /// </summary>
 public class PerspectiveWorkerRewindTests {
-  /// <summary>
-  /// Bounds every signal wait so a regression fails the test instead of hanging it. It is never the
-  /// wait itself: each test waits on the signal for the transition it asserts.
-  /// </summary>
-  private static readonly TimeSpan _signalGuard = TimeSpan.FromSeconds(30);
 
   #region Rewind Routing Tests
 
   [Test]
-  public async Task Worker_RewindRequired_CallsRewindAndRunAsyncAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindRequired_CallsRewindAndRunAsyncAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -114,9 +110,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // The rewind call itself is the transition asserted below; the runner signals it.
-    await runner.RewindAndRunCalled.WaitAsync(_signalGuard);
+    await runner.RewindAndRunCalled.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - RewindAndRunAsync was called
     await Assert.That(runner.RewindAndRunCallCount).IsGreaterThanOrEqualTo(1);
@@ -124,7 +120,8 @@ public class PerspectiveWorkerRewindTests {
   }
 
   [Test]
-  public async Task Worker_NormalPath_CallsRunAsyncAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NormalPath_CallsRunAsyncAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -188,9 +185,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // RunAsync is the routing decision: the item reached the normal path, so it cannot also rewind.
-    await runner.RunCalled.WaitAsync(_signalGuard);
+    await runner.RunCalled.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - RunAsync was called, RewindAndRunAsync was NOT called
     await Assert.That(runner.RunCallCount).IsGreaterThanOrEqualTo(1);
@@ -198,7 +195,8 @@ public class PerspectiveWorkerRewindTests {
   }
 
   [Test]
-  public async Task Worker_RewindRequired_WithLock_AcquiresAndReleasesLockAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindRequired_WithLock_AcquiresAndReleasesLockAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -274,9 +272,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // The release comes after the acquire and the rewind, so it is the last transition asserted.
-    await locker.Released.WaitAsync(_signalGuard);
+    await locker.Released.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - Lock was acquired and released
     await Assert.That(locker.AcquireCallCount).IsGreaterThanOrEqualTo(1);
@@ -285,7 +283,8 @@ public class PerspectiveWorkerRewindTests {
   }
 
   [Test]
-  public async Task Worker_RewindRequired_LockFails_DefersProcessingAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindRequired_LockFails_DefersProcessingAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -365,9 +364,9 @@ public class PerspectiveWorkerRewindTests {
     }
     // Nothing positive happens after the refused lock, so wait for the batch that held the item
     // to finish: by then the worker has decided to defer it, and a rewind would already have run.
-    await cycleComplete.Task.WaitAsync(_signalGuard);
+    await cycleComplete.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - RewindAndRunAsync was NOT called (lock failed, processing deferred)
     await Assert.That(runner.RewindAndRunCallCount).IsEqualTo(0);
@@ -381,7 +380,8 @@ public class PerspectiveWorkerRewindTests {
   #region Bootstrap Snapshot Tests
 
   [Test]
-  public async Task Worker_NormalPath_WithSnapshotStore_NoSnapshots_CallsBootstrapAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NormalPath_WithSnapshotStore_NoSnapshots_CallsBootstrapAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -457,9 +457,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // HasAnySnapshotAsync precedes the bootstrap on the same flow, so the bootstrap is the signal.
-    await runner.BootstrapCalled.WaitAsync(_signalGuard);
+    await runner.BootstrapCalled.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - BootstrapSnapshotAsync was called
     await Assert.That(runner.BootstrapCallCount).IsGreaterThanOrEqualTo(1);
@@ -467,7 +467,8 @@ public class PerspectiveWorkerRewindTests {
   }
 
   [Test]
-  public async Task Worker_NormalPath_WithSnapshotStore_HasSnapshots_SkipsBootstrapAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NormalPath_WithSnapshotStore_HasSnapshots_SkipsBootstrapAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -542,9 +543,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // The bootstrap decision is made before RunAsync on the same flow, so RunAsync proves it was made.
-    await runner.RunCalled.WaitAsync(_signalGuard);
+    await runner.RunCalled.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - the store was asked, and BootstrapSnapshotAsync was NOT called (snapshots already exist)
     await Assert.That(snapshotStore.HasAnyCallCount).IsGreaterThanOrEqualTo(1);
@@ -552,7 +553,8 @@ public class PerspectiveWorkerRewindTests {
   }
 
   [Test]
-  public async Task Worker_NormalPath_NullLastProcessedEventId_SkipsBootstrapAsync() {
+  [Timeout(30000)]
+  public async Task Worker_NormalPath_NullLastProcessedEventId_SkipsBootstrapAsync(CancellationToken cancellationToken) {
     // Arrange - brand new stream with no cursor position
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -617,9 +619,9 @@ public class PerspectiveWorkerRewindTests {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     // The bootstrap decision is made before RunAsync on the same flow, so RunAsync proves it was made.
-    await runner.RunCalled.WaitAsync(_signalGuard);
+    await runner.RunCalled.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - the item ran, with no bootstrap for a brand new stream (no lastProcessedEventId)
     await Assert.That(runner.RunCallCount).IsGreaterThanOrEqualTo(1);
@@ -632,7 +634,8 @@ public class PerspectiveWorkerRewindTests {
   #region Event Completion Tests
 
   [Test]
-  public async Task Worker_CollectsWorkIds_InPerspectiveEventCompletionsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_CollectsWorkIds_InPerspectiveEventCompletionsAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -706,9 +709,9 @@ public class PerspectiveWorkerRewindTests {
     }
     // Event work ids reach the completion channel on the flush after the batch, not in it; wait for
     // the capture to receive one rather than for a guess at how long the flush takes.
-    await harness.CompletionCapture.WaitForAnyEventWorkIdAsync(_signalGuard);
+    await harness.CompletionCapture.WaitForAnyEventWorkIdAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert - Event work IDs flow through the completion channel (channel architecture
     // replaces the legacy CapturedRequests.PerspectiveEventCompletions assertion).
@@ -721,7 +724,8 @@ public class PerspectiveWorkerRewindTests {
   #region Rewind Error Isolation Tests
 
   [Test]
-  public async Task Worker_RewindFails_LogsErrorAndContinuesAsync() {
+  [Timeout(30000)]
+  public async Task Worker_RewindFails_LogsErrorAndContinuesAsync(CancellationToken cancellationToken) {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -800,9 +804,9 @@ public class PerspectiveWorkerRewindTests {
     }
     // The worker surviving the throw is the transition asserted: the batch holding the failing
     // rewind ran to its end.
-    await cycleComplete.Task.WaitAsync(_signalGuard);
+    await cycleComplete.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await _waitForWorkerStoppedAsync(worker);
+    await _waitForWorkerStoppedAsync(worker, cancellationToken);
 
     // Assert: worker should stop cleanly (no unhandled exception). The fault has to be read off
     // the BODY: this used to await what StartAsync returned, which proves nothing because that is
@@ -830,9 +834,9 @@ public class PerspectiveWorkerRewindTests {
   /// either one is a clean stop; callers that care about a fault read
   /// <c>BackgroundService.ExecuteTask</c> afterwards.
   /// </summary>
-  private static async Task _waitForWorkerStoppedAsync(PerspectiveWorker worker) {
+  private static async Task _waitForWorkerStoppedAsync(PerspectiveWorker worker, CancellationToken cancellationToken) {
     if (worker.ExecuteTask is { } body) {
-      await body.WaitAsync(TimeSpan.FromSeconds(30))
+      await body.WaitAsync(cancellationToken)
         .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
   }

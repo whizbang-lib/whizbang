@@ -9,6 +9,7 @@ using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -84,6 +85,14 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
   }
 
   /// <summary>
+  /// The schema-ready gate. While it is closed a tick detects nothing and sends no query: the tables the detection
+  /// reads may not exist yet, and nothing claims work before the gate opens anyway (#1636). Null detects on every
+  /// tick.
+  /// </summary>
+  /// <docs>fundamentals/signal-bus/signal-bus</docs>
+  public ISchemaReadyGate? SchemaReadyGate { get; init; }
+
+  /// <summary>
   /// SQL that returns a single boolean — <c>true</c> if any unclaimed work exists for this
   /// instance, <c>false</c> otherwise. The subclass parameter <c>@instance_id</c> is bound to
   /// <see cref="IServiceInstanceProvider.InstanceId"/> by the base class.
@@ -92,6 +101,9 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
 
   /// <inheritdoc />
   protected sealed override async ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
+    if (SchemaReadyGate is { IsReady: false }) {
+      return false;   // #1636: the tables this reads may not exist yet, and nothing claims work before the gate opens
+    }
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     // Prefer the registered notification data source - the only path that
     // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback

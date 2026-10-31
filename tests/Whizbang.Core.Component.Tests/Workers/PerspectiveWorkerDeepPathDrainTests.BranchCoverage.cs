@@ -24,7 +24,8 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class PerspectiveWorkerDeepPathDrainTests {
 
   [Test]
-  public async Task DrainMode_WithMetrics_CountsTheUpdatedStreamAndEveryAppliedEventAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_WithMetrics_CountsTheUpdatedStreamAndEveryAppliedEventAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var firstEvent = Guid.CreateVersion7();
     var secondEvent = Guid.CreateVersion7();
@@ -49,10 +50,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     // The meters move after the completion is reported, on the same pass: the body has to have finished.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(meters.GetByName("whizbang.perspective.streams_updated").Sum(m => m.Value)).IsEqualTo(1d)
@@ -62,7 +63,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_InversionRewind_IsCountedLikeAnyOtherRewindAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_InversionRewind_IsCountedLikeAnyOtherRewindAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
@@ -90,9 +92,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
@@ -110,7 +112,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_AfterARewind_TheCommitSequenceCursorMovesWithTheEventIdCursorAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_AfterARewind_TheCommitSequenceCursorMovesWithTheEventIdCursorAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var lateEvent = Guid.CreateVersion7();
     var laterEvent = Guid.CreateVersion7();
@@ -147,10 +150,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     // The drain loop re-fetches after each pass and stops when a fetch comes back empty, so the two
     // enqueued responses are two passes and the third call ends the loop. The second pass runs against
     // the cursor the first pass just set, which is the thing under test.
-    await coordinator.WaitForStreamEventsCallsAsync(3, TimeSpan.FromSeconds(20));
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await coordinator.WaitForStreamEventsCallsAsync(3, cancellationToken);
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(runner.RewindCalls.Count).IsEqualTo(2)
@@ -162,7 +165,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_LeaseDeadlineWithMetrics_CountsOneErrorAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_LeaseDeadlineWithMetrics_CountsOneErrorAsync(CancellationToken cancellationToken) {
     var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -184,9 +188,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+    await runner.Started.WaitAsync(cancellationToken);
     fakeTime.Advance(TimeSpan.FromSeconds(10));
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -197,7 +201,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_ApplyOutlivesItsLease_HoldsTheGateUntilTheApplyEnds_AndTheNextDrainSkipsItAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_ApplyOutlivesItsLease_HoldsTheGateUntilTheApplyEnds_AndTheNextDrainSkipsItAsync(CancellationToken cancellationToken) {
     // The lease executor stops waiting for an apply whose lease ran out, and the consumer moves on, but
     // the apply keeps running and has not yet marked its events processed. Its gate must stay held until
     // it ends: released with the consumer, a second drain of the stream applied the same event again.
@@ -244,10 +249,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     try {
       await drainChannel.WriteAsync(streamId, cts.Token);
-      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await runner.Started.WaitAsync(cancellationToken);
       // Past the one-second lease window: the executor abandons the apply and the consumer finishes the stream.
       fakeTime.Advance(TimeSpan.FromSeconds(10));
-      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(cancellationToken);
 
       var holds = worker.SnapshotAffinityHolds(TimeSpan.Zero);
       await Assert.That(holds.Count).IsEqualTo(1)
@@ -261,11 +266,11 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     // The abandoned apply finishes on its own thread after the hang ends: it marks the row in the cooldown cache,
     // then releases the gate. The second drain starts only after that release, or it can read the row first.
-    await abandonedReleased.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await abandonedReleased.Task.WaitAsync(cancellationToken);
     await drainChannel.WriteAsync(streamId, cts.Token);
-    await secondBatchEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await secondBatchEnded.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
@@ -280,7 +285,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task Stop_WhileAnAbandonedApplyStillRuns_WaitsForItToEndAndReleaseItsGateAsync() {
+  [Timeout(30000)]
+  public async Task Stop_WhileAnAbandonedApplyStillRuns_WaitsForItToEndAndReleaseItsGateAsync(CancellationToken cancellationToken) {
     // Stopping cancels the lease token too (it is linked to the worker's), so the executor abandons an
     // apply still in the runner. The worker must not finish stopping while that apply runs: a stopped
     // worker that still held a gate, or still had an apply of its running, is not stopped.
@@ -308,14 +314,14 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     var waiting = logger.WaitForAsync(e => e.Message.Contains("waiting for 1 abandoned apply", StringComparison.Ordinal));
     try {
       await drainChannel.WriteAsync(streamId, cts.Token);
-      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await runner.Started.WaitAsync(cancellationToken);
       await cts.CancelAsync();
       // The consumer has left the gate scope while the runner still hangs: the apply was abandoned.
-      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(cancellationToken);
 
       // Either the worker finishes stopping, or it says it is waiting for the abandoned apply. The apply
       // cannot end until this test releases it, so only the second is correct.
-      var first = await Task.WhenAny(worker.ExecuteTask!, waiting).WaitAsync(TimeSpan.FromSeconds(10));
+      var first = await Task.WhenAny(worker.ExecuteTask!, waiting).WaitAsync(cancellationToken);
       await Assert.That(first == waiting).IsTrue()
         .Because("the worker waits for an abandoned apply to end before it finishes stopping");
       await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero).Single().Path).IsEqualTo("drain-abandoned");
@@ -323,8 +329,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       hang.TrySetResult();
     }
 
-    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    var release = await released.Task.WaitAsync(cancellationToken);
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true))
@@ -334,7 +340,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task Stop_WhileAnAbandonedApplyStillRuns_KeepsItsScopeAliveUntilTheApplyEndsAsync() {
+  [Timeout(30000)]
+  public async Task Stop_WhileAnAbandonedApplyStillRuns_KeepsItsScopeAliveUntilTheApplyEndsAsync(CancellationToken cancellationToken) {
     // The abandoned apply still uses the drain group's scope: its runner, its work coordinator and, in a
     // real host, a DbContext whose command may be in flight. Disposing the scope when the consumer leaves
     // closes that connection under the running command (#1382); the scope must outlive the apply.
@@ -362,11 +369,11 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     ScopeProbes.Probe applyScope;
     try {
       await drainChannel.WriteAsync(streamId, cts.Token);
-      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await runner.Started.WaitAsync(cancellationToken);
       applyScope = probes.Resolved.Single(p => p.RunnerRequested);
       await cts.CancelAsync();
       // The consumer has left: the apply was abandoned and is still in the runner.
-      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(cancellationToken);
 
       await Assert.That(applyScope.Disposals).IsEqualTo(0)
         .Because("the abandoned apply is still running on the drain group's scope, which must not be disposed under it");
@@ -374,8 +381,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       hang.TrySetResult();
     }
 
-    await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await released.Task.WaitAsync(cancellationToken);
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(applyScope.Disposals).IsEqualTo(1)
@@ -385,7 +392,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_ApplyOutlivesItsLease_KeepsItsScopeAliveUntilTheApplyEndsAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_ApplyOutlivesItsLease_KeepsItsScopeAliveUntilTheApplyEndsAsync(CancellationToken cancellationToken) {
     // The same hand-off in steady state: the lease runs out, the executor abandons the apply and the
     // consumer moves on, but the apply keeps running on the group's scope (#1382).
     var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
@@ -416,10 +424,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     ScopeProbes.Probe applyScope;
     try {
       await drainChannel.WriteAsync(streamId, cts.Token);
-      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await runner.Started.WaitAsync(cancellationToken);
       applyScope = probes.Resolved.Single(p => p.RunnerRequested);
       fakeTime.Advance(TimeSpan.FromSeconds(10));
-      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(cancellationToken);
 
       await Assert.That(applyScope.Disposals).IsEqualTo(0)
         .Because("the apply the lease abandoned still runs on the drain group's scope");
@@ -427,9 +435,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       hang.TrySetResult();
     }
 
-    await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await released.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(applyScope.Disposals).IsEqualTo(1)
@@ -438,7 +446,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task AbandonedApply_ScopeDisposalThrows_IsLoggedAndTheGateStillReleasesAsync() {
+  [Timeout(30000)]
+  public async Task AbandonedApply_ScopeDisposalThrows_IsLoggedAndTheGateStillReleasesAsync(CancellationToken cancellationToken) {
     // Nothing awaits the hand-off's result (the gate only waits for it to end), so a scope that fails to
     // dispose after the abandoned apply must be logged, not lost in an unobserved task.
     var streamId = Guid.CreateVersion7();
@@ -467,16 +476,16 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     try {
       await drainChannel.WriteAsync(streamId, cts.Token);
-      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await runner.Started.WaitAsync(cancellationToken);
       await cts.CancelAsync();
-      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(cancellationToken);
     } finally {
       hang.TrySetResult();
     }
 
-    await logged.WaitAsync(TimeSpan.FromSeconds(10));
-    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+    await logged.WaitAsync(cancellationToken);
+    var release = await released.Task.WaitAsync(cancellationToken);
+    await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true))
@@ -585,7 +594,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_StoredFormRefusalWithoutAPath_SaysThePathWasNotReportedAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_StoredFormRefusalWithoutAPath_SaysThePathWasNotReportedAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var workId = Guid.CreateVersion7();
@@ -601,8 +611,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+    await coordinator.FirstFailure.WaitAsync(cancellationToken);
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -615,7 +625,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_InversionAgainstACursorWithNoEventId_ReportsAnEmptyCachedCursorAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_InversionAgainstACursorWithNoEventId_ReportsAnEmptyCachedCursorAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
@@ -641,7 +652,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -656,7 +667,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
-  public async Task DrainMode_RunnerRegistryGoneWhenTheGroupRuns_SkipsThePerspectiveWithoutFailingAsync() {
+  [Timeout(30000)]
+  public async Task DrainMode_RunnerRegistryGoneWhenTheGroupRuns_SkipsThePerspectiveWithoutFailingAsync(CancellationToken cancellationToken) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
@@ -678,7 +690,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await cycleComplete.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

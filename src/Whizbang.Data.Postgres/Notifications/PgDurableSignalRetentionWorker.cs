@@ -23,11 +23,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <para>
 /// 1. The DELETE joins against <c>wh_signal_cursors</c> and only removes ids &lt;= the min cursor,
 ///    so a pod that fell behind still has its needed rows even if they're older than the age window.
+///    Only the cursors of live instances count (#1771): an instance is live while it is registered in
+///    <c>wh_service_instances</c>, the rule the partition carry uses (#1758), so an instance that stopped without
+///    being reaped no longer holds the sweep back until the stale-instance reap removes it.
 /// </para>
 /// <para>
-/// 2. Rows are also age-bounded — the delete predicate is
-///    <c>created_at &lt; NOW() - @retention AND id &lt;= (SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors)</c>
-///    — so an empty cursors table (no pods have ever tailed) does NOT wipe pre-existing signals.
+/// 2. Rows are also age-bounded. The delete predicate is
+///    <c>created_at &lt; NOW() - @retention AND id &lt;= (the min cursor of the registered instances)</c>,
+///    so with no live cursor (no registered pod has ever tailed) the floor is 0 and pre-existing signals are NOT
+///    wiped.
 /// </para>
 /// <para>
 /// Once <c>wh_signals</c> is partitioned and partition maintenance is enabled, expired days are dropped whole by the
@@ -38,6 +42,9 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Partitioning/SignalPartitionConversionTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionIntegrationTests.cs:Sweep_ACursorWhoseInstanceIsNoLongerRegistered_DoesNotHoldBackTheSweepAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionIntegrationTests.cs:Sweep_ARegisteredInstancesCursor_StillHoldsBackTheSweepAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionIntegrationTests.cs:Sweep_WithOnlyCursorsOfUnregisteredInstances_DeletesNothingAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "The only text formatted in is the relation wh_partition_sweep_relation returns, an identifier it quoted itself from the catalog; the window and batch size are bound parameters.")]
 public sealed partial class PgDurableSignalRetentionWorker(
   IOptions<WhizbangNotificationOptions> options,
@@ -111,7 +118,8 @@ public sealed partial class PgDurableSignalRetentionWorker(
       return 0;
     }
     // In batches, so a large backlog is never one long delete; each batch keeps both guards (the age window and the
-    // slowest pod's cursor), and the loop ends on a short batch (#1574).
+    // slowest live pod's cursor), and the loop ends on a short batch (#1574). A cursor counts only while its instance
+    // is registered, as in the partition carry (#1771, #1758).
     var deleted = 0;
     int batch;
     do {
@@ -120,7 +128,10 @@ public sealed partial class PgDurableSignalRetentionWorker(
         WHERE id IN (
           SELECT s.id FROM {relation} s
           WHERE s.created_at < NOW() - @retention
-            AND s.id <= COALESCE((SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors), 0)
+            AND s.id <= COALESCE((
+              SELECT MIN(c.last_delivered_signal_id)
+              FROM wh_signal_cursors c
+              JOIN wh_service_instances si ON si.instance_id = c.instance_id), 0)
           ORDER BY s.id
           LIMIT @batch)", conn);
       cmd.Parameters.AddWithValue("retention", _options.SignalRetention);

@@ -110,6 +110,34 @@ public sealed class StreamIntegrityMetrics {
   /// lanes are wider than the page budget covers per audit — raise the cap or accept the pace.</summary>
   public PassiveCounter<long> ManifestPagesCapped { get; }
 
+  /// <summary>Stored events whose empty origin columns a redelivery filled: history received before the store
+  /// recorded origins, now verifiable under its origin. Growth during convergence after an upgrade is expected; it
+  /// stops once that history has been redelivered once.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  public PassiveCounter<long> OriginsAdopted { get; }
+
+  /// <summary>Stored events without an origin that a redelivery named an origin for but did not adopt, because the
+  /// event's first hop names another service: an event this service authored, or one received from a third service,
+  /// that the origin's store had filed as its own. Growth means an origin is redelivering events it did not author;
+  /// the warning logged once per bundle names the origin.</summary>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  public PassiveCounter<long> OriginsRefused { get; }
+
+  /// <summary>Buckets recorded as ones repair cannot change: a redelivery answered with events that were all already
+  /// stored under their origin, so repair stops asking for them. Each bucket is counted once.</summary>
+  /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
+  public PassiveCounter<long> RepairsUnhealable { get; }
+
+  /// <summary>
+  /// #1792: deficit buckets a manifest comparison could not add to the paced repair drain's ledger,
+  /// deferred to a later audit. Tagged by origin and reason: <c>per_audit_cap</c>
+  /// (<c>MaxAutoRepairRequestsPerAudit</c> new buckets already admitted by this comparison) or
+  /// <c>backlog_cap</c> (the ledger holds <c>MaxRepairDrainBacklog</c> rows). Sustained growth means
+  /// discovery outpaces the drain: raise <c>RepairDrainRatePerSecond</c> or accept the pace.
+  /// </summary>
+  public PassiveCounter<long> RepairsDeferred { get; }
+
+  private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
   private static readonly string[] _discardRoles = ["origin_request", "consumer_bundle", "maintenance_sweep"];
@@ -186,6 +214,18 @@ public sealed class StreamIntegrityMetrics {
     ManifestPagesCapped = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifest_pages_capped",
       description: "Cursor-follow chains stopped at the per-window page budget");
+    OriginsAdopted = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origins_adopted",
+      description: "Stored events whose empty origin columns a redelivery filled (history received before origins were recorded)");
+    OriginsRefused = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origins_refused",
+      description: "Stored events without an origin that a redelivery did not adopt because their first hop names another service");
+    RepairsUnhealable = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repairs_unhealable",
+      description: "Buckets a redelivery could not change; repair stops asking for them until they change or heal");
+    RepairsDeferred = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repairs_deferred",
+      description: "Deficit buckets a comparison deferred instead of adding to the paced repair drain's ledger; tagged by origin + reason (per_audit_cap | backlog_cap)");
     RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
@@ -221,6 +261,7 @@ public sealed class StreamIntegrityMetrics {
     ManifestChunksSent.Touch("level", Enum.GetNames<Whizbang.Core.Messaging.ManifestLevel>());
     DigestDriftHealed.Touch("kind", _driftKinds);
     RepairTrafficDiscarded.Touch("role", _discardRoles);
+    RepairsDeferred.Touch("reason", _deferralReasons);
   }
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;

@@ -335,7 +335,13 @@ public partial class InboxDrainWorkerCoverageTests {
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 4 };
     var signalCount = 0;
-    inbox.OnNewInboxWorkAvailable += () => Interlocked.Increment(ref signalCount);
+    // The signal is raised after the write that completes the count returns, so waiting on the count alone can stop
+    // the worker between the two. Wait on the signal itself as well.
+    var signaled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    inbox.OnNewInboxWorkAvailable += () => {
+      Interlocked.Increment(ref signalCount);
+      signaled.TrySetResult();
+    };
     var instance = new FakeServiceInstanceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -358,7 +364,7 @@ public partial class InboxDrainWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
     await drain.WriteAsync(streamId);
 
-    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    await Task.WhenAll(inbox.ReachedCount.Task, signaled.Task).WaitAsync(TimeSpan.FromSeconds(15));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

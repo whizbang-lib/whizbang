@@ -69,8 +69,8 @@ public sealed record TableStorageInfo(
 
 /// <summary>
 /// The schema-pass statements that apply a column's or a table's declared storage options: <c>SET STORAGE</c>,
-/// <c>SET COMPRESSION</c>, <c>toast_tuple_target</c>, <c>fillfactor</c>, the autovacuum settings, and a size budget
-/// as a check constraint.
+/// <c>SET COMPRESSION</c>, <c>toast_tuple_target</c> and a size budget as a check constraint; and the storage marker
+/// that declares the table's fillfactor and autovacuum settings to the reconcile that applies them at every start.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -79,8 +79,12 @@ public sealed record TableStorageInfo(
 /// </para>
 /// <para>
 /// None of these rewrites existing rows: storage and compression apply to values written from then on, and the
-/// size constraint is added <c>NOT VALID</c>, so rows already stored are not scanned. A changed fillfactor queues a
-/// rewrite request for the maintenance worker instead of rewriting the table during the pass.
+/// size constraint is added <c>NOT VALID</c>, so rows already stored are not scanned.
+/// </para>
+/// <para>
+/// The fillfactor and the six autovacuum parameters are not set here: the schema SQL runs only when its hash changes,
+/// and the model is the authority for those seven at every start (WS-4 decision 3, #1747). <see cref="StorageMarker"/>
+/// declares them in a comment line the runtime reconcile (<c>PerspectiveStorageParameters</c>) reads.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
@@ -88,6 +92,12 @@ public sealed record TableStorageInfo(
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs</tests>
 public static class ColumnStorageSql {
   private const string DO_BEGIN = "DO $$ BEGIN\n";
+
+  /// <summary>
+  /// Starts a table's storage marker line; the bare table name and each declared <c>name=value</c> follow,
+  /// space-separated. The runtime reconcile reads the same text (<c>PerspectiveStorageParameters.MARKER</c>).
+  /// </summary>
+  public const string STORAGE_MARKER = "-- @whizbang:table-storage ";
   private const string END_IF = "  END IF;\n";
   private const string DO_END = "END $$;";
 
@@ -165,29 +175,36 @@ public static class ColumnStorageSql {
       yield return SetToastTupleTarget(qualifiedTable, target);
     }
 
-    if (storage?.FillFactor is { } fillFactor) {
-      yield return SetFillFactor(qualifiedTable, fillFactor);
-    }
-
-    if (storage is null) {
-      yield break;
-    }
-
-    foreach (var (name, value) in _autovacuumParameters(storage)) {
-      if (value is not null) {
-        yield return SetStorageParameter(qualifiedTable, name, value);
-      }
-    }
+    yield return StorageMarker(qualifiedTable, storage);
   }
 
-  // The declared autovacuum parameters in emission order, each rendered as PostgreSQL stores it, or null.
-  private static IEnumerable<(string Name, string? Value)> _autovacuumParameters(TableStorageInfo storage) {
-    yield return ("autovacuum_vacuum_threshold", _render(storage.AutovacuumVacuumThreshold));
-    yield return ("autovacuum_vacuum_scale_factor", _render(storage.AutovacuumVacuumScaleFactor));
-    yield return ("autovacuum_vacuum_insert_threshold", _render(storage.AutovacuumInsertThreshold));
-    yield return ("autovacuum_vacuum_insert_scale_factor", _render(storage.AutovacuumInsertScaleFactor));
-    yield return ("toast.autovacuum_vacuum_threshold", _render(storage.ToastAutovacuumVacuumThreshold));
-    yield return ("toast.autovacuum_vacuum_scale_factor", _render(storage.ToastAutovacuumVacuumScaleFactor));
+  /// <summary>
+  /// The table's storage marker: a comment line naming the bare table and each fillfactor or autovacuum parameter the
+  /// model declares, in a fixed order. The runtime reconcile sets each declared value and resets each governed
+  /// parameter left out, at every start; a table without the attribute gets a marker declaring nothing.
+  /// </summary>
+  /// <param name="qualifiedTable">The table as the statements name it, with or without its schema.</param>
+  /// <param name="storage">The table's options, or null.</param>
+  /// <returns>The marker line.</returns>
+  /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ColumnStorageSqlTests.cs:StorageMarker_ListsEachDeclaredParameterInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveStorageParametersTests.cs:TheGeneratorsMarker_IsTheOneTheReconcileReadsAsync</tests>
+  public static string StorageMarker(string qualifiedTable, TableStorageInfo? storage) {
+    // The schema prefix, if any, ends at the last dot: generated table names never contain one.
+    var table = qualifiedTable[(qualifiedTable.LastIndexOf('.') + 1)..].Trim('"');
+    var declared = _governedParameters(storage).Where(p => p.Value is not null).Select(p => $" {p.Name}={p.Value}");
+    return STORAGE_MARKER + table + string.Concat(declared);
+  }
+
+  // The governed parameters in declaration order, each rendered as PostgreSQL stores it, or null when not declared.
+  private static IEnumerable<(string Name, string? Value)> _governedParameters(TableStorageInfo? storage) {
+    yield return ("fillfactor", _render(storage?.FillFactor));
+    yield return ("autovacuum_vacuum_threshold", _render(storage?.AutovacuumVacuumThreshold));
+    yield return ("autovacuum_vacuum_scale_factor", _render(storage?.AutovacuumVacuumScaleFactor));
+    yield return ("autovacuum_vacuum_insert_threshold", _render(storage?.AutovacuumInsertThreshold));
+    yield return ("autovacuum_vacuum_insert_scale_factor", _render(storage?.AutovacuumInsertScaleFactor));
+    yield return ("toast.autovacuum_vacuum_threshold", _render(storage?.ToastAutovacuumVacuumThreshold));
+    yield return ("toast.autovacuum_vacuum_scale_factor", _render(storage?.ToastAutovacuumVacuumScaleFactor));
   }
 
   private static string? _render(int? value) => value?.ToString(CultureInfo.InvariantCulture);
@@ -232,37 +249,7 @@ public static class ColumnStorageSql {
   /// <param name="name">The parameter, such as <c>autovacuum_vacuum_threshold</c> or <c>toast.autovacuum_vacuum_threshold</c>.</param>
   /// <param name="value">The value, rendered as PostgreSQL stores it.</param>
   /// <returns>The statement.</returns>
-  public static string SetStorageParameter(string qualifiedTable, string name, string value) =>
-    _setStorageParameter(qualifiedTable, name, value, whenChanged: "");
-
-  /// <summary>
-  /// The table's <c>fillfactor</c>, when its storage parameters do not already say so, and then a rewrite request
-  /// for a table that has pages: a changed fillfactor applies only to the pages written from then on, so the rows
-  /// already stored stay packed to the old value until the table is rewritten.
-  /// </summary>
-  /// <remarks>
-  /// The request goes through <c>wh_request_table_rewrite</c> in the table's own schema and names the bare table, as
-  /// the rewriter lists the tables it measures. A restart that finds the value in place queues nothing, and neither
-  /// does a table created empty.
-  /// </remarks>
-  /// <param name="qualifiedTable">The table as the statement names it, with or without its schema.</param>
-  /// <param name="fillFactor">The fillfactor, 10 to 100.</param>
-  /// <returns>The statement.</returns>
-  /// <docs>fundamentals/perspectives/physical-fields#perspective-fillfactor</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/ColumnStorageSqlTests.cs:SetFillFactor_QueuesARewriteOnlyWhenTheValueChangesOnATableWithPagesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs:AChangedFillFactor_OnATableWithRows_QueuesOneRewriteAsync</tests>
-  public static string SetFillFactor(string qualifiedTable, int fillFactor) {
-    // The schema prefix, if any, ends at the last dot: generated table names never contain one.
-    var split = qualifiedTable.LastIndexOf('.') + 1;
-    var schemaPrefix = qualifiedTable[..split];
-    var table = qualifiedTable[split..];
-    return _setStorageParameter(qualifiedTable, "fillfactor", fillFactor.ToString(CultureInfo.InvariantCulture),
-      whenChanged: $"    IF pg_relation_size('{qualifiedTable}'::regclass) > 0 THEN\n"
-        + $"      PERFORM {schemaPrefix}wh_request_table_rewrite('{table}');\n"
-        + "    END IF;\n");
-  }
-
-  private static string _setStorageParameter(string qualifiedTable, string name, string value, string whenChanged) {
+  public static string SetStorageParameter(string qualifiedTable, string name, string value) {
     const string TOAST_PREFIX = "toast.";
     var held = name.StartsWith(TOAST_PREFIX, System.StringComparison.Ordinal)
       ? $"  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_class toast ON toast.oid = c.reltoastrelid WHERE c.oid = '{qualifiedTable}'::regclass\n"
@@ -272,7 +259,6 @@ public static class ColumnStorageSql {
     return DO_BEGIN
       + held
       + $"    ALTER TABLE {qualifiedTable} SET ({name} = {value});\n"
-      + whenChanged
       + END_IF
       + DO_END;
   }

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -21,13 +22,21 @@ namespace Whizbang.Core.Tests.Workers;
 /// independently. Defaults 300 ms / 3 s / 1000.
 /// </summary>
 public class SlidingWindowApplyBatchStrategyTests {
+  /// <summary>
+  /// The batch window. Tests that wait on a window run the batcher on a <see cref="BatchWindowClock"/>, so the window
+  /// closes only when the test advances the clock past it, never because a loaded runner was slow.
+  /// </summary>
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(50);
+
   private readonly Uuid7IdProvider _idProvider = new();
 
   [Test]
-  public async Task AppendAsync_SameStream_MultipleSignals_CoalesceIntoOneFlushAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_SameStream_MultipleSignals_CoalesceIntoOneFlushAsync(CancellationToken cancellationToken) {
     var flushed = new ConcurrentBag<(Guid StreamId, int Count)>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, _) => {
@@ -37,17 +46,24 @@ public class SlidingWindowApplyBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(500),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(streamId);
-    await sut.AppendAsync(streamId);
-    await sut.AppendAsync(streamId);
+    // Each signal is drained, and its window armed, before the next one is made, so all three are in the open
+    // batch when the clock closes the window.
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    // Wait for the sliding-window flush to fire.
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    // Close the sliding window and wait for its flush.
+    clock.Advance(_window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     var arr = flushed.ToArray();
     await Assert.That(arr.Length).IsEqualTo(1);
@@ -56,12 +72,14 @@ public class SlidingWindowApplyBatchStrategyTests {
   }
 
   [Test]
-  public async Task AppendAsync_DifferentStreams_FlushIndependentlyAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_DifferentStreams_FlushIndependentlyAsync(CancellationToken cancellationToken) {
     var flushed = new ConcurrentBag<(Guid StreamId, int Count)>();
     var streamA = _idProvider.NewGuid();
     var streamB = _idProvider.NewGuid();
-    var done = new TaskCompletionSource();
+    var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var flushCount = 0;
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, _) => {
@@ -73,16 +91,23 @@ public class SlidingWindowApplyBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(500),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(streamA);
-    await sut.AppendAsync(streamA);
-    await sut.AppendAsync(streamB);
+    // Stream A's worker arms the first two windows (its second signal restarts its window); stream B's worker arms
+    // the third. One advance then closes both streams' open windows together.
+    await sut.AppendAsync(streamA, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    await sut.AppendAsync(streamA, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    await sut.AppendAsync(streamB, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    await done.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    clock.Advance(_window);
+    await done.Task.WaitAsync(cancellationToken);
 
     var arr = flushed.ToArray();
     await Assert.That(arr.Length).IsEqualTo(2);
@@ -94,7 +119,8 @@ public class SlidingWindowApplyBatchStrategyTests {
   }
 
   [Test]
-  public async Task FlushAndStopAsync_DrainsPendingBuffersBeforeReturningAsync() {
+  [Timeout(30000)]
+  public async Task FlushAndStopAsync_DrainsPendingBuffersBeforeReturningAsync(CancellationToken cancellationToken) {
     var flushed = new ConcurrentBag<Guid>();
     var streamId = _idProvider.NewGuid();
 
@@ -105,16 +131,17 @@ public class SlidingWindowApplyBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        // Long window so we'd never flush in time without FlushAndStopAsync forcing it.
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(60),
         MaxSize = 1000,
-      });
+      },
+      // A clock nobody advances: no window can close, so only FlushAndStopAsync can force the flush.
+      timeProvider: new FakeTimeProvider());
 
-    await sut.AppendAsync(streamId);
-    await sut.AppendAsync(streamId);
+    await sut.AppendAsync(streamId, cancellationToken);
+    await sut.AppendAsync(streamId, cancellationToken);
 
-    await sut.FlushAndStopAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.FlushAndStopAsync(cancellationToken);
 
     await Assert.That(flushed.ToArray().Length).IsGreaterThanOrEqualTo(1);
     await Assert.That(flushed.ToArray()[0]).IsEqualTo(streamId);
@@ -133,15 +160,18 @@ public class SlidingWindowApplyBatchStrategyTests {
 
   /// <summary>
   /// Covers the idle-sweep timer callback path (static lambda → _fireAndForgetIdleSweep →
-  /// _runIdleSweepAsync). A tight IdleSweepInterval ensures the timer fires at least once
-  /// during the wait, and a tight IdleEvictionWindow ensures the inactive buffer is
-  /// evicted.
+  /// _runIdleSweepAsync). Advancing the clock by one IdleSweepInterval fires the timer, and by
+  /// then the buffer has been quiet for longer than the IdleEvictionWindow, so it is evicted.
   /// </summary>
   [Test]
-  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync() {
+  [Timeout(30000)]
+  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync(CancellationToken cancellationToken) {
     var flushed = new ConcurrentBag<Guid>();
     var streamId = _idProvider.NewGuid();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(10);
+    var sweepInterval = TimeSpan.FromSeconds(1);
+    var clock = new BatchWindowClock(window);
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, _, _) => {
@@ -151,24 +181,27 @@ public class SlidingWindowApplyBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-        IdleSweepInterval = TimeSpan.FromMilliseconds(20),
-        IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
-      });
+        IdleSweepInterval = sweepInterval,
+        IdleEvictionWindow = sweepInterval,
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(streamId);
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the stream stays mapped after its flush until a sweep finds it idle");
 
-    // Wait long enough for the idle sweep timer to fire at least once with an empty
-    // LastActivity > cutoff predicate. The sweep timer reads _streams from the active
-    // map and evicts inactive entries; the buffer added above will be evicted once
-    // its LastActivity falls below IdleEvictionWindow.
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-    while (sut.ActiveStreamCount > 0 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // The sweep timer's callback runs inside the advance and records the sweep it starts; wait for that sweep.
+    // The sweep reads _streams from the active map and evicts the entry whose LastActivity is now older than
+    // the IdleEvictionWindow.
+    clock.Advance(sweepInterval);
+    await sut.IdleSweeps.DrainAsync(cancellationToken);
+
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
   }
 
@@ -183,10 +216,13 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// then asserted against a token no flush was ever handed, and read as a defect in the strategy.
   /// </remarks>
   [Test]
-  public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync() {
+  [Timeout(30000)]
+  public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync(CancellationToken cancellationToken) {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
-    var flushStarted = new TaskCompletionSource();
+    var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(10);
+    var clock = new BatchWindowClock(window);
     // The token the in-flight flush was handed — the strategy's own stop token.
     var flushToken = CancellationToken.None;
     var sut = new SlidingWindowApplyBatchStrategy(
@@ -197,12 +233,15 @@ public class SlidingWindowApplyBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(streamId);
-    await flushStarted.Task;  // the flush is in flight and stuck, whatever the machine's load
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(window);
+    await flushStarted.Task.WaitAsync(cancellationToken);  // the flush is in flight and stuck, whatever the machine's load
 
     using var cts = new CancellationTokenSource();
     var stopping = sut.FlushAndStopAsync(cts.Token);
@@ -238,38 +277,51 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// </para>
   /// </summary>
   [Test]
-  public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync() {
+  [Timeout(30000)]
+  public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync(CancellationToken cancellationToken) {
     var flushed = new ConcurrentBag<Guid>();
     var streamId = _idProvider.NewGuid();
-    var flushedSignal = new TaskCompletionSource();
+    // The completed buffer flushes the first signal as its worker ends; the second flush is the one the append
+    // that raced the eviction has to reach.
+    var secondFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(10);
+    var clock = new BatchWindowClock(window);
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, _, _) => {
         flushed.Add(sid);
-        flushedSignal.TrySetResult();
+        if (flushed.Count == 2) {
+          secondFlush.TrySetResult();
+        }
         return Task.CompletedTask;
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-        // Long enough that the real sweep never fires during this test — the seam drives the
+        // Long enough that the sweep never fires during this test: the seam drives the
         // eviction state instead, so the assertion is about recovery, not about timing.
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromMinutes(5),
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(streamId);
+    await sut.AppendAsync(streamId, cancellationToken);
+    // The first buffer's worker has drained the signal and armed its window
+    await clock.Armed(1).WaitAsync(cancellationToken);
 
     // Reproduce the losing interleave: the buffer this stream maps to is completed while still
     // mapped, so the next append grabs a dead channel.
     await Assert.That(sut.CompleteMappedWriterForTest(streamId)).IsTrue()
       .Because("test setup must have found and completed a live buffer");
 
-    await sut.AppendAsync(streamId);
+    await sut.AppendAsync(streamId, cancellationToken);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // The new buffer's worker arms its own window; closing it flushes the second signal
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    clock.Advance(window);
+    await secondFlush.Task.WaitAsync(cancellationToken);
     await Assert.That(flushed).Contains(streamId)
       .Because("an append that raced an idle eviction must still reach a flush, not throw");
   }

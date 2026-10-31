@@ -35,7 +35,7 @@ namespace Whizbang.Core.Minting;
 /// </para>
 /// <list type="bullet">
 ///   <item><description><strong>Failure atomicity:</strong> configurable via <see cref="Atomicity"/> — <c>Independent</c> (default; a bad child is dropped, the rest fan out) or <c>Atomic</c> (any child failure dead-letters the whole composite). A cap breach always dead-letters the whole composite.</description></item>
-///   <item><description><strong>Inner-event StreamId:</strong> all inner events inherit the composite's StreamId. Producers needing per-inner StreamIds emit separate envelopes (no composite).</description></item>
+///   <item><description><strong>Inner-event StreamId:</strong> each inner event is stored on the stream its producer stored it on: the one the bundle recorded for it, else the one its own <c>[StreamId]</c> names, else the composite's (#1798). The composite is transport packaging, never a stream rewrite.</description></item>
 ///   <item><description><strong>Ordering:</strong> inner events are processed in producer-yielded order (the order <see cref="InnerEvents"/> enumerates them). Matches single-row outbox storage semantics.</description></item>
 ///   <item><description><strong>Event-store replay:</strong> composite envelopes NEVER reach the replay path — only expanded inner events. Producers can stop emitting a composite type at any time without affecting historical replay.</description></item>
 ///   <item><description><strong>Dispatchable + hookable:</strong> the composite is a real message at the surface — a pre-fanout <c>IReceptor&lt;TComposite&gt;</c> fires before fan-out (its inline emissions commit atomically with the children). After fan-out, the per-inner-event lifecycle runs normally; downstream sees only children.</description></item>

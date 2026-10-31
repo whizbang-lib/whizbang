@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -127,15 +128,83 @@ public class ProcessedEventCacheCoverageTests {
       .Throws<ArgumentOutOfRangeException>();
   }
 
-  // The locked re-check exists because multiple threads can pass the unlocked "count > cap"
-  // check together. Without the re-check, every thread that raced past it would run a full
-  // eviction batch — over-evicting entries that are still within TTL under concurrent load,
-  // forcing needless duplicate-processing fallbacks in the perspective drainer.
+  // The locked re-check exists because two inserts can both see the cache over its cap before
+  // either takes the eviction lock. The first to take the lock evicts the overflow; the second must
+  // find the overflow gone and evict nothing. Without the re-check the second would still run a
+  // batch of at least one entry (Math.Max(overflow, maxEntries / 10)) and drop an entry that is
+  // still inside its TTL, so that event would be fetched and applied again. The interleaving is
+  // fixed by signals, not by luck: the held insert parks in OnCapacityExceeded, which runs after
+  // the unlocked "count > cap" check and before the lock, while a second insert evicts.
+  [Test]
+  public async Task MarkProcessed_OverflowEvictedWhileInsertWaitsForLock_EvictsNothingAsync() {
+    // Arrange: fill to the cap one second apart, so eviction order (oldest expiry first) is known.
+    var provider = _fakeProvider(out var fake);
+    const int maxEntries = 10;
+    var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(60), maxEntries: maxEntries);
+    var primed = new Guid[maxEntries];
+    for (var i = 0; i < maxEntries; i++) {
+      primed[i] = (Guid)TrackedGuid.New();
+      cache.MarkProcessed(primed[i]);
+      fake.Advance(TimeSpan.FromSeconds(1));
+    }
+
+    // RunContinuationsAsynchronously keeps the test's continuation off the held thread; inline, it
+    // would await the held insert from inside it and never return.
+    var heldPastUnlockedCheck = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var releaseHeld = new SemaphoreSlim(0, 1);
+    var observedCounts = new ConcurrentQueue<int>();
+    var holdNext = 1;
+    cache.OnCapacityExceeded += residentCount => {
+      observedCounts.Enqueue(residentCount);
+      if (Interlocked.Exchange(ref holdNext, 0) == 1) {
+        heldPastUnlockedCheck.SetResult(residentCount);
+        releaseHeld.Wait();
+      }
+    };
+
+    var heldId = (Guid)TrackedGuid.New();
+    var evictingId = (Guid)TrackedGuid.New();
+
+    // Act
+    var heldInsert = Task.Run(() => cache.MarkProcessed(heldId));
+    try {
+      // If the held insert finished without ever raising, there is nothing to hold; fail instead of
+      // waiting forever.
+      var first = await Task.WhenAny(heldPastUnlockedCheck.Task, heldInsert);
+      await Assert.That(first == heldPastUnlockedCheck.Task).IsTrue()
+        .Because("an insert that takes the cache past its cap must raise OnCapacityExceeded before the lock");
+
+      // Held thread has passed the unlocked check and owns no lock. This insert takes the cache to
+      // 12 and evicts the overflow of 2 (the two oldest primed ids) back down to the cap.
+      cache.MarkProcessed(evictingId);
+      await Assert.That(cache.Count).IsEqualTo(maxEntries)
+        .Because("the second insert evicts the whole overflow while the first is held");
+    } finally {
+      releaseHeld.Release();
+    }
+    await heldInsert;
+
+    // Assert: the held insert re-checked under the lock, found no overflow, and evicted nothing.
+    await Assert.That(observedCounts.ToArray()).IsEquivalentTo([maxEntries + 1, maxEntries + 2])
+      .Because("the held insert saw 11 resident entries and the evicting insert saw 12");
+    await Assert.That(cache.Count).IsEqualTo(maxEntries)
+      .Because("the held insert found the overflow already evicted and must not run a batch of its own");
+    await Assert.That(cache.WasRecentlyProcessed(primed[0])).IsFalse();
+    await Assert.That(cache.WasRecentlyProcessed(primed[1])).IsFalse();
+    for (var i = 2; i < maxEntries; i++) {
+      await Assert.That(cache.WasRecentlyProcessed(primed[i])).IsTrue()
+        .Because($"primed id {i} is inside its TTL and no eviction was owed when the held insert ran");
+    }
+    await Assert.That(cache.WasRecentlyProcessed(heldId)).IsTrue();
+    await Assert.That(cache.WasRecentlyProcessed(evictingId)).IsTrue();
+  }
+
+  // A stress check of the same lock under real contention: whatever interleaving the scheduler
+  // picks, concurrent inserts racing the cap eviction never leave the cache over its cap. The
+  // re-check's outcome is pinned deterministically by the test above; this one only guards the bound.
   [Test]
   public async Task MarkProcessed_ConcurrentInsertsAtCap_StaysBoundedAsync() {
-    // Arrange — prime the cache to exactly the cap so the very first wave of concurrent
-    // inserts is already over it, maximizing the chance multiple threads pass the unlocked
-    // check together and race into the locked re-check this test targets.
+    // Arrange: prime the cache to exactly the cap so every concurrent insert lands over it.
     var provider = _fakeProvider(out _);
     const int maxEntries = 20;
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(60), maxEntries: maxEntries);
@@ -143,7 +212,7 @@ public class ProcessedEventCacheCoverageTests {
       cache.MarkProcessed((Guid)TrackedGuid.New());
     }
 
-    // Act — many threads insert concurrently, all racing the cap-eviction lock.
+    // Act: many threads insert concurrently, all racing the cap-eviction lock.
     var tasks = Enumerable.Range(0, 100)
       .Select(_ => Task.Run(() => cache.MarkProcessed((Guid)TrackedGuid.New())))
       .ToArray();

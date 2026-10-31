@@ -41,6 +41,15 @@ public sealed class MaintenancePartitioningOptions {
   /// </summary>
   public int CreateAhead { get; set; } = DEFAULT_CREATE_AHEAD;
 
+  /// <summary>
+  /// Who creates partitions (<c>Whizbang:Workers:Maintenance:Partitioning:Strategy</c>). Default
+  /// <see cref="PartitionManagementStrategy.Auto"/>: pg_partman where it is already Ready, the built-in manager
+  /// otherwise. Expired partitions are always dropped by the built-in manager.
+  /// </summary>
+  /// <docs>operations/infrastructure/partitioned-ledgers#pg-partman</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitionManagementStrategyTests.cs:TheSetting_DefaultsToAuto_AndBindsFromConfigurationAsync</tests>
+  public PartitionManagementStrategy Strategy { get; set; } = PartitionManagementStrategy.Auto;
+
   /// <summary>Configuration errors in the partitioning options, by key.</summary>
   /// <param name="partitioning">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>

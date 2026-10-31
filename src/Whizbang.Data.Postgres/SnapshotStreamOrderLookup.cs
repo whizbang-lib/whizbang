@@ -41,7 +41,7 @@ public static class SnapshotStreamOrderLookup {
   /// guess skips the events in between and leaves nothing pending to repair them.
   /// </summary>
   private const string BY_VERSION_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -58,7 +58,7 @@ public static class SnapshotStreamOrderLookup {
   /// never had the defect.
   /// </summary>
   private const string BY_EVENT_ID_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -72,6 +72,23 @@ public static class SnapshotStreamOrderLookup {
   /// connection. Null when there is none, which a caller reads as "replay further" rather than as an error.
   /// </summary>
   public static async Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> FindAsync(
+      NpgsqlConnection connection,
+      Guid streamId,
+      string perspectiveName,
+      Guid beforeEventId,
+      CancellationToken ct = default) =>
+    await FindFloorAsync(connection, streamId, perspectiveName, beforeEventId, ct).ConfigureAwait(false) is { } floor
+      ? (floor.SnapshotEventId, floor.SnapshotVersion, floor.SnapshotData)
+      : null;
+
+  /// <summary>
+  /// The same snapshot as <see cref="FindAsync"/>, with how far an archive of the stream reaches when one covers it
+  /// (<c>archived_through_version</c>, #1738), which tells a rewind from it to read through the archive.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPerspectiveSnapshotStoreTests.cs:GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync</tests>
+  public static async Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> FindFloorAsync(
       NpgsqlConnection connection,
       Guid streamId,
       string perspectiveName,
@@ -106,6 +123,7 @@ public static class SnapshotStreamOrderLookup {
     var snapshotEventId = reader.GetGuid(0);
     int? snapshotVersion = await reader.IsDBNullAsync(1, ct).ConfigureAwait(false) ? null : reader.GetInt32(1);
     var snapshotJson = reader.GetString(2);
-    return (snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson));
+    long? archivedThrough = await reader.IsDBNullAsync(3, ct).ConfigureAwait(false) ? null : reader.GetInt64(3);
+    return new Whizbang.Core.Perspectives.PerspectiveSnapshotFloor(snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson), archivedThrough);
   }
 }

@@ -23,7 +23,8 @@ namespace Whizbang.Core.Tests.Configuration;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Configuration/UnknownConfigurationKeyCheck.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Configuration/KnownConfigurationKeys.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Core/Configuration/RemovedConfigurationKeys.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Configuration/RemovedConfigurationKeyAttribute.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Configuration/ConfigurationManifestRegistry.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Configuration/ConfigurationCheckOptions.cs</code-under-test>
 /// <docs>operations/configuration/configuration-reference#unknown-keys</docs>
 [Category("Shard2")]
@@ -113,14 +114,14 @@ public sealed class UnknownConfigurationKeyCheckTests {
 
   [Test]
   public async Task Removed_MaintenanceInterval_NamesTheMaintenanceKeysAsync() {
-    var removed = RemovedConfigurationKeys.Find("whizbang:workcoordinator:maintenanceinterval");
+    var removed = ConfigurationManifestRegistry.FindRemovedKey("whizbang:workcoordinator:maintenanceinterval");
 
     await Assert.That(removed).IsNotNull();
     await Assert.That(removed!.ReplacedBy).Contains("Whizbang:Workers:Maintenance:IntervalMinutes");
     await Assert.That(removed.ReplacedBy).Contains("Whizbang:Housekeeping:SettledCooldown");
     await Assert.That(removed.ReplacedBy).Contains("Whizbang:Housekeeping:MaxDeferral");
     await Assert.That(removed.ReplacedBy).DoesNotContain("Whizbang:Housekeeping:MaxConsecutiveDeferrals");
-    await Assert.That(RemovedConfigurationKeys.Find("Whizbang:Workers:Maintenance:IntervalMinutes")).IsNull();
+    await Assert.That(ConfigurationManifestRegistry.FindRemovedKey("Whizbang:Workers:Maintenance:IntervalMinutes")).IsNull();
   }
 
   [Test]
@@ -139,7 +140,7 @@ public sealed class UnknownConfigurationKeyCheckTests {
     foreach (var (key, replacement) in expected) {
       await Assert.That(KnownConfigurationKeys.Library.IsKnown(key)).IsFalse()
         .Because($"nothing reads {key}, so the startup check must report it");
-      var removed = RemovedConfigurationKeys.Find(key);
+      var removed = ConfigurationManifestRegistry.FindRemovedKey(key);
       await Assert.That(removed).IsNotNull();
       await Assert.That(removed!.ReplacedBy).IsEquivalentTo([replacement]);
     }
@@ -147,8 +148,9 @@ public sealed class UnknownConfigurationKeyCheckTests {
 
   [Test]
   public async Task Removed_EveryReplacementIsAKeyTheLibraryReads_AndNoRemovedKeyIsAsync() {
-    await Assert.That(RemovedConfigurationKeys.All).IsNotEmpty();
-    foreach (var removed in RemovedConfigurationKeys.All) {
+    var declared = _coreRemovedKeys();
+    await Assert.That(declared).IsNotEmpty();
+    foreach (var removed in declared) {
       await Assert.That(KnownConfigurationKeys.Library.IsKnown(removed.Key)).IsFalse()
         .Because($"{removed.Key} is listed as removed, so nothing may read it");
       foreach (var replacement in removed.ReplacedBy) {
@@ -156,6 +158,55 @@ public sealed class UnknownConfigurationKeyCheckTests {
           .Because($"{removed.Key} points operators at {replacement}, which must be a real key");
       }
     }
+  }
+
+  [Test]
+  public async Task Removed_WhizbangCoreDeclaresEveryFormerTableEntry_ThroughTheAttributeAsync() {
+    // #1755: the removed keys were a hand-kept table. They are now [RemovedConfigurationKey] declarations the
+    // configuration manifest generator collects; these are the eight entries the table held, none lost.
+    (string Key, string[] ReplacedBy)[] expected = [
+      (MAINTENANCE_INTERVAL, ["Whizbang:Workers:Maintenance:IntervalMinutes", "Whizbang:Housekeeping:SettledCooldown", "Whizbang:Housekeeping:MaxDeferral"]),
+      ("Whizbang:PostgresExtensions:ProbeOnStartup", ["Whizbang:Capabilities:ProbeOnStartup"]),
+      .. _inboxBatch("AzureServiceBus"),
+      .. _inboxBatch("RabbitMQ"),
+    ];
+
+    var declared = _coreRemovedKeys();
+
+    await Assert.That(declared.Count).IsEqualTo(8).Because("the table held eight entries");
+    foreach (var (key, replacedBy) in expected) {
+      var entry = declared.SingleOrDefault(d => d.Key == key);
+      await Assert.That(entry).IsNotNull().Because($"{key} was in the table");
+      await Assert.That(entry!.ReplacedBy).IsEquivalentTo(replacedBy, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    }
+  }
+
+  [Test]
+  public async Task Run_ARemovedKeyWithNoReplacement_SaysNothingReplacesItAsync() {
+    // Registered under an assembly name of this test's own: the registry is process-wide.
+    const string key = "Whizbang:Tests:UnknownKeyCheck:RemovedWithoutReplacement";
+    ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.UnknownKeyCheck.NoReplacement", []) {
+      RemovedKeys = [new RemovedConfigurationKeyEntry(key, [])],
+    });
+    var logger = new FakeLogger();
+
+    UnknownConfigurationKeyCheck.Run(_configuration((key, "1")), _known(), UnknownConfigurationKeyMode.Warn, logger);
+
+    var record = logger.Collector.GetSnapshot().Single();
+    await Assert.That(record.Message).Contains($"'{key}' was removed");
+    await Assert.That(record.Message).Contains("nothing replaces it");
+  }
+
+  private static IReadOnlyList<RemovedConfigurationKeyEntry> _coreRemovedKeys() =>
+    ConfigurationManifestRegistry.Manifests.Single(m => m.Assembly == "Whizbang.Core").RemovedKeys;
+
+  private static (string, string[])[] _inboxBatch(string transport) {
+    var section = $"Whizbang:Transports:{transport}:MessageProcessing";
+    return [
+      ($"{section}:InboxBatchSize", ["Whizbang:Workers:InboxBatch:MaxSize"]),
+      ($"{section}:InboxBatchSlideMs", ["Whizbang:Workers:InboxBatch:SlidingWindow"]),
+      ($"{section}:InboxBatchMaxWaitMs", ["Whizbang:Workers:InboxBatch:MaxWait"]),
+    ];
   }
 
   // ---- finding unknown keys ----

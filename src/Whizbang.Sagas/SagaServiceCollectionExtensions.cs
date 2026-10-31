@@ -46,15 +46,18 @@ public static class SagaServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddWhizbangSagas_DeclaresTheTickAsConsumed_OnceHoweverOftenItIsCalledAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:HostWithItsOwnTickReceptor_SubscribesOnce_AndEachTickIsRecoveredOnceAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:TwoContainers_EachResolveADeriverForTheirOwnNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaItemStreamNamespacePerHostTests.cs:TwoHostsWithDifferentNamespaces_EachHostsWatchdogReadsItsOwnItemsAsTerminalAsync</tests>
   public static IServiceCollection AddWhizbangSagas(this IServiceCollection services, Action<SagaOptions>? configure = null) {
     ArgumentNullException.ThrowIfNull(services);
 
     var opts = new SagaOptions();
     configure?.Invoke(opts);
 
-    // Apply the namespace before any saga service can resolve. SagaItemStreams.Of's
-    // no-override path reads AppDefaultNamespace at call time, so every subsequent
-    // derivation in this process uses the configured value.
+    // This host's per-item stream ids derive from these options: the deriver below, and every saga service built with
+    // them, read this host's namespace however many hosts the process builds (#1888). The process-wide value is still
+    // set for code with no container (SagaItemStreams.Of without a namespace); the last registration in a process wins it.
+    opts.RegisteredWithHost = true;
     SagaItemStreams.AppDefaultNamespace = opts.PerItemStreamNamespace;
 
     // Whizbang:Sagas binds over the code values when the options first resolve, so the watchdog and
@@ -62,6 +65,8 @@ public static class SagaServiceCollectionExtensions {
     // code value alone.
     services.AddSingleton(sp => _bindFromConfiguration(sp.GetService<IConfiguration>(), opts));
     services.AddSingleton<SagaMetrics>(sp => new SagaMetrics(sp.GetRequiredService<WhizbangMetrics>()));
+    // Derives under the options this container serves, so the deriver and the saga services agree on the namespace.
+    services.TryAddSingleton<ISagaItemStreamIdDeriver>(sp => new SagaItemStreamIdDeriver(sp.GetRequiredService<SagaOptions>()));
     // The default: a consumer that registered its own emitter first keeps it.
     services.TryAddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
 

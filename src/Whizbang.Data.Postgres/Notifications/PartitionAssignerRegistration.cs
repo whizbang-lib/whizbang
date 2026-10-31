@@ -36,7 +36,9 @@ internal static class PartitionAssignerRegistration {
     services.AddHostedService<PartitionAssignmentSubscriber>();
 
     services.TryAddSingleton<PartitionAssignerWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PartitionAssignerWorker>());
+    // #1636: the assigner is elected and publishes from Coordinate on. Before then it voted against tables the
+    // migration was altering and, on a fresh database, before they existed.
+    services.AddHostedServiceAtStage(StartupStage.Coordinate, sp => sp.GetRequiredService<PartitionAssignerWorker>());
     return services;
   }
 }

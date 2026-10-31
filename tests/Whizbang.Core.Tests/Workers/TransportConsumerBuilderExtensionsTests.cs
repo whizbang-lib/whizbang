@@ -207,12 +207,13 @@ public class TransportConsumerBuilderExtensionsTests {
 
     // Assert - TransportConsumerWorker is always registered (with built-in resilience).
     // Since the Ready composite landed, the shape is singleton + hosted forward: the worker is
-    // resolvable by type and the IHostedService registration is a factory returning that singleton.
+    // resolvable by type and the IHostedService registration is a factory returning that singleton,
+    // or the no-transport stand-in when no transport is registered (#1876).
     var workerDescriptor = services.FirstOrDefault(
         d => d.ServiceType == typeof(TransportConsumerWorker));
     var hostedForward = services.FirstOrDefault(
         d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationFactory?.Method.ReturnType == typeof(TransportConsumerWorker));
+             d.ImplementationFactory?.Method.ReturnType == typeof(IHostedService));
 
     await Assert.That(workerDescriptor).IsNotNull();
     await Assert.That(workerDescriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);

@@ -256,7 +256,7 @@ public partial class PerspectiveWorker(
   // Releases deferred to the end of an abandoned apply, until each has run; the worker's stop waits for them.
   private readonly ConcurrentDictionary<Task, byte> _abandonedApplyReleases = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
-  private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
+  private long _lastStreamAffinitySweepTicks = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcTicks;
   // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
   // subscription is established lazily on first use of the affinity gates so injection
   // ordering doesn't matter — _cursorCache is initialized as a field but the options
@@ -264,15 +264,16 @@ public partial class PerspectiveWorker(
   private int _cursorCacheEvictionSubscribed;
 
   /// <summary>
-  /// Per-stream semaphore plus a wall-clock activity timestamp so the
+  /// Per-stream semaphore plus an activity timestamp on the worker's clock so the
   /// activity-triggered sweep can identify idle entries. Class (not struct)
   /// so concurrent updates to <see cref="LastActivityTicks"/> land on the
   /// same instance retrieved from
   /// <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>.
   /// </summary>
-  private sealed class StreamAffinityGateEntry : IDisposable {
+  private sealed class StreamAffinityGateEntry(long createdUtcTicks) : IDisposable {
     public readonly SemaphoreSlim Semaphore = new(1, 1);
-    public long LastActivityTicks = DateTimeOffset.UtcNow.Ticks;
+    /// <summary>Worker-clock UTC ticks of the last acquire or release.</summary>
+    public long LastActivityTicks = createdUtcTicks;
     /// <summary>Worker-clock UTC ticks since the current holder took the gate; 0 while it is free.</summary>
     public long HeldSinceTicks;
     /// <summary>When the watchdog last named this hold; 0 until it has.</summary>
@@ -463,7 +464,8 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Event fired after a complete batch cycle finishes, including all phases:
   /// drain mode processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
-  /// and metrics recording. Fires once per worker tick regardless of whether work was found.
+  /// and metrics recording. Fires once per batch the worker processes, after every stream in it has been decided (run,
+  /// rewound, bootstrapped, skipped or deferred); a tick that finds no work does not raise it.
   /// </summary>
   /// <remarks>
   /// Use for deterministic test synchronization when verifying lifecycle stages that fire
@@ -672,7 +674,9 @@ public partial class PerspectiveWorker(
       var pollMs = !_perspectiveNotificationListener.IsConfigured
         ? _options.PollingIntervalMilliseconds
         : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
-      var idleTimeout = Task.Delay(pollMs, stoppingToken);
+      // On the worker's clock, so the safety-net cadence is the injected TimeProvider's and a test that
+      // owns the clock decides when the next idle poll comes round.
+      var idleTimeout = Task.Delay(TimeSpan.FromMilliseconds(pollMs), _timeProvider, stoppingToken);
       // WaitAsync returns the SAME pending task while a wait is outstanding, so an iteration that
       // ends on a channel or the timeout leaves no extra waiter behind (#728). The signal is a level:
       // a Set() that lands while the loop is busy stays raised until the Consume() below, so the next
@@ -959,23 +963,26 @@ public partial class PerspectiveWorker(
   }
 
   private int _statsGaugeCounter;
+  private PendingEventsStatisticsRefresh? _pendingEventsRefresh;
 
-  private async Task _periodicGatherStatisticsAsync(CancellationToken ct) {
+  private Task _periodicGatherStatisticsAsync(CancellationToken ct) {
     // Gather expensive stats every 60 ticks (~60 seconds)
     // These are COUNT(*) queries that we don't want on the hot path
     if (++_statsGaugeCounter % 60 != 0) {
-      return;
+      return Task.CompletedTask;
     }
 
-    try {
-      await using var scope = _scopeFactory.CreateAsyncScope();
-      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      var stats = await workCoordinator.GatherStatisticsAsync(ct);
-      _metrics?.SetPendingEvents(stats.PendingPerspectiveEvents);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Don't let gauge failure interrupt the main loop
-      // Swallow — periodic stats gathering is non-critical
-    }
+    // A failed query never interrupts the loop, and is never silent either: the refresh warns once per failure streak,
+    // naming the query and the stale gauge, and counts every failure (#1865).
+    _pendingEventsRefresh ??= new PendingEventsStatisticsRefresh(_queryPendingEventsAsync, _metrics, _logger);
+    return _pendingEventsRefresh.RefreshAsync(ct);
+  }
+
+  private async Task<long> _queryPendingEventsAsync(CancellationToken ct) {
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var stats = await workCoordinator.GatherStatisticsAsync(ct).ConfigureAwait(false);
+    return stats.PendingPerspectiveEvents;
   }
 
   private void _periodicStaleTrackingCleanup() {
@@ -1045,7 +1052,7 @@ public partial class PerspectiveWorker(
     foreach (var orphan in orphaned) {
       try {
         var tracking = lifecycleCoordinator.BeginTracking(
-          orphan.EventId, orphan.Envelope,
+          LifecycleTrackingPath.Perspective, orphan.EventId, orphan.Envelope,
           LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
           orphan.StreamId);
 
@@ -1059,6 +1066,9 @@ public partial class PerspectiveWorker(
         LogReconciliationCompleted(_logger, orphan.EventId);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogReconciliationError(_logger, ex, orphan.EventId);
+      } finally {
+        // The replay began this entry, so it ends it, whatever the stages did: nothing else would (#1797).
+        lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, orphan.EventId);
       }
     }
 
@@ -1098,19 +1108,20 @@ public partial class PerspectiveWorker(
       PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLog, streamCount, perspectiveCount);
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var scanStarted = _timeProvider.GetTimestamp();
         // Channel architecture: ClaimWorker drives claims in the background; our main loop
         // reads from the channel. Wait for ClaimWorker + the channel consumer to drain rewinds
         // by re-querying. The legacy _processWorkBatchAsync pump was removed.
         const int maxIterations = 100;
         for (var i = 0; i < maxIterations; i++) {
-          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), ct);
+          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), _timeProvider, ct);
           rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
           if (rewindCursors.Count == 0) {
             break;
           }
         }
-        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
+        var scanMs = (long)_timeProvider.GetElapsedTime(scanStarted).TotalMilliseconds;
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, scanMs);
       }
       // Background mode: normal channel-consumer loop will pick them up.
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
@@ -1202,7 +1213,7 @@ public partial class PerspectiveWorker(
       claimWindowReservations);
 
     _recordBatchMetrics(batchActivity, workBatch, groupedWork, [], []);
-    _logBatchComposition(workBatch, groupedWork);
+    LogBatchComposition(_logger, workBatch, groupedWork);
     _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0 || workBatch.PerspectiveStreamIds.Count > 0);
 
     var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
@@ -1283,8 +1294,7 @@ public partial class PerspectiveWorker(
         // the same-pod hole that caused a production strand race. See
         // plans/perspective-worker-stream-affinity.md.
         _ensureCursorCacheEvictionSubscribed();
-        var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
-        Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+        var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(gateEntry, "standard");
         try {
@@ -1527,6 +1537,18 @@ public partial class PerspectiveWorker(
     }
   }
 
+  /// <summary>
+  /// The affinity gate for one stream and perspective, created on first use, with its activity stamped now
+  /// on the worker's clock so the idle sweep ages it against the same clock it compares with.
+  /// </summary>
+  private StreamAffinityGateEntry _getStreamAffinityGate(Guid streamId, string perspectiveName) {
+    var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
+    var gateEntry = _streamAffinityGates.GetOrAdd(
+      (streamId, perspectiveName), static (_, ticks) => new StreamAffinityGateEntry(ticks), nowTicks);
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, nowTicks);
+    return gateEntry;
+  }
+
   /// <summary>Whether a gate is resident for (stream, perspective); read by tests of the eviction cascade.</summary>
   internal bool HasStreamAffinityGate(Guid streamId, string perspectiveName) =>
     _streamAffinityGates.ContainsKey((streamId, perspectiveName));
@@ -1558,8 +1580,7 @@ public partial class PerspectiveWorker(
   internal async Task WithStreamAffinityGateAsync(
       Guid streamId, string perspectiveName, Func<Action<Task>, Task> body, CancellationToken ct) {
     _ensureCursorCacheEvictionSubscribed();
-    var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
-    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
     // Fast path: take the gate synchronously when it's free (the common case — different streams, or
     // one applier per stream). Only when it's already HELD do we surface contention + park. A zero
     // timeout completes at once; it just reports whether the slot was free.
@@ -1608,7 +1629,7 @@ public partial class PerspectiveWorker(
   /// </remarks>
   private void _releaseStreamAffinityGate(
       Guid streamId, string perspectiveName, StreamAffinityGateEntry gateEntry, bool abandoned) {
-    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, _timeProvider.GetUtcNow().UtcTicks);
     _markAffinityReleased(gateEntry);
     try {
       _raiseStreamAffinityGateReleased(new AffinityGateRelease(streamId, perspectiveName, abandoned));
@@ -1782,7 +1803,7 @@ public partial class PerspectiveWorker(
   /// the racing path adds a fresh entry via <c>GetOrAdd</c> and proceeds.
   /// </remarks>
   private void _sweepIdleStreamAffinityGatesIfDue() {
-    var nowTicks = DateTimeOffset.UtcNow.Ticks;
+    var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
     var prevSweepTicks = Interlocked.Read(ref _lastStreamAffinitySweepTicks);
     var sweepIntervalTicks = _streamAffinityOptions.SweepInterval.Ticks;
     if (nowTicks - prevSweepTicks < sweepIntervalTicks) {
@@ -1855,7 +1876,7 @@ public partial class PerspectiveWorker(
       await _perspectiveCompletionChannel.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
     }
 
-    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
+    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, _timeProvider.GetUtcNow());
     return (pendingCompletions.Length, pendingFailures.Length);
   }
 
@@ -2395,7 +2416,7 @@ public partial class PerspectiveWorker(
       }
 
       _ = lifecycleCoordinator.BeginTracking(
-        envelope.MessageId.Value, envelope,
+        LifecycleTrackingPath.Perspective, envelope.MessageId.Value, envelope,
         LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
 
       if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
@@ -2616,6 +2637,15 @@ public partial class PerspectiveWorker(
         } else {
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
+        }
+        // #1862: an ephemeral runner with no snapshot floor drops a late event instead of rewinding for it. What it
+        // dropped is retired here, once, and the rest of the batch is handed back; otherwise the event's work stays
+        // pending and every lap and claim finds it, skips the same rewind and drops it again.
+        if (result.DroppedStragglers.Length > 0) {
+          (result, filteredEvents) = await _retireDroppedStragglersAsync(
+            runner, result, filteredEvents,
+            new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider),
+            batchContext, leaseCt);
         }
         // The runner ran for this (stream, perspective): the batch's claimed copy of the same
         // group is redundant. Only a real runner invocation records here; a pass that cooled
@@ -2977,7 +3007,7 @@ public partial class PerspectiveWorker(
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already replayed by a completed rewind; their rows are completed without a new rewind (#1361)")]
+    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already handled by an earlier rewind (replayed, or dropped as a straggler it could not replay); their rows are completed without a new rewind (#1361)")]
   private static partial void LogEventsCoveredByRewind(ILogger logger, Guid streamId, string perspectiveName, int count);
 
   [LoggerMessage(Level = LogLevel.Warning,
@@ -3142,6 +3172,64 @@ public partial class PerspectiveWorker(
     }
     return true;
   }
+
+  /// <summary>
+  /// #1862: retires the late events an ephemeral runner dropped instead of rewinding for them, and runs what is left of
+  /// the batch. The runner names one straggler per skipped rewind, so a batch holding several is handed back until no
+  /// straggler is left in it; every pass removes at least one event, so this ends.
+  /// </summary>
+  /// <remarks>
+  /// A dropped event is retired the way an event a rewind already covered is: its rows are completed with nothing
+  /// applied, it is marked in the cooldown and in the cursor cache's rewind memory (so a re-delivery under a new row is
+  /// covered rather than dropped again), its lifecycle is signaled, and waiters on it are released without claiming it
+  /// was applied. The cursor is not touched. A runner can only drop an event it was handed; a report that names none of
+  /// the batch retires nothing.
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StragglerDropped.cs</tests>
+  private async Task<(PerspectiveCursorCompletion Result, List<MessageEnvelope<IEvent>> Remaining)> _retireDroppedStragglersAsync(
+      IPerspectiveRunner runner,
+      PerspectiveCursorCompletion result,
+      List<MessageEnvelope<IEvent>> events,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext,
+      CancellationToken ct) {
+    var remaining = events;
+    while (result.DroppedStragglers.Length > 0) {
+      var dropped = result.DroppedStragglers.ToHashSet();
+      var retired = remaining.FindAll(e => dropped.Contains(e.MessageId.Value));
+      if (retired.Count == 0) {
+        break;
+      }
+      _retireDroppedStragglers(retired, streamCtx, batchContext);
+      remaining = remaining.FindAll(e => !dropped.Contains(e.MessageId.Value));
+      if (remaining.Count == 0) {
+        break;
+      }
+      result = await runner.RunWithEventsAsync(
+        streamCtx.StreamId, streamCtx.PerspectiveName, streamCtx.LastProcessedEventId, remaining, ct);
+    }
+    return (result, remaining);
+  }
+
+  private void _retireDroppedStragglers(
+      List<MessageEnvelope<IEvent>> retired,
+      PerspectiveStreamContext streamCtx,
+      DrainBatchContext batchContext) {
+    var retiredIds = retired.ConvertAll(e => e.MessageId.Value);
+    _signalCooldownSkippedEvents(
+      retired, streamCtx.PerspectiveName, streamCtx.StreamId,
+      batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
+    _markProcessedInCooldown(_recentlyProcessedEventCache, retired, batchContext.RawByEventId, streamCtx.PerspectiveName);
+    _cursorCache.MarkReplayed(streamCtx.StreamId, streamCtx.PerspectiveName, (IEnumerable<Guid>)retiredIds);
+    _enqueueDrainModePerspectiveCompletions(streamCtx.StreamId, streamCtx.PerspectiveName, retired, batchContext.RawByEventId);
+    _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)retiredIds, streamCtx.PerspectiveName);
+    _recordStragglersDropped(streamCtx.PerspectiveName, retired.Count);
+  }
+
+  /// <summary>#1862: counts late events an ephemeral perspective dropped instead of rewinding for them.</summary>
+  private void _recordStragglersDropped(string perspectiveName, int count) =>
+    _metrics?.StragglersDropped.Add(count, new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
 
   /// <summary>
   /// #1361 — removes from <paramref name="freshEvents"/>, and returns, the events a completed rewind was already
@@ -3375,7 +3463,7 @@ public partial class PerspectiveWorker(
     _completionStrategy.ClearAcknowledged();
 
     // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
-    _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
+    _completionStrategy.ResetStale(_timeProvider.GetUtcNow());
 
     // 9. Dedup: filter out work items already processed within retention window
     var dedupedWork = _filterDuplicateWorkItems(workBatch.PerspectiveWork, claimWindowReservations);
@@ -3418,18 +3506,24 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Logs diagnostic information about the batch composition.
   /// </summary>
-  private void _logBatchComposition(
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
+  internal static void LogBatchComposition(
+      ILogger logger,
       WorkBatch workBatch,
       List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork) {
+    // Runs on every batch with a line per group; with debug off it must not box a value per group (#1756)
+    if (!logger.IsEnabled(LogLevel.Debug)) {
+      return;
+    }
 
 #pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
-    _logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+    logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
       workBatch.PerspectiveWork.Count, groupedWork.Count);
     foreach (var g in groupedWork) {
-      _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
+      logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
     }
     if (workBatch.PerspectiveWork.Count == 0) {
-      _logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_cursors");
+      logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_cursors");
     }
 #pragma warning restore CA1848, CA1873
   }
@@ -3597,7 +3691,7 @@ public partial class PerspectiveWorker(
 
     // Per-batch renewal enqueues are filtered by LeaseRenewalWorker against the LeaseRegistry —
     // an id with no registered LeaseHandle is silently skipped, so without this the renewals
-    // never reach renew_leases and the DB lease still expires under a long multi-batch apply.
+    // never reach wh_renew_held_leases and the DB lease still expires under a long multi-batch apply.
     using var sinkLeaseScope = _registerSinkLeases(sinkWorkIds, cancellationToken);
 
     var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
@@ -4293,7 +4387,7 @@ public partial class PerspectiveWorker(
             if (lifecycleCoordinator is not null) {
               // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
               var tracking = lifecycleCoordinator.BeginTracking(
-                envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
+                LifecycleTrackingPath.Perspective, envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
                 MessageSource.Local, streamCtx.StreamId, runner.PerspectiveType);
 
               // Stage guard ensures these fire once per event, not once per perspective group
@@ -4353,7 +4447,13 @@ public partial class PerspectiveWorker(
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
         eventsBehind, enablePerspectiveSpans, cancellationToken);
-      return (result, ProcessingMode.Replay, lockSkipped);
+      if (result.DroppedStragglers.Length == 0) {
+        return (result, ProcessingMode.Replay, lockSkipped);
+      }
+      // #1862: an ephemeral runner with no snapshot floor skipped the rewind and dropped the late event. The work
+      // item's rows are completed below whatever happens, and the events after the cursor it carries still need
+      // applying, so they take the normal path instead of being skipped with the rewind.
+      _recordStragglersDropped(streamCtx.PerspectiveName, result.DroppedStragglers.Length);
     }
 
     // Bootstrap snapshot if needed (existing stream with events but no snapshots)
@@ -4844,7 +4944,11 @@ public partial class PerspectiveWorker(
         // drain-mode twin at _buildDrainModeTypeNameCache). Hand-building it risked drift.
         var eventTypeKey = TypeNameFormatter.Format(eventType);
         if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
-          lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+          // Only a tracked event can fire: an ended one (a cooled row re-signaling it) would get an expectation
+          // nothing completes and nothing sweeps (#1797).
+          if (lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null) {
+            lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+          }
         } else {
           LogEventTypeNotInPerspectiveRegistry(_logger, eventTypeKey);
         }
@@ -4861,47 +4965,77 @@ public partial class PerspectiveWorker(
       }
     }
 
-    foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
-      // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete
-      if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
-        // Not all perspectives have completed yet — keep tracking alive for next batch.
-        // Don't abandon: the tracking instance preserves the stage guard so
-        // PostAllPerspectivesDetached fires exactly once across all batch cycles.
-        continue;
+    try {
+      foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
+        await _fireTerminalStagesAndEndAsync(eventId, envelope, lifecycleCoordinator, scopedProvider, cancellationToken);
       }
-
-      try {
-        await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
-
-        // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
-        var tracking = lifecycleCoordinator.GetTracking(eventId);
-        if (tracking is not null) {
-          // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
-          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
-          coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
-
-          // PostLifecycle: fires once per event as the final lifecycle stage
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-          coordinatorMetrics?.PostLifecycleFired.Add(1);
-
-          // Record durable lifecycle completion marker for crash recovery
-          await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
-        }
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Isolate per-event errors — one failing receptor must not prevent other events
-        // from firing PostLifecycle. Without this, a single throwing receptor kills the
-        // entire batch loop and all subsequent events never get PostLifecycle.
-        LogPostLifecycleError(_logger, ex, eventId);
-        coordinatorMetrics?.PostLifecycleErrors.Add(1);
+    } catch (OperationCanceledException) {
+      // Canceled mid-batch: every event whose gate is open ends here too. Nothing in memory finishes its stages
+      // now; the missing durable completion marker replays them at the next startup (#1797).
+      foreach (var eventId in batchProcessedEvents.Keys.Where(id => _isReadyToFire(id, lifecycleCoordinator))) {
+        lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
       }
+      throw;
+    }
+  }
 
-      // DON'T abandon tracking after stages fire — the tracking instance's stage guard
-      // prevents PostAllPerspectivesDetached from firing again in subsequent batch cycles.
-      // The tracking is marked _isComplete after PostLifecycleInline (see LifecycleTrackingState),
-      // so all future AdvanceToAsync calls return immediately.
-      // Memory cleanup happens naturally as events age out of batchProcessedEvents.
+  /// <summary>
+  /// The events a batch can fire: tracked, with every expected perspective reported. An untracked event has no
+  /// lifecycle left in this process (a cooled row re-signaling an event whose tracking already ended).
+  /// </summary>
+  private static bool _isReadyToFire(Guid eventId, ILifecycleCoordinator lifecycleCoordinator) =>
+    lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId) is not null && lifecycleCoordinator.AreAllPerspectivesComplete(eventId);
+
+  /// <summary>
+  /// Fires one event's PostAllPerspectives and PostLifecycle stages once its WhenAll gate is open, then ends its
+  /// tracking. The end is the exit this path owns: the worker began the tracking, so it ends it once the
+  /// lifecycle is done, when a terminal-stage receptor fails (the failure is isolated and not retried in memory)
+  /// and when the stages are canceled. An event still waiting on a perspective keeps its entry for a later
+  /// batch (#1797).
+  /// </summary>
+  /// <docs>fundamentals/lifecycle/lifecycle-coordinator#live-tracking</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_EveryProjectedEventsTracking_EndsOnceItsLifecycleCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_AnEventWaitingOnAPerspectiveThatHasNotReported_StaysTrackedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:DrainMode_APostAllPerspectivesReceptorThatThrows_StillEndsItsEventsTrackingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:FirePostLifecycle_CanceledMidBatch_EndsEveryReadyEventsTrackingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.TrackingEnds.cs:FirePostLifecycle_AnEventWhoseTrackingEnded_IsNeitherRegisteredNorFiredAgainAsync</tests>
+  private async Task _fireTerminalStagesAndEndAsync(
+      Guid eventId,
+      MessageEnvelope<IEvent> envelope,
+      ILifecycleCoordinator lifecycleCoordinator,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
+    // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete. Not complete yet: the
+    // entry stays for a later batch, and its stage guard keeps PostAllPerspectivesDetached to exactly once.
+    if (!_isReadyToFire(eventId, lifecycleCoordinator)) {
+      return;
+    }
+
+    try {
+      await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
+
+      // The tracking was created during PrePerspective via BeginTracking
+      var tracking = lifecycleCoordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)!;
+      // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
+      coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
+
+      // PostLifecycle: fires once per event as the final lifecycle stage
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+      coordinatorMetrics?.PostLifecycleFired.Add(1);
+
+      // Record durable lifecycle completion marker for crash recovery
+      await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Isolate per-event errors: one failing receptor must not prevent other events
+      // from firing PostLifecycle. Without this, a single throwing receptor kills the
+      // entire batch loop and all subsequent events never get PostLifecycle.
+      LogPostLifecycleError(_logger, ex, eventId);
+      coordinatorMetrics?.PostLifecycleErrors.Add(1);
+    } finally {
+      lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
     }
   }
 
@@ -5076,7 +5210,7 @@ public partial class PerspectiveWorker(
     }
     try {
       while (!ct.IsCancellationRequested) {
-        await Task.Delay(_streamLockOptions.KeepAliveInterval, ct);
+        await Task.Delay(_streamLockOptions.KeepAliveInterval, _timeProvider, ct);
         await _streamLocker.RenewLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, ct);
       }
     } catch (OperationCanceledException) {

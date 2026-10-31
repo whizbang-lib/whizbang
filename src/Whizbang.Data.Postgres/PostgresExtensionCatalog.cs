@@ -101,7 +101,7 @@ public static class PostgresExtensionCatalog {
     new("pg_partman", "partition management (a built-in fallback exists)",
       ["Ledger partition management (create_parent, then run_maintenance from the maintenance worker)"],
       LibraryMayCreate: true, ALLOWLIST),
-    new("pgstattuple", "exact table bloat measurement (otherwise estimated)",
+    new("pgstattuple", "table bloat measured with pgstattuple_approx before a rewrite is queued, and after it (otherwise estimated)",
       ["Table bloat measurement"], LibraryMayCreate: true, ALLOWLIST),
     new("pg_stat_statements", "query statistics",
       ["Expensive-predicate advice", "Query diagnostics"], LibraryMayCreate: true, PRELOAD),
@@ -131,6 +131,7 @@ public static class PostgresExtensionCatalog {
     if (extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.ClientBinary)) {
       prerequisites.Add($"the {extension.Name} client program");
     }
+    var logicalWal = extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.LogicalWalLevel);
     return new CapabilityDescriptor(
       new CapabilityId(PROVIDER, extension.Name),
       extension.Enables,
@@ -143,7 +144,14 @@ public static class PostgresExtensionCatalog {
         [CapabilityState.NoPrivilege] = Remedy(extension, PostgresExtensionState.NoPrivilege),
         [CapabilityState.Missing] = Remedy(extension, PostgresExtensionState.Missing),
         [CapabilityState.Unknown] = Remedy(extension, PostgresExtensionState.Unknown),
-      });
+      }) {
+      // NeedsLogicalWalLevel shares NeedsServerChange with NeedsPreload, and needs its own fix.
+      DetailRemedies = logicalWal
+        ? new Dictionary<string, string>(StringComparer.Ordinal) {
+          [nameof(PostgresExtensionState.NeedsLogicalWalLevel)] = Remedy(extension, PostgresExtensionState.NeedsLogicalWalLevel),
+        }
+        : new Dictionary<string, string>(StringComparer.Ordinal),
+    };
   }
 
   /// <summary>
@@ -162,6 +170,8 @@ public static class PostgresExtensionCatalog {
         ? $"add {name.ToUpperInvariant()} to the server's extension allowlist (azure.extensions on Azure Database for PostgreSQL) and {name} to shared_preload_libraries, then restart the server"
         : $"add {name.ToUpperInvariant()} to the server's extension allowlist (azure.extensions on Azure Database for PostgreSQL)",
       PostgresExtensionState.NeedsPreload => $"add {name} to shared_preload_libraries, then restart the server",
+      PostgresExtensionState.NeedsLogicalWalLevel =>
+        "set wal_level = logical (and max_replication_slots to at least one more than the slots in use), then restart the server",
       PostgresExtensionState.NoPrivilege =>
         $"run CREATE EXTENSION {name} as a role allowed to create it (a superuser or the server's administrator role), or grant this role CREATE on the database",
       PostgresExtensionState.Missing => $"install the {name} package on the database server, or use a server image that includes it",

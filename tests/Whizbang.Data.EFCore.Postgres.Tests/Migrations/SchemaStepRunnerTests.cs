@@ -202,6 +202,27 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A connection lost while the step runs takes the step's transaction with it. The lost connection is the step's
+  /// failure and is what propagates, so the initializer sees a transient failure it retries; the ended transaction the
+  /// rollback then finds is not raised in its place (#1915).
+  /// </summary>
+  [Test]
+  public async Task AConnectionLostWhileTheStepRuns_RaisesTheLostConnection_NotTheEndedTransactionAsync() {
+    var runner = _runner();
+
+    var raised = await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), async ct => {
+      await _terminateContextBackendAsync();
+      await _work(1)(ct);
+    }, null, CancellationToken.None)).Throws<Exception>();
+
+    await Assert.That(raised).IsNotTypeOf<ObjectDisposedException>()
+      .Because("a disposed transaction is not what went wrong, and it is not transient, so the initializer gave up on it");
+    await Assert.That(raised is NpgsqlException).IsTrue()
+      .Because($"the step's own failure is the lost connection; raised was {raised!.GetType().Name}: {raised.Message}");
+    await Assert.That(_context.Database.CurrentTransaction).IsNull();
+  }
+
+  /// <summary>
   /// A step that fails while its connection is still busy (here a reader it left open) cannot be rolled back on that
   /// connection; the rollback's failure is reported, and the step's own failure is what propagates.
   /// </summary>
@@ -335,6 +356,102 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
 
     await Assert.That(logger.Lines[1]).IsEqualTo(
       "Error Migration 1 of 1 - Failed : a.sql : TimeoutException slow; retrying in 2.000s at 2026-10-22T12:00:02.0000000+00:00");
+  }
+
+  // ─── A deadlock (#1636) ───────────────────────────────────────────────────
+
+  /// <summary>
+  /// A deadlock is retried in place, after a short back-off, and said at Warning: the step that lost the deadlock is
+  /// the step that runs again, nothing before it is touched, and the pass goes on. It used to fail the step at Error,
+  /// end the attempt, and wait for the initializer's own back-off before resuming.
+  /// </summary>
+  [Test]
+  public async Task ADeadlock_IsRetriedInPlace_AfterAShortBackOff_AndSaidAtWarningAsync() {
+    var logger = new RecordingLogger();
+    var runner = _runner(logger: logger);
+    var attempts = 0;
+
+    runner.BeginPass(1);
+    var outcome = await runner.RunAsync("a.sql", _ => Task.FromResult(false), async ct => {
+      if (++attempts == 1) {
+        await _context.Database.ExecuteSqlRawAsync(
+          "DO $$ BEGIN RAISE EXCEPTION 'injected deadlock' USING ERRCODE = '40P01'; END $$", ct);
+      }
+      await _work(1)(ct);
+    }, _record("a.sql"), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SchemaStepOutcome.Applied);
+    await Assert.That(attempts).IsEqualTo(2);
+    await Assert.That(await _countAsync("step_work")).IsEqualTo(1L).Because("the retry applied the step once");
+    await Assert.That(await _countAsync("step_failures")).IsEqualTo(0L)
+      .Because("a deadlock retried in place is not a failed step");
+    var lines = logger.Lines;
+    await Assert.That(lines.Count).IsEqualTo(4);
+    await Assert.That(lines[0]).IsEqualTo("Information Migration 1 of 1 - Started : a.sql");
+    await Assert.That(lines[1]).Matches(
+      @"^Warning Migration 1 of 1 - Deadlocked : a\.sql : 40P01 injected deadlock; retrying the step in 0\.1\d\ds \(deadlock 1 of 5\)$");
+    await Assert.That(lines[2]).IsEqualTo("Information Migration 1 of 1 - Started : a.sql");
+    await Assert.That(lines[3]).Matches(@"^Information Migration 1 of 1 - Succeeded : a\.sql \(\d+\.\d{3}s\)$");
+  }
+
+  /// <summary>
+  /// A deadlock that does not clear is a failure like any other once the in-place retries are spent: Error, the
+  /// record, the stopped pass, and the initializer's own retry.
+  /// </summary>
+  [Test]
+  public async Task ADeadlockThatKeepsHappening_FailsTheStep_OnceTheInPlaceRetriesAreSpentAsync() {
+    var logger = new RecordingLogger();
+    var runner = new SchemaStepRunner(_context, _lockId, SCHEMA, _ => Task.FromResult(false), null, logger) {
+      MaxDeadlockRetries = 1,
+    };
+    var attempts = 0;
+
+    runner.BeginPass(1);
+    await Assert.That(async () => await runner.RunAsync("a.sql", _ => Task.FromResult(false), ct => {
+      attempts++;
+      return _context.Database.ExecuteSqlRawAsync(
+        "DO $$ BEGIN RAISE EXCEPTION 'injected deadlock' USING ERRCODE = '40P01'; END $$", ct);
+    }, _record("a.sql"), CancellationToken.None)).Throws<PostgresException>();
+
+    await Assert.That(attempts).IsEqualTo(2).Because("one in-place retry, then the failure");
+    await Assert.That(logger.Lines.Count(l => l.StartsWith("Warning Migration 1 of 1 - Deadlocked : a.sql", StringComparison.Ordinal)))
+      .IsEqualTo(1);
+    await Assert.That(logger.Lines).Contains("Error Migration 1 of 1 - Failed : a.sql : 40P01 injected deadlock");
+    await Assert.That(await _countAsync("step_failures")).IsEqualTo(1L).Because("the spent deadlock is recorded as the step's failure");
+  }
+
+  /// <summary>The step that begins a pass is not counted, so its deadlock is said in a form of its own.</summary>
+  [Test]
+  public async Task ADeadlockInAStepBeforeThePassBegins_IsSaidWithoutAPositionAsync() {
+    var logger = new RecordingLogger();
+    var runner = _runner(logger: logger);
+    var attempts = 0;
+
+    await runner.RunAsync("pass", _ => Task.FromResult(false), async ct => {
+      if (++attempts == 1) {
+        await _context.Database.ExecuteSqlRawAsync(
+          "DO $$ BEGIN RAISE EXCEPTION 'injected deadlock' USING ERRCODE = '40P01'; END $$", ct);
+      }
+    }, null, CancellationToken.None);
+
+    await Assert.That(logger.Lines).HasSingleItem();
+    await Assert.That(logger.Lines[0]).Matches(
+      @"^Warning Schema step pass deadlocked : 40P01 injected deadlock; retrying the step in 0\.1\d\ds \(deadlock 1 of 5\)$");
+  }
+
+  [Test]
+  public async Task TheDeadlockBackOffDoublesFromATenthOfASecond_ToTwoSeconds_WithJitterUnderHalfAsync() {
+#pragma warning disable CA5394, S2245 // a seeded generator makes the jitter the test reads repeatable; it protects nothing
+    var random = new Random(1636);
+#pragma warning restore CA5394, S2245
+
+    var first = SchemaStepRunner.DeadlockRetryDelay(1, random);
+    var second = SchemaStepRunner.DeadlockRetryDelay(2, random);
+    var late = SchemaStepRunner.DeadlockRetryDelay(30, random);
+
+    await Assert.That(first.TotalMilliseconds).IsGreaterThanOrEqualTo(100).And.IsLessThan(150);
+    await Assert.That(second.TotalMilliseconds).IsGreaterThanOrEqualTo(200).And.IsLessThan(300);
+    await Assert.That(late.TotalMilliseconds).IsGreaterThanOrEqualTo(2_000).And.IsLessThan(3_000);
   }
 
   /// <summary>The step that begins a pass is not one of its counted steps, so it says nothing in this form.</summary>

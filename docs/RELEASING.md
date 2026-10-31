@@ -740,6 +740,11 @@ That writes `src/<Project>/CompatibilitySuppressions.xml`, one entry per break (
 `CP0006` member added to an interface, and so on). The diff of that file is the API review. A suppression for
 a break nobody meant to make is the signal to fix the code instead.
 
+**A new package has no baseline yet.** Its project file sets `<WhizbangUnreleasedPackage>true</WhizbangUnreleasedPackage>`,
+which keeps package validation on but skips the comparison with nuget.org, where there is nothing to download
+(restore would otherwise fail with `NU1101`). Delete the property after the package's first stable release, when
+the baseline is moved.
+
 **After each stable release, move the baseline.** Set `PackageValidationBaselineVersion` in
 `Directory.Build.targets` to the version just released, and delete every `CompatibilitySuppressions.xml`: the
 breaks they recorded are now in the baseline. Do it in one pull request into `develop` right after the

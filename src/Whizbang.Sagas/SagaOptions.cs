@@ -33,6 +33,13 @@ public sealed class SagaOptions {
   public Guid PerItemStreamNamespace { get; set; } = SagaItemStreams.DefaultNamespace;
 
   /// <summary>
+  /// True for the options a container's <c>AddWhizbangSagas</c> registered, which are that host's own. A saga service
+  /// given these options derives per-item stream ids under their namespace rather than the process-wide one (#1888).
+  /// </summary>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:For_OptionsAContainerRegistered_DeriveUnderThoseOptionsAsync</tests>
+  internal bool RegisteredWithHost { get; set; }
+
+  /// <summary>
   /// Floor for the watchdog tick's next-fire delay. The adaptive scheduler
   /// in <c>BaseSagaService.TryRecoverViaWatchdogTickAsync</c> clamps the
   /// computed delay against this minimum so a very high observed completion

@@ -86,6 +86,29 @@ public interface IPerspectiveRunner {
   ) => [await RunAsync(physicalStreamId, perspectiveName, null, cancellationToken)];
 
   /// <summary>
+  /// Folds a row that receives events an upcaster re-keyed onto it during a REBUILD: the row's own stream's events
+  /// (less any re-keyed away) together with every re-keyed source, merged in commit order
+  /// (<see cref="RebuildRowRouting.Merge"/>) and folded from an empty model (#1820).
+  /// </summary>
+  /// <remarks>
+  /// The default implementation has no event store to read the row's own stream from, so it folds the sources alone.
+  /// Generated runners read the row's own stream too.
+  /// </remarks>
+  /// <param name="rowStreamId">The row's stream.</param>
+  /// <param name="perspectiveName">Name of the perspective to run.</param>
+  /// <param name="rekeyedSources">The re-keyed events, one list per stream they were read from.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The row's cursor completion.</returns>
+  /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:RunRekeyedRowAsync_Default_FoldsTheMergedSourcesAsync</tests>
+  async Task<PerspectiveCursorCompletion> RunRekeyedRowAsync(
+    Guid rowStreamId,
+    string perspectiveName,
+    IReadOnlyList<IReadOnlyList<MessageEnvelope<IEvent>>> rekeyedSources,
+    CancellationToken cancellationToken = default
+  ) => await RunWithEventsAsync(rowStreamId, perspectiveName, null, RebuildRowRouting.Merge(rekeyedSources), cancellationToken);
+
+  /// <summary>
   /// Rewinds a perspective by restoring from the nearest snapshot before the triggering event,
   /// then replays all events from that point in order. If no qualifying snapshot exists,
   /// performs a full replay from event zero.

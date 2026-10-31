@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Workers;
 
@@ -96,6 +97,11 @@ public sealed partial class MaintenanceWorker(
       return;
     }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
+
+    // #1738: the append-to-archived policies, on every tick and ahead of the idle gate below. A background write to an
+    // archived stream is refused inside the store, which reads the stored policy, so a policy must be in force soon after
+    // a start even on a service too busy for the sweep. One small statement, and nothing to contend with.
+    await _syncStreamTypePoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
 
     if (_housekeeping is null) {
       await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
@@ -337,7 +343,7 @@ public sealed partial class MaintenanceWorker(
     // returns to the free space map but never to the OS, and a dropped column leaves bytes that
     // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
     // Rewrite startup step performs it, in the window it should always have had.
-    await _rewriteBloatedTablesAsync(coordinator, ct);
+    await _rewriteBloatedTablesAsync(coordinator, sp, ct);
 
     // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
     // maintenance cycle so backings that don't implement it (default no-op
@@ -745,7 +751,7 @@ public sealed partial class MaintenanceWorker(
     return released;
   }
 
-  private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+  private async Task _rewriteBloatedTablesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     IReadOnlyList<Whizbang.Core.Messaging.TableRewriteCandidate> candidates;
     try {
       candidates = await coordinator.GetTablesNeedingRewriteAsync(ct);
@@ -756,23 +762,61 @@ public sealed partial class MaintenanceWorker(
       return;
     }
 
+    // The catalog estimate shortlists; while pgstattuple is Ready, pgstattuple_approx confirms before a table is
+    // queued (#1807). Without it, the estimate queues the table as it always has.
+    var approxReady = ApproxBloatMeasurement.IsReady(sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>());
+    var measured = new Dictionary<string, Whizbang.Core.Observability.BloatMeasurement>(StringComparer.Ordinal);
     foreach (var c in candidates) {
       if (ct.IsCancellationRequested) {
         return;
       }
-      // Report either way — an operator who never looks at this still gets the bloat gauge.
-      LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
       if (c.Requested) {
-        continue;   // already on the books
+        // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
+        // and a row queued with a measurement keeps reporting it while it waits.
+        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
+        if (c.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
+          measured[c.TableName] = new(c.BloatRatio, c.Method);
+        }
+        continue;
       }
       try {
-        await coordinator.RequestTableRewriteAsync(c.TableName, ct);
+        await _recordRewriteAsync(coordinator, c, approxReady, measured, ct);
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {
         LogRewriteFailed(_logger, c.TableName, ex);
       }
     }
+    sp.GetService<Whizbang.Core.Observability.TableStatisticsMetrics>()?.UpdateMeasuredTableBloat(measured);
+  }
+
+  /// <summary>
+  /// Queues one shortlisted table: from its estimate when pgstattuple is not Ready or the measurement has no answer,
+  /// otherwise with its pgstattuple_approx measurement, and not at all when that measurement is under the threshold.
+  /// </summary>
+  private async Task _recordRewriteAsync(
+      IWorkCoordinator coordinator, Whizbang.Core.Messaging.TableRewriteCandidate candidate, bool approxReady,
+      Dictionary<string, Whizbang.Core.Observability.BloatMeasurement> measured, CancellationToken ct) {
+    var approx = approxReady
+      ? await ApproxBloatMeasurement.TryMeasureAsync(coordinator, candidate.TableName, _logger, ct)
+      : null;
+    if (approx is not { } ratio) {
+      LogRewriteNeeded(_logger, candidate.TableName, candidate.BloatRatio);
+      await coordinator.RequestTableRewriteAsync(candidate.TableName, ct);
+      return;
+    }
+
+    var measurement = new Whizbang.Core.Observability.BloatMeasurement(
+      ratio, Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+    measured[candidate.TableName] = measurement;
+    ApproxBloatMeasurement.ReportDisagreement(_logger, candidate.TableName, candidate.BloatRatio, measurement);
+    var method = measurement.Method.ToValue();
+    if (ratio < candidate.RewriteThreshold) {
+      LogRewriteNotConfirmed(_logger, candidate.TableName, candidate.BloatRatio, ratio, method, candidate.RewriteThreshold);
+      return;
+    }
+    LogRewriteNeededMeasured(_logger, candidate.TableName, ratio, method, candidate.BloatRatio);
+    await coordinator.RequestMeasuredTableRewriteAsync(candidate.TableName, measurement, candidate.BloatRatio, ct);
   }
 
   private async Task _reapDrivenEphemeralSnapshotAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
@@ -941,6 +985,29 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  /// <summary>
+  /// Stores the configured append-to-archived policies, replacing the stored set. Best-effort: the write paths keep the
+  /// set already stored, so a failed write is logged with the types it left unstored and the tick goes on. Cancellation
+  /// is shutdown and propagates.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  private async Task _syncStreamTypePoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var policies = (sp.GetService<IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()?.Value
+      ?? new Whizbang.Core.Archival.StreamLifecycleOptions()).AppendToArchivedPolicies();
+    try {
+      await coordinator.SyncStreamTypePoliciesAsync(policies, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogStreamTypePolicySyncFailed(_logger, string.Join(", ", policies.Select(p => $"{p.StreamType}={p.AppendToArchived}")), ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Warning,
+    Message = "Failed to store the append-to-archived policies in wh_stream_type_policies (configured: {Policies}); the write paths keep the policies already stored until a later tick succeeds.")]
+  static partial void LogStreamTypePolicySyncFailed(ILogger logger, string policies, Exception ex);
+
   [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
     Message = "Failed to publish database-side settings to wh_settings (keys: {Keys}); the maintenance sweep keeps the values already stored. If debug retention was just enabled, completed rows may still be purged; a retention window just changed in configuration is not yet in effect.")]
   static partial void LogRetentionSettingsSyncFailed(ILogger logger, string keys, Exception ex);
@@ -1019,8 +1086,16 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
-    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; the post-ready Rewrite step performs it on the next boot as Whizbang:Workers:Maintenance:TableRewriteStrategy and AllowTableRewrite decide (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; Whizbang:Workers:Maintenance:TableRewriteStrategy decides what rewrites it: PgSqueeze rewrites it online from the maintenance cycle, and otherwise the post-ready Rewrite step performs it on the next boot as AllowTableRewrite permits (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
+
+  [LoggerMessage(EventId = 60, Level = LogLevel.Information,
+    Message = "Table {Table} was estimated at {Estimate}x but measures {Measured}x by {Method}, under the rewrite threshold of {Threshold}x; it is not queued")]
+  static partial void LogRewriteNotConfirmed(ILogger logger, string table, double estimate, double measured, string method, double threshold);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Table {Table} holds {Ratio}x the space its live rows need, measured by {Method} (estimated at {Estimate}x). Autovacuum cannot reclaim this; a rewrite can. Recorded; Whizbang:Workers:Maintenance:TableRewriteStrategy decides what rewrites it: PgSqueeze rewrites it online from the maintenance cycle, and otherwise the post-ready Rewrite step performs it on the next boot as AllowTableRewrite permits (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+  static partial void LogRewriteNeededMeasured(ILogger logger, string table, double ratio, string method, double estimate);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
   static partial void LogRewriteFailed(ILogger logger, string table, Exception ex);
@@ -1111,6 +1186,10 @@ public sealed partial class MaintenanceWorker(
 
 /// <summary>Configuration for <see cref="MaintenanceWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+// Removed with the legacy publisher worker. Maintenance now runs on the idle-gated cadence: an admission interval, a
+// settled dwell, and a forced run once deferrals have lasted MaxDeferral.
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:WorkCoordinator:MaintenanceInterval",
+  "Whizbang:Workers:Maintenance:IntervalMinutes", "Whizbang:Housekeeping:SettledCooldown", "Whizbang:Housekeeping:MaxDeferral")]
 public sealed class MaintenanceWorkerOptions {
   /// <summary>
   /// Killswitch. Set to <c>false</c> to disable the maintenance loop. Default <c>true</c>.
@@ -1137,6 +1216,35 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
+
+  /// <summary>
+  /// The most heap bytes one maintenance cycle rewrites online when <see cref="TableRewriteStrategy"/> is
+  /// <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> (<c>Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle</c>).
+  /// Default 1 GiB. pg_squeeze writes a full copy of each table it rewrites, plus the WAL for it, so this bounds the extra
+  /// disk and WAL one cycle can cause. Queued tables are taken largest bloat first; one that does not fit what is left
+  /// waits for a later cycle, and one larger than the whole budget is never rewritten until it is raised. <c>0</c>
+  /// rewrites nothing.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
+
+  /// <summary>
+  /// How many times its expected size an index on a queue table that churns to empty may grow before the maintenance
+  /// cycle rebuilds it with <c>REINDEX INDEX CONCURRENTLY</c> (<c>Whizbang:Workers:Maintenance:ReindexBloatThreshold</c>).
+  /// Default <c>3.0</c>, the same line a table is queued for rewrite at; <c>0</c> turns the rebuild off. Any other value
+  /// must be finite and greater than 1, because a freshly built index measures about 1 and would be rebuilt every cycle.
+  /// One index is rebuilt per cycle, fleet-wide, the one with the most bytes to give back (#1746).
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+  public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
+
+  /// <summary>
+  /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
+  /// <see cref="Workers.TableRewriteStrategy.PgRepack"/> runs.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
+  public TableRewriteOptions TableRewrite { get; } = new();
 
   /// <summary>
   /// Whether an instance that takes the maintainer duty over from another instance (a hand-off, or a

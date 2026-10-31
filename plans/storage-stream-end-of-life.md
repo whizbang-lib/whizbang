@@ -107,7 +107,18 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S3. Stream lifecycle ledger (candidate discovery without scanning the event store)
 
-**Status (2026-10-24):** open. No `wh_stream_lifecycle` table in any migration. S4, S5, S7 and S11 build on it.
+**Status (2026-10-29):** done in #1732 (migration 260), pending review. S4, S5, S7 and S11 build on it.
+
+- **Landed.** `wh_stream_lifecycle` with the planned columns; `state` is `Active`, `Sealed` or `Archived`
+  (`ck_stream_lifecycle_state`); `origin_generation` is nullable (null until a history mutation). All three write paths
+  (outbox chain, inbox chain, `wh_append_event`) keep it under the stream lock they already hold; `wh_purge_streams`
+  removes the row. Ephemeral events, compaction origins and the empty stream id get no row. Indexes: the key and
+  `idx_stream_lifecycle_due (disposition_due_at, stream_id) INCLUDE (state) WHERE disposition_due_at IS NOT NULL`;
+  fillfactor 45 (measured: 70 kept only 58% of whole-page rewrites heap-only). The backfill runs outside the
+  migration from the `stream-lifecycle-backfill` maintenance step (`StreamLifecycleBackfill`, both drivers), gated on
+  `stream_lifecycle_backfill_version` with a cursor in `stream_lifecycle_backfill_cursor`.
+- **Left for later slices.** Prefix truncation does not reduce `approx_bytes` (S7/S11 adjust it when they truncate on
+  purpose); nothing writes `sealed_at`, `disposition_due_at`, `archive_locator` or `origin_generation` yet.
 
 - **Change.** New migration with `wh_stream_lifecycle` (stream_id PK, stream_type, tenant,
   first_appended_at, last_appended_bucket, last_version, approx_bytes, state, sealed_at,
@@ -124,8 +135,32 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S4. P1: developer-driven finalization and sealing
 
-**Status (2026-10-24):** open. `src/` has no `IStreamFinalizer`, `[TerminalEvent]` or `StreamSealedException`.
-Depends on S3.
+**Status (2026-10-29):** implemented on `feat/1733-stream-sealing` (#1733), on top of storage bundle 9 (S3 and S7).
+Migration `266_SealedStreamsRefuseAppends.sql` (267, also reserved, is unused). Decisions taken in the slice:
+
+- **The reason** is a new column, `wh_stream_lifecycle.sealed_reason`, written with `sealed_at` and never changed after.
+  A terminal event writes `Terminal event <type> (event <id>)`. The seal is `sealed_at`, not the state: an archived
+  stream stays `Archived` when finalized, and `wh_restore_archived_stream` (copied from 262) now returns a sealed stream
+  to `Sealed` rather than `Active`.
+- **`[TerminalEvent]`** is registered by the message catalog generator (`TerminalEvents.Register` in its module
+  initializer, plus `IsTerminal` on the catalog entry for the receive path) and stamped as `EventFlags.Terminal`
+  (`1 << 6`); `_wh_event_flags_from_names` (copied from 232) reads the name. Inherited; ignored on a command.
+- **The refusal** sits in the outbox and inbox emit chains and in `wh_append_event`, under the stream lock. A direct
+  append raises `WHS01` (`StreamSealedException` on both drivers); the chains dead-letter the refused event alone
+  (`MessageFailureReason.StreamSealed`, 25, held for review) and store the rest, unlike the tombstone's `WHA01` trigger,
+  which fails the whole batch. An outbox write whose caller awaits the flush (the `RaiseOnMixedStream` element of the
+  immediate and scoped strategies) raises `WHS01` from `store_outbox_messages` instead (owner decision on #1733,
+  matching the mixed-stream refusal), and the strategy withdraws it. An event after a terminal event in the same write
+  is refused.
+- **Ephemeral streams** are never sealed: they have no ledger row, finalizing one returns `NothingToSeal`, and the
+  terminal flag on an ephemeral event does nothing.
+- **Cost:** one probe per batch of `idx_stream_lifecycle_sealed` (partial on `sealed_at`, holding only sealed streams);
+  measured in `StreamSealingEmitCostScenarioTests` (numbers in the docs page).
+
+Open for later slices: S5 (scheduling the disposition of a sealed stream), S12 (closing the books seals through
+`IStreamFinalizer`). Docs: `stream-end-of-life.md#sealing-a-stream` and `event-streams.md` (docs branch `docs/1733`).
+
+Original slice text:
 
 - **Change.** `IStreamFinalizer.FinalizeAsync(streamId, reason)` and a declarative
   `[TerminalEvent]` attribute on an event type (generator-registered, no reflection). Finalizing
@@ -174,8 +209,17 @@ ephemeral events page this slice was to promote is already published. Depends on
 
 ### S7. B3: `IArchiveStore` and the Postgres-table store
 
-**Status (2026-10-24):** open. `wh_event_archive` and `GetArchivedEventsAsync` exist (migration 085), but there
-is no `IArchiveStore` type.
+**Status (2026-10-29):** implemented on `feat/1736-archive-store` (#1736), to ship with S3 (#1732) in one bundle, S3
+first. Migration `262_ArchiveStoreKeepsATombstone.sql`; `IArchiveStore`, `ArchiveBatch` (one stream, prefix or whole),
+`ArchiveLocator` (`{store}://{address}?codec={codec}&format={format}`, codec recorded per archive), and
+`PostgresTableArchiveStore` (codec `none`: the rows stay `jsonb`), registered by both drivers and used by the prefix
+truncate's archive path. A whole-stream archive parks cursors in `wh_event_archive_cursors`, keeps snapshots and leaves
+the tombstone (built from the events by 260's rules when the stream has no ledger row yet); a statement trigger on
+`wh_event_store` refuses version reuse (`WHA01`). The archive keeps `approx_bytes` measuring the hot store (a prefix
+subtracts what it moved, a whole stream counts 0, a restore adds back), and `wh_purge_streams` (copied from 260) also
+removes the parked cursors. `RestoreAsync` (restores exact positions) and `DeleteAsync` are implemented here, so S9
+only consumes them. Open for S9: the per-type append-to-archived policy on the write paths (today the trigger raises,
+which fails the whole emit-chain batch). Docs: `v1.0.0/fundamentals/events/archive-store.md` (docs branch `docs/1736`).
 
 - **Change.** `IArchiveStore` in Core: `WriteAsync(ArchiveBatch)`, `ReadAsync(streamId, fromVersion)`,
   `RestoreAsync(streamId)`, `DeleteAsync(streamId)`. `PostgresTableArchiveStore` wraps
@@ -189,8 +233,21 @@ is no `IArchiveStore` type.
 
 ### S8. B3: Azure Blob archive store (production default)
 
-**Status (2026-10-24):** open. No `Whizbang.Archive.AzureBlob` package. Depends on S7. Decision 3 (#1673) puts
-Brotli first, not zstd as written below.
+**Status (2026-10-29):** implemented on `feat/1737-blob-archive` (#1737), on top of the S7 bundle. Migration
+`268_ArchiveManifest.sql`; package `Whizbang.Archive.AzureBlob` (`AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
+`AddWhizbangAzureBlobArchive`, `ArchiveObjectCorruptedException`); both drivers register `PostgresArchiveConnection`.
+As built, differing from the plan below: Brotli (decision 3), quality 4 by default (measured; 3 was a zstd level); the
+"two phases" are one database transaction (262's `wh_archive_stream` stages and truncates, the objects upload, the
+manifest rows are written, then the commit), which makes a crash before the commit leave the stream fully hot and an
+uploaded object unreferenced, and a retry rewrites the same content-addressed object; the manifest records each
+object's locator, range, count, byte length, SHA-256 and generation (checked on every read), with `ON DELETE CASCADE`
+from `wh_stream_lifecycle` so a purge removes it; restore and delete stage objects back through `wh_event_archive` and
+reuse 262's SQL; archives the table store wrote stay readable and move into objects on the next write. The account is
+`ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Migration
+`269_ArchiveObjectDeletionQueue.sql` (owner decision on #1737): a trigger on the manifest queues every object a row stops
+naming (purge, restore, delete) in the removing transaction, and `ArchiveObjectDeletionStep` (maintenance, maintainer
+duty) deletes them with confirm-then-clear and backoff retries. Open: no access-tier setting yet. Docs:
+`archive-store.md#the-azure-blob-store` (docs branch `docs/1737`).
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned
   in `Directory.Packages.props`). One blob per archive chunk: JSONL, zstd-compressed, with a manifest
@@ -207,7 +264,43 @@ Brotli first, not zstd as written below.
 
 ### S9. Read-through, restore, and the append-to-archived policy
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S7.
+**Status (2026-10-30):** implemented on `feat/1738-archive-read-through` (#1738), migration
+`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, also reserved, are unused). Owner decisions of 2026-10-30 on
+#1738, as built:
+
+- **Read-through by gap detection** (`ArchiveAwareEventStoreDecorator`, innermost in the event store's decorator chain
+  on both drivers when an `IArchiveStore` is registered; `Whizbang:Archive:ReadThrough`, default `true`). A read from the
+  start (a sequence read from 0 or 1, an id or between-read with no starting event, the rebuild) asks the archive only
+  when the hot read shows a gap (no hot event, or a first hot version above 1); a resumed read never does. Every driver
+  read now carries `LocalStreamVersion`; archived rows are decoded by the driver's `DeserializeStreamEvents` (now
+  implemented on the Dapper store) and carry their commit positions (`ArchivedEvent.CommitSequence`,
+  `OriginServiceId`, `OriginCommitSequence`). The readers that seemed to bypass `IEventStore` (the replay reader, the
+  collective replay applier, the runner's rewind and rebuild) all resolve the decorated store, so they read through.
+  Measured: a resumed read issues the same statements as before; a from-the-start read of an archived stream one more.
+- **Archive rules** in `wh_archive_stream`: a prefix through a version below 1 is refused (`not_past_first_version`);
+  one reaching any perspective's newest snapshot is refused (`snapshot_in_range`, refused rather than clamped so the
+  caller gets exactly what it asked for or nothing).
+- **Snapshots record archived data**: `wh_perspective_snapshots.archived_through_version`, set on the covered snapshots
+  by every archive, cleared by every restore; the rewind reads through the archive from a marked snapshot
+  (`IEventStore.ReadPolymorphicThroughArchiveAsync`, `IPerspectiveSnapshotStore.GetSnapshotFloorAsync`); a marked snapshot
+  with no version is not used (full replay through the gap).
+- **Append-to-archived policy** per stream type (`Whizbang:StreamLifecycle:Types:<StreamType>:AppendToArchived`, default
+  `Refuse`; `NewGeneration` is not an enum value and fails startup naming #1734), stored in `wh_stream_type_policies`
+  on every maintenance tick before the idle gate. 262's whole-batch `WHA01` trigger is dropped; every write path refuses
+  per event after the seal's check, one probe of the new `idx_stream_lifecycle_closed` (sealed or archived streams)
+  replacing the seal's probe. Refuse: `StreamArchivedException` (`WHA01`) / dead letter `StreamArchived` (26).
+  AutoRestore: inline restore and one retry (`WHA02`) for direct and awaited writes; background writes dead-lettered
+  `AwaitingRestore` (27), held by a `wh_archive_restore_requests` row (Pending, Restoring, Restored, Failed) queued in the
+  same transaction; `ArchiveRestoreRequestStep` (maintenance, both drivers) restores through `IArchiveStore`; any
+  restore completes the request and makes its dead letters due for the recovery worker (policy `AfterRestore`); a
+  failure holds them for review with the error.
+
+Left for later: NewGeneration (#1734, S5); the Dapper driver has no dead-letter recovery service, so on Dapper an
+`AwaitingRestore` dead letter becomes due but nothing redrives it until that service exists. Docs:
+`archive-store.md#read-through`, `#appending-to-an-archived-stream`, `#restore-requests`, `rewind.md`, `rebuild.md`
+(docs branch `docs/1738`).
+
+Original slice text:
 
 - **Change.** `IEventStore.ReadAsync` (`IEventStore.cs:177,189`), rewind and
   `PerspectiveRebuilder` consult the tombstone and stream from the archive when the requested range

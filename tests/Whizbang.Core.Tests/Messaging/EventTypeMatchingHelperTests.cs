@@ -34,6 +34,22 @@ public class EventTypeMatchingHelperTests {
     await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated, MyApp.Contracts");
   }
 
+  /// <summary>
+  /// A comma too close to the end to start ", Version=" is kept as it is. Names without "Version=" return before the
+  /// scan (#1756), so only a versioned name with a short trailing segment reaches this check.
+  /// </summary>
+  [Test]
+  public async Task NormalizeTypeName_WithShortSegmentAfterVersion_KeepsTheShortSegmentAsync() {
+    // Arrange
+    const string typeName = "MyApp.Events.OrderCreated, Version=1.0.0.0, X";
+
+    // Act
+    var result = EventTypeMatchingHelper.NormalizeTypeName(typeName);
+
+    // Assert
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated, X");
+  }
+
   [Test]
   public async Task NormalizeTypeName_WithVersionInfo_StripsVersionAsync() {
     // Arrange

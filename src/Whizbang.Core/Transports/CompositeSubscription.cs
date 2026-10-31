@@ -41,6 +41,22 @@ internal sealed class CompositeSubscription : ISubscription {
   /// </summary>
   public bool IsActive => _subscriptions.All(static s => s.IsActive);
 
+  /// <summary>
+  /// The first disconnect any namespace's subscription has recorded: one dropped mirror is a disconnect of this
+  /// handle, as it is when the drop is raised.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/CompositeSubscriptionCoverageTests.cs:Disconnection_WhenAnUnderlyingSubscriptionRecordedOne_ReportsItAsync</tests>
+  public SubscriptionDisconnectedEventArgs? Disconnection {
+    get {
+      foreach (var subscription in _subscriptions) {
+        if (subscription.Disconnection is { } disconnection) {
+          return disconnection;
+        }
+      }
+      return null;
+    }
+  }
+
   /// <inheritdoc />
   public async Task PauseAsync() {
     foreach (var subscription in _subscriptions) {

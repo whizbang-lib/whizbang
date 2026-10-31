@@ -77,15 +77,10 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
-  // The size the next stamp asks for. Starts at the steady-state size and grows while calls keep
-  // filling, because each call costs a scan of the whole pending set whatever size it asks for.
-  // Only the loop below reads or writes it, and only one instance holds the role, so it needs no
-  // synchronization of its own.
+  // The size the next stamp asks for, carried from call to call. Only the loop below reads or writes it, and only one
+  // instance holds the role, so it needs no synchronization of its own.
   // Initializers run in order: _stamperOptions above has already thrown for missing options.
-  private int _batchSize = stamperOptions.Value.BatchSize;
-  // The size the last timeout backed off to (#1217): growth stops there until a short batch shows the pending set
-  // drained. Null while no call has timed out since then. Read and written by the same loop as _batchSize.
-  private int? _timeoutCap;
+  private readonly CommitOrderStampSizer _sizer = new(stamperOptions.Value.BatchSize, stamperOptions.Value.DrainBatchSize);
   // Measures each stamp call, which the next call's size answers to (#1327).
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
@@ -522,7 +517,7 @@ public sealed partial class PgCommitOrderStamperWorker(
         await PgRoleElector.AssertEpochAsync(conn, grant, ct);
       }
       await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
-      cmd.Parameters.AddWithValue("bs", _batchSize);
+      cmd.Parameters.AddWithValue("bs", _sizer.Size);
       cmd.Parameters.AddWithValue("notify", notifyOwners);
       var result = await cmd.ExecuteScalarAsync(ct);
       stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
@@ -609,38 +604,33 @@ public sealed partial class PgCommitOrderStamperWorker(
   static partial void LogRoleDrained(ILogger logger);
 
   /// <summary>
-  /// Halves the batch after a call that timed out (#1217) and holds growth at the new size until the backlog drains.
+  /// Halves the batch after a call that timed out (#1217); it grows again only after a call well inside the budget (#1786).
   /// </summary>
   /// <remarks>
   /// A canceled call rolled back everything it did, so the same size can never succeed: one stamper repeated a 30 s
   /// timeout for ten hours after an import had grown its batch, because the size changed only after a call returned.
   /// </remarks>
   private void _backOffAfterTimeout() {
-    var timedOutAt = _batchSize;
-    _batchSize = CommitOrderStampBatch.AfterTimeout(_batchSize);
-    _timeoutCap = _batchSize;
-    LogStampTimedOut(_logger, timedOutAt, _batchSize);
-    OnStampTimedOut?.Invoke(_batchSize);
+    var timedOutAt = _sizer.Size;
+    _sizer.AfterTimeout();
+    LogStampTimedOut(_logger, timedOutAt, _sizer.Size);
+    OnStampTimedOut?.Invoke(_sizer.Size);
   }
 
   /// <summary>
   /// Sizes the next call from the count this one returned rather than from a count of what is left: a probe for the
   /// backlog size would be another read of the set a stamp exists to avoid reading. How long the call took bounds the
-  /// size too (#1327): see <see cref="CommitOrderStampBatch.Next(int, int, int, int, int?, TimeSpan, TimeSpan)"/>.
+  /// size too (#1327), and a halving that stopped making calls cheaper stops the shrinking (#1786): see
+  /// <see cref="CommitOrderStampSizer"/>.
   /// </summary>
   private void _resizeAfter(int stamped, TimeSpan took) {
-    var asked = _batchSize;
+    var asked = _sizer.Size;
     var budget = _callBudget;
-    _batchSize = CommitOrderStampBatch.Next(
-      _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap, took, budget);
-    if (stamped < asked) {
-      // Drained to the fence: the next burst starts at the configured size and may grow past the old timeout again.
-      _timeoutCap = null;
-    } else if (took > budget) {
-      // #1327: a full call that ran long halved; growth stops there until the backlog drains, as after a timeout.
-      _timeoutCap = _batchSize;
-      LogStampRanLong(_logger, asked, took.TotalMilliseconds, budget.TotalMilliseconds, _batchSize);
-      OnStampRanLong?.Invoke(_batchSize);
+    _sizer.AfterCall(stamped, took, budget);
+    if (stamped >= asked && took > budget) {
+      // #1327: a full call that ran long is answered by the next call's size; say what ran long and what comes next.
+      LogStampRanLong(_logger, asked, took.TotalMilliseconds, budget.TotalMilliseconds, _sizer.Size);
+      OnStampRanLong?.Invoke(_sizer.Size);
     }
   }
 

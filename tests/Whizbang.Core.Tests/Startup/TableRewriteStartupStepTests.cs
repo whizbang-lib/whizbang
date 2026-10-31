@@ -43,6 +43,16 @@ public class TableRewriteStartupStepTests {
       return Task.CompletedTask;
     }
 
+    /// <summary>The ratio pgstattuple_approx measures after the rewrite, per table.</summary>
+    public Dictionary<string, double?> ApproxAfter { get; init; } = new(StringComparer.Ordinal);
+    public List<(string Table, Whizbang.Core.Observability.BloatMeasurementMethod Method)> Measured { get; } = [];
+
+    public Task<double?> MeasureTableBloatAsync(
+        string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) {
+      Measured.Add((tableName, method));
+      return Task.FromResult(ApproxAfter.GetValueOrDefault(tableName));
+    }
+
     // Unused surface for this test.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -229,21 +239,58 @@ public class TableRewriteStartupStepTests {
   }
 
   [Test]
-  public async Task PgSqueeze_HasNoRewriterInThisVersion_AndSaysSoAsync() {
+  public async Task PgSqueeze_IsLeftToTheMaintenanceCycle_NotRunAtBootAsync() {
     var coordinator = new RewriteCoordinator {
       Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
     };
+    var squeeze = new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE);
     var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
 
-    var report = await _stepWith(coordinator, TableRewriteStrategy.PgSqueeze, await _squeezeAsync(CapabilityState.Ready), vacuum)
+    var report = await _stepWith(coordinator, TableRewriteStrategy.PgSqueeze, await _squeezeAsync(CapabilityState.Ready), squeeze, vacuum)
       .ExecuteAsync(CancellationToken.None);
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
     await Assert.That(report.Reason).IsEqualTo(
-      "PgSqueeze: online rewrite through pg_squeeze; no table rewriter is registered for it, so requested tables stay queued");
+      "PgSqueeze: online rewrite through pg_squeeze; the maintenance cycle performs it, largest bloat first, up to "
+      + "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle bytes per cycle");
+    await Assert.That(squeeze.Rewritten).IsEmpty()
+      .Because("the online rewrite is budgeted per maintenance cycle, so the boot step never runs it unbounded");
     await Assert.That(vacuum.Rewritten).IsEmpty()
       .Because("an explicit online choice is never replaced by a blocking rewrite, though AllowTableRewrite is true");
-    await Assert.That(coordinator.Rewritten).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  [Test]
+  public async Task PgRepackInProcess_IsLeftToTheMaintenanceCycle_NotRunAtBootAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var repack = new RecordingRewriter(TableRewriteStrategies.PG_REPACK);
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.PgRepack, repack, vacuum).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo(
+      "PgRepack: online rewrite through pg_repack; the maintenance cycle performs it, largest bloat first, up to "
+      + "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle bytes per cycle");
+    await Assert.That(repack.Rewritten).IsEmpty()
+      .Because("pg_repack in process is budgeted per maintenance cycle like pg_squeeze, so the boot step never runs it unbounded");
+    await Assert.That(vacuum.Rewritten).IsEmpty()
+      .Because("an explicit online choice is never replaced by a blocking rewrite, though AllowTableRewrite is true");
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  [Test]
+  public async Task AStrategyWithNoRegisteredRewriter_SaysSo_AndLeavesTheQueueAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.VacuumFull).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).EndsWith("; no table rewriter is registered for it, so requested tables stay queued");
     await Assert.That(coordinator.Cleared).IsEmpty();
   }
 
@@ -329,5 +376,54 @@ public class TableRewriteStartupStepTests {
     await Assert.That(() => new TableRewriteStartupStep(scopeFactory, null!, options, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new TableRewriteStartupStep(scopeFactory, [], null!, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new TableRewriteStartupStep(scopeFactory, [], options, null, null!)).Throws<ArgumentNullException>();
+  }
+
+  // ---- the re-measure after a rewrite uses pgstattuple_approx while it is Ready (#1807) ----
+
+  /// <summary>A registry with pgstattuple in <paramref name="state"/> on one database.</summary>
+  private static async Task<CapabilityRegistry> _pgstattupleAsync(CapabilityState state) {
+    var provider = new FakeCapabilityProvider("postgres", ["db-0"], FakeCapabilityProvider.Describe("postgres", "pgstattuple"));
+    provider.States["pgstattuple"] = state;
+    var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    return registry;
+  }
+
+  [Test]
+  public async Task WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = {
+        new TableRewriteCandidate("wh_outbox", 4.0, Requested: true) { Method = Whizbang.Core.Observability.BloatMeasurementMethod.Approx },
+        new TableRewriteCandidate("wh_inbox", 4.0, Requested: true) { Method = Whizbang.Core.Observability.BloatMeasurementMethod.Approx },
+      },
+      ApproxAfter = { ["wh_outbox"] = 1.1, ["wh_inbox"] = 4.2 },
+    };
+    // The rewriter's own (estimate) re-measure says both improved; the measurement says only one did.
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL, ratioAfter: 1.2);
+    var step = _stepWith(coordinator, TableRewriteStrategy.VacuumFull, await _pgstattupleAsync(CapabilityState.Ready), vacuum);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Measured).IsEquivalentTo([
+      ("wh_outbox", Whizbang.Core.Observability.BloatMeasurementMethod.Approx),
+      ("wh_inbox", Whizbang.Core.Observability.BloatMeasurementMethod.Approx),
+    ]);
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(report.Reason).IsEqualTo("rewrote 1 table(s); 1 ineffective, left queued for the next boot");
+  }
+
+  [Test]
+  public async Task WhilePgstattupleIsNotReady_TheRewritersReMeasureDecidesAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 4.0, Requested: true) },
+      ApproxAfter = { ["wh_outbox"] = 4.2 },
+    };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL, ratioAfter: 1.2);
+    var step = _stepWith(coordinator, TableRewriteStrategy.VacuumFull, await _pgstattupleAsync(CapabilityState.Provisionable), vacuum);
+
+    await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Measured).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
   }
 }

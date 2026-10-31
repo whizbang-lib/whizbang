@@ -45,6 +45,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     "wh_perspective_applied", PERSPECTIVE_TABLE, "wh_perspective_row_hold", "wh_row_eviction_journal",
     "wh_stream_digests", "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
     "wh_lifecycle_completions", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store",
+    "wh_stream_lifecycle",
   ];
 
   [Test]
@@ -232,6 +233,8 @@ public class StreamPurgeTests : EFCoreTestBase {
 
     await Assert.That(sp.GetRequiredService<IPerspectivePurgeMarkerStore>()).IsTypeOf<PostgresPerspectivePurgeMarkerStore>();
     await Assert.That(sp.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
+    await Assert.That(sp.GetRequiredService<IFanoutChildRefiler>()).IsTypeOf<PostgresFanoutChildRefiler>()
+      .Because("the driver registers the composite-child repair (#1798) over the same data source");
     await Assert.That(sp.GetService<IPerspectiveTableSwapper>()).IsTypeOf<Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper>()
       .Because("the driver registers the blue-green rebuild's swapper over an independent connection");
   }
@@ -400,7 +403,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     foreach (var table in new[] {
         "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams", "wh_receptor_processing",
         "wh_perspective_cursors", "wh_perspective_snapshots", "wh_perspective_applied", "wh_stream_digests",
-        "wh_integrity_ledger", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store" }) {
+        "wh_integrity_ledger", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store", "wh_stream_lifecycle" }) {
       counts[table] = await _scalarAsync<long>(conn, $"SELECT count(*) FROM {table} WHERE stream_id = $1", stream);
     }
     counts["wh_inbox_state"] = await _scalarAsync<long>(conn,

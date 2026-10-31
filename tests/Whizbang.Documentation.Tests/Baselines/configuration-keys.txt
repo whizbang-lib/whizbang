@@ -7,6 +7,12 @@ ConnectionPool:MinPoolSize
 ConnectionPool:Timeout
 ConnectionStrings:*
 ServiceName
+Whizbang:Archive:AzureBlob:CompressionLevel
+Whizbang:Archive:AzureBlob:ConnectionString
+Whizbang:Archive:AzureBlob:ContainerName
+Whizbang:Archive:AzureBlob:MaxEventsPerChunk
+Whizbang:Archive:AzureBlob:ServiceUri
+Whizbang:Archive:ReadThrough
 Whizbang:AspNet:Availability:Enabled
 Whizbang:AspNet:Availability:ExemptPaths:*
 Whizbang:AspNet:Availability:Mode
@@ -223,6 +229,7 @@ Whizbang:Schema:Reconcile:Drop:*
 Whizbang:Schema:Reconcile:DropAfterFleetConverged
 Whizbang:Schema:Reconcile:Mode
 Whizbang:Schema:Reconcile:Pins:*
+Whizbang:SchemaInitialization:DispatchMaxWait
 Whizbang:SchemaInitialization:InitRetryDelay
 Whizbang:SchemaInitialization:MigrationTimeout
 Whizbang:SchemaInitialization:NonBlockingSchemaInit
@@ -241,6 +248,7 @@ Whizbang:Scope:OrganizationIdHeaderName
 Whizbang:Scope:PermissionsAggregation
 Whizbang:Scope:PermissionsClaimType
 Whizbang:Scope:PermissionsClaimTypes:*
+Whizbang:Scope:PropagatedClaimTypes:*
 Whizbang:Scope:RolesClaimType
 Whizbang:Scope:TenantIdClaimType
 Whizbang:Scope:TenantIdClaimTypes:*
@@ -284,6 +292,7 @@ Whizbang:StreamIntegrity:MaxEpochVerificationsPerSweep
 Whizbang:StreamIntegrity:MaxGapReportsPerCheckpoint
 Whizbang:StreamIntegrity:MaxManifestPagesPerAudit
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
+Whizbang:StreamIntegrity:MaxRepairDrainBacklog
 Whizbang:StreamIntegrity:PublishReportEvents
 Whizbang:StreamIntegrity:RepairDrainBatchSize
 Whizbang:StreamIntegrity:RepairDrainEnabled
@@ -292,6 +301,7 @@ Whizbang:StreamIntegrity:RepairMode
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds
 Whizbang:StreamIntegrity:RepairTopic
 Whizbang:StreamIntegrity:StartupAuditMaxJitterSeconds
+Whizbang:StreamLifecycle:Types:*:AppendToArchived
 Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow
 Whizbang:StreamRateLimiter:StaleEntryTimeout
@@ -387,6 +397,7 @@ Whizbang:Transports:AzureServiceBus:SubscriptionResilience:HealthCheckInterval
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:InitialRetryAttempts
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:InitialRetryDelay
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:MaxRetryDelay
+Whizbang:Transports:AzureServiceBus:SubscriptionResilience:ReconnectBackoffResetAfter
 Whizbang:Transports:AzureServiceBus:SubscriptionResilience:RetryIndefinitely
 Whizbang:Transports:RabbitMQ
 Whizbang:Transports:RabbitMQ:AutoDeclareDeadLetterExchange
@@ -415,6 +426,7 @@ Whizbang:Transports:RabbitMQ:SubscriptionResilience:HealthCheckInterval
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:InitialRetryAttempts
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:InitialRetryDelay
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:MaxRetryDelay
+Whizbang:Transports:RabbitMQ:SubscriptionResilience:ReconnectBackoffResetAfter
 Whizbang:Transports:RabbitMQ:SubscriptionResilience:RetryIndefinitely
 Whizbang:UnobservedExceptionDiagnostics:EnableFirstChanceExceptionLogging
 Whizbang:UnobservedExceptionDiagnostics:FirstChanceExceptionTypeAllowList:*
@@ -469,12 +481,16 @@ Whizbang:Workers:Heartbeat:Enabled
 Whizbang:Workers:Heartbeat:IntervalSeconds
 Whizbang:Workers:Heartbeat:LivenessSourceMode
 Whizbang:Workers:Heartbeat:SlowIntervalSeconds
+Whizbang:Workers:InboxBatch:FlushRetryBackoff
+Whizbang:Workers:InboxBatch:FlushRetryMaxBackoff
 Whizbang:Workers:InboxBatch:IdleEvictionWindow
 Whizbang:Workers:InboxBatch:IdleSweepInterval
+Whizbang:Workers:InboxBatch:MaxFlushAttempts
 Whizbang:Workers:InboxBatch:MaxSize
 Whizbang:Workers:InboxBatch:MaxWait
 Whizbang:Workers:InboxBatch:SlidingWindow
 Whizbang:Workers:InboxDeserializeCache:Enabled
+Whizbang:Workers:InboxDeserializeCache:MaxBytes
 Whizbang:Workers:InboxDeserializeCache:MaxEntries
 Whizbang:Workers:InboxDeserializeCache:TtlMinutes
 Whizbang:Workers:InboxDispatch:Enabled
@@ -491,6 +507,7 @@ Whizbang:Workers:InboxDrain:Batcher:SlidingWindow
 Whizbang:Workers:InboxDrain:DepthHeadroomFactor
 Whizbang:Workers:InboxDrain:Enabled
 Whizbang:Workers:InboxDrain:MaxBytesPerStream
+Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes
 Whizbang:Workers:InboxDrain:MaxPerStream
 Whizbang:Workers:InboxDrain:MaxPerStreamCeiling
 Whizbang:Workers:InboxDrain:MaxRowsPerCycle
@@ -524,8 +541,11 @@ Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
+Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle
 Whizbang:Workers:Maintenance:Partitioning:CreateAhead
 Whizbang:Workers:Maintenance:Partitioning:Enabled
+Whizbang:Workers:Maintenance:Partitioning:Strategy
+Whizbang:Workers:Maintenance:ReindexBloatThreshold
 Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
 Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
@@ -547,9 +567,14 @@ Whizbang:Workers:Maintenance:SettledFoldIdleDays
 Whizbang:Workers:Maintenance:StuckRowSentinelEnabled
 Whizbang:Workers:Maintenance:StuckRowSentinelLimit
 Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
+Whizbang:Workers:Maintenance:TableRewrite:PgRepack:ClientPath
+Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode
 Whizbang:Workers:Maintenance:TableRewriteStrategy
+Whizbang:Workers:OutboxBatch:FlushRetryBackoff
+Whizbang:Workers:OutboxBatch:FlushRetryMaxBackoff
 Whizbang:Workers:OutboxBatch:IdleEvictionWindow
 Whizbang:Workers:OutboxBatch:IdleSweepInterval
+Whizbang:Workers:OutboxBatch:MaxFlushAttempts
 Whizbang:Workers:OutboxBatch:MaxSize
 Whizbang:Workers:OutboxBatch:MaxWait
 Whizbang:Workers:OutboxBatch:SlidingWindow

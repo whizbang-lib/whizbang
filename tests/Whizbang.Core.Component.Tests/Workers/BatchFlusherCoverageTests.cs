@@ -60,6 +60,12 @@ public class BatchFlusherCoverageTests {
     var gate = new Lock();
     var firstFlushFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var sawBothItems = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new ArmingClock();
+    var options = new BatchFlusherOptions {
+      CoalesceWindowMs = 10,
+      MaxBatchSize = 100,
+      ImmediateFlushThreshold = 1,
+    };
 
     await using var flusher = new BatchFlusher<int>(
       flush: (items, _) => {
@@ -75,16 +81,17 @@ public class BatchFlusherCoverageTests {
         }
         return Task.CompletedTask;
       },
-      options: new BatchFlusherOptions {
-        CoalesceWindowMs = 10,
-        MaxBatchSize = 100,
-        ImmediateFlushThreshold = 1,
-      },
-      logger: NullLogger.Instance);
+      options: options,
+      logger: NullLogger.Instance,
+      timeProvider: clock);
 
     await flusher.Writer.WriteAsync(1, cancellationToken);
     await firstFlushFailed.Task.WaitAsync(cancellationToken);
     await flusher.Writer.WriteAsync(2, cancellationToken);
+    // The retry waits out its backoff on the flusher's clock (#1868); move past it once it is armed
+    var backoff = TimeSpan.FromMilliseconds(options.FlushRetryBackoffMs);
+    await clock.WaitForArmedAsync(backoff, cancellationToken);
+    clock.Advance(backoff);
 
     await sawBothItems.Task.WaitAsync(cancellationToken);
 

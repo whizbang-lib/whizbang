@@ -276,4 +276,85 @@ public class MappedPathDiscoveryTests {
       .Because("the copy constructor needs a Basket to make a Basket, and the other one takes a "
         + "collection no mapped property can supply");
   }
+
+  /// <summary>
+  /// An array of a complex element is named (#1910): Entity Framework accepts it while building the model, then
+  /// refuses it at the first read ("Collection navigations cannot be arrays") and on the change tracker's snapshot
+  /// ("Collection was of a fixed size"), so the model takes the opaque form instead.
+  /// </summary>
+  [Test]
+  public async Task AnArrayOfAComplexElementIsReportedAsync() {
+    var member = _unmappableMembers("  public Tag[] Items { get; init; } = [];");
+
+    await Assert.That(member).IsEqualTo("Items")
+      .Because("an array of records builds a model and then never reads back on the mapped path");
+  }
+
+  /// <summary>An array of a complex element inside a collection element is named by its path (#1910).</summary>
+  [Test]
+  [Arguments("List<Group>")]
+  [Arguments("IList<Group>")]
+  public async Task AnArrayInsideACollectionElementIsNamedByItsPathAsync(string collection) {
+    var source = $$"""
+      using System;
+      using System.Collections.Generic;
+
+      namespace TestApp;
+
+      public record Tag(Guid TagId, string Label);
+
+      public sealed record Group {
+        public string Name { get; init; } = "";
+        public Tag[] Tags { get; init; } = [];
+      }
+
+      public class Model {
+        public {{collection}} Groups { get; init; } = null!;
+      }
+      """;
+
+    await Assert.That(_unmappable(source)).IsEqualTo("Groups.Tags")
+      .Because("the nested array fails the read exactly as a top-level one does");
+  }
+
+  /// <summary>
+  /// An array of primitives is a value on the mapped path, which reads it back, so it keeps the model mapped and
+  /// its indexing.
+  /// </summary>
+  [Test]
+  [Arguments("string[]")]
+  [Arguments("Guid[]")]
+  [Arguments("int[]")]
+  [Arguments("byte[]")]
+  [Arguments("DayOfWeek[]")]
+  [Arguments("int?[]")]
+  public async Task AnArrayOfPrimitivesIsNotReportedAsync(string type) {
+    var member = _unmappableMembers($"  public {type} Items {{ get; init; }} = [];");
+
+    await Assert.That(member).IsNull()
+      .Because("routing a model opaquely for an array the mapped path reads would take its indexing away for nothing");
+  }
+
+  /// <summary>
+  /// An array whose element is itself an array is not a value the mapped path stores, so it takes the opaque form,
+  /// which the serializer reads whatever the nesting.
+  /// </summary>
+  [Test]
+  public async Task AnArrayOfArraysIsReportedAsync() {
+    var member = _unmappableMembers("  public int[][] Items { get; init; } = [];");
+
+    await Assert.That(member).IsEqualTo("Items");
+  }
+
+  /// <summary>
+  /// A member whose type is not a named type once arrays are set aside (a dynamic member) has no members to walk and
+  /// nothing the mapped path must construct, so it leaves the model mapped.
+  /// </summary>
+  [Test]
+  public async Task AMemberThatIsNotANamedType_IsNotReportedAsync() {
+    var member = _unmappableMembers("  public dynamic? Extra { get; init; }");
+
+    await Assert.That(member).IsNull()
+      .Because("only an array or a named type can hold something the mapped path cannot construct");
+  }
 }

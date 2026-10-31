@@ -126,6 +126,9 @@ public static class ServiceCollectionExtensions {
       new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
         // The registry rows row retention enrolls from, for every perspective the host's assemblies declared (#1548).
         PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
+        // What each table's model declares, read with the options the stores read with (#1874).
+        DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
+          Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         ManagedObjects = managedObjects is null
           ? null
           : ManagedSchemaHostPass.Declared(ManagedSchemaObjectSet.FromDeclarations(managedObjects), sp),
@@ -161,6 +164,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -294,6 +298,8 @@ public static class ServiceCollectionExtensions {
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql) {
         PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
+        DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
+          Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
@@ -314,6 +320,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addStreamLifecycleBackfill(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -439,7 +446,8 @@ public static class ServiceCollectionExtensions {
         connectionString,
         options,
         () => createInitializer(sp),
-        sp.GetRequiredService<ILogger<DapperSchemaInitializationRunner>>()));
+        sp.GetRequiredService<ILogger<DapperSchemaInitializationRunner>>(),
+        sp));
     }
     services.AddWhizbangSchemaInitialization();
   }
@@ -447,12 +455,16 @@ public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
-  /// connection of their own per call. A host's own registration wins.
+  /// connection of their own per call, and the repair for composite children filed under the composite's stream
+  /// (<see cref="IFanoutChildRefiler"/>, #1798), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A host's
+  /// own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:Finalize_ThroughTheRegisteredFinalizer_SealsTheStream_AndTheNextAppendThrowsAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
       new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
@@ -460,6 +472,31 @@ public static class ServiceCollectionExtensions {
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
+    // registered first wins.
+    services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
+      var database = sp.GetRequiredService<PostgresArchiveConnection>();
+      return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
+    });
+    // The maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever archive store
+    // is registered.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
+      ArchiveRestoreRequestStep.FromServices));
+    // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
+    // then refuses the stream's appends.
+    services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>
+      new PostgresStreamFinalizer(
+        ct => OpenConnectionAsync(connectionString, ct),
+        timeProvider: sp.GetService<TimeProvider>(),
+        logger: sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+    services.TryAddSingleton<IFanoutChildRefiler>(sp =>
+      new PostgresFanoutChildRefiler(
+        ct => OpenConnectionAsync(connectionString, ct),
+        sp.GetService<global::Whizbang.Core.IStreamIdExtractor>(),
+        jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+        schema: null,
+        logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
   }
 
   /// <summary>
@@ -492,6 +529,16 @@ public static class ServiceCollectionExtensions {
   // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once (#1646)
   // and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and
   // is idle otherwise.
+  /// <summary>
+  /// TURNKEY: the maintenance step that seeds the stream lifecycle ledger for the streams the event store held before
+  /// migration 260 added it (#1732). Idle once the backfill is recorded as done, which a new database is.
+  /// </summary>
+  private static void _addStreamLifecycleBackfill(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperStreamLifecycleBackfillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();
     services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
@@ -521,9 +568,15 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <docs>operations/observability/metrics#table-statistics</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsTableStatisticsAsync</tests>
+  /// <remarks>
+  /// Statement statistics are read only while the probe found <c>pg_stat_statements</c> Ready on this database, the
+  /// scope <see cref="ProbeDatabaseName"/> names (#1754).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StatementStatisticsCapabilityTests.cs:ADapperHost_AsksAboutItsOwnDatabaseAsync</tests>
   private static void _addTableStatistics(IServiceCollection services, string connectionString) =>
-    services.AddWhizbangTableStatistics((_, options) => new PostgresTableStatisticsProvider(
-      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables));
+    services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
+      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables,
+      sp.GetRequiredService<Whizbang.Core.Capabilities.ICapabilityRegistry>(), ProbeDatabaseName(connectionString)));
 
   /// <summary>
   /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's

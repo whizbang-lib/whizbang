@@ -106,26 +106,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including inherited properties)
-    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdProperty is not null) {
-      // Check for [GenerateStreamId] on the property itself
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
-
-      return new StreamIdInfo(
-          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: streamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
-          IsPropertyValueType: streamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
-      );
-    }
-
-    // Look for [StreamId] on constructor parameters (for records)
-    return _extractStreamIdFromConstructorParameters(typeSymbol);
+    // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
+    return _selectStreamId(typeSymbol);
   }
 
   /// <summary>
@@ -165,70 +147,46 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including the inherited CompositeEventBase.StreamId).
-    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdProperty is not null) {
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
-
-      return new StreamIdInfo(
-          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: streamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
-          IsPropertyValueType: streamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
-      );
-    }
-
-    // Look for [StreamId] on constructor parameters (for record composites).
-    return _extractStreamIdFromConstructorParameters(typeSymbol);
+    // The inherited CompositeEventBase.StreamId, unless the composite overrides it or declares a nearer one.
+    return _selectStreamId(typeSymbol);
   }
 
   /// <summary>
-  /// Searches constructor parameters for the [StreamId] attribute and extracts StreamIdInfo.
-  /// Used for record types where [StreamId] is applied to constructor parameters.
+  /// The [StreamId] a message type's extractor reads, chosen by <see cref="StreamIdSelection"/> so the generator and the
+  /// WHIZ006 analyzer agree (#1512, #1833). [GenerateStreamId] is read from the parameter when the stream id came from
+  /// one, else from the property, and from the class in either case.
   /// </summary>
-  private static StreamIdInfo? _extractStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
-    foreach (var ctor in typeSymbol.Constructors) {
-      foreach (var parameter in ctor.Parameters) {
-        if (!_hasStreamIdAttributeOnParameter(parameter)) {
-          continue;
-        }
-
-        // Find corresponding property (records create properties from constructor parameters)
-        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-        if (property is null) {
-          continue;
-        }
-
-        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
-
-        return new StreamIdInfo(
-            EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-            PropertyName: property.Name,
-            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-            IsPropertyValueType: property.Type.IsValueType,
-            HasGenerate: hasGenerate,
-            OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-            PropertyLocation: LocationUtilities.FirstOrNone(property)
-        );
-      }
+  private static (IPropertySymbol Property, bool HasGenerate, bool OnlyIfEmpty)? _resolveStreamId(INamedTypeSymbol typeSymbol) {
+    var choice = StreamIdSelection.Select(typeSymbol);
+    if (choice is null) {
+      return null;
     }
-
-    return null;
+    var (hasGenerate, onlyIfEmpty) = choice.Parameter is null
+        ? _extractGenerateStreamIdInfo(choice.Property, typeSymbol)
+        : _resolveGenerateStreamIdForParameter(choice.Parameter, typeSymbol);
+    return (choice.Property, hasGenerate, onlyIfEmpty);
   }
 
   /// <summary>
-  /// Checks if a constructor parameter has the [StreamId] attribute.
+  /// Builds the extractor info for an event or composite from its chosen [StreamId].
   /// </summary>
-  private static bool _hasStreamIdAttributeOnParameter(IParameterSymbol parameter) {
-    return parameter.GetAttributes().Any(a =>
-        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.STREAM_ID_ATTRIBUTE));
+  private static StreamIdInfo? _selectStreamId(INamedTypeSymbol typeSymbol) {
+    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+      return null;
+    }
+    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    return new StreamIdInfo(
+        EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+        PropertyName: property.Name,
+        PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+        IsPropertyValueType: property.Type.IsValueType,
+        HasGenerate: hasGenerate,
+        OnlyIfEmpty: onlyIfEmpty,
+        IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol),
+        DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
+    );
   }
 
   /// <summary>
@@ -274,9 +232,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if has [StreamId] anywhere (including inherited properties)
-    var streamIdOnProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdOnProperty is not null) {
+    // Has a stream id the extractor can read (an override anywhere in the chain, an inherited property, or a record parameter)
+    if (StreamIdSelection.Select(typeSymbol) is not null) {
       return null;
     }
 
@@ -313,63 +270,55 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including inherited properties)
-    var commandStreamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (commandStreamIdProperty is not null) {
-      // Check for [GenerateStreamId] on the property or class
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(commandStreamIdProperty, typeSymbol);
-
-      return new CommandStreamIdInfo(
-          CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: commandStreamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(commandStreamIdProperty.Type),
-          IsPropertyValueType: commandStreamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(commandStreamIdProperty)
-      );
+    // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
+    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+      return null;
     }
-
-    // Look for [StreamId] on constructor parameters (for records)
-    return _extractCommandStreamIdFromConstructorParameters(typeSymbol);
+    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    return new CommandStreamIdInfo(
+        CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+        PropertyName: property.Name,
+        PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+        IsPropertyValueType: property.Type.IsValueType,
+        HasGenerate: hasGenerate,
+        OnlyIfEmpty: onlyIfEmpty,
+        IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+        PropertyLocation: LocationUtilities.FirstOrNone(property),
+        InheritanceDepth: _inheritanceDepth(typeSymbol),
+        DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
+    );
   }
 
   /// <summary>
-  /// Searches constructor parameters for the [StreamId] attribute and extracts CommandStreamIdInfo.
-  /// Used for record command types where [StreamId] is applied to constructor parameters.
+  /// Whether <paramref name="typeSymbol"/> declares its own <c>[StreamId]</c> (plain or <c>Override = true</c>) with
+  /// no <c>[GenerateStreamId]</c> of its own while a base type's policy generates. Such a type does not inherit the
+  /// base's <c>[GenerateStreamId]</c>: the policy follows the stream id, so a type that names its own stream id names
+  /// its own policy too, and the generated policy lookup gets an explicit "do not generate" case for it ahead of the
+  /// base's check (#1893). A type with no <c>[StreamId]</c> of its own still inherits the base's stream id and policy.
   /// </summary>
-  private static CommandStreamIdInfo? _extractCommandStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
-    foreach (var ctor in typeSymbol.Constructors) {
-      foreach (var parameter in ctor.Parameters) {
-        if (!_hasStreamIdAttributeOnParameter(parameter)) {
-          continue;
-        }
+  /// <docs>extending/attributes/generatestreamid</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedOverrideWithNoGenerateStreamId_DoesNotInheritTheBasesClassLevelGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndGenerateStreamId_UsesItsOwnGenerationPolicyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithNoStreamIdOfItsOwn_InheritsTheBasesGenerateStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ATypeWithNoStreamIdOfItsOwn_InheritsTheGenerationPolicyOfItsNearestBaseAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ATypeWithItsOwnStreamId_DoesNotInheritAGenerateStreamIdFromAnyLevelAboveAsync</tests>
+  private static bool _declinesInheritedGenerate(INamedTypeSymbol typeSymbol, IPropertySymbol streamIdProperty, bool hasGenerate) =>
+    !hasGenerate
+    && SymbolEqualityComparer.Default.Equals(streamIdProperty.ContainingType, typeSymbol)
+    && _anyBaseGenerates(typeSymbol);
 
-        // Find corresponding property (records create properties from constructor parameters)
-        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-        if (property is null) {
-          continue;
-        }
-
-        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
-
-        return new CommandStreamIdInfo(
-            CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-            PropertyName: property.Name,
-            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-            IsPropertyValueType: property.Type.IsValueType,
-            HasGenerate: hasGenerate,
-            OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-            PropertyLocation: LocationUtilities.FirstOrNone(property)
-        );
+  /// <summary>
+  /// Whether any base type of <paramref name="typeSymbol"/> resolves to a stream id with <c>[GenerateStreamId]</c>,
+  /// so the generated policy lookup's check for that base would also match an instance of this type.
+  /// </summary>
+  private static bool _anyBaseGenerates(INamedTypeSymbol typeSymbol) {
+    for (var level = typeSymbol.BaseType; level is not null; level = level.BaseType) {
+      if (_resolveStreamId(level) is { HasGenerate: true }) {
+        return true;
       }
     }
-
-    return null;
+    return false;
   }
 
   /// <summary>
@@ -390,8 +339,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
-    _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
-    _reportGenerateStreamIdOnInitOnly(context, eventsWithStreamId, commandsWithStreamId);
+    // Most-derived first in every region that dispatches on type, so a base type's check never shadows a derived
+    // type's own [StreamId] (#1893).
+    var events = _mostDerivedFirst(eventsWithStreamId);
+    var commands = _mostDerivedFirst(commandsWithStreamId);
+    var composites = _mostDerivedFirst(compositesWithStreamId);
+
+    _reportStreamIdDiagnostics(context, events, eventsWithoutStreamId);
+    _reportGenerateStreamIdOnInitOnly(context, events, commands);
 
     // Load and prepare template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -402,25 +357,50 @@ public class StreamIdGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
     // Generate GetGenerationPolicy dispatch cases (events AND commands)
-    template = _generateGenerationPolicyRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateGenerationPolicyRegion(template, events, commands);
 
     // Generate event dispatch and extractors
-    template = _generateEventRegions(template, eventsWithStreamId);
+    template = _generateEventRegions(template, events);
 
     // Generate command dispatch and extractors
-    template = _generateCommandRegions(template, context, commandsWithStreamId);
+    template = _generateCommandRegions(template, context, commands);
 
     // Generate the object-typed (OTHER) regions for composites — IMessage-not-IEvent types carrying [StreamId].
-    template = _generateOtherRegions(template, compositesWithStreamId);
+    template = _generateOtherRegions(template, composites);
 
     // Generate SetStreamId dispatch cases
-    template = _generateSetStreamIdRegion(template, eventsWithStreamId, commandsWithStreamId);
+    template = _generateSetStreamIdRegion(template, events, commands);
 
     // Generate [ModuleInitializer] registration code
-    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId, compositesWithStreamId);
+    template = _generateModuleInitializerRegion(template, events, commands, composites);
 
     context.AddSource("StreamIdExtractors.g.cs", template);
   }
+
+  /// <summary>
+  /// How many base types <paramref name="typeSymbol"/> has: zero for a type with none, one for a direct subclass of
+  /// <see cref="object"/>, and one more for each further level.
+  /// </summary>
+  private static int _inheritanceDepth(INamedTypeSymbol typeSymbol) {
+    var depth = 0;
+    for (var baseType = typeSymbol.BaseType; baseType is not null; baseType = baseType.BaseType) {
+      depth++;
+    }
+    return depth;
+  }
+
+  /// <summary>
+  /// Orders events or composites for type dispatch: deepest inheritance first, then by type name, so a base type's
+  /// <c>is</c> check comes after every type derived from it and the generated file does not depend on discovery order.
+  /// </summary>
+  private static ImmutableArray<StreamIdInfo> _mostDerivedFirst(ImmutableArray<StreamIdInfo> infos) =>
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.EventType, StringComparer.Ordinal)];
+
+  /// <summary>
+  /// Orders commands for type dispatch: deepest inheritance first, then by type name (see the event overload).
+  /// </summary>
+  private static ImmutableArray<CommandStreamIdInfo> _mostDerivedFirst(ImmutableArray<CommandStreamIdInfo> infos) =>
+    [.. infos.OrderByDescending(i => i.InheritanceDepth).ThenBy(i => i.CommandType, StringComparer.Ordinal)];
 
   /// <summary>
   /// Reports diagnostics for events with and without stream keys.
@@ -477,17 +457,20 @@ public class StreamIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the GENERATION_POLICY_DISPATCH region for events and commands with [GenerateStreamId].
+  /// Generates the GENERATION_POLICY_DISPATCH region for events and commands with [GenerateStreamId], and a
+  /// "do not generate" case for each type that declines a base type's policy (see
+  /// <see cref="_declinesInheritedGenerate"/>). The inputs are most-derived first, so each case precedes its base's.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
   private static string _generateGenerationPolicyRegion(
       string template,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
 
-    var eventsWithGenerate = eventsWithStreamId.Where(e => e.HasGenerate).ToImmutableArray();
-    var commandsWithGenerate = commandsWithStreamId.Where(c => c.HasGenerate).ToImmutableArray();
+    var eventsWithPolicy = eventsWithStreamId.Where(e => e.HasGenerate || e.DeclinesInheritedGenerate).ToImmutableArray();
+    var commandsWithPolicy = commandsWithStreamId.Where(c => c.HasGenerate || c.DeclinesInheritedGenerate).ToImmutableArray();
 
-    if (eventsWithGenerate.IsEmpty && commandsWithGenerate.IsEmpty) {
+    if (eventsWithPolicy.IsEmpty && commandsWithPolicy.IsEmpty) {
       return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", "");
     }
 
@@ -500,24 +483,27 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var generationPolicyCode = new StringBuilder();
     generationPolicyCode.AppendLine("// Type-based dispatch for generation policy");
 
-    foreach (var info in eventsWithGenerate) {
+    foreach (var info in eventsWithPolicy) {
       var caseCode = generationPolicySnippet
           .Replace(PLACEHOLDER_EVENT_TYPE, info.EventType)
-          .Replace("__SHOULD_GENERATE__", "true")
-          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+          .Replace("__SHOULD_GENERATE__", _csharpBool(info.HasGenerate))
+          .Replace("__ONLY_IF_EMPTY__", _csharpBool(info.OnlyIfEmpty));
       generationPolicyCode.AppendLine(caseCode);
     }
 
-    foreach (var info in commandsWithGenerate) {
+    foreach (var info in commandsWithPolicy) {
       var caseCode = generationPolicySnippet
           .Replace(PLACEHOLDER_EVENT_TYPE, info.CommandType)
-          .Replace("__SHOULD_GENERATE__", "true")
-          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+          .Replace("__SHOULD_GENERATE__", _csharpBool(info.HasGenerate))
+          .Replace("__ONLY_IF_EMPTY__", _csharpBool(info.OnlyIfEmpty));
       generationPolicyCode.AppendLine(caseCode);
     }
 
     return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", generationPolicyCode.ToString().TrimEnd());
   }
+
+  /// <summary>The C# literal for <paramref name="value"/>.</summary>
+  private static string _csharpBool(bool value) => value ? "true" : "false";
 
   /// <summary>
   /// Generates event dispatch, extractor, and try-extract regions.

@@ -166,4 +166,45 @@ public class RecentlyProcessedEventCacheTests {
     // 7 minutes since first mark, but only 3 minutes since refresh — still alive.
     await Assert.That(cache.WasRecentlyProcessed(workId)).IsTrue();
   }
+
+  // OnCapacityExceeded is the operator's sign that MaxEntries is too small for the drain's
+  // throughput: every raise is followed by an eviction of entries still inside their TTL. If it
+  // fired under the cap it would cry wolf; if it stopped firing over the cap a too-small cache would
+  // go unnoticed while it forced duplicate fetches.
+  [Test]
+  public async Task MarkProcessed_OverCap_RaisesOnCapacityExceededWithResidentCountAsync() {
+    var provider = _fakeProvider(out var fake);
+    var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(60), maxEntries: 3);
+    var observed = new List<int>();
+    cache.OnCapacityExceeded += observed.Add;
+
+    for (var i = 0; i < 3; i++) {
+      cache.MarkProcessed((Guid)TrackedGuid.New());
+      fake.Advance(TimeSpan.FromSeconds(1));
+    }
+    await Assert.That(observed).IsEmpty()
+      .Because("filling the cache exactly to its cap is not over it");
+
+    cache.MarkProcessed((Guid)TrackedGuid.New());
+
+    await Assert.That(observed).IsEquivalentTo([4])
+      .Because("the insert that took the cache past its cap reports the resident count it saw");
+    await Assert.That(cache.Count).IsEqualTo(3)
+      .Because("the raise precedes the cap eviction, which still runs");
+  }
+
+  // The bulk insert enforces the cap once, after every id is in, so it reports once with the
+  // count it left behind rather than once per id.
+  [Test]
+  public async Task MarkProcessed_BulkOverCap_RaisesOnCapacityExceededOnceAsync() {
+    var cache = new RecentlyProcessedEventCache(_fakeProvider(out _), ttl: TimeSpan.FromMinutes(60), maxEntries: 3);
+    var observed = new List<int>();
+    cache.OnCapacityExceeded += observed.Add;
+
+    cache.MarkProcessed(Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()));
+
+    await Assert.That(observed).IsEquivalentTo([5]);
+    await Assert.That(cache.Count).IsEqualTo(3)
+      .Because("one eviction removes the whole overflow of two");
+  }
 }

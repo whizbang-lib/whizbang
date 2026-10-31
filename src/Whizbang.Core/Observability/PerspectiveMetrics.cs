@@ -88,6 +88,17 @@ public sealed class PerspectiveMetrics {
   /// <summary>Updates the cached pending events count for the observable gauge.</summary>
   public void SetPendingEvents(long count) => Interlocked.Exchange(ref _pendingEventsValue, count);
 
+  /// <summary>
+  /// Refreshes of <c>whizbang.perspective.pending_events</c> whose statistics query failed (#1865).
+  /// </summary>
+  /// <remarks>
+  /// The gauge keeps the last value it read while its query fails, so a frozen number reads as real lag or real
+  /// health. This rising while the gauge holds still says the gauge is stale; the worker's warning names the cause.
+  /// </remarks>
+  /// <docs>operations/observability/metrics#perspectives</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+  public PassiveCounter<long> PendingEventsRefreshFailures { get; }
+
   // Rewind
 
   /// <summary>
@@ -120,6 +131,18 @@ public sealed class PerspectiveMetrics {
   /// </remarks>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public PassiveCounter<long> RewindsFailed { get; }
+
+  /// <summary>
+  /// Late events an ephemeral perspective dropped instead of rewinding for them, because no snapshot floor preceded them
+  /// and the bodies a replay would read were reaped. Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// Each straggler is counted once: its work is retired when it is dropped, so no later claim finds it again (#1862).
+  /// A rising count says late events are arriving outside the perspective's reorder window, which a snapshot cadence
+  /// or grace period wide enough to cover them would turn back into rewinds.
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  public PassiveCounter<long> StragglersDropped { get; }
 
   /// <summary>Rewinds running right now (observable gauge).</summary>
   private long _rewindsInFlightValue;
@@ -168,10 +191,14 @@ public sealed class PerspectiveMetrics {
     meter.CreateObservableGauge("whizbang.perspective.pending_events",
       observeValue: () => Interlocked.Read(ref _pendingEventsValue),
       description: "Pending perspective events awaiting processing");
+    PendingEventsRefreshFailures = meter.CreatePassiveCounter<long>("whizbang.perspective.pending_events_refresh_failures",
+      description: "Refreshes of the pending events gauge whose statistics query failed, leaving the gauge at its last value");
 
     Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
     RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");
     RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
+    StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
+      description: "Late events an ephemeral perspective dropped instead of rewinding for them");
 
     // Pinned at the concurrency limit means rewinds are queueing behind it, which no counter shows.
     meter.CreateObservableGauge("whizbang.perspective.rewinds_in_flight",

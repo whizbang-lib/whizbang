@@ -123,7 +123,7 @@ caches the first result).
 | pg_squeeze | online table rewrite (`storage-bloat.md`) | yes | the table rewriter calls `squeeze.squeeze_table(schema, table)` from the maintenance worker | allowlist, `shared_preload_libraries`, logical `wal_level`, restart |
 | pg_partman | partition management (`storage-ledger-retention.md`) | yes | `partman.create_parent` when a ledger is converted; `partman.run_maintenance` from the maintenance worker each cycle | allowlist (its background worker is not used) |
 | pg_repack | table rewrite without a long lock | yes (the extension) | either the `pg_repack` client run **in process** by the maintenance duty holder, or an **external job** that runs the same work from the queue | allowlist; the client program on `PATH` or at a configured path (in-process mode) |
-| pgstattuple | exact bloat measurement | yes | read by table statistics when Ready; otherwise estimated | allowlist |
+| pgstattuple | measured bloat (pgstattuple_approx) | yes | confirms a rewrite candidate before it is queued, and re-measures after, when Ready (#1807); otherwise estimated | allowlist |
 | pg_stat_statements | expensive-predicate advice | yes | read by the index advisor when Ready | `shared_preload_libraries` |
 | pg_cron | not used | no | detection only | n/a |
 
@@ -171,7 +171,7 @@ Each slice is one red-then-green increment and its own commit.
    `ICapabilityRequirementSource` seam (the registry is static and module-initialized; the verdict should read
    requirements through the seam so slice 6's vector columns can add a runtime source), and each setting's
    declared default (needed for "a default turned the feature on"). Not replaced: the recorded key manifest
-   and `RemovedConfigurationKeys` (no `[RemovedConfigurationKey]` yet). Original scope: `[RequiresCapability]` and
+   and `RemovedConfigurationKeys` (replaced by `[RemovedConfigurationKey]` in #1755). Original scope: `[RequiresCapability]` and
    `[RequiresPostgresExtension]` in core; a `ConfigurationManifestGenerator` in
    `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs`, recognizing each literal
    `GetSection("<key>")` binding and emitting the key tree plus one requirement per attributed
@@ -190,7 +190,7 @@ Each slice is one red-then-green increment and its own commit.
    features the plan names (slices 7 to 9) do not exist. Original scope: Explicit vs implicit from configuration; the verdict line per
    required capability naming each feature and its key; the `required` gauge tag; the health entry.
    RED: one test per row of the validation table, including the exact line text.
-4. **Provisioning runner and `AutoProvision`.** DONE on branch `feat/1742-1750-rewrite-provisioning` (issue #1750):
+4. **Provisioning runner and `AutoProvision`.** DONE, shipped in PR #1772 (issue #1750):
    `CapabilityProvisioningRunner` runs in the `Capabilities` step between the probe and the verdict, for every
    capability a requirement in force names (nothing else is provisioned): Provisionable is created, Ready with a newer
    `AvailableVersion` (`CapabilityVersion.IsNewer`) is upgraded, Ready otherwise reads already present; the outcome is
@@ -228,24 +228,55 @@ Each slice is one red-then-green increment and its own commit.
 7. **pg_squeeze managed.** Requirement on `TableRewriteStrategy.PgSqueeze`; provisioning; the
    rewriter strategy itself is `storage-bloat.md` slice 3. RED: explicit PgSqueeze on a server
    without preload fails start with the preload fix text.
-   **Status (2026-10-24):** open. Depends on slice 4; the rewriter itself is `storage-bloat.md` slice 3.
+   **Status (2026-10-27):** shipped in PR #1809 (#1751). Already in place from #1742/#1750
+   (PR #1772): the requirement on `TableRewriteStrategy.PgSqueeze`, generic provisioning (`CREATE EXTENSION` when
+   Provisionable, `ALTER EXTENSION UPDATE` when older) and the RED test "explicit PgSqueeze without preload fails start
+   with the preload fix" (`TableRewriteStrategyTests`). Added here: the catalog declared `wal_level = logical` but the
+   probe never read it, so pg_squeeze read Ready on a server where it cannot run. The probe now reads `wal_level` and
+   `server_version_num`; new Postgres state `NeedsLogicalWalLevel` (NeedsServerChange) below Postgres 19, checked after
+   the preload; a per-detail fix on the descriptor (`DetailRemedies`) so the verdict names `wal_level`, not the preload.
 8. **pg_partman managed.** Requirement on `PartitionManagementStrategy.PgPartman`; `create_parent`
    on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
    `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back
    to the built-in manager and says so in the verdict.
-   **Status (2026-10-24):** open. Depends on slice 4; it also closes the last piece of
-   `storage-ledger-retention.md` S4.
+   **Status (2026-10-27):** shipped in PR #1809 (issue #1752, migration 246). `Auto` uses pg_partman
+   only when Ready (never provisions it) and logs its choice from the partition step, not the verdict: `Auto` puts no
+   requirement in force, so the verdict line in the format example above ("= Auto, default; using the built-in
+   manager") is not produced. pg_partman creates partitions; the built-in manager still drops (signal carry-forward).
+   A real-server test needs a pg_partman CI image (not added); verified by hand against pg_partman 5.5.
 9. **pg_repack managed, both run modes.** The client program becomes a probed prerequisite (found on
    `PATH` or at `ClientPath`, version read with `--version`). `InProcess` runs it from the maintainer
    duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
    no client fails an explicit requirement and degrades an implicit one; external mode never starts a
    process; credentials never appear in the process arguments. Docs: the storage-maintenance page.
-   **Status (2026-10-24):** open. Depends on slice 4; pairs with `storage-bloat.md` slice 5.
+   **Status (2026-10-27):** shipped in PR #1809 (#1753), with `storage-bloat.md`
+   slice 5. `TableRewriteStrategy.PgRepack` requires `postgres/pg_repack`; `PgRepackOptions.Mode` (`InProcess` default,
+   `External`) and `ClientPath` under `Whizbang:Workers:Maintenance:TableRewrite:PgRepack`. The client is the capability
+   `program/pg_repack` (`PgRepackClientCapabilityProvider`, probed with `--version` only when the strategy is PgRepack and
+   the mode is InProcess, so External never starts a process); `PgRepackClientRequirementSource` puts it in force,
+   explicit when `Mode` is configured and implicit at the default. `PgRepackTableRewriter` runs the client through
+   `IExternalProcessRunner` with `--no-superuser-check --no-kill-backend --table=<qualified>` and the connection as libpq
+   environment variables (`LibpqEnvironment`), handed over by `IWorkCoordinator.RewriteTableWithAsync` (the init
+   connection when configured; ownership checked otherwise; ANALYZE and re-measure after). Not covered: comparing the
+   client's version with the extension's (pg_repack itself refuses a mismatch, which is logged and left queued), and a
+   packaged job helper for External mode (the docs give the loop).
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
-    **Status (2026-10-24):** open. `GetExpensivePredicatesAsync` still catches every `PostgresException`
-    (`PostgresTableStatisticsProvider.cs:536` on #1723's branch). Depends on slice 3 (done in #1723).
+    **Status (2026-10-27):** half shipped in PR #1809 (#1754). `GetExpensivePredicatesAsync` reads `pg_stat_statements` only while
+    the registry has it Ready in the provider's database scope (both drivers pass the registry and their probe
+    name); any other state, or no registry, answers empty without opening a connection, and the
+    `catch (PostgresException)` is gone. The bloat estimate is unchanged: it never read pgstattuple or caught a
+    `PostgresException` (it estimates from `pg_stats`), so there was no catch to replace. Reading pgstattuple when
+    Ready, as the capability table above says, is a new measurement that scans tables on the statistics cadence and
+    is the open question #1807 (cost, cadence, `pgstattuple_approx` or exact).
+    **Status (2026-10-28):** the bloat half is done in #1807 (owner decision: estimate to shortlist,
+    `pgstattuple_approx` to confirm). The estimate still runs every statistics pass. While pgstattuple is Ready on every
+    probed database the maintenance cycle measures a shortlisted table with `pgstattuple_approx` before queuing it,
+    queues it with the measured ratio (method `approx`, migration 254's `wh_table_rewrite_measurements`), does not
+    queue it when the measurement is under the threshold, and logs a measurement more than 25% from its estimate with
+    both figures. The re-measure after a rewrite uses `pgstattuple_approx` too; the exact scan never runs; the gauge has
+    a `method` tag. A failed measurement is logged and the estimate stands in.
 11. **Unknown keys (defect 8).** Shipped: the recorded
     manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
     start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry
@@ -254,9 +285,10 @@ Each slice is one red-then-green increment and its own commit.
     `Whizbang:Workers:Maintenance:IntervalMinutes`. RED: a removed key warns with its replacement; a
     typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
     configuration reference.
-    **Status (2026-10-24):** done. #1490, closed by PR #1541. Removed keys are still a hand-kept table
-    (`src/Whizbang.Core/Configuration/RemovedConfigurationKeys.cs`), not `[RemovedConfigurationKey]` through
-    slice 2's generator.
+    **Status (2026-10-26):** done. #1490, closed by PR #1541. The removed-key table moved to
+    `[RemovedConfigurationKey]` through slice 2's generator, shipped in PR #1809 (#1755): the
+    manifest carries `RemovedKeys`, `ConfigurationManifestRegistry.FindRemovedKey` answers the check, all eight entries
+    migrated (declared on `MaintenanceWorkerOptions`, `CapabilityOptions` and `SlidingWindowInboxOptions`).
 
 ## Engineering standards
 

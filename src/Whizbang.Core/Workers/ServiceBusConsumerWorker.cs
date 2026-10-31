@@ -235,30 +235,6 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-    // #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
-    // perspective or tag-attribute) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
-    // skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped here, unstored,
-    // and the transport then completed it with the broker. Null registry: legacy behavior (always process) for test
-    // harnesses. EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; the gate is skipped then
-    // rather than misclassifying.
-    // EXEMPTION, body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>, which no
-    // service consumes; BodyClaimRehydrator restores the original type downstream.
-    // EXEMPTION, composites: a composite is wire-only, so nothing consumes the composite type itself; its consumers are
-    // registered for the INNER events, addressable after the dispatch seam fans it out. See
-    // CompositeInboxFanout.IsCompositeWireType.
-    string? discardedOnReceive = null;
-    if (!string.IsNullOrWhiteSpace(envelopeType)
-        && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
-      var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
-      if (innerMessageType is not null
-          && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-          && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
-          && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
-        LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
-        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
-      }
-    }
-
     var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
     // Global concurrency gate — limits total concurrent handlers across all subscriptions
@@ -272,6 +248,7 @@ public partial class ServiceBusConsumerWorker(
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
+      var discardedOnReceive = _discardedOnReceive(envelope, envelopeType, scopedProvider);
 
       // Serialize and deduplicate via per-message flush
       var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, discardedOnReceive, strategy, scopedProvider, ct);
@@ -302,6 +279,28 @@ public partial class ServiceBusConsumerWorker(
       _concurrencySemaphore?.Release();
       inboxActivity?.Dispose();
     }
+  }
+
+  /// <summary>
+  /// #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
+  /// perspective or runtime receptor) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
+  /// skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped, unstored, and the
+  /// transport then completed it with the broker. The decision is <see cref="ReceiveConsumerGate"/>, shared with
+  /// <see cref="TransportConsumerWorker"/>: it exempts body-offload claims, composites and unparseable envelope types,
+  /// and asks the shared discard policy, when the worker pipeline registered one, so an event in an absorbed namespace
+  /// is kept for the event store with no local consumer (#1776).
+  /// </summary>
+  /// <returns><see cref="InboxReceiveDiscard.NO_LOCAL_CONSUMER"/> when nothing here consumes the message; otherwise
+  /// <see langword="null"/>.</returns>
+  private string? _discardedOnReceive(IMessageEnvelope envelope, string? envelopeType, IServiceProvider scopedProvider) {
+    var unconsumedType = ReceiveConsumerGate.UnconsumedMessageType(
+      envelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver,
+      scopedProvider.GetService<Routing.IMessageDiscardPolicy>());
+    if (unconsumedType is null) {
+      return null;
+    }
+    LogDroppedUnsubscribedType(_logger, envelope.MessageId, unconsumedType);
+    return InboxReceiveDiscard.NO_LOCAL_CONSUMER;
   }
 
   /// <summary>
@@ -472,14 +471,14 @@ public partial class ServiceBusConsumerWorker(
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+        LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
       // Wait for detached tasks to complete before abandoning tracking
       // This ensures PostLifecycleDetached (which fires in Task.Run) completes
       // before the worker's DrainDetachedAsync returns.
       await tracking.DrainDetachedAsync();
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
@@ -678,7 +677,7 @@ public partial class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) => ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
+  private static Guid _extractStreamId(IMessageEnvelope envelope) => StreamIdentity.Of(envelope);
 
   /// <summary>
   /// Stops the worker and disposes all subscriptions.

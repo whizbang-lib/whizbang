@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -27,6 +28,16 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>fundamentals/perspectives/row-retention</docs>
 public class EventStoreDecoratorForwardingTests {
   public static IEnumerable<Func<IEventStore>> Decorators() => [
+    () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
+    () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
+    () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
+    () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
+    () => new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(new ProbeAwareStore(), new NoArchiveStore(), readThrough: true),
+  ];
+
+  /// <summary>The decorators that pass the explicit read through the archive on to the store they wrap.</summary>
+  public static IEnumerable<Func<IEventStore>> ThroughArchiveForwarders() => [
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
     () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
     () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
@@ -53,6 +64,7 @@ public class EventStoreDecoratorForwardingTests {
     () => typeof(AuditingEventStoreDecorator),
     () => typeof(SyncTrackingEventStoreDecorator),
     () => typeof(UpcastingEventStoreDecorator),
+    () => typeof(Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator),
   ];
 
   /// <summary>
@@ -100,6 +112,36 @@ public class EventStoreDecoratorForwardingTests {
       .Because($"{decorated.GetType().Name} must forward the typed probe to the inner store's override");
   }
 
+  [Test]
+  [MethodDataSource(nameof(ThroughArchiveForwarders))]
+  public async Task Decorator_ForwardsTheReadThroughTheArchive_ToInnerStoreAsync(IEventStore decorated) {
+    var read = new List<MessageEnvelope<IEvent>>();
+    await foreach (var envelope in decorated.ReadPolymorphicThroughArchiveAsync(Guid.NewGuid(), null, 3, [typeof(ProbeEvent)])) {
+      read.Add(envelope);
+    }
+
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo([ProbeAwareStore.ThroughArchiveSentinel])
+      .Because($"{decorated.GetType().Name} must pass a rewind's read through the archive on, or the rewind reads only hot events");
+  }
+
+  /// <summary>An event the probe store returns from its read through the archive.</summary>
+  public sealed record ProbeEvent : IEvent {
+    /// <summary>The stream.</summary>
+    [Whizbang.Core.StreamId]
+    public Guid StreamId { get; init; }
+  }
+
+  /// <summary>An archive store the forwarding probes never reach.</summary>
+  private sealed class NoArchiveStore : Whizbang.Core.Archival.IArchiveStore {
+    public Task<Whizbang.Core.Archival.ArchiveWriteResult> WriteAsync(Whizbang.Core.Archival.ArchiveBatch batch, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public IAsyncEnumerable<ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task<Whizbang.Core.Archival.ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
   /// <summary>
   /// An inner store whose probe methods return sentinel values distinguishable from the
   /// interface defaults (null / false) — forwarding is proven iff the sentinel surfaces
@@ -141,6 +183,19 @@ public class EventStoreDecoratorForwardingTests {
 
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
+
+    public static readonly Guid ThroughArchiveSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000c0de");
+
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+        Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      new[] {
+        new MessageEnvelope<IEvent> {
+          MessageId = Whizbang.Core.ValueObjects.MessageId.From(ThroughArchiveSentinel),
+          Payload = new ProbeEvent(),
+          Hops = [],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        },
+      }.ToAsyncEnumerable();
   }
 
   private sealed class NoopSyncAwaiter : IPerspectiveSyncAwaiter {

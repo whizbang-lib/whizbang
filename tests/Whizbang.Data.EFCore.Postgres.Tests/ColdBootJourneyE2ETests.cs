@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// The cold-boot journey, end to end: a genuinely unmigrated database, the REAL generated
 /// dispatcher, real lens registration, real gates, the real lifecycle ladder — composed the way a
 /// booting pod composes them. Covers the three claims the unit tests prove only in isolation:
-/// (1) both data-plane seams REFUSE while Migrate is under way, through the real entry points;
+/// (1) while Migrate is under way a dispatch waits for it (#1877) and the read side refuses, through the real entry points;
 /// (2) at <c>AcceptingCommands</c> the write side is live — a publish lands DURABLY in the outbox —
 /// while the read side keeps refusing; (3) the ladder walks Connecting → Migrating →
 /// AcceptingCommands → Running in order, and the fleet row reports it. The moment the read gate
@@ -217,7 +217,7 @@ public class ColdBootJourneyE2ETests {
 
   [Test]
   [Timeout(120000)]
-  public async Task ColdBoot_TheSeamsRefuse_ThenTheLadderOpensInOrderAsync(CancellationToken cancellationToken) {
+  public async Task ColdBoot_DispatchWaitsForMigrateAndReadsRefuse_ThenTheLadderOpensInOrderAsync(CancellationToken cancellationToken) {
     var pod = new Pod();
     var schemaGate = new SchemaReadyGate();
     var readGate = new ReadModelsReadyGate();
@@ -232,10 +232,12 @@ public class ColdBootJourneyE2ETests {
     await phaseWorker.StartAsync(cancellationToken);
     await _awaitPhaseAsync(lifecycle, LifecyclePhase.Migrating, cancellationToken);
 
-    // (1) While Migrate is under way, BOTH seams refuse — through the real entry points,
-    // against a database where the tables genuinely do not exist yet.
-    await Assert.ThrowsAsync<WhizbangNotReadyException>(async () =>
-      await dispatcher.PublishAsync(new LocalEventStorageTests.OutboxRoutedEvent(Guid.CreateVersion7(), "early")));
+    // (1) While Migrate is under way, a dispatch WAITS for it (#1877) instead of being refused, and the
+    // read side refuses, through the real entry points against a database whose tables do not exist yet.
+    // The early publish cannot complete until the schema gate is marked below: nothing else releases it.
+    var earlyPublish = dispatcher.PublishAsync(new LocalEventStorageTests.OutboxRoutedEvent(Guid.CreateVersion7(), "early"));
+    await Assert.That(earlyPublish.IsCompleted).IsFalse()
+      .Because("a dispatch made while Migrate is under way waits on the schema gate rather than failing");
     await using (var earlyScope = provider.CreateAsyncScope()) {
       await Assert.ThrowsAsync<WhizbangNotReadyException>(async () => {
         _ = earlyScope.ServiceProvider.GetRequiredService<ILensQuery<ProbeModel>>();
@@ -246,6 +248,7 @@ public class ColdBootJourneyE2ETests {
     // The REAL migration — the exact work the initializer performs before it marks the gate.
     await _migrateForRealAsync();
     schemaGate.MarkReady();
+    await earlyPublish.WaitAsync(cancellationToken);
     await _awaitPhaseAsync(lifecycle, LifecyclePhase.AcceptingCommands, cancellationToken);
 
     // Identify happens after Migrate: the instance registers once the tables exist.

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Identifies which work category a flush operation targets. Used by category-aware
-/// methods like <see cref="IWorkCoordinator.RenewLeasesAsync"/> and
+/// methods like <see cref="IWorkCoordinator.RenewHeldLeasesAsync"/> and
 /// <see cref="IWorkCoordinator.ReportFailuresAsync"/>.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>

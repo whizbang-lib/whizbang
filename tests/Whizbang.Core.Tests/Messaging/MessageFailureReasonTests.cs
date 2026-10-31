@@ -25,6 +25,15 @@ public class MessageFailureReasonTests {
     await Assert.That((int)MessageFailureReason.EmptyStreamId).IsEqualTo(11);
     // Written by the store itself (migration 228), so the number is part of the SQL contract.
     await Assert.That((int)MessageFailureReason.MixedStreamRefused).IsEqualTo(22);
+    // Written by wh_store_outbox_dead_letters (migration 256) through its caller, so the number is stored data.
+    await Assert.That((int)MessageFailureReason.OutboxStoreFailed).IsEqualTo(23);
+    // Written by wh_store_inbox_dead_letters (migration 257) through its caller, so the number is stored data.
+    await Assert.That((int)MessageFailureReason.InboxStoreFailed).IsEqualTo(24);
+    // Written by the store itself (migration 266), so the number is part of the SQL contract.
+    await Assert.That((int)MessageFailureReason.StreamSealed).IsEqualTo(25);
+    // Written by the store itself (migration 271), so the numbers are part of the SQL contract.
+    await Assert.That((int)MessageFailureReason.StreamArchived).IsEqualTo(26);
+    await Assert.That((int)MessageFailureReason.AwaitingRestore).IsEqualTo(27);
     await Assert.That((int)MessageFailureReason.Unknown).IsEqualTo(99);
 #pragma warning restore TUnitAssertions0005
   }

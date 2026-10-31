@@ -7,6 +7,7 @@ using System.Text.Json;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Postgres;
@@ -283,10 +284,12 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
     // The ordering guard, so an event the row has already moved past is skipped rather than applied
     // backwards. Written against EXCLUDED.metadata in the upsert forms and against the bound
-    // parameter in the conditional update, the only place the incoming metadata differs.
-    var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
+    // parameter in the conditional update, the only place the incoming metadata differs. A rebuild's
+    // write is not ordered on the event id even for a versioned model (#1819).
+    var ordersOnEventId = PerspectiveRowVersionCommands.OrdersOnEventId(
+      typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel)), ProcessingModeAccessor.Current);
     string guard(string incoming) =>
-      PerspectiveRowVersionCommands.OrderingGuard(_table, incoming, isVersionedTarget);
+      PerspectiveRowVersionCommands.OrderingGuard(_table, incoming, ordersOnEventId);
 
     // A checked write lands only on the version the apply read. An existing row is updated in place
     // on that exact version -- an UPDATE, not an upsert, so a row deleted meanwhile is not brought

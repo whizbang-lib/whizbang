@@ -34,10 +34,14 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
   // Task.WhenAll(workers) inside FlushAndStopAsync would surface an unrelated fault instead of
   // the clean shutdown callers rely on.
   [Test]
-  [Timeout(15000)]
+  [Timeout(30000)]
   public async Task FlushObservingStopToken_DuringForcedShutdown_ReturnsWithoutFaultingAsync(
       CancellationToken cancellationToken) {
     var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(20);
+    var clock = new BatchWindowClock(window);
+    var abandoned = new System.Collections.Concurrent.ConcurrentQueue<OutboxFlushFailure>();
+    var abandonedReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: async (_, ct) => {
@@ -48,12 +52,22 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock,
+      onFlushFailed: (failure, _) => {
+        abandoned.Enqueue(failure);
+        abandonedReported.TrySetResult();
+        return Task.FromResult(true);
+      },
+      metrics: null);
 
-    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    var message = _make(_idProvider.NewGuid());
+    await sut.AppendAsync(message, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(window);
     await flushEntered.Task.WaitAsync(cancellationToken);
 
     using var stopCts = new CancellationTokenSource();
@@ -64,9 +78,14 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     // pending flush above is blocked on. Must return promptly, not hang or throw.
     await sut.FlushAndStopAsync(stopCts.Token).WaitAsync(cancellationToken);
 
-    await Assert.That(async () => await sut.AppendAsync(_make(_idProvider.NewGuid())))
+    await Assert.That(async () => await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken))
       .ThrowsExactly<ObjectDisposedException>()
       .Because("the strategy must have fully stopped, not merely returned from a faulted drain task");
+    // #1871: the batch the forced stop interrupted is not dropped; its worker reports it once the stop has returned.
+    await abandonedReported.Task.WaitAsync(cancellationToken);
+    var reported = abandoned.Single();
+    await Assert.That(reported.Cause).IsEqualTo(OutboxFlushFailureCause.AbandonedAtShutdown);
+    await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
   }
 
   /// <summary>

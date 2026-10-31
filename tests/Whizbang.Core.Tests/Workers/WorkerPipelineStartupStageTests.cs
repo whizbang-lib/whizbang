@@ -50,6 +50,28 @@ public sealed class WorkerPipelineStartupStageTests {
       .StartsWith("Stage 1 of 7: Preflight - host starting; ");
   }
 
+  /// <summary>
+  /// One stage gate, the one the reporter tells: a worker registered to start at a stage waits on the stage this
+  /// instance's reporter actually enters, and on the schema-ready gate for every stage up to Coordinate.
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangWorkers_RegistersOneStageGate_TheReportersObserverAsync() {
+    var services = _compose(times: 2);
+    await using var provider = services.BuildServiceProvider();
+
+    var gate = provider.GetRequiredService<IStartupStageGate>();
+    await Assert.That(gate).IsTypeOf<StartupStageGate>();
+    await Assert.That(provider.GetServices<IStartupStageObserver>().Count(o => ReferenceEquals(o, gate))).IsEqualTo(1)
+      .Because("composing the pipeline twice must not tell the gate each stage twice");
+
+    await provider.GetRequiredService<IStartupStageReporter>().EnterAsync(StartupStage.Elect, "voting");
+    await Assert.That(gate.HasReached(StartupStage.Elect)).IsTrue().Because("the gate hears the reporter's stages");
+    await Assert.That(gate.HasReached(StartupStage.Migrate)).IsFalse();
+
+    provider.GetRequiredService<ISchemaReadyGate>().MarkReady();
+    await Assert.That(gate.HasReached(StartupStage.Coordinate)).IsTrue().Because("the gate reads the host's schema-ready gate");
+  }
+
   private static ServiceCollection _compose(int times) {
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());

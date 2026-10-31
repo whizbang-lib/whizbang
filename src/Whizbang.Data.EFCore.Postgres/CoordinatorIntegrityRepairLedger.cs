@@ -185,6 +185,30 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  /// <remarks>One round trip. A store that cannot answer marks nothing: repair then keeps its terminal cadence for
+  /// these buckets, which costs an occasional redundant redelivery and never stops a repair that could help.</remarks>
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    if (keys.Count == 0) {
+      return [];
+    }
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is not null
+          && await coordinator.IntegrityMarkUnhealableBatchAsync(keys[0].OriginServiceId, keys, now, cancellationToken).ConfigureAwait(false) is { } marked) {
+        return marked;
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("mark-unhealable", fallback: false, ex);
+    }
+    return [];
+  }
+
+  /// <inheritdoc />
   public async ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
     try {
       using var scope = scopeFactory.CreateScope();

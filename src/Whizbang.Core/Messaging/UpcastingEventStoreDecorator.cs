@@ -45,13 +45,29 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>Initializes the decorator.</remarks>
 /// <param name="inner">The underlying event store.</param>
 /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
-public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) : ForwardingEventStoreDecorator(inner) {
+/// <param name="streamIds">Reads an event's <c>[StreamId]</c> before and after the pipeline; the generated registry's when null.</param>
+public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline, IStreamIdExtractor? streamIds) : ForwardingEventStoreDecorator(inner) {
+  /// <summary>Initializes the decorator with the generated stream-id registry.</summary>
+  /// <param name="inner">The underlying event store.</param>
+  /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
+  public UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline)
+    : this(inner, pipeline, streamIds: null) {
+  }
+
+  // Reads an event's [StreamId] before and after the pipeline, to tell a re-key from an event that names another stream (#1798).
+  private readonly IStreamIdExtractor _streamIds = streamIds ?? Registry.StreamIdExtractorRegistry.GetComposite();
   private readonly EventUpcasterPipeline _pipeline = ArgumentGuard.NotNull(pipeline);
 
   private MessageEnvelope<IEvent> _upcast(MessageEnvelope<IEvent> envelope) {
-    var upcasted = _pipeline.Apply(envelope.Payload);
-    if (!ReferenceEquals(upcasted, envelope.Payload)) {
+    var stored = envelope.Payload;
+    // Read before the pipeline runs: a re-key upcaster may move the stream in place, on the same instance.
+    var storedStream = _streamIds.ExtractStreamId(stored, stored.GetType());
+    var upcasted = _pipeline.Apply(stored);
+    if (!ReferenceEquals(upcasted, stored)) {
       envelope.Payload = upcasted;
+    }
+    if (_streamIds.ExtractStreamId(upcasted, upcasted.GetType()) is { } moved && moved != Guid.Empty && moved != storedStream) {
+      EventRekeys.Record(upcasted, moved);
     }
     return envelope;
   }
@@ -59,9 +75,21 @@ public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcaste
   // ── transformed: polymorphic read paths ──
 
   /// <inheritdoc />
-  public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
-      Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+  public override IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+      Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    _upcastReadAsync(types => Inner.ReadPolymorphicAsync(streamId, fromEventId, types, cancellationToken), eventTypes, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>A rewind's read through the archive (#1738) is upcast exactly as the ordinary read is.</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:ReadPolymorphicThroughArchive_UpcastsLikeTheOrdinaryReadAsync</tests>
+  public override IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+      Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    _upcastReadAsync(types => Inner.ReadPolymorphicThroughArchiveAsync(streamId, fromEventId, afterVersion, types, cancellationToken),
+      eventTypes, cancellationToken);
+
+  private async IAsyncEnumerable<MessageEnvelope<IEvent>> _upcastReadAsync(
+      Func<IReadOnlyList<Type>, IAsyncEnumerable<MessageEnvelope<IEvent>>> read, IReadOnlyList<Type> eventTypes,
+      [EnumeratorCancellation] CancellationToken cancellationToken) {
     // Type-change upcasters consume foreign inputs (LegacyA → GenericB) that the caller's
     // requested type set excludes — so the inner store would skip them before the upcaster runs.
     // Include those source types in the read, then drop any upcast result that isn't one of the
@@ -69,9 +97,7 @@ public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcaste
     // upcasters declare no source types, so this is a no-op for them (the common case).
     var extra = _pipeline.ExtraInputTypesFor(eventTypes);
     if (extra.Count == 0) {
-      await foreach (var envelope in Inner
-          .ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)
-          .WithCancellation(cancellationToken)) {
+      await foreach (var envelope in read(eventTypes).WithCancellation(cancellationToken)) {
         yield return _upcast(envelope);
       }
       yield break;
@@ -80,9 +106,7 @@ public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcaste
     var requested = new HashSet<Type>(eventTypes);
     var readTypes = new List<Type>(eventTypes);
     readTypes.AddRange(extra);
-    await foreach (var envelope in Inner
-        .ReadPolymorphicAsync(streamId, fromEventId, readTypes, cancellationToken)
-        .WithCancellation(cancellationToken)) {
+    await foreach (var envelope in read(readTypes).WithCancellation(cancellationToken)) {
       var upcasted = _upcast(envelope);
       if (requested.Contains(upcasted.Payload.GetType())) {
         yield return upcasted;

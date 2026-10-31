@@ -470,6 +470,21 @@ public partial class WorkTablesAreLockedInOneOrderTests {
   }
 
   /// <summary>
+  /// The held-lease renewal (#1852) takes each category's rows and then the stream ledger, in the canonical order,
+  /// and its arms are as exclusive as <c>renew_leases</c>'s.
+  /// </summary>
+  [Test]
+  public async Task TheHeldLeaseRenewal_TakesEachCategoryBeforeTheLedgerAsync() {
+    var renewHeld = _reachableOrders()["wh_renew_held_leases"];
+
+    await Assert.That(renewHeld).Contains(("wh_outbox", "wh_active_streams"));
+    await Assert.That(renewHeld).Contains(("wh_inbox_state", "wh_active_streams"));
+    await Assert.That(renewHeld).Contains(("wh_perspective_events", "wh_active_streams"));
+    await Assert.That(renewHeld).DoesNotContain(("wh_outbox", "wh_inbox_state"))
+      .Because("the outbox and inbox arms of the CASE are mutually exclusive, so no call locks both");
+  }
+
+  /// <summary>
   /// An <c>INSERT ... ON CONFLICT</c> is counted, because it takes a row lock.
   /// </summary>
   /// <remarks>

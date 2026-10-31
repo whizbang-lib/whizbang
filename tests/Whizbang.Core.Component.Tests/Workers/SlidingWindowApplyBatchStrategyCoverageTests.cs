@@ -54,6 +54,8 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new RecordingLogger();
+    var window = TimeSpan.FromMilliseconds(10);
+    var clock = new BatchWindowClock(window);
 
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: async (_, _, ct) => {
@@ -64,13 +66,16 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
       },
       logger: logger,
       options: new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(Guid.CreateVersion7(), testToken);
-    await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await clock.Armed(1).WaitAsync(testToken);
+    clock.Advance(window);
+    await flushStarted.Task.WaitAsync(testToken);
 
     using var callerCts = new CancellationTokenSource();
     await callerCts.CancelAsync();
@@ -78,11 +83,11 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
     // The caller's token is already canceled and the flush is still hung, so awaiting the drain
     // workers with that token must throw immediately — caught internally, forcing the strategy's
     // own hard-cancel — rather than this call ever throwing out to us.
-    await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(testToken);
 
-    // Give the drain task's own exception handler, now unblocked by the forced cancellation, a moment to run
-    // — it either returns quietly or, if regressed, logs a spurious failure.
-    await Task.Delay(200, testToken);
+    // Wait for the drain worker itself to finish: its exception handler, unblocked by the forced cancellation,
+    // either returns quietly or, if regressed, logs a spurious failure, and both happen before the worker ends.
+    await sut.WhenWorkersStoppedForTests().WaitAsync(testToken);
 
     await Assert.That(logger.Errors).IsEmpty()
       .Because("a shutdown-forced cancellation of an in-flight flush is not a flush failure and "
@@ -99,6 +104,9 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
   [Timeout(30000)]
   public async Task IdleSweep_SkipsAStreamStillWithinItsWindowWhileEvictingAStaleOneAsync(CancellationToken testToken) {
     var staleStream = Guid.CreateVersion7();
+    var sweepInterval = TimeSpan.FromSeconds(10);
+    var evictionWindow = TimeSpan.FromSeconds(30);
+    var clock = new FakeTimeProvider();
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => Task.CompletedTask,
@@ -107,22 +115,22 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-        IdleSweepInterval = TimeSpan.FromMilliseconds(50),
-        IdleEvictionWindow = TimeSpan.FromMilliseconds(300),
-      });
+        IdleSweepInterval = sweepInterval,
+        IdleEvictionWindow = evictionWindow,
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(staleStream, testToken);
-    // Let the stale stream age well past the eviction window before the active one even exists.
-    await Task.Delay(350, testToken);
+    // The stale stream ages to just short of the eviction window before the active one even exists; the sweeps
+    // that tick on the way find nothing old enough to evict.
+    clock.Advance(evictionWindow - (sweepInterval / 2));
     var activeStream = Guid.CreateVersion7();
     await sut.AppendAsync(activeStream, testToken);
 
-    // Poll for the sweep to evict exactly the stale stream — the active one (appended moments
-    // ago) is still comfortably inside its own 300ms window on every sweep tick that follows.
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-    while (sut.ActiveStreamCount > 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20, testToken);
-    }
+    // The next sweep tick lands with the stale stream past its window and the active one, appended moments
+    // ago, comfortably inside its own. The tick runs inside the advance and records its sweep; wait for it.
+    clock.Advance(sweepInterval / 2);
+    await sut.IdleSweeps.DrainAsync(testToken);
 
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
       .Because("the sweep must evict the stale stream while leaving the still-active one mapped — "

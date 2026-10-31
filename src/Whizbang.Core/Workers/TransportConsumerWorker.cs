@@ -59,6 +59,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
+  private readonly TimeProvider _timeProvider;
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
@@ -139,6 +140,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
   /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
+  /// <param name="timeProvider">
+  /// The clock the subscription retry and reconnect delays and the health monitor's sweep wait on; the system clock
+  /// when omitted.
+  /// </param>
   /// <remarks>
   /// <para>
   /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from the per-message scope
@@ -172,7 +177,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
     Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
     TransportBatchOptions? transportBatchOptions = null,
-    Tags.ControlClassResolver? controlClassResolver = null
+    Tags.ControlClassResolver? controlClassResolver = null,
+    TimeProvider? timeProvider = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -186,6 +192,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _transport = transport;
     _options = options;
     _resilienceOptions = resilienceOptions;
+    _timeProvider = timeProvider ?? TimeProvider.System;
     _scopeFactory = scopeFactory;
     _metrics = metrics;
     _logger = logger;
@@ -213,7 +220,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
-      _states[destination] = new SubscriptionState(destination);
+      _states[destination] = new SubscriptionState(destination) { StatusChanged = _raiseSubscriptionStatusChanged };
     }
 
     // Register recovery handler if transport supports it
@@ -226,6 +233,61 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Gets the current subscription states for health monitoring.
   /// </summary>
   public IReadOnlyDictionary<TransportDestination, SubscriptionState> SubscriptionStates => _states;
+
+  /// <summary>
+  /// Raised each time a destination's subscription status changes value: <see cref="SubscriptionStatus.Pending"/>
+  /// to <see cref="SubscriptionStatus.Healthy"/> on a successful subscribe, to <see cref="SubscriptionStatus.Recovering"/>
+  /// on a failed attempt or a disconnect, to <see cref="SubscriptionStatus.Failed"/> when retries are exhausted, and
+  /// back to <see cref="SubscriptionStatus.Pending"/> when the health monitor or a connection recovery retries it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use it to monitor subscriptions as they change (alerting, metrics, a readiness gate per destination), or to wait
+  /// on the exact transition a test asserts. <see cref="SubscriptionsReady"/> says the initial subscription pass is
+  /// over; this says what each destination's status became, including every later change.
+  /// </para>
+  /// <para>
+  /// The event is raised synchronously on the thread that changed the status, after the status and the fields that
+  /// accompany it (<see cref="SubscriptionState.LastError"/>, <see cref="SubscriptionState.AttemptCount"/>,
+  /// <see cref="SubscriptionState.Subscription"/>) are recorded, so a handler that reads
+  /// <see cref="SubscriptionStatusChangedEventArgs.State"/> sees them. Writing a status a state already has raises
+  /// nothing. Keep handlers short and hand longer work off: the subscribe and retry path waits for them.
+  /// </para>
+  /// <para>
+  /// A handler that throws is logged as a warning naming the destination and the status, and neither the
+  /// subscription nor the other handlers are affected. With no handler attached the cost is one null check per
+  /// status change.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/transport-consumer#subscription-status-changes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_EveryDestinationSubscribes_RaisedPendingToHealthyAfterTheStateIsRecordedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_SubscribeKeepsFailing_RaisedRecoveringThenFailedWithTheErrorRecordedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerThrows_IsLoggedAndLaterHandlersAndTheSubscriptionAreUnaffectedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_NoHandlerAttached_StatusStillChangesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerDetached_NoLongerRaisedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_SubscriptionDisconnects_RaisedRecoveringWithTheDisconnectErrorThenHealthyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_ConnectionRecovered_RaisedPendingWithAResetStateThenHealthyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HealthMonitorRetriesAFailedSubscription_RaisedPendingWithAResetCounterThenHealthyAsync</tests>
+  public event EventHandler<SubscriptionStatusChangedEventArgs>? SubscriptionStatusChanged;
+
+  /// <summary>
+  /// Turns one state's status change into <see cref="SubscriptionStatusChanged"/>, each handler isolated so a throwing
+  /// one is logged and cannot reach the subscribe and retry path that changed the status.
+  /// </summary>
+  private void _raiseSubscriptionStatusChanged(SubscriptionState state, SubscriptionStatus previousStatus, SubscriptionStatus status) {
+    var handlers = SubscriptionStatusChanged;
+    if (handlers is null) {
+      return;
+    }
+    var args = new SubscriptionStatusChangedEventArgs(state, previousStatus, status);
+    foreach (var handler in Delegate.EnumerateInvocationList(handlers)) {
+      try {
+        handler(this, args);
+      } catch (Exception ex) {
+        LogSubscriptionStatusHandlerFailed(_logger, ex, state.Destination.Address, args.Status);
+      }
+    }
+  }
 
   /// <summary>
   /// Executes the worker, creating subscriptions for all configured destinations.
@@ -421,6 +483,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       state,
       _resilienceOptions,
       _logger,
+      _timeProvider,
       cancellationToken
     );
   }
@@ -432,11 +495,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _logger.LogInformation("Connection recovered, re-establishing subscriptions...");
 
     // Reset all states to Pending
+    // The status is written last, so an observer of the change to Pending reads the reset state.
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
-      state.Subscription = null;
-      state.Status = SubscriptionStatus.Pending;
+      // Taken atomically, so a reconnect racing this recovery for the same subscription cannot dispose it again (#1839).
+      state.ReleaseSubscription()?.Dispose();
       state.ResetAttempts();
+      state.Status = SubscriptionStatus.Pending;
     }
 
     // Re-subscribe to all destinations
@@ -451,7 +515,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private async Task _monitorSubscriptionHealthAsync(CancellationToken cancellationToken) {
     while (!cancellationToken.IsCancellationRequested) {
       try {
-        await Task.Delay(_resilienceOptions.HealthCheckInterval, cancellationToken);
+        await Task.Delay(_resilienceOptions.HealthCheckInterval, _timeProvider, cancellationToken);
 
         var failedStates = _states.Values
           .Where(s => s.Status == SubscriptionStatus.Failed)
@@ -467,9 +531,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
           }
 
           foreach (var state in failedStates) {
-            // Reset and retry in background
-            state.Status = SubscriptionStatus.Pending;
+            // Reset and retry in background. The status is written last, so an observer of the
+            // change to Pending reads the reset counter.
             state.ResetAttempts();
+            state.Status = SubscriptionStatus.Pending;
             _ = _subscribeWithRetryAsync(state, cancellationToken);
           }
         }
@@ -531,6 +596,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Ensure event type set is built before echo check (lazy, one-time init).
     _ensureKnownEventTypesInitialized(scope.ServiceProvider);
+    // The shared discard policy the worker pipeline registers; absent, the receive gate keeps the registry-only decision.
+    var discardPolicy = scope.ServiceProvider.GetService<IMessageDiscardPolicy>();
 
     // Collect inbox messages for one direct INSERT (store_inbox_messages)
     var inboxMessages = new List<InboxMessage>(messages.Count);
@@ -553,17 +620,14 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // EXEMPTION, composites: a composite is wire-only, so NO service consumes the composite type itself; its
       // consumers are registered for the INNER events, addressable once the dispatch seam fans it out. See
       // CompositeInboxFanout.IsCompositeWireType.
+      // EXEMPTION, absorbed namespaces (#1776): an event in RoutingOptions.AbsorbedNamespaces is kept with no local
+      // consumer, so the claim copies it into the event store for a perspective added later to rebuild from. The shared
+      // discard policy owns that decision; ReceiveConsumerGate asks it, for this worker and ServiceBusConsumerWorker alike.
       string? discardedOnReceive = null;
-      if (!string.IsNullOrWhiteSpace(msg.EnvelopeType)
-          && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
-        var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
-        if (innerMessageType is not null
-            && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
-            && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
-          discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
-          _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType));
-        }
+      if (ReceiveConsumerGate.UnconsumedMessageType(
+            msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null) {
+        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
+        _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType!));
       }
 
       // CONTROL CLASS — non-durable receive (topology arc phase 9): receive → compare → discard.
@@ -1084,12 +1148,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesDetached, MessageSource.Inbox);
+        LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesDetached, MessageSource.Inbox);
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
     } else {
       // Detached stages: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
@@ -1293,7 +1357,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
+      state.ReleaseSubscription()?.Dispose();
     }
 
     _states.Clear();
@@ -1323,6 +1387,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         TimestampKind.DeliveredAt,
         DateTimeOffset.UtcNow);
   }
+
+  /// <summary>Logs that a <see cref="SubscriptionStatusChanged"/> handler threw; the subscription is unaffected.</summary>
+  /// <docs>messaging/transports/transport-consumer#subscription-status-changes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerThrows_IsLoggedAndLaterHandlersAndTheSubscriptionAreUnaffectedAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "A SubscriptionStatusChanged handler threw for destination {Address} changing to {Status}; the subscription is unaffected"
+  )]
+  private static partial void LogSubscriptionStatusHandlerFailed(ILogger logger, Exception exception, string address, SubscriptionStatus status);
 
   /// <summary>Logs that an owned event was discarded (owned events arriving from transport are always echo).</summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>

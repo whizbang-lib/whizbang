@@ -21,12 +21,22 @@ namespace Whizbang.Core.Tests;
 /// <code-under-test>src/Whizbang.Core/EventMarkerResolver.cs</code-under-test>
 public class EventMarkerResolverCoverageTests {
   private sealed class KnownType;
+  private sealed class TerminalType;
   private sealed class UnknownType;
 
   private sealed class Catalog : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
       new(typeof(KnownType), TypeNameFormatter.FormatClrTypeName(typeof(KnownType)), "event", null) {
         IsComposite = true,
+      },
+    ];
+  }
+
+  private sealed class TerminalCatalog : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
+      new(typeof(KnownType), TypeNameFormatter.FormatClrTypeName(typeof(KnownType)), "event", null),
+      new(typeof(TerminalType), TypeNameFormatter.FormatClrTypeName(typeof(TerminalType)), "event", null) {
+        IsTerminal = true,
       },
     ];
   }
@@ -42,6 +52,16 @@ public class EventMarkerResolverCoverageTests {
 
     await Assert.That(flags is not null).IsTrue();
     await Assert.That(flags!.Value.HasFlag(EventFlags.Composite)).IsTrue();
+  }
+
+  [Test]
+  public async Task Resolve_ATerminalEntry_StampsTheTerminalBit_AndAPlainEntryDoesNotAsync() {
+    var resolver = new EventMarkerResolver(new TerminalCatalog());
+
+    await Assert.That(resolver.Resolve(typeof(TerminalType))).IsEqualTo(EventFlags.Terminal);
+    await Assert.That(resolver.Resolve(TypeNameFormatter.FormatClrTypeName(typeof(TerminalType)))).IsEqualTo(EventFlags.Terminal)
+      .Because("the receive path resolves by name, and a received terminal event must seal the receiver's copy of its stream");
+    await Assert.That(resolver.Resolve(typeof(KnownType))).IsEqualTo(EventFlags.None);
   }
 
   [Test]

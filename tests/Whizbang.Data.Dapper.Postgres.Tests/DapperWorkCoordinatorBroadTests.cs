@@ -357,10 +357,10 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_NoMessages_NoOpAsync() {
+  public async Task RenewHeldLeasesAsync_NoMessages_NoOpAsync() {
     var c = _build();
-    var n = await c.RenewLeasesAsync(WorkCategory.Outbox, [], leaseSeconds: 30);
-    await Assert.That(n).IsEqualTo(0);
+    var notHeld = await c.RenewHeldLeasesAsync(WorkCategory.Outbox, (Guid)TrackedGuid.New(), [], leaseSeconds: 30);
+    await Assert.That(notHeld).IsEmpty();
   }
 
   [Test]
@@ -543,7 +543,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_WithStoredRows_BumpsLeaseAsync() {
+  public async Task RenewHeldLeasesAsync_TheHolder_BumpsLeaseAsync() {
     var c = _build();
     var instanceId = (Guid)TrackedGuid.New();
     var msgId = (Guid)TrackedGuid.New();
@@ -555,8 +555,37 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
       "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '1 second' WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
-    var n = await c.RenewLeasesAsync(WorkCategory.Outbox, [msgId], leaseSeconds: 600);
-    await Assert.That(n).IsGreaterThanOrEqualTo(0);
+    var notHeld = await c.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, [msgId], leaseSeconds: 600);
+
+    await Assert.That(notHeld).IsEmpty();
+    var remaining = await conn.ExecuteScalarAsync<double>(
+      "SELECT EXTRACT(EPOCH FROM (lease_expiry - NOW())) FROM wh_outbox WHERE message_id = @m", new { m = msgId });
+    await Assert.That(remaining).IsGreaterThan(500d)
+      .Because("the holder's renewal to 600 seconds moves a one second lease well out");
+  }
+
+  [Test]
+  public async Task RenewHeldLeasesAsync_ARowAnotherInstanceHolds_IsReportedAndLeftAloneAsync() {
+    var c = _build();
+    var formerHolder = (Guid)TrackedGuid.New();
+    var holder = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], 100);
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = holder, m = msgId });
+    var before = await conn.ExecuteScalarAsync<DateTime>("SELECT lease_expiry FROM wh_outbox WHERE message_id = @m", new { m = msgId });
+
+    var notHeld = await c.RenewHeldLeasesAsync(WorkCategory.Outbox, formerHolder, [msgId], leaseSeconds: 1800);
+
+    await Assert.That(notHeld).IsEquivalentTo([msgId])
+      .Because("the row's lease belongs to another instance, so this instance's renewal reports it instead of renewing it (#1852)");
+    var after = await conn.ExecuteScalarAsync<DateTime>("SELECT lease_expiry FROM wh_outbox WHERE message_id = @m", new { m = msgId });
+    await Assert.That(after).IsEqualTo(before)
+      .Because("a former holder's renewal must not extend the lease the current holder has");
   }
 
   [Test]

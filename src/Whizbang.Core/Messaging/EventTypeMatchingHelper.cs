@@ -90,6 +90,13 @@ public static class EventTypeMatchingHelper {
       return assemblyQualifiedTypeName;
     }
 
+    // Only a ", Version=" segment starts the stripping below, so a name without "Version=" is already normalized.
+    // That is the wire form the framework stores ("Type, Assembly"), and every by-name lookup normalizes its key
+    // first: return it as it is rather than copy it per lookup (#1756).
+    if (!assemblyQualifiedTypeName.Contains("Version=", StringComparison.Ordinal)) {
+      return assemblyQualifiedTypeName;
+    }
+
     // Strip ", Version=..., Culture=..., PublicKeyToken=..." segments from assembly-qualified names.
     // Uses string scanning instead of regex to avoid backtracking timeouts on long/nested generic types.
     var result = new System.Text.StringBuilder(assemblyQualifiedTypeName.Length);

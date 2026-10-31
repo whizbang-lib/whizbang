@@ -101,15 +101,16 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task RenewLeasesAsync_IdArray_RenewsTheRowAsync() {
+  public async Task RenewHeldLeasesAsync_IdArray_ReachesTheRenewalAsync() {
     var c = _build();
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], partitionCount: 100);
 
     Guid[] input5 = [msgId];
-    var renewed = await c.RenewLeasesAsync(WorkCategory.Outbox, input5, leaseSeconds: 120);
+    var notHeld = await c.RenewHeldLeasesAsync(WorkCategory.Outbox, (Guid)TrackedGuid.New(), input5, leaseSeconds: 120);
 
-    await Assert.That(renewed).IsEqualTo(1);
+    await Assert.That(notHeld).IsEquivalentTo([msgId])
+      .Because("the id handed in as an array reaches the renewal, which reports the unclaimed row as not held");
   }
 
   [Test]

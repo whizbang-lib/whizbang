@@ -209,6 +209,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ModelClassName: modelClassName,
         PerspectiveClrTypeName: clrTypeName,
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
+        ModelFullyQualifiedName: TypeNameUtilities.FullyQualified(modelType),
         TableSource: PerspectiveTableNaming.From(modelType),
         ModelLocation: LocationUtilities.FirstOrNone(modelType),
         PropertyCount: propertyCount,
@@ -239,6 +240,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ModelClassName: candidate.ModelClassName,
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
         ModelClrTypeName: candidate.ModelClrTypeName,
+        ModelFullyQualifiedName: candidate.ModelFullyQualifiedName,
         TableName: tableName,
         IsManualTableName: candidate.TableSource.IsManual,
         ModelLocation: candidate.ModelLocation,
@@ -611,10 +613,18 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    /// <summary>The perspective registry payload: one entry per perspective, keyed by the model's CLR type name.</summary>");
     schemaBuilder.AppendLine($"    public const string RegistryJson = \"{json.Replace("\\", "\\\\").Replace("\"", "\\\"")}\";");
     schemaBuilder.AppendLine();
-    schemaBuilder.AppendLine("    /// <summary>Registers this assembly's perspective registry payload at load.</summary>");
+    schemaBuilder.AppendLine("    /// <summary>Registers this assembly's perspective registry payload, and the model each table stores, at load.</summary>");
     schemaBuilder.AppendLine("    [global::System.Runtime.CompilerServices.ModuleInitializer]");
-    schemaBuilder.AppendLine("    internal static void RegisterPerspectiveRegistry() =>");
+    schemaBuilder.AppendLine("    internal static void RegisterPerspectiveRegistry() {");
     schemaBuilder.AppendLine("        global::Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Register(ServiceName, RegistryJson);");
+    // One per table: the driver reads a table's declared JSON names from its model's serializer metadata (#1874),
+    // and two perspectives of one model share its table.
+    var registeredTables = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    foreach (var perspective in perspectives.Where(p => registeredTables.Add(p.TableName))) {
+      schemaBuilder.AppendLine(
+        $"        global::Whizbang.Core.Perspectives.PerspectiveDocumentModels.Register(\"{perspective.TableName}\", typeof({perspective.ModelFullyQualifiedName}));");
+    }
+    schemaBuilder.AppendLine("    }");
   }
 
   /// <summary>
@@ -928,6 +938,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="ClassName">Simple class name (e.g., "OrderSummaryPerspective")</param>
 /// <param name="FullyQualifiedClassName">Fully qualified class name</param>
 /// <param name="ModelClassName">Simple class name of the model type</param>
+/// <param name="ModelFullyQualifiedName">The model as C# names it (<c>global::MyApp.Owner.Model</c>), for a <c>typeof</c></param>
 /// <param name="TableName">The model's PostgreSQL table name (e.g., "wh_per_order_summary")</param>
 /// <param name="IsManualTableName">Whether <c>[PerspectiveTable]</c> on the model set <paramref name="TableName"/></param>
 /// <param name="ModelLocation">The model's declaration, where a table-name error is reported</param>
@@ -945,6 +956,7 @@ internal sealed record PerspectiveSchemaInfo(
     string ModelClassName,
     string PerspectiveClrTypeName,
     string ModelClrTypeName,
+    string ModelFullyQualifiedName,
     string TableName,
     bool IsManualTableName,
     Location ModelLocation,
@@ -983,6 +995,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="ModelClassName">Simple class name of the model type</param>
 /// <param name="PerspectiveClrTypeName">The perspective's CLR type name, the form its cursors and snapshots key on</param>
 /// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c>), the perspective registry key</param>
+/// <param name="ModelFullyQualifiedName">The model as C# names it (<c>global::MyApp.Owner.Model</c>), for a <c>typeof</c></param>
 /// <param name="TableSource">Where the model's table name comes from: its base name, or its <c>[PerspectiveTable]</c> name</param>
 /// <param name="ModelLocation">The model's declaration, where a table-name error is reported</param>
 /// <param name="PropertyCount">Number of properties for size estimation</param>
@@ -999,6 +1012,7 @@ internal sealed record PerspectiveCandidate(
     string ModelClassName,
     string PerspectiveClrTypeName,
     string ModelClrTypeName,
+    string ModelFullyQualifiedName,
     PerspectiveTableSource TableSource,
     Location ModelLocation,
     int PropertyCount,

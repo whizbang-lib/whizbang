@@ -1,10 +1,11 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
@@ -12,30 +13,55 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Roslyn analyzer that detects array properties in perspective models.
-/// Arrays cause EF Core change tracking failures because IList.Add() doesn't work on fixed-size arrays.
-/// Recommends using List&lt;T&gt; instead.
+/// Reports an array of records in a perspective model: on the Entity Framework driver it makes the generator store the
+/// model as one opaque document, in which no field can be indexed (#1910).
 /// </summary>
+/// <remarks>
+/// <para>
+/// Entity Framework cannot read an array of a complex element back on the mapped path, so
+/// <see cref="MappedPathDiscovery"/> routes such a model to the opaque form, which reads and writes it correctly at the
+/// cost of its indexing. The warning names each such array where it is declared, at any depth of the model, and the
+/// collection shapes that keep the document mapped. An array of primitives is a mapped value that reads back, so it is
+/// not reported.
+/// </para>
+/// <para>
+/// A perspective model is a type a perspective in the compilation projects (<c>IPerspectiveBase&lt;TModel&gt;</c>, which
+/// every perspective interface extends, or <c>IGlobalPerspectiveFor&lt;TModel, TPartitionKey&gt;</c>). The opaque form
+/// is the Entity Framework driver's, so a compilation that does not reference it is not analyzed: the Dapper driver
+/// serializes every model whole and makes no such choice. The warning is turned off for a whole build with
+/// <c>WhizbangOpaqueArrayWarning=false</c>, and for one property with <c>#pragma warning disable WHIZ200</c> or a
+/// <c>[SuppressMessage]</c>, which apply because it is reported at the property.
+/// </para>
+/// </remarks>
+/// <docs>operations/diagnostics/whiz200</docs>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   // Diagnostic IDs: WHIZ200-299 reserved for model validation
   private const string CATEGORY = "Whizbang.ModelValidation";
 
+  /// <summary>The build property that turns the warning off for a whole compilation when <c>false</c>.</summary>
+  internal const string SWITCH_PROPERTY = "build_property.WhizbangOpaqueArrayWarning";
+
+  /// <summary>The assembly of the Entity Framework driver, whose generator stores a model opaquely.</summary>
+  private const string ENTITY_FRAMEWORK_DRIVER = "Whizbang.Data.EFCore.Postgres";
+
+  private const string PERSPECTIVE_BASE = "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
+  private const string GLOBAL_PERSPECTIVE = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor<TModel, TPartitionKey>";
+
   /// <summary>
-  /// WHIZ200: Warning - Perspective model uses array property which causes EF Core tracking failures.
+  /// WHIZ200: Warning - an array of records stores the perspective model as one opaque document.
   /// </summary>
   /// <docs>operations/diagnostics/whiz200</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:Analyzer_ArrayInPerspectiveAttribute_ReportsWHIZ200WarningAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecords_IsReportedAtItsProperty_SayingTheModelIsStoredOpaquelyAsync</tests>
   public static readonly DiagnosticDescriptor ArrayPropertyInPerspectiveModel = new(
       id: "WHIZ200",
-      title: "Perspective model should use List<T> instead of array",
-      messageFormat: "Property '{0}' in perspective model '{1}' uses array type '{2}'. Use 'List<{3}>' instead to avoid EF Core change tracking errors.",
+      title: "An array of records stores the perspective model as one opaque document",
+      messageFormat: "Property '{0}' of perspective model '{1}' is an array of records ('{2}'), so the model is stored as one opaque document and none of its fields can be indexed. Declare it as List<{3}>, IList<{3}> or ImmutableList<{3}> to keep the document mapped and indexable.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Arrays in perspective models cause 'Collection was of a fixed size' errors during EF Core change tracking. " +
-                   "EF Core's snapshot mechanism uses IList.Add() which fails on arrays. Use List<T> for collection properties."
-  );
+      description: "Entity Framework cannot read an array of a complex element back from a mapped JSON document, so a perspective model holding one, at any depth, is stored as one serialized document, which reads and writes correctly but has no field an index can serve. List<T>, IList<T> and ImmutableList<T> keep the document mapped. Arrays of primitives are not affected. Turn the warning off for a project with WhizbangOpaqueArrayWarning=false.");
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
@@ -45,140 +71,71 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
-
-    // Register for class declarations to find perspective models
-    context.RegisterSyntaxNodeAction(_analyzeClass, SyntaxKind.ClassDeclaration);
-    context.RegisterSyntaxNodeAction(_analyzeRecord, SyntaxKind.RecordDeclaration);
-  }
-
-  private static void _analyzeClass(SyntaxNodeAnalysisContext context) {
-    var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    _analyzeTypeDeclaration(context, classDeclaration);
-  }
-
-  private static void _analyzeRecord(SyntaxNodeAnalysisContext context) {
-    var recordDeclaration = (RecordDeclarationSyntax)context.Node;
-    _analyzeTypeDeclaration(context, recordDeclaration);
-  }
-
-  private static void _analyzeTypeDeclaration(SyntaxNodeAnalysisContext context, TypeDeclarationSyntax typeDeclaration) {
-    // Check if this type is used as a perspective model. The bind guard shares that exit: a
-    // declaration Roslyn bound no symbol for is not a perspective model either, so it leaves by the
-    // same test and the symbol is never dereferenced.
-    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, context.CancellationToken) is not { } typeSymbol
-        || !_isPerspectiveModel(typeSymbol)) {
-      return;
-    }
-
-    // Check all properties for arrays (including inherited properties from base model classes)
-    foreach (var propertySymbol in typeSymbol.GetAllProperties()) {
-      _checkPropertyForArray(context, propertySymbol, typeSymbol);
-    }
-  }
-
-  private static bool _isPerspectiveModel(INamedTypeSymbol typeSymbol) {
-    // Check if the type has [Perspective] attribute
-    foreach (var attribute in typeSymbol.GetAttributes()) {
-      var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
-      if (attributeName == "Whizbang.Core.Perspectives.PerspectiveAttribute" ||
-          attributeName.EndsWith(".PerspectiveAttribute", System.StringComparison.Ordinal)) {
-        return true;
-      }
-    }
-
-    // Check if type name ends with "Model" (common convention for perspective models)
-    // This is a heuristic - the main check is the attribute
-    if (typeSymbol.Name.EndsWith("Model", System.StringComparison.Ordinal)) {
-      // Check if it's referenced by any IPerspectiveFor<TModel, ...> in the compilation
-      // For performance, we use the naming convention heuristic here
-      // The attribute check above is the definitive one
-      return _isReferencedAsPerspectiveModel(typeSymbol);
-    }
-
-    return false;
-  }
-
-  private static bool _isReferencedAsPerspectiveModel(INamedTypeSymbol typeSymbol) {
-    // Check if any type in the compilation implements IPerspectiveFor<ThisType, ...>
-    // This is a simplified check - we look for the [Perspective] attribute on the model
-    // or if there's a [StreamId] property (indicating it's a stream model)
-
-    foreach (var member in typeSymbol.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        foreach (var attribute in property.GetAttributes()) {
-          var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
-          if (attributeName == "Whizbang.Core.Perspectives.StreamIdAttribute" ||
-              attributeName.EndsWith(".StreamIdAttribute", System.StringComparison.Ordinal)) {
-            return true;
-          }
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private static bool _hasVectorFieldAttribute(IPropertySymbol propertySymbol) {
-    foreach (var attribute in propertySymbol.GetAttributes()) {
-      var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
-      if (attributeName == "Whizbang.Core.Lenses.VectorFieldAttribute" ||
-          attributeName.EndsWith(".VectorFieldAttribute", System.StringComparison.Ordinal)) {
-        return true;
-      }
-    }
-    return false;
+    context.RegisterCompilationStartAction(_start);
   }
 
   /// <summary>
-  /// Whether the property is a <c>[PhysicalField]</c> whose column is jsonb, declared or defaulted.
+  /// Analyzes nothing in a build that turned the warning off or that does not reference the Entity Framework driver;
+  /// otherwise looks at each type for the models it projects.
   /// </summary>
-  private static bool _isPromotedToJsonb(IPropertySymbol propertySymbol) {
-    var attribute = propertySymbol.GetAttributes().FirstOrDefault(a =>
-      TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
-    if (attribute is null) {
-      return false;
-    }
-
-    var declared = attribute.NamedArguments.FirstOrDefault(a => a.Key == "ColumnType").Value.Value as string;
-    return PhysicalFieldScalar.IsJsonb(declared ?? PhysicalFieldScalar.DefaultColumnType(propertySymbol.Type));
-  }
-
-  private static void _checkPropertyForArray(
-      SyntaxNodeAnalysisContext context,
-      IPropertySymbol propertySymbol,
-      INamedTypeSymbol containingType) {
-
-    // Skip properties with [VectorField] attribute - these are intentionally float[]
-    // for vector embeddings and are handled specially by the source generator
-    if (_hasVectorFieldAttribute(propertySymbol)) {
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:TheBuildProperty_TurnsTheWarningOffAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AProjectWithoutTheEntityFrameworkDriver_IsNotReportedAsync</tests>
+  private static void _start(CompilationStartAnalysisContext context) {
+    if (_isTurnedOff(context.Options.AnalyzerConfigOptionsProvider.GlobalOptions)
+        || !context.Compilation.ReferencedAssemblyNames.Any(a => a.Name == ENTITY_FRAMEWORK_DRIVER)) {
       return;
     }
 
-    // Skip a [PhysicalField] stored as jsonb: the generated model keeps it out of the mapped document and
-    // reads and writes it as one converted value, so the change tracker never grows it in place.
-    if (_isPromotedToJsonb(propertySymbol)) {
+    // One report per property, however many perspectives project its model.
+    var reported = new ConcurrentDictionary<ISymbol, byte>(SymbolEqualityComparer.Default);
+    context.RegisterSymbolAction(symbolContext => _analyzePerspective(symbolContext, reported), SymbolKind.NamedType);
+  }
+
+  private static bool _isTurnedOff(AnalyzerConfigOptions options) =>
+    options.TryGetValue(SWITCH_PROPERTY, out var value)
+    && string.Equals(value.Trim(), "false", System.StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>Reports each array of records in the models a perspective projects, once per property.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AModelTwoPerspectivesProject_IsReportedOnceAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AModelFromAnotherAssembly_IsReportedAtThePerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AModelFromAReferencedAssembly_IsReportedAtThePerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnInterfaceExtendingAPerspectiveInterface_IsNotAPerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AStructPerspectivesModel_IsReportedAsync</tests>
+  private static void _analyzePerspective(SymbolAnalysisContext context, ConcurrentDictionary<ISymbol, byte> reported) {
+    var perspective = (INamedTypeSymbol)context.Symbol;
+    if (perspective.TypeKind is not (TypeKind.Class or TypeKind.Struct)) {
       return;
     }
 
-    var propertyType = propertySymbol.Type;
-
-    // Check if property type is an array
-    if (propertyType is IArrayTypeSymbol arrayType) {
-      // Get the element type for the suggestion
-      var elementType = TypeNameUtilities.MinimallyQualified(arrayType.ElementType);
-
-      // Find the property declaration syntax for accurate location
-      var location = LocationUtilities.FirstOrNone(propertySymbol);
-
-      var diagnostic = Diagnostic.Create(
-          ArrayPropertyInPerspectiveModel,
-          location,
-          propertySymbol.Name,
-          containingType.Name,
-          TypeNameUtilities.MinimallyQualified(propertyType),
-          elementType
-      );
-      context.ReportDiagnostic(diagnostic);
+    foreach (var model in _modelsProjectedBy(perspective)) {
+      foreach (var (property, path) in MappedPathDiscovery.ArraysOfRecords(model)) {
+        if (!reported.TryAdd(property, 0)) {
+          continue;
+        }
+        var array = (IArrayTypeSymbol)property.Type;
+        // At the property, so a pragma or a SuppressMessage on it applies. A property of another project has no source
+        // in this compilation (a metadata reference has none, and an IDE's project reference has another
+        // compilation's, which cannot be reported here), so it is reported at the perspective that projects its model.
+        var location = property.Locations.FirstOrDefault(l => l.SourceTree is { } tree && context.Compilation.ContainsSyntaxTree(tree))
+          ?? perspective.Locations[0];
+        context.ReportDiagnostic(Diagnostic.Create(
+            ArrayPropertyInPerspectiveModel,
+            location,
+            path,
+            model.Name,
+            TypeNameUtilities.MinimallyQualified(array),
+            TypeNameUtilities.MinimallyQualified(array.ElementType)));
+      }
     }
   }
+
+  /// <summary>The models a type projects: the first type argument of each perspective interface it implements.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AGlobalPerspectivesModel_IsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:ATypeNoPerspectiveProjects_IsNotReported_WhateverItsNameAsync</tests>
+  private static IEnumerable<INamedTypeSymbol> _modelsProjectedBy(INamedTypeSymbol perspective) =>
+    perspective.AllInterfaces
+      .Where(i => TypeNameUtilities.Display(i.OriginalDefinition) is PERSPECTIVE_BASE or GLOBAL_PERSPECTIVE)
+      .Select(i => i.TypeArguments[0])
+      .OfType<INamedTypeSymbol>()
+      .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 }

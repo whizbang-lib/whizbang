@@ -418,6 +418,105 @@ public class ImmediateWorkCoordinatorStrategyTests {
       .Because("the refused write can never succeed; offering it again would fail every later flush on this strategy");
   }
 
+  /// <summary>
+  /// A write refused because its stream is sealed rolled back and its caller has the error; the same write is refused
+  /// every time, so it is withdrawn like a mixed-stream refusal (#1733).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForASealedStream_TheNextFlushDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new StreamSealedException("Stream x was sealed", Guid.NewGuid(), DateTimeOffset.UnixEpoch, "Closed")
+    };
+    var sut = _strategy(fakeCoordinator);
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<StreamSealedException>();
+    var later = _createOutboxMessage();
+    sut.QueueOutboxMessage(later);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    Guid[] onlyTheLaterWork = [later.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(onlyTheLaterWork)
+      .Because("the refused write can never succeed; offering it again would fail every later flush on this strategy");
+  }
+
+  /// <summary>
+  /// A write refused because its stream is archived whole and its type refuses appends is withdrawn like a sealed one:
+  /// the caller has the refusal, and the same write is refused every time until someone restores the stream (#1738).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForAnArchivedStream_TheNextFlushDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new Whizbang.Core.Archival.StreamArchivedException(
+        "Stream x is archived through version 3", Guid.NewGuid(), 3, Whizbang.Core.Archival.AppendToArchivedPolicy.Refuse)
+    };
+    var sut = _strategy(fakeCoordinator);
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<Whizbang.Core.Archival.StreamArchivedException>();
+    var later = _createOutboxMessage();
+    sut.QueueOutboxMessage(later);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    Guid[] onlyTheLaterWork = [later.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(onlyTheLaterWork);
+  }
+
+  /// <summary>
+  /// An awaited write to an archived stream whose type restores on append restores the stream through the registered
+  /// archive store and stores the same write once more, so the caller sees it succeed (#1738).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_AnAutoRestoreRefusal_RestoresTheStream_AndStoresTheWriteOnceMoreAsync() {
+    var stream = Guid.NewGuid();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new Whizbang.Core.Archival.StreamArchivedException(
+        "Stream x is archived through version 3", stream, 3, Whizbang.Core.Archival.AppendToArchivedPolicy.AutoRestore)
+    };
+    var archive = new RestoreRecordingArchiveStore();
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Archival.IArchiveStore>(archive);
+    var sut = _strategy(fakeCoordinator, services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+    var message = _createOutboxMessage();
+    sut.QueueOutboxMessage(message);
+
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(archive.Restores).IsEquivalentTo([stream]);
+    Guid[] theWrite = [message.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(theWrite)
+      .Because("the same write is stored once the stream is back");
+  }
+
+  /// <summary>Records each restore it is asked for.</summary>
+  internal sealed class RestoreRecordingArchiveStore : Whizbang.Core.Archival.IArchiveStore {
+    public List<Guid> Restores { get; } = [];
+    public Task<Whizbang.Core.Archival.ArchiveWriteResult> WriteAsync(Whizbang.Core.Archival.ArchiveBatch batch, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public IAsyncEnumerable<ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task<Whizbang.Core.Archival.ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) {
+      Restores.Add(streamId);
+      return Task.FromResult(new Whizbang.Core.Archival.ArchiveRestoreResult(Whizbang.Core.Archival.ArchiveStatus.RESTORED, 1, 1));
+    }
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  private static ImmediateWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator, IServiceScopeFactory scopeFactory) =>
+    new(
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null,
+      detachedWork: new DetachedLifecycleWork());
+
   private static ImmediateWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator) =>
     new(
       coordinator: coordinator,

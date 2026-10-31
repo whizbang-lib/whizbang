@@ -199,8 +199,17 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isCompositeType(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
-    return _hasAnyConsumer(payloadClrType) || _isTagWorkForThisHost(payloadClrType)
-      ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
+    if (_hasAnyConsumer(payloadClrType) || _isTagWorkForThisHost(payloadClrType)) {
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
+    // An absorbed event with no consumer is kept on receive so the claim copies it into the event store (#1776). By
+    // dispatch that copy is done and nothing here takes the event: the expected steady state of an absorbed namespace,
+    // skipped as routine (Debug) rather than reported as a receptor that disappeared in a deploy.
+    return _isAbsorbedNamespace(payloadClrType)
+      ? new MessageDiscardDecision(
+          ShouldDiscard: true,
+          Reason: MessageDiscardReason.NoLocalConsumer,
+          Detail: $"Payload type '{payloadClrType}' is in an absorbed namespace and stored in the event store; nothing here dispatches it")
       : new MessageDiscardDecision(
           ShouldDiscard: true,
           Reason: MessageDiscardReason.RegistryChanged,

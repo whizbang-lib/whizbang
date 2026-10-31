@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 
 [assembly: Rock(typeof(IRoleAssignmentReader), BuildType.Create)]
 
@@ -34,6 +35,43 @@ public class RoleAssignmentHealthSourceTests {
     var health = await new RoleAssignmentHealthSource(reader.Instance(), Options.Create(options)).ReportAsync(CancellationToken.None);
     reader.Verify();
     return health;
+  }
+
+  /// <summary>
+  /// Before this instance reaches the election stage the role tables may not exist yet (#1636), so a probe reports
+  /// Degraded with the reason and reads nothing: a readiness probe every few seconds on a fresh database was a stream
+  /// of 42P01s on the server.
+  /// </summary>
+  [Test]
+  public async Task BeforeTheElectionStage_NothingIsRead_AndTheRolesAreDegradedAsync() {
+    var reader = new IRoleAssignmentReaderCreateExpectations();
+    var gate = new StartupStageGate(new SchemaReadyGate());
+    await gate.OnStageChangedAsync(
+      new StartupStageSnapshot(StartupStage.Preflight, "host starting", false, DateTimeOffset.UnixEpoch), false, CancellationToken.None);
+
+    var health = await new RoleAssignmentHealthSource(reader.Instance(), Options.Create(new RoleAssignmentOptions()), gate)
+      .ReportAsync(CancellationToken.None);
+
+    reader.Verify();
+    await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
+    await Assert.That(health.Detail).IsEqualTo("role assignments are read from the Elect stage on; this instance is in an earlier one");
+  }
+
+  [Test]
+  public async Task FromTheElectionStageOn_TheAssignmentsAreReadAsync() {
+    var reader = new IRoleAssignmentReaderCreateExpectations();
+    reader.Setups.ReadAssignmentsAsync(Arg.Any<CancellationToken>())
+      .ReturnValue(Task.FromResult<IReadOnlyList<RoleAssignmentSnapshot>>(
+        [_snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held)]));
+    var gate = new StartupStageGate(new SchemaReadyGate());
+    await gate.OnStageChangedAsync(
+      new StartupStageSnapshot(StartupStage.Elect, "voting", false, DateTimeOffset.UnixEpoch), false, CancellationToken.None);
+
+    var health = await new RoleAssignmentHealthSource(reader.Instance(), Options.Create(new RoleAssignmentOptions()), gate)
+      .ReportAsync(CancellationToken.None);
+
+    reader.Verify();
+    await Assert.That(health.State).IsEqualTo(ComponentState.Operational);
   }
 
   [Test]

@@ -134,6 +134,9 @@ PR #1570 (#1548). `v1.0.0/fundamentals/perspectives/row-retention.md` is publish
 
 **Status (2026-10-24):** done. The four SQL ledgers are #1572 (PR #1573). The durable-signal window
 (`WhizbangNotificationOptions.SignalRetention`) and the batched signal sweep are #1574 (PR #1575).
+Follow-up (2026-10-26): the signal sweep holds back only to the cursors of instances registered in
+`wh_service_instances`, the rule the #1758 carry uses, so a dead instance's cursor no longer stops it (#1771; the
+statement is the worker's own, no migration).
 
 - **Change.** Batched deletes in `perform_maintenance` (edit the latest definition in place;
   `debug_mode`-guarded) for `wh_log` (`log_retention_days`, default 14) and `wh_schedule_runs`
@@ -165,8 +168,9 @@ partition the manager creates carries its ledger's autovacuum settings, and part
 the next cycle (#1693, migration 237); the `wh_log` row sweep clears `wh_log`'s default partition once managed instead
 of skipping the table (#1694, migration 238); before a `wh_signals` partition is dropped or emptied, the signals past
 the slowest live instance's tail cursor move to the current partition, ids unchanged (#1758 from #1692, migration
-239). Remaining: the pg_partman strategy (`Partitioning:Strategy`, WS-8 slice
-8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
+239). The pg_partman strategy (`Partitioning:Strategy`, WS-8 slice 8) ships in PR #1809 (#1752, migration 246): pg_partman
+creates partitions under `Auto` (when Ready) or `PgPartman`, and the built-in manager keeps dropping them so the signal
+carry-forward holds. S4 is complete. Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
 
 **Also needed by WS-2 S9/S9b** (`plans/storage-event-slimming.md`): the staged full-metadata table and the trace
 table are daily partitions created ahead and dropped behind by this partition manager, so S4 lands first.

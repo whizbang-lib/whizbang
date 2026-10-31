@@ -453,12 +453,14 @@ public sealed partial class OutboxPublishWorker(
       .Select(work => work.MessageId)
       .Where(id => !_holdRenewedAt.TryGetValue(id, out var renewedAt) || now - renewedAt >= renewEvery)
       .ToList();
-    if (due.Count > 0 && await _tryRenewHeldLeasesAsync(due, ct)) {
+    var notHeld = due.Count > 0 ? await _tryRenewHeldLeasesAsync(due, ct) : null;
+    if (notHeld is not null) {
       foreach (var id in due) {
         _holdRenewedAt[id] = now;
       }
+      _stopHolding(notHeld);
     }
-    foreach (var work in held) {
+    foreach (var work in held.Where(work => notHeld?.Contains(work.MessageId) != true)) {
       _workChannelWriter.TryWrite(work);
     }
     var delayMs = _options.TransportNotReadyRetryDelayMilliseconds;
@@ -472,19 +474,33 @@ public sealed partial class OutboxPublishWorker(
   }
 
   /// <summary>
-  /// Renews the leases of held rows. A failure is logged and reported as false, so the rows stay held and the
-  /// next pass renews them: a failed renewal must not become a failed publish, which would charge an attempt.
+  /// Renews the leases of held rows as this instance and returns the rows it no longer holds (#1852). A failure is
+  /// logged and reported as null, so the rows stay held and the next pass renews them: a failed renewal must not
+  /// become a failed publish, which would charge an attempt.
   /// </summary>
-  private async Task<bool> _tryRenewHeldLeasesAsync(List<Guid> ids, CancellationToken ct) {
+  private async Task<IReadOnlyList<Guid>?> _tryRenewHeldLeasesAsync(List<Guid> ids, CancellationToken ct) {
     try {
       using var scope = _scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-      await coordinator.RenewLeasesAsync(WorkCategory.Outbox, ids, _leaseRenewalOptions.LeaseSeconds, ct);
-      LogHeldLeasesRenewed(_logger, ids.Count, _leaseRenewalOptions.LeaseSeconds);
-      return true;
+      var notHeld = await coordinator.RenewHeldLeasesAsync(
+        WorkCategory.Outbox, _instanceProvider.InstanceId, ids, _leaseRenewalOptions.LeaseSeconds, ct);
+      LogHeldLeasesRenewed(_logger, ids.Count - notHeld.Count, _leaseRenewalOptions.LeaseSeconds);
+      return notHeld;
     } catch (Exception ex) when (!ct.IsCancellationRequested) {
       LogHeldLeaseRenewalFailed(_logger, ids.Count, ex);
-      return false;
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Stops holding the held rows a renewal did not cover (#1852): another instance claimed them after this one's
+  /// lease lapsed, or they completed. They are not re-buffered, so this instance does not publish them.
+  /// </summary>
+  private void _stopHolding(IReadOnlyList<Guid> notHeld) {
+    foreach (var id in notHeld) {
+      _holdRenewedAt.Remove(id);
+      _workChannelWriter.RemoveInFlight(id);
+      LogHeldRowNoLongerHeld(_logger, id);
     }
   }
 
@@ -525,7 +541,7 @@ public sealed partial class OutboxPublishWorker(
 
     if (coordinator is not null) {
       var tracking = coordinator.BeginTracking(
-        work.MessageId, typedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+        LifecycleTrackingPath.Outbox, work.MessageId, typedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
         await tracking.AdvanceToAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, stoppingToken);
       }
@@ -568,7 +584,7 @@ public sealed partial class OutboxPublishWorker(
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
         await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
       }
-      coordinator.AbandonTracking(work.MessageId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Outbox, work.MessageId);
       return;
     }
 
@@ -635,6 +651,11 @@ public sealed partial class OutboxPublishWorker(
   [LoggerMessage(EventId = 8, Level = LogLevel.Information,
     Message = "OutboxPublishWorker: transport not ready; holding {Rows} row(s) and renewed their leases by {LeaseSeconds}s without publishing")]
   static partial void LogHeldLeasesRenewed(ILogger logger, int rows, int leaseSeconds);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "OutboxPublishWorker: held outbox message {MessageId} is no longer held by this instance: its lease was not renewed "
+            + "because another instance has claimed it since this instance's lease lapsed, or it has completed. It is not published here")]
+  static partial void LogHeldRowNoLongerHeld(ILogger logger, Guid messageId);
 
   [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
     Message = "OutboxPublishWorker: transport not ready; renewing the leases of {Rows} held row(s) failed, retrying on the next pass")]

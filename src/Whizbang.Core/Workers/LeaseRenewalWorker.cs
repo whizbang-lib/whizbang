@@ -7,13 +7,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Drains lease-renewal requests from a bounded channel, batches via <see cref="BatchFlusher{T}"/>,
-/// calls <see cref="IWorkCoordinator.RenewLeasesAsync"/> per category. Coalesced flush.
-/// Phase C of work-pump decomposition.
+/// calls <see cref="IWorkCoordinator.RenewHeldLeasesAsync"/> per category as this instance, so only the leases it
+/// holds are extended. Coalesced flush. Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewalChannel {
@@ -24,6 +25,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   private readonly LeaseRegistry? _leaseRegistry;
   private readonly TimeProvider _timeProvider;
   private readonly IPinnedConnectionPool _pinnedPool;
+  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly BatchFlusher<CategorizedLeaseRenewal> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
@@ -33,6 +35,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     IOptions<LeaseRenewalWorkerOptions> options,
     ILogger<LeaseRenewalWorker> logger,
     IPinnedConnectionPool pinnedPool,
+    IServiceInstanceProvider instanceProvider,
     LeaseRegistry? leaseRegistry = null,
     TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
@@ -45,7 +48,9 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     _leaseRegistry = leaseRegistry;
     _timeProvider = timeProvider ?? TimeProvider.System;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger);
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger, _timeProvider);
   }
 
   /// <inheritdoc />
@@ -90,7 +95,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
           continue;
         }
         if (!handle.TryExtendDeadline(newDeadline)) {
-          // Cap hit (or disposed). Stop submitting this work_id to RenewLeasesAsync — DB lease
+          // Cap hit (or disposed). Stop submitting this work_id to RenewHeldLeasesAsync; the DB lease
           // expires naturally, claim_orphaned re-issues, attempts bumps.
           LogMaxRenewalsHit(_logger, item.Category, item.Id, handle.RenewalCount);
           continue;
@@ -99,7 +104,10 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
       }
 
       if (idsToRenew.Count > 0) {
-        await coordinator.RenewLeasesAsync(group.Key, idsToRenew, _options.LeaseSeconds, ct);
+        var notHeld = await coordinator.RenewHeldLeasesAsync(group.Key, _instanceProvider.InstanceId, idsToRenew, _options.LeaseSeconds, ct);
+        foreach (var id in notHeld) {
+          LogNotHeld(_logger, group.Key, id);
+        }
       }
     }
   }
@@ -120,6 +128,9 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "LeaseRenewalWorker: max renewals hit for {Category}/{WorkId} after {RenewalCount} extensions — letting DB lease expire so claim_orphaned can re-issue")]
   static partial void LogMaxRenewalsHit(ILogger logger, WorkCategory category, Guid workId, int renewalCount);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "LeaseRenewalWorker: {Category}/{WorkId} was not renewed because this instance no longer holds it: another instance has claimed it since this instance's lease lapsed, or it has completed. Work still running on it here runs on a row this instance does not hold")]
+  static partial void LogNotHeld(ILogger logger, WorkCategory category, Guid workId);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Debug, Message = "LeaseRenewalWorker: handle not found in registry for {Category}/{WorkId} — race with disposal, skipping")]
   static partial void LogHandleNotFound(ILogger logger, WorkCategory category, Guid workId);

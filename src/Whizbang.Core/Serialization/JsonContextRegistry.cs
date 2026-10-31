@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -30,6 +31,58 @@ namespace Whizbang.Core.Serialization;
 public static class JsonContextRegistry {
   /// <summary>Monotonic registration sequence — breaks priority ties in registration order (FIFO).</summary>
   private static long _registrationSeq;
+
+  /// <summary>
+  /// Registrations made visible so far: what <see cref="Generation"/> reports. Advanced only after the
+  /// entry is in its queue, never when its sequence number is taken, so a build that reads a
+  /// generation can never miss a registration that generation counts (#1900).
+  /// </summary>
+  private static long _publishedRegistrations;
+
+  /// <summary>
+  /// Runs on the registering thread after a registration takes its sequence number and before the
+  /// registration is visible. Set only by tests, through <see cref="AfterSequenceAllocatedForTests"/>.
+  /// </summary>
+  [ThreadStatic]
+  private static Action? _afterSequenceAllocatedForTests;
+
+  /// <summary>
+  /// Runs <paramref name="callback"/> inside every registration this thread makes until the returned
+  /// scope is disposed, at the point after the registration takes its sequence number and before it is
+  /// visible.
+  /// </summary>
+  /// <param name="callback">What to run at that point, typically a build of options from the registry.</param>
+  /// <returns>A scope that restores the previous callback when disposed.</returns>
+  /// <remarks>
+  /// A registration racing a build on another thread opens a window too narrow to hit on purpose. This
+  /// puts the build inside the window on one thread, so a test can show what a build there records
+  /// without depending on how two threads happen to interleave. Thread-static, so a registration on any
+  /// other thread is untouched.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryPublicationTests.cs</tests>
+  internal static IDisposable AfterSequenceAllocatedForTests(Action callback) {
+    var previous = _afterSequenceAllocatedForTests;
+    _setAfterSequenceAllocated(callback);
+    return new AfterSequenceAllocatedScope(previous);
+  }
+
+  private static void _setAfterSequenceAllocated(Action? callback) => _afterSequenceAllocatedForTests = callback;
+
+  private sealed class AfterSequenceAllocatedScope(Action? previous) : IDisposable {
+    private readonly Action? _previous = previous;
+
+    public void Dispose() => _setAfterSequenceAllocated(_previous);
+  }
+
+  /// <summary>Takes the next sequence number, which orders a registration among those of equal priority.</summary>
+  private static long _allocateSequence() {
+    var seq = Interlocked.Increment(ref _registrationSeq);
+    _afterSequenceAllocatedForTests?.Invoke();
+    return seq;
+  }
+
+  /// <summary>Counts a registration in <see cref="Generation"/>; called only once its entry is visible.</summary>
+  private static void _publish() => Interlocked.Increment(ref _publishedRegistrations);
 
   /// <summary>
   /// A registered type-info provider with its ranking metadata. <paramref name="Profile"/> of
@@ -91,6 +144,12 @@ public static class JsonContextRegistry {
   /// </summary>
   private static readonly ConcurrentDictionary<string, (Type type, IJsonTypeInfoResolver resolver)> _typeNameMappings = new();
 
+  // What GetTypeInfoByName reads on every deserialization: a frozen copy of _typeNameMappings, about three times
+  // faster to look up. Registration stays open (a module initializer runs when its assembly first loads), so every
+  // registration drops the copy under _typeNameGate and the next lookup rebuilds it (#1756).
+  private static FrozenDictionary<string, (Type type, IJsonTypeInfoResolver resolver)>? _typeNameSnapshot;
+  private static readonly Lock _typeNameGate = new();
+
   /// <summary>
   /// Registers a JsonSerializerContext resolver.
   /// Called from [ModuleInitializer] methods - runs before Main().
@@ -111,7 +170,8 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, _allocateSequence()));
+    _publish();
   }
 
   /// <summary>
@@ -138,7 +198,8 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(new ConverterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _converters.Enqueue(new ConverterEntry(converter, priority, profile, _allocateSequence()));
+    _publish();
   }
 
   /// <summary>
@@ -165,7 +226,8 @@ public static class JsonContextRegistry {
       Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(modifier);
 
-    _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+    _modifiers.Enqueue(new ModifierEntry(modifier, profile, _allocateSequence()));
+    _publish();
   }
   /// <summary>
   /// Removes a modifier a test registered, keeping every other registration in its original order.
@@ -249,7 +311,12 @@ public static class JsonContextRegistry {
   /// <para>The returned options set <see cref="JsonSerializerOptions.AllowOutOfOrderMetadataProperties"/>
   /// so polymorphic payloads survive a PostgreSQL <c>jsonb</c> round-trip, which reorders object keys and
   /// would otherwise push the <c>$type</c> discriminator out of the first position STJ requires.</para>
+  ///
+  /// <para>They also set <see cref="JsonSerializerOptions.PropertyNameCaseInsensitive"/>, so a document an
+  /// earlier release wrote under a C# name that differs from the declared <c>[JsonPropertyName]</c> only in
+  /// case reads its value rather than the member's default. Writing always uses the declared name.</para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/DeclaredNameReadTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
@@ -275,6 +342,10 @@ public static class JsonContextRegistry {
         "No JsonSerializerContext instances registered. " +
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
     }
+
+    // Read before the registry is, so the generation recorded below never counts a registration this
+    // build did not see (#1900).
+    var generation = Generation;
 
     // Highest priority first; registration order (Seq) breaks ties. JsonTypeInfoResolver.Combine is
     // first-match-wins, so the ordered list makes the winning provider deterministic.
@@ -305,7 +376,13 @@ public static class JsonContextRegistry {
       // perspective completion stalls). This is the single choke point every consumer's options flow
       // through, so enabling it here fixes the event store, perspective persistence, and every Dapper/
       // EF Core read path at once.
-      AllowOutOfOrderMetadataProperties = true
+      AllowOutOfOrderMetadataProperties = true,
+      // A property is written under its declared [JsonPropertyName], and releases before that was honored wrote
+      // it under its C# name. Where the two differ only in case ("X" for a declared "x"), a case-sensitive reader
+      // finds no key and silently leaves the member at its default: an event stored by such a release replays as
+      // zeros. Events are history and are never rewritten, so the reader accepts the other case instead. An exact
+      // match is still preferred, and writing is unchanged (#1874).
+      PropertyNameCaseInsensitive = true
     };
 
     // Register WhizbangId converters as runtime converters in addition to resolvers.
@@ -325,7 +402,7 @@ public static class JsonContextRegistry {
       options.Converters.Add(entry.Converter);
     }
 
-    _completeChains.AddOrUpdate(options, new CompletedChain(Generation, options));
+    _completeChains.AddOrUpdate(options, new CompletedChain(generation, options));
     return options;
   }
 
@@ -397,12 +474,12 @@ public static class JsonContextRegistry {
       return entry.Options;
     }
 
-    var completed = _complete(hostOptions);
+    var completed = _complete(hostOptions, generation);
     _completeChains.AddOrUpdate(hostOptions, new CompletedChain(generation, completed));
     return completed;
   }
 
-  private static JsonSerializerOptions _complete(JsonSerializerOptions hostOptions) {
+  private static JsonSerializerOptions _complete(JsonSerializerOptions hostOptions, long generation) {
     var registry = CreateCombinedOptions();
     // The host's settings (naming policy, ignore conditions) and converters are kept as they are.
     var completed = new JsonSerializerOptions(hostOptions) {
@@ -418,7 +495,7 @@ public static class JsonContextRegistry {
       completed.Converters.Add(converter);
     }
     // Already complete: completing it again returns it unchanged.
-    _completeChains.AddOrUpdate(completed, new CompletedChain(Generation, completed));
+    _completeChains.AddOrUpdate(completed, new CompletedChain(generation, completed));
     return completed;
   }
 
@@ -438,7 +515,19 @@ public static class JsonContextRegistry {
 
     // Use centralized type name normalization from EventTypeMatchingHelper
     var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
-    _typeNameMappings[normalizedName] = (type, resolver);
+    lock (_typeNameGate) {
+      _typeNameMappings[normalizedName] = (type, resolver);
+      Volatile.Write(ref _typeNameSnapshot, null);
+    }
+  }
+
+  // Rebuilt under the gate so it holds every registration completed before it; one completed after it drops it again
+  private static FrozenDictionary<string, (Type type, IJsonTypeInfoResolver resolver)> _freezeTypeNames() {
+    lock (_typeNameGate) {
+      var snapshot = _typeNameMappings.ToFrozenDictionary();
+      Volatile.Write(ref _typeNameSnapshot, snapshot);
+      return snapshot;
+    }
   }
 
   /// <summary>
@@ -461,7 +550,8 @@ public static class JsonContextRegistry {
     // Use centralized type name normalization from EventTypeMatchingHelper
     var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
 
-    if (_typeNameMappings.TryGetValue(normalizedName, out var entry)) {
+    var mappings = Volatile.Read(ref _typeNameSnapshot) ?? _freezeTypeNames();
+    if (mappings.TryGetValue(normalizedName, out var entry)) {
       return entry.resolver.GetTypeInfo(entry.type, options);
     }
 
@@ -482,10 +572,18 @@ public static class JsonContextRegistry {
   /// What lets a caller reuse a set of options built from this registry without either rebuilding
   /// per call, which throws the serializer's metadata cache away every time, or caching forever,
   /// which cannot resolve a type from an assembly whose contexts registered after the cache was
-  /// built. Compare it to the value seen when the options were built; a difference means rebuild.
+  /// built. Read it before building and compare it to that value later; a difference means rebuild.
+  /// <para>
+  /// A registration is counted only once it is visible. A build that reads the generation first and then
+  /// reads the registry therefore includes every registration that generation counts; one it misses
+  /// advances the generation when it lands, so options recorded against the earlier value are rebuilt
+  /// rather than reused (#1900).
+  /// </para>
   /// </remarks>
+  /// <docs>extending/internals/json-serialization-customizations</docs>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryGenerationTests.cs</tests>
-  public static long Generation => Interlocked.Read(ref _registrationSeq);
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryPublicationTests.cs</tests>
+  public static long Generation => Interlocked.Read(ref _publishedRegistrations);
 
   /// <summary>
   /// Gets the count of registered type name mappings (for diagnostics/testing).

@@ -48,6 +48,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 [Category("Integration")]
 [Category("Shard4")]
 public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
   private const string HOLD_INSTRUMENT = "whizbang.gate.hold_duration_ms";
   private const string PERSPECTIVE = "Gate.Perspective";
   private const string EVENT_TYPE = "Gate.Event, Gate.Assembly";
@@ -148,7 +151,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
-      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
+      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5)));
     register("IntegrityStampRepairWindows", "IntegrityStampRepairWindowsAsync", (c, _) =>
       c.IntegrityStampRepairWindowsAsync(_origin(), [_key()], windowFrom: 1, windowUntil: 10));
     register("IntegrityClaimRepairDrain", "IntegrityClaimRepairDrainAsync", (c, _) =>
@@ -166,8 +169,24 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     // ── Maintenance ────────────────────────────────────────────────────────
     register("GetTablesNeedingRewrite", "GetTablesNeedingRewriteAsync", (c, _) => c.GetTablesNeedingRewriteAsync());
     register("RewriteTable", "RewriteTableAsync", (c, _) => c.RewriteTableAsync("wh_settings"));
+    register("SqueezeTable", "SqueezeTableAsync", async (c, _) =>
+      await Assert.That(await c.SqueezeTableAsync("wh_settings")).IsNull()
+        .Because("the test server has no pg_squeeze, so the prerequisite check reports it and nothing is rewritten"));
+    register("RewriteTableWith", "RewriteTableWithAsync", async (c, _) =>
+      await Assert.That(await c.RewriteTableWithAsync("wh_settings", (_, _) => Task.FromResult(false))).IsNull()
+        .Because("the program reported failure, so nothing is analyzed or re-measured"));
     register("RequestTableRewrite", "RequestTableRewriteAsync", (c, _) => c.RequestTableRewriteAsync("wh_settings"));
     register("ClearTableRewriteRequest", "ClearTableRewriteRequestAsync", (c, _) => c.ClearTableRewriteRequestAsync("wh_settings"));
+    register("MeasureTableBloat", "MeasureTableBloatAsync", (c, _) => c.MeasureTableBloatAsync("wh_settings", BloatMeasurementMethod.Estimate));
+    register("RequestMeasuredTableRewrite", "RequestMeasuredTableRewriteAsync", (c, _) =>
+      c.RequestMeasuredTableRewriteAsync("wh_settings", new BloatMeasurement(4.5, BloatMeasurementMethod.Approx), 4.0));
+    register("GetQueueIndexBloat", "GetQueueIndexBloatAsync", async (c, _) =>
+      await Assert.That(await c.GetQueueIndexBloatAsync()).IsNotEmpty());
+    register("DropInvalidQueueIndex", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That(await c.DropInvalidQueueIndexAsync("idx_absent_ccnew")).IsFalse()
+        .Because("no such index is on a queue table, so nothing is dropped"));
+    register("ReindexQueueIndex", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That((await c.ReindexQueueIndexAsync("wh_active_streams_pkey")).HasValue).IsTrue());
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>
@@ -225,8 +244,10 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
         CompletedStatus = MessageProcessingStatus.Stored,
         Error = "gate failure"
       }]));
-    register("RenewLeases", "RenewLeasesAsync", async (c, _) =>
-      await Assert.That(await c.RenewLeasesAsync(WorkCategory.Outbox, [_newId()])).IsEqualTo(0));
+    register("RenewHeldLeases", "RenewHeldLeasesAsync", async (c, _) => {
+      var unknown = _newId();
+      await Assert.That(await c.RenewHeldLeasesAsync(WorkCategory.Outbox, _newId(), [unknown])).IsEquivalentTo([unknown]);
+    });
     register("ReleaseUnprocessedInbox", "ReleaseUnprocessedInboxAsync", async (c, _) =>
       await Assert.That(await c.ReleaseUnprocessedInboxAsync(_newId(), [_newId()])).IsEqualTo(0));
     register("ReleaseUnstartedLeases", "ReleaseUnstartedLeasesAsync", (c, _) =>

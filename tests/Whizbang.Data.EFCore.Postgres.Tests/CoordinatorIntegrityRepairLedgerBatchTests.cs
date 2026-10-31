@@ -25,6 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity</docs>
 [Category("Shard4")]
 public class CoordinatorIntegrityRepairLedgerBatchTests {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private sealed class BatchCoordinator : IWorkCoordinator {
     public IReadOnlyList<bool>? BatchAnswer { get; set; }
@@ -121,7 +124,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     coordinator.BatchAnswer = [true, false];
 
     var flags = await ledger.TryBeginReportBatchAsync(
-      [new(_key(origin), 1, 2, 0, 0), new(_key(origin), 3, 4, 0, 0)],
+      [new(_key(origin), 1, 2, 0, 0, IsDeficit: true), new(_key(origin), 3, 4, 0, 0, IsDeficit: true)],
       DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
 
     await Assert.That(flags.ToList()).IsEquivalentTo([true, false]);
@@ -137,7 +140,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     coordinator.BatchAnswer = null;   // the DIM default: engine cannot batch
 
     var flags = await ledger.TryBeginReportBatchAsync(
-      [new(_key(origin), 1, 2, 0, 0), new(_key(origin), 3, 4, 0, 0)],
+      [new(_key(origin), 1, 2, 0, 0, IsDeficit: true), new(_key(origin), 3, 4, 0, 0, IsDeficit: true)],
       DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
 
     await Assert.That(flags.Count).IsEqualTo(2);
@@ -152,7 +155,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     coordinator.ThrowOnBatch = true;
 
     var flags = await ledger.TryBeginReportBatchAsync(
-      [new(_key(origin), 1, 2, 0, 0)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
+      [new(_key(origin), 1, 2, 0, 0, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(60));
 
     await Assert.That(flags.Count).IsEqualTo(1);
     await Assert.That(coordinator.SingleReportCalls).IsEqualTo(1)
@@ -232,7 +235,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     var now = DateTimeOffset.UtcNow;
 
     var reports = await ledger.TryBeginReportBatchAsync(
-      [.. keys.Select(k => new IntegrityReportObservation(k, 1, 2, 0, 0))], now, TimeSpan.FromMinutes(60));
+      [.. keys.Select(k => new IntegrityReportObservation(k, 1, 2, 0, 0, IsDeficit: true))], now, TimeSpan.FromMinutes(60));
     await Assert.That(reports.All(granted => granted)).IsTrue()
       .Because("first sighting reports — the default loops the proven single");
 
@@ -242,7 +245,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
 
     await ledger.MarkHealedBatchAsync(keys);
     var again = await ledger.TryBeginReportBatchAsync(
-      [.. keys.Select(k => new IntegrityReportObservation(k, 1, 2, 0, 0))], now.AddMinutes(1), TimeSpan.FromMinutes(60));
+      [.. keys.Select(k => new IntegrityReportObservation(k, 1, 2, 0, 0, IsDeficit: true))], now.AddMinutes(1), TimeSpan.FromMinutes(60));
     await Assert.That(again.All(granted => granted)).IsTrue()
       .Because("healed buckets are forgotten — a later sighting is a fresh incident");
   }

@@ -129,6 +129,27 @@ public interface IPerspectiveSnapshotStore {
     Task.FromResult<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?>(null);
 
   /// <summary>
+  /// The rewind's snapshot floor: the snapshot <see cref="GetLatestSnapshotBeforeEventInStreamOrderAsync"/> selects, with
+  /// how far an archive of the stream reaches when one covers it (<c>wh_perspective_snapshots.archived_through_version</c>,
+  /// #1738). A rewind from a marked snapshot reads through the archive
+  /// (<see cref="Messaging.IEventStore.ReadPolymorphicThroughArchiveAsync"/>), because the events after it may be archived.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <param name="beforeEventId">The triggering event the snapshot must sit before.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <returns>The floor, or null when no snapshot sits before the event. The default wraps
+  /// <see cref="GetLatestSnapshotBeforeEventInStreamOrderAsync"/> and records no mark: a store that keeps none has no
+  /// archive to read through.</returns>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs:ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync</tests>
+  async Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+    var snapshot = await GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, beforeEventId, ct).ConfigureAwait(false);
+    return snapshot is { } s ? new PerspectiveSnapshotFloor(s.SnapshotEventId, s.SnapshotVersion, s.SnapshotData, ArchivedThroughVersion: null) : null;
+  }
+
+  /// <summary>
   /// Checks whether any snapshot exists for a stream/perspective pair.
   /// Cheap index-scan check used for bootstrap detection.
   /// </summary>
@@ -198,3 +219,14 @@ public sealed class NullPerspectiveSnapshotStore : IPerspectiveSnapshotStore, IN
   public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
     throw new InvalidOperationException(NOT_REGISTERED);
 }
+
+/// <summary>
+/// The snapshot a rewind restores from, and whether an archive covers it (#1738).
+/// </summary>
+/// <param name="SnapshotEventId">The event the snapshot was taken at.</param>
+/// <param name="SnapshotVersion">The stream version the snapshot was taken at, or null for a snapshot that records none.</param>
+/// <param name="SnapshotData">The stored snapshot.</param>
+/// <param name="ArchivedThroughVersion">The last version an archive of the stream holds, when an archive covers this
+/// snapshot; null when everything after the snapshot is hot.</param>
+/// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData, long? ArchivedThroughVersion);

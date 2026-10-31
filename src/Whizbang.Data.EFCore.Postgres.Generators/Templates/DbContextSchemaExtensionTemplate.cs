@@ -210,6 +210,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }
         }
 
+        // Stored keys first: a key an earlier release wrote under its C# name, differing from the declared
+        // [JsonPropertyName] only in case, is moved to the declared name, so everything after it addresses the key the
+        // model reads (#1874). A row holding both spellings with different values stops startup here.
+        var declaredKeys = await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.RewriteAsync(
+          rewriteConnectionFactory, "__SCHEMA__",
+          Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(
+            dbContext.Model, Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options),
+          _schemaCommandTimeoutSeconds, logger, cancellationToken);
+
         // The app's stored-form migrations first, so a value a rename moves is converted to the canonical temporal
         // form in the same pass; then the temporal rewrites derived from the model; then the generated
         // physical-column rewrites (an enum column an earlier release stored as text is converted to the number it
@@ -231,6 +240,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
         await global::Whizbang.Data.Postgres.StoredFormIndexRebuild.ApplyAsync(
           rewriteConnectionFactory, storedFormMigrations, _schemaCommandTimeoutSeconds, logger, cancellationToken);
+        // Last, once a [StoredForm(DefaultWhenMissing)] has filled what it fills: a required member still missing from
+        // stored rows is reported, and each table checked is recorded, settled when nothing changed or is missing.
+        await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.SettleAsync(
+          rewriteConnectionFactory, "__SCHEMA__", declaredKeys, _schemaCommandTimeoutSeconds, logger, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
@@ -599,6 +612,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
 
+    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
+    // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
+    // already in line is not altered. Never fatal.
+    await Whizbang.Data.EFCore.Postgres.PerspectiveStorageReconcile.RunAsync(
+      dbContext, "__SCHEMA__", System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql), segmentConnectionFactory,
+      logger, cancellationToken);
+
     // No maintenance here (#1351). Schema initialization runs on every instance at every start, and a
     // service that scales out on its backlog starts instances at the peak of a load: the purge runs in
     // the maintenance cycle behind its busy check, and the work tables are vacuumed by the instance that
@@ -708,11 +728,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var previousSearchPath = await Whizbang.Data.Postgres.MigrationSearchPath.EnterAsync(
       migrationConnection, "__SCHEMA__", cancellationToken);
 
-    // The overwhelming majority of migrations carry no marker and come back as one plain segment,
-    // which is sent exactly as it was before this path existed.
+    // The overwhelming majority of migrations carry no marker and come back as one plain segment. Its idempotent DDL
+    // is catalog-checked as it is sent (#1636): an ADD COLUMN or CREATE INDEX IF NOT EXISTS with nothing to do takes
+    // no lock, so a re-run does not queue behind, or deadlock with, the workers using the table.
     foreach (var segment in segments) {
       if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
-        await dbContext.Database.ExecuteSqlRawAsync(segment.Sql, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(segment.Sql), cancellationToken);
         continue;
       }
 
@@ -1129,7 +1150,10 @@ END $$;
     var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     try {
-      await dbContext.Database.ExecuteSqlRawAsync(coreInfrastructureSchema, cancellationToken);
+      // Catalog-checked (#1636): the ensure re-asserts every column and index on every pass, and each would otherwise
+      // take its table's lock to find it already there.
+      await dbContext.Database.ExecuteSqlRawAsync(
+        Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(coreInfrastructureSchema), cancellationToken);
       logger?.LogDebug("Core infrastructure tables created successfully");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to create core infrastructure tables");

@@ -26,7 +26,8 @@ public interface IEventStore {
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.
-  /// Events are ordered by sequence number within each stream.
+  /// Events are ordered by sequence number within each stream. A new stream starts at sequence 1, as on the outbox and
+  /// inbox paths; an existing stream continues from its highest sequence, whatever it started at (#1913).
   /// Generic for AOT compatibility - allows compile-time type information for JSON serialization.
   /// </summary>
   /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
@@ -38,9 +39,14 @@ public interface IEventStore {
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ANewStream_StartsAtVersionOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:DirectAppend_ToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
+  /// <exception cref="StreamSealedException">The stream is sealed (finalized, or ended by a terminal event) and refuses
+  /// every append; nothing is stored. Raised by the Postgres stores, which keep the stream lifecycle ledger.</exception>
+  /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -329,6 +335,25 @@ public interface IEventStore {
       => throw new NotSupportedException(
           "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
           "Ensure AddWhizbang() is called with IEventCompletionAwaiter enabled.");
+
+  /// <summary>
+  /// The read a rewind makes from a snapshot an archive covers (#1738): the events after the snapshot, reading the
+  /// archived ones above <paramref name="afterVersion"/> back first. Every other read decides for itself whether to look
+  /// at the archive (a read from the start reads through a gap; a read that resumes after an event never does); this is
+  /// the one resumed read whose resume point may be inside the archive.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="fromEventId">The snapshot's event: the hot events after it are read.</param>
+  /// <param name="afterVersion">The snapshot's stream version: the archived events above it are read.</param>
+  /// <param name="eventTypes">The event types the reader folds.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The events after the snapshot. The default is the ordinary read after <paramref name="fromEventId"/>: a
+  /// store with no archive has nothing archived to read.</returns>
+  /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:TheInterfaceDefault_ForAStoreWithNoArchive_IsTheOrdinaryReadAsync</tests>
+  IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+      Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
 
   /// <summary>
   /// Deserializes raw stream event data (from get_stream_events) into typed MessageEnvelope&lt;IEvent&gt;.

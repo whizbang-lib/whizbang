@@ -90,13 +90,15 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // let a hot stream with many pending events stop respecting the deadline.
     var template = _loadTemplate();
 
-    await Assert.That(template).Contains("foreach (var envelope in events)")
+    // The apply loop folds foldEvents (the batch, or its last event alone on the jump path). This anchor once named
+    // `events`, which only the rebuild's partition loop iterated, so the check passed on that loop's position instead.
+    await Assert.That(template).Contains("foreach (var envelope in foldEvents)")
       .Because("the apply loop is the anchor for the CT check");
     await Assert.That(template).Contains("cancellationToken.ThrowIfCancellationRequested()")
       .Because("the apply loop must call ThrowIfCancellationRequested at the top of each iteration");
 
     // Ensure the CT check appears INSIDE the events foreach (not just somewhere in the file).
-    var foreachIdx = template.IndexOf("foreach (var envelope in events)", StringComparison.Ordinal);
+    var foreachIdx = template.IndexOf("foreach (var envelope in foldEvents)", StringComparison.Ordinal);
     var ctCheckIdx = template.IndexOf("cancellationToken.ThrowIfCancellationRequested()", foreachIdx, StringComparison.Ordinal);
     await Assert.That(ctCheckIdx).IsGreaterThan(foreachIdx)
       .Because("the CT check must appear inside the foreach body, not before it");
@@ -110,7 +112,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // fall through to the full replay-from-zero (RunFromModelAsync with a null model / null anchor) —
     // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
     // guards the fallback with `_isEphemeralPerspective && !hasSnapshot`; the guard must remain, and it
-    // must sit between the snapshot lookup and the RunFromModelAsync call so it can short-circuit it.
+    // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs RunFromModelAsync) so it can short-circuit it.
     var template = _loadTemplate();
 
     await Assert.That(template).Contains("_isEphemeralPerspective && !hasSnapshot")
@@ -122,11 +124,32 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     await Assert.That(rewindIdx).IsGreaterThan(0);
     var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
-    var replayCallIdx = template.IndexOf("result = await RunFromModelAsync(", rewindIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", rewindIdx, StringComparison.Ordinal);
     await Assert.That(guardIdx).IsGreaterThan(rewindIdx)
       .Because("the guard must live inside RewindAndRunAsync");
     await Assert.That(replayCallIdx).IsGreaterThan(guardIdx)
       .Because("the guard must short-circuit the full replay-from-zero, so it precedes the RunFromModelAsync call");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task EphemeralRewind_SkippedRewindNamesTheStragglerItDropsAsync() {
+    // #1862: the skipped rewind reports "nothing replayed" so the cursor stays put, but it must also name the late
+    // event it dropped. Without that the worker could not retire the event's work, and every claim found the same
+    // straggler, skipped the same rewind and logged the same drop, without end.
+    var template = _loadTemplate();
+
+    var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
+    var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
+    var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", guardIdx, StringComparison.Ordinal);
+    var namedIdx = template.IndexOf("DroppedStragglers = [triggeringEventId]", guardIdx, StringComparison.Ordinal);
+    await Assert.That(namedIdx).IsGreaterThan(guardIdx)
+      .Because("the skipped rewind's completion names the dropped straggler");
+    await Assert.That(namedIdx).IsLessThan(replayCallIdx)
+      .Because("it is the skip branch, not the replay, that names it");
+    var skipBranch = template[guardIdx..replayCallIdx];
+    await Assert.That(skipBranch).DoesNotContain("\u2014")
+      .Because("the drop warning is written in plain punctuation");
   }
 
   [Test]

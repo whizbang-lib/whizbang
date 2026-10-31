@@ -48,7 +48,21 @@ internal sealed partial class LifecycleTrackingState(
   private readonly Lock _lock = new();
   private LifecycleStage _currentStage = entryStage;
   private bool _isComplete;
-  private DateTimeOffset _lastActivityUtc = DateTimeOffset.UtcNow;
+  private readonly TimeProvider _clock = TimeProvider.System;
+  private DateTimeOffset _lastActivityUtc = TimeProvider.System.GetUtcNow();
+
+  /// <summary>
+  /// The clock activity is stamped on; the coordinator passes its own, so its inactivity sweep and these stamps
+  /// read the same time (#1797). Setting it restarts the activity stamp on that clock.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_KeepsAnUnreportedEntry_UntilTheInjectedClockPassesTheBoundAsync</tests>
+  internal TimeProvider Clock {
+    get => _clock;
+    init {
+      _clock = value;
+      _lastActivityUtc = value.GetUtcNow();
+    }
+  }
 
   /// <inheritdoc/>
   public Guid EventId { get; } = eventId;
@@ -90,7 +104,7 @@ internal sealed partial class LifecycleTrackingState(
   /// </summary>
   internal void TouchActivity() {
     lock (_lock) {
-      _lastActivityUtc = DateTimeOffset.UtcNow;
+      _lastActivityUtc = Clock.GetUtcNow();
     }
   }
 
@@ -122,7 +136,7 @@ internal sealed partial class LifecycleTrackingState(
     IServiceProvider scopedProvider,
     CancellationToken ct) {
     var stageStopwatch = DebugAwareStopwatch.StartNew();
-    var startedAt = DateTimeOffset.UtcNow;
+    var startedAt = Clock.GetUtcNow();
 
     lock (_lock) {
       // Stage guard: each stage fires at most once per event (exactly-once guarantee)
@@ -130,7 +144,7 @@ internal sealed partial class LifecycleTrackingState(
         return;
       }
       _currentStage = stage;
-      _lastActivityUtc = DateTimeOffset.UtcNow;
+      _lastActivityUtc = Clock.GetUtcNow();
     }
 
     // Resolve scoped invoker
