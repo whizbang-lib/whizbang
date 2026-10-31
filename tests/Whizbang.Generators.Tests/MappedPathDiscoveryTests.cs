@@ -334,4 +334,15 @@ public class MappedPathDiscoveryTests {
     await Assert.That(member).IsNull()
       .Because("routing a model opaquely for an array the mapped path reads would take its indexing away for nothing");
   }
+
+  /// <summary>
+  /// An array whose element is itself an array is not a value the mapped path stores, so it takes the opaque form,
+  /// which the serializer reads whatever the nesting.
+  /// </summary>
+  [Test]
+  public async Task AnArrayOfArraysIsReportedAsync() {
+    var member = _unmappableMembers("  public int[][] Items { get; init; } = [];");
+
+    await Assert.That(member).IsEqualTo("Items");
+  }
 }

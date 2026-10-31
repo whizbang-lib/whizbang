@@ -944,6 +944,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AbandonTracking`, `ExpectCompletionsFrom` and `SignalSegmentCompleteAsync` take a `LifecycleTrackingPath`
   (`LocalDispatch`, `Perspective`, `Outbox`, `Inbox`), each path's entry has its own stage guard and its own end, and
   the perspective gate ends only with the perspective path's entry (Fixes #1918)
+- **A perspective model holding an array of records reads back on the Entity Framework driver.** A `T[]` of a
+  complex element, at the top level or inside a collection element, was mapped as a complex collection, which Entity
+  Framework accepts while building the model and then refuses at the first read ("collection navigations cannot be
+  arrays") and on the change tracker's snapshot ("collection was of a fixed size"), with nothing at build time saying
+  so. Such a model is now stored as one opaque document, as a model holding an `IReadOnlyList<T>` of records already
+  is, so `T[]` round-trips on both drivers with no change to the model; rows the atomic upsert wrote before still
+  read. An array of primitives stays a mapped value. Declaring the member as `List<T>` keeps the document mapped and
+  its fields indexable (Fixes #1910)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of

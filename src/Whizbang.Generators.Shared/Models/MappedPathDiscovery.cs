@@ -37,7 +37,8 @@ namespace Whizbang.Generators.Shared.Models;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectionMemberShapeProbeTests.cs</tests>
 public static class MappedPathDiscovery {
   /// <summary>
-  /// The collection types that cannot hold a complex element on the mapped path.
+  /// The collection types that cannot hold a complex element on the mapped path. An array of a complex element
+  /// cannot either, and is judged on its own because an array is not a named type.
   /// </summary>
   /// <remarks>
   /// Entity Framework needs to create and fill the collection while materializing a row. It manages
@@ -104,13 +105,25 @@ public static class MappedPathDiscovery {
   }
 
   /// <summary>The unmappable member at or below this property, or null.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfAComplexElementIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayInsideACollectionElementIsNamedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfPrimitivesIsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfArraysIsReportedAsync</tests>
   private static string? _judgeProperty(
       IPropertySymbol property, HashSet<INamedTypeSymbol> visited, string path) {
+    var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+
+    // An array of a complex element: Entity Framework builds a model with it, then refuses it at the first read
+    // (collection navigations cannot be arrays) and on the change tracker's snapshot (the array is of a fixed
+    // size), so it is reported here rather than left to fail at runtime (#1910). An array of primitives is a
+    // value the mapped path reads back.
+    if (property.Type is IArrayTypeSymbol array) {
+      return array.ElementType is INamedTypeSymbol arrayElement && _isPrimitive(arrayElement) ? null : here;
+    }
+
     if (property.Type is not INamedTypeSymbol propertyType) {
       return null;
     }
-
-    var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
     var element = _collectionElement(propertyType);
 
     // A collection the mapped path cannot fill, holding something other than a primitive. A
