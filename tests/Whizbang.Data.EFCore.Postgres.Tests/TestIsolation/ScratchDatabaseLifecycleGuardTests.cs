@@ -64,7 +64,6 @@ public partial class ScratchDatabaseLifecycleGuardTests {
     "QueryTranslation/PerspectiveDateFormatLockTests.cs",
     "ReconcileConvergenceE2ETests.cs",
     "StartupParity/StartupParityTests.cs",
-    "TurnkeyVectorIntegrationTests.cs",
     "UnifiedQuerySyntaxTests.cs",
     "VectorSearchIntegrationTests.cs",
   ];
