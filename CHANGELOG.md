@@ -1008,6 +1008,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A test's scratch database is created and dropped whatever the load on the shared test container.**
+  `PerTestDatabaseFactory` issued `CREATE DATABASE` and `DROP DATABASE ... WITH (FORCE)` with Npgsql's default
+  30-second command timeout, and the vector extension tests issued their own the same way, so beside another shard's
+  load the client cancelled them and the tests failed before an assertion ran. The factory now issues both with no
+  command timeout, bounded by the caller's token (the hook's or the test's), and the vector tests create and drop all
+  four of their databases through it, taking their teardown from `[After(Test)]` only (Fixes #1940)
 - **The jsonb containment tests no longer fail in setup when another shard loads the shared test container.** Each
   test inserted 200,000 rows on a connection with Npgsql's default 30-second command timeout; beside another shard's
   load the client cancelled the insert (the server logged `canceling statement due to user request` on it, then the

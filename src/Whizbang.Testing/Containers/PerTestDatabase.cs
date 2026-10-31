@@ -104,6 +104,17 @@ public static class PerTestDatabaseFactory {
     exception is PostgresException { SqlState: DUPLICATE_DATABASE };
 
   /// <summary>
+  /// The connection the factory creates and drops databases on: the server's, under the setup policy.
+  /// </summary>
+  /// <remarks>
+  /// <c>CREATE DATABASE</c> copies a template and <c>DROP DATABASE ... WITH (FORCE)</c> waits for the sessions it
+  /// ends, so how long either takes is a fact about the shared server's load. Under Npgsql's default 30-second
+  /// command timeout the client cancelled both beside a busy shard (#1940); with no command timeout they finish,
+  /// and the caller's token, from the hook or the test, is the bound.
+  /// </remarks>
+  private static string _adminConnectionString() => ForSetup(SharedPostgresContainer.ConnectionString);
+
+  /// <summary>
   /// Runs one attempt at a time until it succeeds, it is not contention, or the attempts run out.
   /// </summary>
   /// <param name="attempt">The statement to run.</param>
@@ -231,7 +242,7 @@ public static class PerTestDatabaseFactory {
     var statement = template is null ? $"CREATE DATABASE {name}" : $"CREATE DATABASE {name} TEMPLATE {template}";
     await RunWithRetryAsync(
       async () => {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await using var admin = new NpgsqlConnection(_adminConnectionString());
         await admin.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var create = new NpgsqlCommand(statement, admin);
         await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -269,7 +280,7 @@ public static class PerTestDatabaseFactory {
     try {
       await RunWithRetryAsync(
         async () => {
-          await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await using var admin = new NpgsqlConnection(_adminConnectionString());
           await admin.OpenAsync(cancellationToken).ConfigureAwait(false);
           await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {name} WITH (FORCE)", admin);
           await drop.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
