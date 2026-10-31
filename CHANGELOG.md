@@ -933,6 +933,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the container suites stay on Linux with Docker. Any missing secret, unset variable, API error or timeout falls back, and the picker can never
   fail the gate; with nothing configured every job runs where it did before. Setup, the label
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
+- **Contributing: secret scanning uses Gitleaks, and every pipeline tool's license is checked.** Dependency
+  review refused the secret scanner action for its AGPL-3.0 license at release time. Secret scanning now runs
+  Gitleaks (MIT) as a pinned, checksum-verified release binary over the full git history, failing on any
+  finding; it matches patterns rather than verifying credentials with their provider, so reviewed placeholders
+  are listed by exact value in `.github/gitleaks.toml` and single historical findings by fingerprint in
+  `.github/gitleaksignore`, and an inline `gitleaks:allow` silences nothing. A new pipeline-script check
+  (`.github/scripts/Test-PipelineToolLicenses.ps1`, run by `Test · Pipeline scripts`) fails a pull request that
+  uses an action, a dotnet tool or a downloaded release binary not listed with its license in
+  `.github/pipeline-tool-licenses.txt`; MIT, Apache-2.0, BSD and PostgreSQL pass, anything else needs a
+  reviewed exception, and strong copyleft (AGPL, GPL, SSPL) never passes, in that list or on the dependency
+  review allow list.
 
 ### Fixed
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
