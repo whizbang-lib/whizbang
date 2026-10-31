@@ -124,6 +124,8 @@ public class PerspectiveApplyNearMissTests {
   [Arguments("public (Order?, ModelAction, int) Aply(Order current, OrderStatusChanged @event) => (null, ModelAction.None, 0);")]
   [Arguments("public ApplyResult<Invoice> Aply(Order current, OrderStatusChanged @event) => ModelAction.None;")]
   [Arguments("public static Order Aply(Order current, OrderStatusChanged @event) => current;")]
+  [Arguments("public Order[] Aply(Order current, OrderStatusChanged @event) => [];")]
+  [Arguments("public (Invoice?, ModelAction) Aply(Order current, OrderStatusChanged @event) => (null, ModelAction.None);")]
   [RequiresAssemblyFiles]
   [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
   public async Task AMethodWithoutAnApplysSignature_IsNotReported_WhateverItsNameAsync(string member) {

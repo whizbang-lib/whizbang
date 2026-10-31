@@ -19,6 +19,8 @@ namespace Whizbang.Generators.Utilities;
 internal sealed class PerspectiveContract {
   internal const string APPLY = "Apply";
   private const string EVENT_INTERFACE = "Whizbang.Core.IEvent";
+  private const string MODEL_ACTION = "Whizbang.Core.Perspectives.ModelAction";
+  private const string APPLY_RESULT = "Whizbang.Core.Perspectives.ApplyResult<TModel>";
 
   private readonly Dictionary<ITypeSymbol, HashSet<ITypeSymbol>> _routed;
 
@@ -57,6 +59,28 @@ internal sealed class PerspectiveContract {
   /// <summary>Whether <paramref name="type"/> is an event: it implements <c>IEvent</c>.</summary>
   internal static bool IsEvent(ITypeSymbol type) =>
     type.AllInterfaces.Any(static i => TypeNameUtilities.IsNamed(i, EVENT_INTERFACE));
+
+  /// <summary>
+  /// Whether <paramref name="returned"/> is what an <c>Apply</c> for <paramref name="model"/> returns in any of the shapes
+  /// the generator knows: the model (nullable or not), <c>ApplyResult&lt;TModel&gt;</c>, <c>ModelAction</c> or
+  /// <c>(TModel?, ModelAction)</c>.
+  /// </summary>
+  internal static bool IsApplyShapedReturn(ITypeSymbol model, ITypeSymbol returned) =>
+    SymbolEqualityComparer.Default.Equals(returned, model)
+    || IsModelAction(returned)
+    || (returned is INamedTypeSymbol named && (_isApplyResultOf(named, model) || _isModelActionTuple(named, model)));
+
+  /// <summary>Whether <paramref name="type"/> is <c>ModelAction</c>.</summary>
+  internal static bool IsModelAction(ITypeSymbol type) => TypeNameUtilities.IsNamed(type, MODEL_ACTION);
+
+  private static bool _isApplyResultOf(INamedTypeSymbol type, ITypeSymbol model) =>
+    TypeNameUtilities.IsNamed(type.OriginalDefinition, APPLY_RESULT)
+    && SymbolEqualityComparer.Default.Equals(type.TypeArguments[0], model);
+
+  private static bool _isModelActionTuple(INamedTypeSymbol type, ITypeSymbol model) =>
+    type is { IsTupleType: true, TupleElements.Length: 2 }
+    && SymbolEqualityComparer.Default.Equals(type.TupleElements[0].Type, model)
+    && IsModelAction(type.TupleElements[1].Type);
 
   /// <summary>
   /// The perspective's ordinary instance <c>Apply</c> methods with two parameters, its own and inherited, of any
