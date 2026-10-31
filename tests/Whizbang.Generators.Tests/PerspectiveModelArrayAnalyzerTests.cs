@@ -355,4 +355,45 @@ public class PerspectiveModelArrayAnalyzerTests {
     await Assert.That(source).Contains(declaration);
     await Assert.That(await _whiz200Async(source)).Count().IsEqualTo(1);
   }
+
+  /// <summary>
+  /// A model compiled into a referenced assembly (a metadata reference, as a build of a project reference is) has no
+  /// source location at all, so the warning is reported at the perspective.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AModelFromAReferencedAssembly_IsReportedAtThePerspectiveAsync() {
+    var models = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+      using System;
+      namespace Models;
+      public sealed record Tag(Guid TagId, string Label);
+      public class LedgerModel {
+        public Tag[] Tags { get; set; } = [];
+      }
+      """).WithAssemblyName("Models").WithOptions(new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+    await using var image = new MemoryStream();
+    var emitted = models.Emit(image);
+    await Assert.That(emitted.Success).IsTrue().Because("the model assembly has to compile to be referenced");
+    var compilation = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+        using Models;
+        namespace TestApp;
+        public record Noted([property: StreamId] Guid Id) : IEvent;
+        public class LedgerProjection : IPerspectiveFor<LedgerModel, Noted> {
+          public LedgerModel Apply(LedgerModel currentData, Noted eventData) => currentData;
+        }
+        """)
+      .AddReferences(MetadataReference.CreateFromImage(image.ToArray()),
+        CSharpCompilation.Create("Whizbang.Data.EFCore.Postgres").ToMetadataReference());
+
+    var all = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelArrayAnalyzer>(
+      compilation, globalOptions: MSBuildGlobalOptions.For());
+    var reported = all.Where(d => d.Id == "WHIZ200").ToList();
+
+    await Assert.That(all.Where(d => d.Id == "AD0001")).IsEmpty();
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(_locatedAt(reported[0])).IsEqualTo("LedgerProjection");
+  }
 }
