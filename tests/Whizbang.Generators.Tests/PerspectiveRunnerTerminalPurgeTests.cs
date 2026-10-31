@@ -52,12 +52,12 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => ApplyResult<AccountModel>.Purge();")]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) { return ApplyResult<AccountModel>.Purge(); }")]
-  [Arguments("public ModelAction Apply(AccountModel currentData, ClosedEvent @event) => ModelAction.Purge;")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Purge);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => ModelAction.Purge;")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Purge);")]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (ApplyResult<AccountModel>.Purge());")]
-  [Arguments("public ModelAction Apply(AccountModel currentData, ClosedEvent @event) => Whizbang.Core.Perspectives.ModelAction.Purge;")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => Whizbang.Core.Perspectives.ModelAction.Purge;")]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => global::Whizbang.Core.Perspectives.ApplyResult<AccountModel>.Purge();")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (default, ModelAction.Purge);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (default, ModelAction.Purge);")]
   public async Task AnApplyThatCanOnlyPurge_IsATerminalPurgeAsync(string closedApply) {
     var runner = _runnerFor(closedApply);
 
@@ -74,12 +74,12 @@ namespace TestNamespace {
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => Decide();")]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => Decide().Purge();")]
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => Outcomes.Purge();")]
-  [Arguments("public AccountModel Apply(AccountModel currentData, ClosedEvent @event) => currentData;")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (currentData, ModelAction.Purge);")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (0, ModelAction.Purge);")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (null, @event.Hard ? ModelAction.Purge : ModelAction.None);")]
-  [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Delete);")]
-  [Arguments("public (AccountModel?, ModelAction, int) Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Purge, 1);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => currentData;")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (currentData, ModelAction.Purge);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (0, ModelAction.Purge);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (null, @event.Hard ? ModelAction.Purge : ModelAction.None);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Delete);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Purge, 1);")]
   public async Task AnApplyThatMightNotPurge_IsReplayedAsync(string closedApply) {
     var runner = _runnerFor(closedApply);
 

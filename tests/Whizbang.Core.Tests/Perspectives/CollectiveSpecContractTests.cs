@@ -136,8 +136,12 @@ public class CollectiveSpecContractTests {
     : ICollectiveSpec<JobModel>;
 
   private sealed class ArchiveApply : ICollectiveApplyFor<JobModel, ArchiveCollectiveEvent> {
+    // A compile-time fixture of the interface's TEvent constraint, never meant to be bound as a handler, so it carries
+    // no [CollectiveApplyFor]; WHIZ116 reports exactly that for a real handler (#1936).
+#pragma warning disable WHIZ116
     public ICollectiveSpec<JobModel> Apply(ArchiveCollectiveEvent evt, ICollectiveQuery query) =>
       new ArchiveSpec(s => s.SetProperty(j => j.Status, "Archived"));
+#pragma warning restore WHIZ116
   }
 
   private sealed class TenantResolverStub : ICollectiveScopeResolver {
