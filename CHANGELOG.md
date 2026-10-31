@@ -933,6 +933,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the container suites stay on Linux with Docker. Any missing secret, unset variable, API error or timeout falls back, and the picker can never
   fail the gate; with nothing configured every job runs where it did before. Setup, the label
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
+- **Contributing: secret scanning uses Gitleaks, and every pipeline tool's license is checked.** Dependency
+  review refused the secret scanner action for its AGPL-3.0 license at release time. Secret scanning now runs
+  Gitleaks (MIT) as a pinned, checksum-verified release binary over the full git history, failing on any
+  finding; it matches patterns rather than verifying credentials with their provider, so reviewed placeholders
+  are listed by exact value in `.github/gitleaks.toml` and single historical findings by fingerprint in
+  `.github/gitleaksignore` (two example Pushover recipient keys from history, accepted, #1938), and an inline
+  `gitleaks:allow` silences nothing. A new pipeline-script check (`.github/scripts/Test-PipelineToolLicenses.ps1`,
+  run by `Test · Pipeline scripts`) fails a pull request that uses an action, a dotnet tool, a downloaded release
+  binary or a container image (`container:`, `services:`, `uses: docker://`, `docker run`) not listed with its
+  license in `.github/pipeline-tool-licenses.txt`; MIT, Apache-2.0, BSD and PostgreSQL pass, anything else needs
+  a reviewed exception. Strong copyleft (AGPL, GPL, SSPL) never passes on the dependency review allow list, and in
+  the pipeline only for a container image run unmodified in CI that the script names: today only the REUSE image
+  behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking

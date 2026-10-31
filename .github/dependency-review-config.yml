@@ -25,6 +25,13 @@ fail-on-scopes:
 
 # Licenses a new dependency may carry: the permissive licenses the project already ships with or builds with.
 # A dependency under anything else (copyleft, non-commercial, no license) needs a reviewed exception below.
+#
+# Strong copyleft (AGPL, GPL and SSPL, any version) is refused by being left off this list. The action cannot
+# also take a deny-licenses list (it rejects a configuration with both), so the guard that it stays off is
+# .github/scripts/Test-PipelineToolLicenses.ps1, run by Test · Pipeline scripts, which fails if any
+# strong-copyleft identifier is added here. That script also checks the licenses of the pipeline's own tools
+# (actions and dotnet tools) against .github/pipeline-tool-licenses.txt, so a tool like the AGPL-3.0 secret
+# scanner this list once refused at release time now fails in the pull request that adds it.
 allow-licenses:
   - MIT
   - MIT-0
