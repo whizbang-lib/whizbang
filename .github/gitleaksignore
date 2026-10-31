@@ -5,9 +5,9 @@
 # Only for an occurrence that is already in history and needs no change to the tree; a value that can
 # recur belongs in .github/gitleaks.toml. Each entry says what it is and why it is accepted.
 
-# Two Pushover recipient keys (a user key and a group key) used as examples in the notify-pushover action's
-# input description, added and removed on 2026-03-07 (88e856bf, removed by 09e5c493). A Pushover user or
-# group key identifies who receives a notification; it sends nothing without the application token, which
-# has only ever been a secret. Accepted pending the owner's decision on regenerating them.
+# Two example Pushover recipient keys (a user key and a group key) in the notify-pushover action's input
+# description, added and removed on 2026-03-07 (88e856bf, removed by 09e5c493). A Pushover user or group key
+# identifies who receives a notification; it sends nothing without the application token, which has only
+# ever been a secret. Accepted by the owner on 2026-10-31 (#1938); history is not rewritten.
 88e856bf0ac93b58e56bf764051224a9801cf193:.github/actions/notify-pushover/action.yml:generic-api-key:11
 88e856bf0ac93b58e56bf764051224a9801cf193:.github/actions/notify-pushover/action.yml:generic-api-key:12
