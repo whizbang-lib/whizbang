@@ -952,6 +952,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is, so `T[]` round-trips on both drivers with no change to the model; rows the atomic upsert wrote before still
   read. An array of primitives stays a mapped value. Declaring the member as `List<T>` keeps the document mapped and
   its fields indexable (Fixes #1910)
+- **A schema step whose connection is lost raises the lost connection, so the initializer retries it.** The step
+  runner asked the step's transaction for its connection outside the rollback's handler; once a lost connection had
+  ended the transaction that raised `ObjectDisposedException: NpgsqlTransaction` in place of the step's own failure,
+  and since that is not transient the initializer gave up on a start it would have retried. It is now logged as a
+  rollback that could not run, and the lost connection propagates. Two database tests that ended backends in every
+  database of the shared test cluster (every advisory lock holder, and every holder of one key) now end only their own
+  database's, which is what made three tests in other shards fail with that exception when the shards ran together;
+  a guard fails any test whose backend termination does not name its database or a backend it was handed (Fixes #1915)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of

@@ -343,12 +343,22 @@ public sealed class SchemaStepRunner {
   }
 
   /// <summary>Detaches the step's transaction from the context and ends it.</summary>
+  /// <remarks>
+  /// A connection lost under the step ends its transaction with it, and asking that transaction for its connection
+  /// then throws <see cref="ObjectDisposedException"/>. Asked outside the handler, that exception replaced the lost
+  /// connection as the step's failure, and since it is not transient the initializer gave up on a start it would have
+  /// retried (#1915). It is asked inside the handler, so it is logged as a rollback that could not run.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaStepRunnerTests.cs:AConnectionLostWhileTheStepRuns_RaisesTheLostConnection_NotTheEndedTransactionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaStepRunnerTests.cs:ARollbackThatCannotRun_IsLogged_AndTheStepsOwnFailurePropagatesAsync</tests>
   private async Task _endAsync(DbTransaction transaction, string step, bool rollback) {
     await _dbContext.Database.UseTransactionAsync(null, CancellationToken.None).ConfigureAwait(false);
-    // A transaction whose commit was attempted is over either way; rolling it back again would only report that.
-    if (rollback && transaction.Connection is not null) {
+    if (rollback) {
       try {
-        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+        // A transaction whose commit was attempted is over either way; rolling it back again would only report that.
+        if (transaction.Connection is not null) {
+          await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+        }
       } catch (Exception ex) {
         // Over a dead connection the server already rolled it back; the step's own failure is what is raised.
         SchemaInitializationLog.StepRollbackFailed(_logger, ex, _schema, step);
