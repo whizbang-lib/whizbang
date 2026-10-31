@@ -150,10 +150,68 @@ public static class PerTestDatabaseFactory {
   /// Call it instead of issuing <c>CREATE DATABASE</c> in a fixture. A fixture that issues its own
   /// is one more entrant in the race this exists to absorb.
   /// </remarks>
-  public static async Task<PerTestDatabase> CreateAsync(
+  public static Task<PerTestDatabase> CreateAsync(
       string namePrefix,
       TimeProvider? timeProvider = null,
+      CancellationToken cancellationToken = default) =>
+    _createAsync(namePrefix, template: null, timeProvider, cancellationToken);
+
+  /// <summary>
+  /// Creates a database for one test as a copy of <paramref name="template"/>, and returns it with the
+  /// string that reaches it.
+  /// </summary>
+  /// <param name="namePrefix">A short prefix naming the fixture, so a leftover database is traceable.</param>
+  /// <param name="template">
+  /// The database to copy: one a fixture created and filled once, typically in <c>[Before(Class)]</c>. Nothing
+  /// may be connected to it while it is copied, so fill it over a connection string without pooling.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The database and its connection string.</returns>
+  /// <remarks>
+  /// A fixture whose tests each need the same large data set fills it once and copies it per test. The copy is
+  /// a file-level clone of the template, its indexes and its planner statistics included, so each test still
+  /// gets a database of its own to change, without repeating the work that filled it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/PerTestDatabaseTemplateTests.cs</tests>
+  public static Task<PerTestDatabase> CreateFromTemplateAsync(
+      string namePrefix,
+      string template,
       CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(template);
+    return _createAsync(namePrefix, template, timeProvider: null, cancellationToken);
+  }
+
+  /// <summary>
+  /// The connection string a fixture runs its own setup on: the statements that build, fill and migrate its
+  /// database, which have no command timeout and end only when the caller's cancellation token says so.
+  /// </summary>
+  /// <param name="connectionString">The connection string to the fixture's database.</param>
+  /// <returns>The same connection string with the command timeout turned off.</returns>
+  /// <remarks>
+  /// <para>
+  /// How long a setup statement takes is a fact about how busy the shared server is, not about the code under
+  /// test: every test process on a machine shares one container, and a seed that takes seconds on an idle one
+  /// takes minutes beside another shard's load. Under Npgsql's default 30-second command timeout the client
+  /// cancelled such statements, and the test failed before an assertion ran. Without a timeout the statement
+  /// finishes whatever the load, and the bound is the test's own: its <c>[Timeout]</c> or the hook's, through
+  /// the token the statement is given.
+  /// </para>
+  /// <para>
+  /// Use it for setup only. A query a test makes of the code under test keeps the ordinary connection string,
+  /// so a statement that hangs because of a defect still fails at the usual timeout.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/PerTestDatabaseSetupPolicyTests.cs</tests>
+  public static string ForSetup(string connectionString) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    return new NpgsqlConnectionStringBuilder(connectionString) { CommandTimeout = 0 }.ConnectionString;
+  }
+
+  private static async Task<PerTestDatabase> _createAsync(
+      string namePrefix,
+      string? template,
+      TimeProvider? timeProvider,
+      CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrWhiteSpace(namePrefix);
     if (namePrefix.Length > MAX_PREFIX_LENGTH) {
       // Said here rather than discovered later: Postgres truncates an over-long identifier silently,
@@ -170,11 +228,12 @@ public static class PerTestDatabaseFactory {
     var clock = timeProvider ?? TimeProvider.System;
     var stamp = clock.GetUtcNow().UtcDateTime.ToString(STAMP_FORMAT, CultureInfo.InvariantCulture);
     var name = string.Create(CultureInfo.InvariantCulture, $"{namePrefix}_{stamp}_{Guid.NewGuid():N}");
+    var statement = template is null ? $"CREATE DATABASE {name}" : $"CREATE DATABASE {name} TEMPLATE {template}";
     await RunWithRetryAsync(
       async () => {
         await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
         await admin.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var create = new NpgsqlCommand($"CREATE DATABASE {name}", admin);
+        await using var create = new NpgsqlCommand(statement, admin);
         await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       },
       IsAlreadyCreated,

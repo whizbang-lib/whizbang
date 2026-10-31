@@ -1008,6 +1008,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The jsonb containment tests no longer fail in setup when another shard loads the shared test container.** Each
+  test inserted 200,000 rows on a connection with Npgsql's default 30-second command timeout; beside another shard's
+  load the client cancelled the insert (the server logged `canceling statement due to user request` on it, then the
+  test's own teardown ending the session), so the test failed before an assertion ran. The rows are now inserted once
+  per class into a template that each test copies, on a connection with no command timeout whose bound is the hook's
+  own, and the class drops its copy once, from its `[After(Test)]` hook only, instead of a second time as
+  `IAsyncDisposable`. `PerTestDatabaseFactory` gains `CreateFromTemplateAsync` and `ForSetup`, the connection string a
+  fixture runs its own setup on, and a guard fails any fixture that issues its own `CREATE DATABASE` outside the
+  shrinking list of fixtures that predate the factory (Fixes #1941, Fixes #1935)
 - **A local dispatch of an event this process also projects no longer ends the projection's lifecycle.** The
   dispatcher's local PostLifecycle and the perspective worker tracked an event under one key, the event id, so a local
   dispatch of an event the worker was projecting took the worker's entry, completed it with its own PostLifecycle and

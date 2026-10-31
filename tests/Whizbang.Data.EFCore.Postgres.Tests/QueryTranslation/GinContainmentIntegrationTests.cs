@@ -11,6 +11,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
 
@@ -33,7 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Shard5")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
-public class GinContainmentIntegrationTests : IAsyncDisposable {
+public class GinContainmentIntegrationTests {
   // Seeded through EF so the JSON byte format is exactly what the stack writes.
   private const int EF_SEEDED_ROWS = 200;
 
@@ -91,28 +92,54 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     }
   }
 
-  private string _databaseName = null!;
+  // The template every test copies, filled once per class. Static because the class hooks are.
+  private static string? _templateName;
+  private static Guid _needleTenant;
+
+  private string? _databaseName;
   private string _connectionString = null!;
   private GinDbContext? _context;
-  private Guid _needleTenant;
 
-  [Before(Test)]
-  public async Task SetupAsync() {
-    await SharedPostgresContainer.InitializeAsync();
+  private static GinDbContext _contextFor(string connectionString) =>
+    new(new DbContextOptionsBuilder<GinDbContext>()
+      .UseNpgsql(connectionString)
+      // The shipped wiring, so these tests exercise the real rewrite rather than a local imitation
+      // of it. Without this the fixture proved only that the SQL shape works if something emits it.
+      .UseWhizbangPhysicalFields()
+      // Every test here gets its own database, so the options cannot be shared the way a fixture
+      // over one schema would share them, and each instance asks Entity Framework for another
+      // internal service provider. Past twenty of those it raises this as an error, which fails the
+      // whole class in a full run while passing when the class runs alone.
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options);
 
-    _databaseName = $"gin_probe_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await _execAsync(admin, $"CREATE DATABASE {_databaseName}");
-    }
+  /// <summary>
+  /// Builds and fills the database every test copies: the table, its three GIN indexes, the containment
+  /// helper's migration, the rows written through Entity Framework, the bulk rows and the statistics.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Once per class rather than once per test (#1941). Each test used to insert the 200,000 bulk rows itself, on a
+  /// connection with the default 30-second command timeout; beside another shard's load on the shared container
+  /// the client cancelled the insert and the test failed in setup. The fill now runs once, on a connection with no
+  /// command timeout (bounded by this hook's own timeout through the token), and each test copies the result.
+  /// </para>
+  /// <para>
+  /// Nothing may stay connected to the template while it is copied, so the fill does not pool its connections.
+  /// </para>
+  /// </remarks>
+  [Before(Class)]
+  public static async Task FillTemplateAsync(CancellationToken cancellationToken) {
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
 
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
+    var template = await PerTestDatabaseFactory.CreateAsync("gin_tpl", cancellationToken: cancellationToken);
+    _templateName = template.Name;
+    var fill = new NpgsqlConnectionStringBuilder(PerTestDatabaseFactory.ForSetup(template.ConnectionString)) {
+      Pooling = false,
     }.ConnectionString;
 
-    await using (var db = new NpgsqlConnection(_connectionString)) {
-      await db.OpenAsync();
+    await using (var db = new NpgsqlConnection(fill)) {
+      await db.OpenAsync(cancellationToken);
       await _execAsync(db, $"""
         CREATE TABLE {TABLE} (
           id uuid PRIMARY KEY,
@@ -126,39 +153,27 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
         CREATE INDEX idx_gin_probe_data ON {TABLE} USING gin (data);
         CREATE INDEX idx_gin_probe_metadata ON {TABLE} USING gin (metadata);
         CREATE INDEX idx_gin_probe_scope ON {TABLE} USING gin (scope);
-        """);
+        """, cancellationToken);
 
       // The real migration text, not a copy of it: if 152 stops producing a usable function the
       // end-to-end tests below fail rather than passing against a local imitation. 000 comes first
       // because 152 opens by dropping any earlier overload of itself, and the helper that does that
       // is defined there.
       foreach (var migration in new[] { "000_MigrationTracking.sql", "152_JsonbContainmentSet.sql" }) {
-        await _execAsync(db, (await File.ReadAllTextAsync(_migrationPath(migration)))
-          .Replace("__SCHEMA__", "public", StringComparison.Ordinal));
+        await _execAsync(db, (await File.ReadAllTextAsync(_migrationPath(migration), cancellationToken))
+          .Replace("__SCHEMA__", "public", StringComparison.Ordinal), cancellationToken);
       }
     }
 
-    _context = new GinDbContext(new DbContextOptionsBuilder<GinDbContext>()
-      .UseNpgsql(_connectionString)
-      // The shipped wiring, so these tests exercise the real rewrite rather than a local imitation
-      // of it. Without this the fixture proved only that the SQL shape works if something emits it.
-      .UseWhizbangPhysicalFields()
-      // Every test here gets its own database, so the options cannot be shared the way a fixture
-      // over one schema would share them, and each instance asks Entity Framework for another
-      // internal service provider. Past twenty of those it raises this as an error, which fails the
-      // whole class in a full run while passing when the class runs alone.
-      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-      .Options);
-
-    _needleTenant = Guid.NewGuid();
+    _needleTenant = TrackedGuid.NewRandom();
     var rows = new List<PerspectiveRow<CatalogModel>>(EF_SEEDED_ROWS);
     for (var i = 0; i < EF_SEEDED_ROWS; i++) {
       rows.Add(new PerspectiveRow<CatalogModel> {
-        Id = Guid.NewGuid(),
+        Id = TrackedGuid.NewRandom(),
         // One row in the whole table carries the needle, so the predicate is genuinely selective.
         Data = new CatalogModel {
           Title = i == 0 ? "needle" : $"hay-{i.ToString(CultureInfo.InvariantCulture)}",
-          TenantId = i == 0 ? _needleTenant : Guid.NewGuid(),
+          TenantId = i == 0 ? _needleTenant : (Guid)TrackedGuid.NewRandom(),
           Rank = i,
           Note = i == 0 ? "noted" : null,
           OccurredAt = i == 0 ? _needleInstant : _needleInstant.AddDays(i),
@@ -170,7 +185,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           EventType = i == 0 ? "NeedleEvent" : $"HayEvent-{i.ToString(CultureInfo.InvariantCulture)}",
         },
         Scope = new PerspectiveScope {
-          TenantId = (i == 0 ? _needleTenant : Guid.NewGuid()).ToString(),
+          TenantId = (i == 0 ? _needleTenant : (Guid)TrackedGuid.NewRandom()).ToString(),
         },
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow,
@@ -178,11 +193,13 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       });
     }
 
-    _context.AddRange(rows);
-    await _context.SaveChangesAsync();
+    await using (var seeding = _contextFor(fill)) {
+      seeding.AddRange(rows);
+      await seeding.SaveChangesAsync(cancellationToken);
+    }
 
-    await using (var db = new NpgsqlConnection(_connectionString)) {
-      await db.OpenAsync();
+    await using (var db = new NpgsqlConnection(fill)) {
+      await db.OpenAsync(cancellationToken);
 
       await _execAsync(db, $"""
         INSERT INTO {TABLE} (id, created_at, updated_at, version, data, metadata, scope)
@@ -193,30 +210,52 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
                shape.metadata, shape.scope
         FROM generate_series(1, {BULK_SEEDED_ROWS}) g
         CROSS JOIN {SHAPE_SOURCE} shape;
-        """);
+        """, cancellationToken);
 
-      await _execAsync(db, $"ANALYZE {TABLE}");
+      await _execAsync(db, $"ANALYZE {TABLE}", cancellationToken);
     }
   }
 
+  /// <summary>Drops the template once the last test has copied it.</summary>
+  [After(Class)]
+  public static async Task DropTemplateAsync(CancellationToken cancellationToken) {
+    if (Interlocked.Exchange(ref _templateName, null) is { } template) {
+      await PerTestDatabaseFactory.DropAsync(template, cancellationToken: cancellationToken);
+    }
+  }
+
+  /// <summary>Gives the test a copy of the filled template, so it can change its database freely.</summary>
+  /// <remarks>
+  /// The copy's connection string carries the setup policy too: the statements these tests run besides their
+  /// assertions (an index over every row, an <c>ANALYZE</c>) are as load-bound as the fill, and the test's own
+  /// <c>[Timeout]</c> is what bounds them.
+  /// </remarks>
+  [Before(Test)]
+  public async Task SetupAsync(CancellationToken cancellationToken) {
+    var database = await PerTestDatabaseFactory.CreateFromTemplateAsync(
+      "gin_probe", _templateName ?? throw new InvalidOperationException("The class hook did not fill a template."),
+      cancellationToken);
+    _databaseName = database.Name;
+    _connectionString = PerTestDatabaseFactory.ForSetup(database.ConnectionString);
+    _context = _contextFor(_connectionString);
+  }
+
+  /// <summary>Ends the test's context and drops its copy, once.</summary>
+  /// <remarks>
+  /// The only teardown: the class is not also <see cref="IAsyncDisposable"/>, which used to run this a second
+  /// time against a name it never cleared (#1941). The name is taken before the drop, so however often the runner
+  /// calls this, one drop is issued.
+  /// </remarks>
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync(CancellationToken cancellationToken) {
     if (_context is not null) {
       await _context.DisposeAsync();
       _context = null;
     }
 
-    if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await _execAsync(admin, $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)");
-      } catch (NpgsqlException) {
-        // The container is shared and the database is per-test; a failed drop is not a test failure.
-      }
+    if (Interlocked.Exchange(ref _databaseName, null) is { } database) {
+      await PerTestDatabaseFactory.DropAsync(database, cancellationToken: cancellationToken);
     }
-
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>
@@ -444,8 +483,8 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     // A range over a JSON member, before and after a btree index on the extraction. The cast has to be
     // immutable for such an index to be allowed at all.
     await planAsync("range-unindexed", "(data ->> 'Rank')::int > 199000");
-    await _execAsync(db, $"CREATE INDEX idx_gin_probe_rank ON {TABLE} (((data ->> 'Rank')::int))");
-    await _execAsync(db, $"ANALYZE {TABLE}");
+    await _execAsync(db, $"CREATE INDEX idx_gin_probe_rank ON {TABLE} (((data ->> 'Rank')::int))", cancellationToken);
+    await _execAsync(db, $"ANALYZE {TABLE}", cancellationToken);
     await planAsync("range-indexed", "(data ->> 'Rank')::int > 199000");
 
     // And whether a date can be range-scanned as stored text, which needs the text ordering to agree
@@ -543,7 +582,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
              jsonb_build_object('Title', 'legacy'),
              shape.metadata, shape.scope
       FROM {SHAPE_SOURCE} shape;
-      """);
+      """, cancellationToken);
 
     var byExtraction = await _scalarAsync(db,
       $"SELECT count(*) FROM {TABLE} WHERE data ->> 'Rank' IS NULL");
@@ -588,7 +627,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       RETURNS jsonb[] AS $$
         SELECT array_agg(jsonb_build_object(key, v)) FROM unnest(vals) AS v;
       $$ LANGUAGE sql IMMUTABLE;
-      """);
+      """, cancellationToken);
 
     var throughFunction = await _explainArrayAsync(db,
       $"SELECT id FROM {TABLE} WHERE data @> ANY(wh_jsonb_objects('Title', @p))");
@@ -615,7 +654,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       RETURNS jsonb[] AS $$
         SELECT array_agg(jsonb_build_object(key, v)) FROM unnest(vals) AS v;
       $$ LANGUAGE sql IMMUTABLE;
-      """);
+      """, cancellationToken);
 
     var byMembership = await _scalarAsync(db,
       $"SELECT count(*) FROM {TABLE} WHERE data @> ANY(wh_jsonb_objects('Title', ARRAY['needle','bulk-1']))");
@@ -756,7 +795,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     await _execAsync(db, """
       CREATE COLLATION IF NOT EXISTS case_insensitive
         (provider = icu, locale = 'und-u-ks-level2', deterministic = false);
-      """);
+      """, cancellationToken);
 
     // The same stored value and the same candidate, differing only in case.
     var byExtraction = await _scalarAsync(db, """
@@ -778,9 +817,9 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     AppContext.BaseDirectory, "..", "..", "..", "..", "..",
     "src", "Whizbang.Data.Postgres", "Migrations", fileName);
 
-  private static async Task _execAsync(NpgsqlConnection db, string sql) {
+  private static async Task _execAsync(NpgsqlConnection db, string sql, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(sql, db);
-    await command.ExecuteNonQueryAsync();
+    await command.ExecuteNonQueryAsync(cancellationToken);
   }
 
   /// <summary>
