@@ -396,4 +396,17 @@ public class PerspectiveModelArrayAnalyzerTests {
     await Assert.That(reported).Count().IsEqualTo(1);
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("LedgerProjection");
   }
+
+  /// <summary>
+  /// A member the mapped document leaves out (static, non-public, or marked [JsonIgnore] or [NotMapped]) does not make
+  /// the model opaque, so an array of records there is not reported.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("public static Tag[] Shared { get; set; } = [];")]
+  [Arguments("internal Tag[] Internal { get; set; } = [];")]
+  [Arguments("[System.Text.Json.Serialization.JsonIgnore] public Tag[] Ignored { get; set; } = [];")]
+  public async Task AnArrayOfRecordsTheDocumentLeavesOut_IsNotReportedAsync(string member) {
+    await Assert.That(await _whiz200Async(_source($"  {member}"))).IsEmpty();
+  }
 }

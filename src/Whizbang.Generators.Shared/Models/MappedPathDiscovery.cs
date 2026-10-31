@@ -97,6 +97,7 @@ public static class MappedPathDiscovery {
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsInsideACollectionElement_IsReportedByItsPathAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsUnderANestedObject_IsReportedByItsPathAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfPrimitives_IsNotReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfRecordsTheDocumentLeavesOut_IsNotReportedAsync</tests>
   public static IReadOnlyList<(IPropertySymbol Property, string Path)> ArraysOfRecords(INamedTypeSymbol modelType) {
     var found = new List<(IPropertySymbol Property, string Path)>();
     _collectArraysOfRecords(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty, found);
