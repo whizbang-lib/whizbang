@@ -482,9 +482,7 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever archive store
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
-      sp => new ArchiveRestoreRequestStep(
-        sp.GetService<TimeProvider>() ?? TimeProvider.System,
-        sp.GetService<ILogger<ArchiveRestoreRequestStep>>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ArchiveRestoreRequestStep>.Instance)));
+      ArchiveRestoreRequestStep.FromServices));
     // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
     // then refuses the stream's appends.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>

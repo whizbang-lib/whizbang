@@ -318,9 +318,7 @@ public static class PostgresDriverExtensions {
         // archive store is registered, under the maintainer duty.
         // <docs>fundamentals/events/archive-store#restore-requests</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
-          sp => new ArchiveRestoreRequestStep(
-            sp.GetService<TimeProvider>() ?? TimeProvider.System,
-            sp.GetService<ILogger<ArchiveRestoreRequestStep>>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ArchiveRestoreRequestStep>.Instance)));
+          ArchiveRestoreRequestStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>

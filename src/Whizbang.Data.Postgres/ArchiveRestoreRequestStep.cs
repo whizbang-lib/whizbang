@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Workers;
@@ -55,6 +56,24 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
     ArgumentNullException.ThrowIfNull(logger);
     _timeProvider = timeProvider;
     _logger = logger;
+  }
+
+  /// <summary>
+  /// Builds the step from a host's services, as both drivers register it: on the host's <see cref="TimeProvider"/> when
+  /// one is registered and the system clock otherwise, logging to the host's logger when it has logging and discarding
+  /// the log when it has none. A host can therefore list its maintenance steps whatever it registers.
+  /// </summary>
+  /// <param name="services">The host's services.</param>
+  /// <returns>The step.</returns>
+  /// <docs>fundamentals/events/archive-store#restore-requests</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:FromServices_WithAHostClockAndLogger_WritesTheRequestTimesFromThatClock_AndLogsTheOutcomeToThatLoggerAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:FromServices_WithNoClockOrLogger_RunsOnTheSystemClock_WithoutLoggingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:FromServices_RefusesNoServicesAsync</tests>
+  public static ArchiveRestoreRequestStep FromServices(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return new ArchiveRestoreRequestStep(
+      services.GetService<TimeProvider>() ?? TimeProvider.System,
+      services.GetService<ILogger<ArchiveRestoreRequestStep>>() ?? NullLogger<ArchiveRestoreRequestStep>.Instance);
   }
 
   /// <inheritdoc />

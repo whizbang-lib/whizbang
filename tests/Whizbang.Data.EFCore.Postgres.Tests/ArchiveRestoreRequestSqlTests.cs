@@ -290,7 +290,65 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
       .IsEqualTo(hostNow.ToUnixTimeSeconds()).Because("the registration hands the step the host's clock, not the system one");
   }
 
+  [Test]
+  public async Task FromServices_WithAHostClockAndLogger_WritesTheRequestTimesFromThatClock_AndLogsTheOutcomeToThatLoggerAsync() {
+    await using var conn = await _openAsync();
+    var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
+    _ = await _store().DeleteAsync(stream);
+    var hostNow = _t0.AddDays(5);
+    var logger = new CapturingStepLogger();
+    var services = new ServiceCollection();
+    services.AddSingleton<TimeProvider>(new FakeTimeProvider(hostNow));
+    services.AddSingleton<Microsoft.Extensions.Logging.ILogger<ArchiveRestoreRequestStep>>(logger);
+    await using var host = services.BuildServiceProvider();
+
+    await ArchiveRestoreRequestStep.FromServices(host).RunAsync(_runServices(_store()), CancellationToken.None);
+
+    await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Failed|nothing_archived");
+    await Assert.That(await _updatedAtAsync(conn, stream)).IsEqualTo(hostNow.ToUnixTimeSeconds())
+      .Because("the host's clock, not the system one, times the request");
+    await Assert.That(logger.Messages).Count().IsEqualTo(1);
+    await Assert.That(logger.Messages[0]).Contains(stream.ToString()).And.Contains("nothing_archived")
+      .Because("the failed restore is reported in the host's own log");
+  }
+
+  [Test]
+  public async Task FromServices_WithNoClockOrLogger_RunsOnTheSystemClock_WithoutLoggingAsync() {
+    await using var conn = await _openAsync();
+    var stream = await _autoRestoreStreamWithADeadLetterAsync(conn);
+    _ = await _store().DeleteAsync(stream);
+    await using var bare = new ServiceCollection().BuildServiceProvider();
+    var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    await ArchiveRestoreRequestStep.FromServices(bare).RunAsync(_runServices(_store()), CancellationToken.None);
+
+    var after = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    await Assert.That(await _requestErrorAsync(conn, stream)).IsEqualTo("Failed|nothing_archived")
+      .Because("a host without logging still gets a step that runs; its outcome is discarded, not a failure");
+    var updatedAt = await _updatedAtAsync(conn, stream);
+    await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
+      .Because("with no clock registered the step reads the system clock, which lies between the two reads around the run");
+    await Assert.That(updatedAt).IsLessThanOrEqualTo(after);
+  }
+
+  [Test]
+  public async Task FromServices_RefusesNoServicesAsync() {
+    await Assert.That(() => ArchiveRestoreRequestStep.FromServices(null!)).Throws<ArgumentNullException>();
+  }
+
   // =================================================================================================
+
+  // Records each message the step logs.
+  private sealed class CapturingStepLogger : Microsoft.Extensions.Logging.ILogger<ArchiveRestoreRequestStep> {
+    public List<string> Messages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+  }
+
+  private static async Task<long> _updatedAtAsync(NpgsqlConnection conn, Guid stream) =>
+    await _scalarAsync(conn, "SELECT floor(extract(epoch FROM updated_at))::bigint FROM wh_archive_restore_requests WHERE stream_id = @s", ("s", stream));
 
   // Cancels the cycle's token while a restore is running, as a host stopping mid-restore does, and observes it.
   private sealed class CancelingArchiveStore(CancellationTokenSource stopping) : IArchiveStore {
