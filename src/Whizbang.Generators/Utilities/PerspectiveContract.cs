@@ -56,9 +56,11 @@ internal sealed class PerspectiveContract {
   /// <summary>Whether <paramref name="type"/> is one of the perspective's models.</summary>
   internal bool HasModel(ITypeSymbol type) => _routed.ContainsKey(type);
 
-  /// <summary>Whether an interface on the perspective lists <paramref name="eventType"/> for <paramref name="model"/>.</summary>
-  internal bool Routes(ITypeSymbol model, ITypeSymbol eventType) =>
-    _routed.TryGetValue(model, out var listed) && listed.Contains(eventType);
+  /// <summary>
+  /// Whether an interface on the perspective lists <paramref name="eventType"/> for <paramref name="model"/>, which is
+  /// one of the perspective's models (<see cref="HasModel"/>).
+  /// </summary>
+  internal bool Routes(ITypeSymbol model, ITypeSymbol eventType) => _routed[model].Contains(eventType);
 
   /// <summary>
   /// The returns the perspective's interfaces declare for an <c>Apply</c> taking <paramref name="model"/> and
@@ -106,7 +108,8 @@ internal sealed class PerspectiveContract {
     var seen = new HashSet<string>(System.StringComparer.Ordinal);
     for (var current = perspective; current is not null; current = current.BaseType) {
       foreach (var method in current.GetMembers(APPLY).OfType<IMethodSymbol>()) {
-        if (method is { MethodKind: MethodKind.Ordinary, IsStatic: false, Parameters.Length: 2 }
+        // Every member named Apply is an ordinary method: an explicit implementation's name is qualified.
+        if (method is { IsStatic: false, Parameters.Length: 2 }
             && seen.Add(TypeNameUtilities.FullyQualified(method.Parameters[0].Type) + "|" + TypeNameUtilities.FullyQualified(method.Parameters[1].Type))) {
           yield return (method, !SymbolEqualityComparer.Default.Equals(current, perspective));
         }
