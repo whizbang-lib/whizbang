@@ -89,6 +89,47 @@ public class DapperArchiveAppendPolicyTests : PostgresTestBase {
       .Because("queued restores are performed by the maintenance cycle, under the maintainer duty, on either driver");
   }
 
+  [Test]
+  public async Task AddWhizbangPostgres_TheRestoreRequestStep_RunsOnTheHostsClock_InAHostWithoutLoggingAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await _eventStore().AppendAsync(stream, new DapperMixedStreamProbeNoted { StreamId = stream });
+    _ = await _archiveStore().WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await _archiveStore().DeleteAsync(stream);
+    var requestedAt = new DateTimeOffset(2026, 10, 30, 11, 0, 0, TimeSpan.Zero);
+    await using (var conn = await _openAsync()) {
+      _ = await conn.ExecuteAsync(
+        "INSERT INTO wh_archive_restore_requests (stream_id, state, requested_at, updated_at) VALUES (@stream, 'Pending', @at, @at)",
+        new { stream, at = requestedAt });
+    }
+    var hostNow = requestedAt.AddDays(3);
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    services.AddSingleton<TimeProvider>(new FixedClock(hostNow));
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+    // Only this step is built: other maintenance steps require the logging this host leaves out.
+    var factory = services
+      .Where(d => d.ServiceType == typeof(IMaintenanceStep))
+      .Select(d => d.ImplementationFactory)
+      .OfType<Func<IServiceProvider, ArchiveRestoreRequestStep>>()
+      .Single();
+    var step = factory(scope.ServiceProvider);
+
+    await step.RunAsync(scope.ServiceProvider, CancellationToken.None);
+
+    await using var check = await _openAsync();
+    var (state, error, updatedAt) = await check.QuerySingleAsync<(string State, string Error, DateTime UpdatedAt)>(
+      "SELECT state, error, updated_at FROM wh_archive_restore_requests WHERE stream_id = @stream", new { stream });
+    await Assert.That(state).IsEqualTo("Failed").Because("the archive is gone, so there is nothing to restore from");
+    await Assert.That(error).IsEqualTo(ArchiveStatus.NOTHING_ARCHIVED);
+    await Assert.That(updatedAt).IsEqualTo(hostNow.UtcDateTime)
+      .Because("the registration hands the step the host's clock, and a logger that discards where the host has none");
+  }
+
+  // A host clock fixed at one instant.
+  private sealed class FixedClock(DateTimeOffset now) : TimeProvider {
+    public override DateTimeOffset GetUtcNow() => now;
+  }
+
   // ===== Helpers =====
 
   private async Task<NpgsqlConnection> _openAsync() {

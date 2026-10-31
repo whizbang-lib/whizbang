@@ -114,6 +114,32 @@ public class DapperArchiveReadThroughTests : PostgresTestBase {
     await Assert.That(decoded).Count().IsEqualTo(1).Because("one unreadable row is skipped, never the batch");
   }
 
+  [Test]
+  public async Task DeserializeStreamEvents_ARowWithNoMetadata_IsSkipped_AndTheRestAreKeptAsync() {
+    var driver = _eventStore();
+    var stream = Guid.CreateVersion7();
+    await driver.AppendAsync(stream, new PostgresRetryTestEvent { StreamId = stream, Payload = "kept" });
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    var (eventId, eventType, eventData, metadata) = await conn.QuerySingleAsync<(Guid EventId, string EventType, string EventData, string Metadata)>(
+      "SELECT es.event_id, es.event_type, eb.event_data::text, eb.metadata::text FROM wh_event_store es " +
+      "JOIN wh_event_body eb ON eb.event_id = es.event_id WHERE es.stream_id = @stream", new { stream });
+
+    var decoded = driver.DeserializeStreamEvents([
+      new StreamEventData {
+        StreamId = stream, EventId = Guid.CreateVersion7(), EventType = eventType, EventData = eventData,
+        Metadata = null, EventWorkId = Guid.Empty,
+      },
+      new StreamEventData {
+        StreamId = stream, EventId = eventId, EventType = eventType, EventData = eventData,
+        Metadata = metadata, EventWorkId = Guid.Empty,
+      },
+    ], [typeof(PostgresRetryTestEvent)]);
+
+    await Assert.That(decoded).Count().IsEqualTo(1)
+      .Because("a row with no metadata names no message id, so it is skipped like any unreadable row, never the batch");
+    await Assert.That(decoded[0].MessageId.Value).IsEqualTo(eventId);
+  }
+
   // ===== Helpers =====
 
   private PostgresTableArchiveStore _archive() => new(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync);
