@@ -73,7 +73,7 @@ public class PerspectiveSnapshotsSchemaTests {
       .Because("rows written before migration 209 record no version, and both readers treat a null as a "
              + "snapshot they cannot place rather than guessing at its position");
 
-    // #1738 — how far an archive of the stream reaches, when one covers the snapshot. Nullable: most snapshots are not
+    // #1738: how far an archive of the stream reaches, when one covers the snapshot. Nullable: most snapshots are not
     // covered, and migration 271 adds it to existing tables without rewriting a row.
     var archivedThrough = columns.First(c => c.Name == "archived_through_version");
     await Assert.That(archivedThrough.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
