@@ -146,7 +146,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           MessageTypeNames: messageTypeNames,
           EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
           EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null,
-          IsWithActionsInterface: isWithActions
+          IsWithActionsInterface: isWithActions,
+          InterfaceName: TypeNameUtilities.FullyQualified(perspectiveInterface)
       );
     }).ToArray();
 
@@ -378,6 +379,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Uses compile-time type checking (typeof) to match TModel and TEvent, then instantiates
   /// perspective classes directly (no reflection) and creates lambda delegates to Apply methods.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveAssociationApplierTests.cs:TheApplier_RunsTheIPerspectiveForImplementation_NotAnOrdinaryApplyThatReturnsAnActionAsync</tests>
   private static string _generateTypedAssociations(
       ImmutableArray<PerspectiveInfo> perspectives,
       string serviceName) {
@@ -406,14 +408,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
         sb.AppendLine($"            var typedModel = ({modelType})((object)model!);");
         sb.AppendLine($"            var typedEvent = ({eventType})((object)evt!);");
-        if (perspective.IsWithActionsInterface) {
-          // IPerspectiveWithActionsFor returns ApplyResult<TModel> — extract .Model
-          sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
-          sb.AppendLine("            return (TModel)((object)result.Model!);");
-        } else {
-          sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
-          sb.AppendLine("            return (TModel)((object)result!);");
-        }
+        // #1936: Apply is called through the interface that lists the event, so the result is the interface's declared
+        // return (the model, or ApplyResult<TModel>), never whatever an ordinary Apply beside an explicit one returns.
+        sb.AppendLine($"            var result = (({perspective.InterfaceName})perspective).Apply(typedModel, typedEvent);");
+        sb.AppendLine(perspective.IsWithActionsInterface
+          ? "            return (TModel)((object)result.Model!);"
+          : "            return (TModel)((object)result!);");
         sb.AppendLine("          }");
         sb.AppendLine("        )");
         sb.AppendLine("      };");
