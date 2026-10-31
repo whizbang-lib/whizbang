@@ -357,12 +357,12 @@ public class CooldownGateDecisionTests {
       Signaled.Add((eventId, perspectiveName));
       return false;
     }
-    public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null)
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null)
       => throw new NotImplementedException();
-    public ILifecycleTracking? GetTracking(Guid eventId) => null;
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) { }
-    public ValueTask SignalSegmentCompleteAsync(Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) => ValueTask.CompletedTask;
-    public void AbandonTracking(Guid eventId) { }
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => null;
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }
+    public ValueTask SignalSegmentCompleteAsync(LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) => ValueTask.CompletedTask;
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) { }
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) { }
     public bool AreAllPerspectivesComplete(Guid eventId) => false;
     public int CleanupStaleTracking(TimeSpan inactivityThreshold) => 0;

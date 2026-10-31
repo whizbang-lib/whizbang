@@ -74,7 +74,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(((LifecycleCoordinator)lc).TrackedCount).IsEqualTo(0)
       .Because("a completed lifecycle leaves the coordinator at its exit; kept, every projected event grew the heap");
     foreach (var id in ids) {
-      await Assert.That(lc.GetTracking(id)).IsNull();
+      await Assert.That(lc.GetTracking(LifecycleTrackingPath.Perspective, id)).IsNull();
     }
   }
 
@@ -90,7 +90,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
 
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsFalse()
       .Because("one expected perspective has not reported, so the WhenAll gate is still closed");
-    await Assert.That(lc.GetTracking(ids[0])).IsNotNull()
+    await Assert.That(lc.GetTracking(LifecycleTrackingPath.Perspective, ids[0])).IsNotNull()
       .Because("an entry a later batch can still complete is never ended early; its stage guard and signals live in it");
     await Assert.That(((LifecycleCoordinator)lc).TrackedCount).IsEqualTo(1);
   }
@@ -111,7 +111,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(((LifecycleCoordinator)lc).TrackedCount).IsEqualTo(0)
       .Because("a failed terminal stage is not retried in memory, so its entry ends too; the durable marker drives the replay");
     foreach (var id in ids) {
-      await Assert.That(lc.GetTracking(id)).IsNull();
+      await Assert.That(lc.GetTracking(LifecycleTrackingPath.Perspective, id)).IsNull();
     }
   }
 
@@ -129,7 +129,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     var batch = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
     foreach (var envelope in typed) {
       var id = envelope.MessageId.Value;
-      lc.BeginTracking(id, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
+      lc.BeginTracking(LifecycleTrackingPath.Perspective, id, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
       lc.ExpectPerspectiveCompletions(id, [FIRST_PERSPECTIVE]);
       lc.SignalPerspectiveComplete(id, FIRST_PERSPECTIVE);
       batch[id] = (envelope, streamId);
@@ -144,7 +144,7 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(((LifecycleCoordinator)lc).TrackedCount).IsEqualTo(0)
       .Because("the canceled event and the ready event after it both end; nothing in memory will finish them");
     foreach (var id in ids) {
-      await Assert.That(lc.GetTracking(id)).IsNull();
+      await Assert.That(lc.GetTracking(LifecycleTrackingPath.Perspective, id)).IsNull();
     }
   }
 

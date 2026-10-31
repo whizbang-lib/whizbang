@@ -56,20 +56,20 @@ public class LifecycleCoordinatorBranchCoverageTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
     await using var provider = new ServiceCollection().BuildServiceProvider();
     Guid eventId = TrackedGuid.New();
-    coordinator.BeginTracking(eventId, _createEnvelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, _createEnvelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
 
-    coordinator.ExpectCompletionsFrom(eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
     // A second registration is ignored (TryAdd fails), so the gauge must not double-count.
-    coordinator.ExpectCompletionsFrom(eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, PostLifecycleCompletionSource.Outbox);
     await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(1)
       .Because("exactly one WhenAll latch is open for the event");
 
-    await coordinator.SignalSegmentCompleteAsync(eventId, PostLifecycleCompletionSource.Local, provider, CancellationToken.None);
+    await coordinator.SignalSegmentCompleteAsync(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local, provider, CancellationToken.None);
     await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(1)
       .Because("one of two segments is still outstanding, so the latch stays open");
     await Assert.That(_current(helper, POST_LIFECYCLE_FIRED)).IsEqualTo(0);
 
-    await coordinator.SignalSegmentCompleteAsync(eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None);
+    await coordinator.SignalSegmentCompleteAsync(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Outbox, provider, CancellationToken.None);
     await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(0)
       .Because("the last segment closed the latch, so the pending gauge returns to zero");
     await Assert.That(_current(helper, POST_LIFECYCLE_FIRED)).IsEqualTo(1)
@@ -84,12 +84,12 @@ public class LifecycleCoordinatorBranchCoverageTests {
     var coordinator = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance, metrics);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
     Guid eventId = TrackedGuid.New();
-    coordinator.ExpectCompletionsFrom(eventId, PostLifecycleCompletionSource.Local);
+    coordinator.ExpectCompletionsFrom(LifecycleTrackingPath.Perspective, eventId, PostLifecycleCompletionSource.Local);
     coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
     await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(1);
     await Assert.That(_current(helper, PENDING_PERSPECTIVES)).IsEqualTo(1);
 
-    coordinator.AbandonTracking(eventId);
+    coordinator.AbandonTracking(LifecycleTrackingPath.Perspective, eventId);
 
     await Assert.That(_current(helper, PENDING_WHEN_ALL)).IsEqualTo(0)
       .Because("abandoning removed the WhenAll latch, so its gauge must not leak a pending state");
@@ -146,7 +146,7 @@ public class LifecycleCoordinatorBranchCoverageTests {
     // lifecycle with a COMPLETE perspective set is cleaned like any other stale entry.
     var coordinator = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance);
     Guid eventId = TrackedGuid.New();
-    coordinator.BeginTracking(eventId, _createEnvelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, _createEnvelope(eventId), LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
     coordinator.ExpectPerspectiveCompletions(eventId, ["A"]);
     await Assert.That(coordinator.SignalPerspectiveComplete(eventId, "A")).IsTrue();
 
@@ -154,6 +154,6 @@ public class LifecycleCoordinatorBranchCoverageTests {
 
     await Assert.That(cleaned).IsEqualTo(1)
       .Because("a fully complete perspective set is not partial progress, so the guard must not preserve the entry");
-    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.GetTracking(LifecycleTrackingPath.Perspective, eventId)).IsNull();
   }
 }

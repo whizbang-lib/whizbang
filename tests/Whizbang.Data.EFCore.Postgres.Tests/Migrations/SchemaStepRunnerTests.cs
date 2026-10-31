@@ -202,6 +202,27 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A connection lost while the step runs takes the step's transaction with it. The lost connection is the step's
+  /// failure and is what propagates, so the initializer sees a transient failure it retries; the ended transaction the
+  /// rollback then finds is not raised in its place (#1915).
+  /// </summary>
+  [Test]
+  public async Task AConnectionLostWhileTheStepRuns_RaisesTheLostConnection_NotTheEndedTransactionAsync() {
+    var runner = _runner();
+
+    var raised = await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), async ct => {
+      await _terminateContextBackendAsync();
+      await _work(1)(ct);
+    }, null, CancellationToken.None)).Throws<Exception>();
+
+    await Assert.That(raised).IsNotTypeOf<ObjectDisposedException>()
+      .Because("a disposed transaction is not what went wrong, and it is not transient, so the initializer gave up on it");
+    await Assert.That(raised is NpgsqlException).IsTrue()
+      .Because($"the step's own failure is the lost connection; raised was {raised!.GetType().Name}: {raised.Message}");
+    await Assert.That(_context.Database.CurrentTransaction).IsNull();
+  }
+
+  /// <summary>
   /// A step that fails while its connection is still busy (here a reader it left open) cannot be rolled back on that
   /// connection; the rollback's failure is reported, and the step's own failure is what propagates.
   /// </summary>

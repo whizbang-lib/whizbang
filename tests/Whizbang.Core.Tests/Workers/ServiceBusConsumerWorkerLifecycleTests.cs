@@ -312,11 +312,11 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     if (coordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+        Whizbang.Core.Lifecycle.LifecycleTrackingPath.Inbox, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       await tracking.DrainDetachedAsync();
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(Whizbang.Core.Lifecycle.LifecycleTrackingPath.Inbox, eventId);
     }
 
     // Assert: PostInbox stages fired

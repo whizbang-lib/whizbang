@@ -1054,16 +1054,16 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     /// <summary>When true, every stage advance suspends before it finishes, so the caller resumes.</summary>
     public bool AdvanceAsynchronously { get; init; }
 
-    public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) =>
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) =>
       new BranchTracking(this, eventId);
 
-    public ILifecycleTracking? GetTracking(Guid eventId) =>
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) =>
       Untracked.Contains(eventId) ? null : new BranchTracking(this, eventId);
 
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) { }
-    public ValueTask SignalSegmentCompleteAsync(Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) =>
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }
+    public ValueTask SignalSegmentCompleteAsync(LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) =>
       ValueTask.CompletedTask;
-    public void AbandonTracking(Guid eventId) { }
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) { }
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) { }
     public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) => false;
     public bool AreAllPerspectivesComplete(Guid eventId) => !Incomplete.Contains(eventId);

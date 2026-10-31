@@ -1148,12 +1148,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesDetached, MessageSource.Inbox);
+        LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesDetached, MessageSource.Inbox);
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-      coordinator.AbandonTracking(eventId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
     } else {
       // Detached stages: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();

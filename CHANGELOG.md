@@ -972,6 +972,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A local dispatch of an event this process also projects no longer ends the projection's lifecycle.** The
+  dispatcher's local PostLifecycle and the perspective worker tracked an event under one key, the event id, so a local
+  dispatch of an event the worker was projecting took the worker's entry, completed it with its own PostLifecycle and
+  removed it with the event's perspective gate; PostAllPerspectives and the projection's PostLifecycle then never fired
+  for that event in that process. The outbox publish worker and the transport consumers shared the same key space.
+  Lifecycle tracking is now keyed by path and event id: `ILifecycleCoordinator.BeginTracking`, `GetTracking`,
+  `AbandonTracking`, `ExpectCompletionsFrom` and `SignalSegmentCompleteAsync` take a `LifecycleTrackingPath`
+  (`LocalDispatch`, `Perspective`, `Outbox`, `Inbox`), each path's entry has its own stage guard and its own end, and
+  the perspective gate ends only with the perspective path's entry (Fixes #1918)
+- **A perspective model holding an array of records reads back on the Entity Framework driver.** A `T[]` of a
+  complex element, at the top level or inside a collection element, was mapped as a complex collection, which Entity
+  Framework accepts while building the model and then refuses at the first read ("collection navigations cannot be
+  arrays") and on the change tracker's snapshot ("collection was of a fixed size"), with nothing at build time saying
+  so. Such a model is now stored as one opaque document, as a model holding an `IReadOnlyList<T>` of records already
+  is, so `T[]` round-trips on both drivers with no change to the model; rows the atomic upsert wrote before still
+  read. An array of primitives stays a mapped value. Declaring the member as `List<T>` keeps the document mapped and
+  its fields indexable (Fixes #1910)
+- **WHIZ200 now reports what #1910 changed, and only where it applies.** It reported every array, primitives
+  included, in any type named `...Model` with a `[StreamId]` property, said arrays break change tracking, and fired in
+  projects that never use the Entity Framework driver. It now reports an array of records at any depth of a model a
+  perspective projects (including a global perspective), at the property and by its path, saying the model is stored
+  as one opaque document whose fields cannot be indexed and that `List<T>`, `IList<T>` or `ImmutableList<T>` keep it
+  mapped; arrays of primitives are not reported, and a project that does not reference the Entity Framework driver is
+  not analyzed. It stays a Warning, turned off for a project with the new build property
+  `WhizbangOpaqueArrayWarning=false` (default on) and for one property with `#pragma warning disable WHIZ200` or
+  `[SuppressMessage("Whizbang.ModelValidation", "WHIZ200:...")]` (#1910)
+- **A schema step whose connection is lost raises the lost connection, so the initializer retries it.** The step
+  runner asked the step's transaction for its connection outside the rollback's handler; once a lost connection had
+  ended the transaction that raised `ObjectDisposedException: NpgsqlTransaction` in place of the step's own failure,
+  and since that is not transient the initializer gave up on a start it would have retried. It is now logged as a
+  rollback that could not run, and the lost connection propagates. Two database tests that ended backends in every
+  database of the shared test cluster (every advisory lock holder, and every holder of one key) now end only their own
+  database's, which is what made three tests in other shards fail with that exception when the shards ran together;
+  a guard fails any test whose backend termination does not name its database or a backend it was handed (Fixes #1915)
+- **The digest-epoch lane-discovery cost test no longer fails when several test processes share the cluster.** It
+  measured the closure call's whole shared buffers, which include every catalog page a session reads to rebuild its
+  caches; test processes on one machine share one PostgreSQL cluster, their schema passes overflow its invalidation
+  queue, and a session that falls behind is reset, so a call reading the same few store pages counted about 1,570
+  buffers. The test now counts the event store's own block reads and sequential scans in the session's transaction
+  statistics, puts its session through a reset on purpose, and checks that the measure sees a pass over the store
+  (Fixes #1916)
+- **The stored-form recovery test no longer reads a row the recovery already rewrote.** It held the claim loop's
+  hand-offs before the stored-form migration and then read the converted row, but a stream handed off just before the
+  hold (a re-offer queued behind a drain still running) stayed in the worker's queue; drained after the migration had
+  made its row due, it applied the waiting event first, and the read found `Created` instead of `123`. Stopping the
+  hand-offs now waits for any hand-off part way through the gate, then puts a marker behind everything in the worker's
+  queue and completes once the worker has finished the batch that took it; a guard pauses the worker with a stream
+  queued and checks the stop waits for it (Fixes #1917)
 - **Lifecycle tracking no longer grows with every projected event.** The perspective worker began lifecycle tracking
   for each event it projected and never ended it, and the stale sweep by design kept completed entries and entries
   some perspective had reported for, so every entry (with its envelope, hops and parsed JSON) stayed for the life of

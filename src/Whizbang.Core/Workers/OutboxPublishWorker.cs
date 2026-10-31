@@ -541,7 +541,7 @@ public sealed partial class OutboxPublishWorker(
 
     if (coordinator is not null) {
       var tracking = coordinator.BeginTracking(
-        work.MessageId, typedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+        LifecycleTrackingPath.Outbox, work.MessageId, typedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
         await tracking.AdvanceToAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, stoppingToken);
       }
@@ -584,7 +584,7 @@ public sealed partial class OutboxPublishWorker(
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
         await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
       }
-      coordinator.AbandonTracking(work.MessageId);
+      coordinator.AbandonTracking(LifecycleTrackingPath.Outbox, work.MessageId);
       return;
     }
 

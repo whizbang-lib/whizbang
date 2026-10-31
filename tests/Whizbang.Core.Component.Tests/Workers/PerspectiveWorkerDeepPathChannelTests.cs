@@ -1601,18 +1601,18 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public int PostAllAdvanceAttempts => Volatile.Read(ref _postAllAdvanceAttempts);
     public Task AllThrowsObserved => _allThrowsObserved.Task;
 
-    public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
       if (BeginTrackingException is not null) {
         throw BeginTrackingException;
       }
       return new ScriptedTracking(this, eventId);
     }
 
-    public ILifecycleTracking? GetTracking(Guid eventId) => new ScriptedTracking(this, eventId);
-    public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) { }
-    public ValueTask SignalSegmentCompleteAsync(Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) =>
+    public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => new ScriptedTracking(this, eventId);
+    public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }
+    public ValueTask SignalSegmentCompleteAsync(LifecycleTrackingPath path, Guid eventId, PostLifecycleCompletionSource source, IServiceProvider scopedProvider, CancellationToken ct) =>
       ValueTask.CompletedTask;
-    public void AbandonTracking(Guid eventId) { }
+    public void AbandonTracking(LifecycleTrackingPath path, Guid eventId) { }
 
     public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) =>
       ExpectedPerspectiveEventIds.Enqueue(eventId);
