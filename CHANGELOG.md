@@ -1017,6 +1017,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A rewind refuses a stream whose archive was deleted when its replay needs that history (#1964).** A rewind with no
+  usable snapshot replays from the stream's start, and one from a snapshot an archive covers replays the archived events
+  after it; both read through the archive. Once the stream's archive was deleted, such a replay folded the hot events
+  alone and wrote a partial history as the row. The rewind now asks the stream lifecycle ledger first and, when the
+  archive was deleted, refuses as a rebuild that reads archived data skips the stream (#1958): the row and the cursor
+  are left as they are, one warning names the deleted archive, and the late event is reported dropped so the worker
+  retires its work (counted in the stragglers-dropped metric) instead of refusing it again on every claim. A rewind
+  from a snapshot no archive covers never reads the archive, is unaffected, and asks the ledger nothing.
 - **A rewind folds collective events (#1956).** A rewind replays a row from a snapshot or from its stream's start, and it
   never folded collectives, so every collective mutation of the rows it replayed was lost. Since #1931 a default rebuild
   of a stream archived through a prefix starts from the stream's newest snapshot through the same replay, so it lost

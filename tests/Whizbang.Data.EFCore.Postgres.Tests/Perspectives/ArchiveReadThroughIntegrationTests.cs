@@ -257,6 +257,32 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
       .Because("a rewind with no snapshot replays the stream from its start, which reads through the archive");
   }
 
+  // #1964: a rewind with no snapshot did not consult the deleted-archive record, so it replayed a stream whose prefix
+  // archive was deleted from its first hot event and wrote the partial history as the row.
+  [Test]
+  public async Task Rewind_WithoutASnapshot_OfAStreamWhosePrefixArchiveWasDeleted_IsRefused_AndLeavesTheRowAsItWasAsync() {
+    await using var sp = _services(readThrough: true);
+    var (hot, _, prefix) = await _threeCopiesAsync(sp);
+    await Assert.That(await _archive().DeleteAsync(prefix)).IsGreaterThan(0L).Because("the control: the prefix archive held events");
+    var late = Guid.CreateVersion7();
+
+    PerspectiveCursorCompletion control;
+    PerspectiveCursorCompletion refused;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>().GetRunner(PERSPECTIVE, scope.ServiceProvider)!;
+      control = await runner.RewindAndRunAsync(hot, PERSPECTIVE, late, CancellationToken.None);
+      refused = await runner.RewindAndRunAsync(prefix, PERSPECTIVE, late, CancellationToken.None);
+    }
+
+    await Assert.That(control.DroppedStragglers).IsEmpty().Because("the control: a rewind of the hot copy replays it");
+    await Assert.That(await _rowExistsAsync(hot)).IsTrue();
+    await Assert.That(refused.DroppedStragglers).IsEquivalentTo([late])
+      .Because("the history the replay from the start needs is deleted, so the rewind refuses and names the late event dropped");
+    await Assert.That(refused.LastEventId).IsEqualTo(Guid.Empty).Because("nothing was replayed, so the cursor is not moved");
+    await Assert.That(await _rowExistsAsync(prefix)).IsFalse()
+      .Because("the row is left as it was, never written from the hot events alone");
+  }
+
   // ===== Cost: a resumed read costs nothing more =====
 
   [Test]
