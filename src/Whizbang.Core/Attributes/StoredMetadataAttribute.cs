@@ -7,7 +7,7 @@ namespace Whizbang.Core.Attributes;
 /// The form an event type's metadata takes in the event store row (<c>wh_event_body.metadata</c>).
 /// </summary>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/StoredMetadataRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/StoredMetadataRegistryTests.cs</tests>
 public enum StoredMetadataForm {
   /// <summary>
   /// The form <c>Whizbang:EventStore:Metadata:WriteForm</c> chooses (by default the slim row with its full form staged).
