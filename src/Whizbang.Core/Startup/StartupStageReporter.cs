@@ -161,7 +161,8 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
       throw;
     }
 #pragma warning disable CA1031, RCS1075 // a failed write is held and written again; it must never break the transition
-    // that entered the stage. Before the migration that adds the columns runs, every write fails, and that is expected.
+    // that entered the stage. The stage columns and the recorder are Preflight's (277), so from registration on a write
+    // fails only when the database cannot be reached in time, and the next registration signal writes it again.
     catch (Exception ex) {
       LogWriteFailed(_logger, snapshot.Stage, ex);
       return false;
@@ -177,6 +178,6 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   static partial void LogShutdownStage(ILogger logger, string stageName, string stageMessage);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Debug,
-    Message = "Recording startup stage {Stage} on the instance row failed; it is held and written on the next registration signal (expected before the migration that adds the stage columns)")]
+    Message = "Recording startup stage {Stage} on the instance row failed; it is held and written on the next registration signal")]
   static partial void LogWriteFailed(ILogger logger, StartupStage stage, Exception ex);
 }
