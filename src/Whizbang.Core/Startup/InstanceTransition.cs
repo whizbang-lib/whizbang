@@ -16,7 +16,7 @@ namespace Whizbang.Core.Startup;
 /// <param name="Phase">The lifecycle phase: the stage's own (<see cref="StartupStages.LifecyclePhaseOf"/>), or a phase off
 /// the startup ladder (a pause, a stand-by) that keeps the stage.</param>
 /// <param name="LibraryVersion">The library version this instance runs; <see langword="null"/> keeps the recorded one.</param>
-/// <docs>operations/startup/startup-status#startup-stages</docs>
+/// <docs>operations/startup/startup-status#the-instance-row</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
 public sealed record InstanceTransition(
   Guid InstanceId, StartupStage? Stage, string? Message, LifecyclePhase Phase, string? LibraryVersion);

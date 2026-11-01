@@ -19,7 +19,7 @@ namespace Whizbang.Core.Startup;
 /// The reporter never throws for a failed write, so this participant never faults a transition. Since #1636 it is the
 /// only participant that writes the instance's row: one write per transition, of stage, phase and version together.
 /// </remarks>
-/// <docs>operations/startup/startup-status#startup-stages</docs>
+/// <docs>operations/startup/startup-status#one-writer-of-the-phase</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageRunControlTests.cs</tests>
 public sealed class StartupStageRunControl : IWhizbangRunControl {
   private readonly IStartupStageReporter _stages;

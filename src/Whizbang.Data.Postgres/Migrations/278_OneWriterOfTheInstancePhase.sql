@@ -50,7 +50,7 @@
 -- ---------------------------------------------------------------------------------------------
 -- wh_record_instance_transition: stage, phase and version, one update.
 -- ---------------------------------------------------------------------------------------------
--- <docs>operations/startup/startup-status#startup-stages</docs>
+-- <docs>operations/startup/startup-status#the-instance-row</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceTransitionSqlTests.cs:AStage_IsWrittenWithItsPhaseAndTheVersion_AndIsNotAHeartbeatAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceTransitionSqlTests.cs:ATransition_IsOneUpdateOfTheRowAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceTransitionSqlTests.cs:APhaseOnlyWrite_KeepsTheStage_ItsMessage_AndWhenItWasEnteredAsync</tests>
@@ -105,7 +105,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_record_instance_transition(UUID, SMALLINT, TEX
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('record_heartbeat');
 
--- <docs>fundamentals/work-coordinator/claim-loop</docs>
+-- <docs>operations/startup/startup-status#registration-writes</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkRegistrationSqlTests.cs:ClaimWork_HeldOpen_AHeartbeatThatFindsAStalePeerDoesNotWaitAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkRegistrationSqlTests.cs:ClaimWork_HeldOpen_AHeartbeatForTheSameInstanceDoesNotWaitAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecordHeartbeatBackfillTests.cs:PeerPastTheDerivedThreshold_IsStillReapedAsync</tests>

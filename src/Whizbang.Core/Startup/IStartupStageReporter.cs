@@ -55,7 +55,7 @@ public interface IStartupStageReporter {
   /// <param name="phase">The phase.</param>
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task that completes once the phase is written (or held).</returns>
-  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <docs>operations/startup/startup-status#pause-and-standby</docs>
   /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
   ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>

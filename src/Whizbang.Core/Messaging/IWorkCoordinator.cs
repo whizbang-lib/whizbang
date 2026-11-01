@@ -1799,7 +1799,7 @@ public interface IWorkCoordinator {
   /// <param name="transition">What the row records.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Whether the instance's row now records the transition.</returns>
-  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <docs>operations/startup/startup-status#one-writer-of-the-phase</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceTransitionSqlTests.cs</tests>
   Task<bool> RecordInstanceTransitionAsync(
       Startup.InstanceTransition transition, CancellationToken cancellationToken = default) =>
