@@ -45,7 +45,7 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
   private static readonly DateTimeOffset _hour13 = new(2026, 10, 29, 13, 0, 0, TimeSpan.Zero);
 
   // 266 (#1733) adds sealed_at, the predicate of idx_stream_lifecycle_sealed: written only when a stream is sealed.
-  private static readonly string[] _indexedColumns = ["disposition_due_at", "sealed_at", "state", "stream_id"];
+  private static readonly string[] _indexedColumns = ["disposition_due_at", "sealed_at", "state", "stream_id", "stream_type", "tenant"];
   private static readonly string[] _duePredicate = ["(disposition_due_at IS NOT NULL)"];
   private static readonly string[] _states = ["Active", "Sealed", "Archived"];
 
@@ -192,7 +192,7 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
       "SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = 'wh_stream_lifecycle'::regclass");
 
     await Assert.That(indexed).IsEquivalentTo(_indexedColumns)
-      .Because("an update is heap-only only when no indexed column changes: the stream id never changes, and state, the seal time and the due time change only at end of life");
+      .Because("an update is heap-only only when no indexed column changes: the stream id, its type and its tenant are written once when the row is created (the type and tenant index, migration 272, serves the collective replay's lookup of archived streams), and state, the seal time and the due time change only at end of life");
     await Assert.That(predicate).IsEquivalentTo(_duePredicate)
       .Because("the due index holds only the streams that have a disposition scheduled");
     await Assert.That(options.Single()).Contains("fillfactor=45")
