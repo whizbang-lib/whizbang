@@ -15,6 +15,7 @@ using Whizbang.Core;
 using Whizbang.Core.Security;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
@@ -239,6 +240,48 @@ public sealed partial class StartupPreflightHostTests {
       await Assert.That(recorder.StageOnTheRow).IsEqualTo((int)StartupStage.Preflight)
         .Because("the row exists, holding Preflight, when its first stage is recorded");
     } finally {
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// A direct <c>dbContext.EnsureWhizbangDatabaseInitializedAsync()</c> call made while the host's own initialization
+  /// is still migrating waits for it (#1636), and then applies nothing of its own: it bypasses the host's registry, so
+  /// only the barrier inside the generated method can hold it. The host's initialization is held open after its first
+  /// committed step, so "still migrating" is a fact when the direct call is made.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ADirectDbContextInitialization_WaitsForTheHostsOwn_AndAppliesNothingAsync(CancellationToken cancellationToken) {
+    var hold = new HoldFirstStep();
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<ISchemaInitializationObserver>(hold));
+    var starting = instance.Host.StartAsync(cancellationToken);
+    try {
+      await hold.Holding.WaitAsync(_deadline, cancellationToken);
+      await using var scope = instance.Host.Services.CreateAsyncScope();
+      var dbContext = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+      var directLog = new SignalingListLogger();
+
+      var direct = dbContext.EnsureWhizbangDatabaseInitializedAsync(directLog, cancellationToken: cancellationToken);
+      var waiting = directLog.WaitForAsync("already running in this host");
+
+      await Assert.That(await Task.WhenAny(waiting, direct).WaitAsync(_deadline, cancellationToken) == waiting).IsTrue()
+        .Because("the direct call waits for the initialization in progress; it does not run a pass beside it");
+      await Assert.That(direct.IsCompleted).IsFalse().Because("the host's initialization is held mid-pass");
+      hold.Release();
+      await direct.WaitAsync(_deadline, cancellationToken);
+
+      var files = MigrationStepTransactionTests.MigrationFiles();
+      await Assert.That(await _scalarAsync<long>(
+          "SELECT count(*) FROM public.wh_schema_migrations WHERE owner = 'whizbang' AND status IN (1, 2) AND file_name = ANY($1)",
+          (object)files))
+        .IsEqualTo((long)files.Length).Because("when the direct call returns, every file has been applied");
+      await Assert.That(directLog.Entries.Where(e => e.Message.Contains("- Succeeded :", StringComparison.Ordinal)))
+        .IsEmpty().Because("the host's pass applied every step; the direct call found the schema current");
+      await starting.WaitAsync(_deadline, cancellationToken);
+    } finally {
+      hold.Release();
       await instance.Host.StopAsync(CancellationToken.None);
       instance.Host.Dispose();
     }
