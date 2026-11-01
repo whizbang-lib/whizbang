@@ -3,9 +3,11 @@
 
 using System.Runtime.CompilerServices;
 using Azure.Core;
+using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -174,6 +176,7 @@ public class AzureBlobArchiveRegistrationTests {
       ["ContainerName"] = "archive-a",
       ["CompressionLevel"] = "9",
       ["MaxEventsPerChunk"] = "500",
+      ["AccessTier"] = "Cool",
     }), bound);
     AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["ContainerName"] = " " }), defaults);
 
@@ -187,6 +190,83 @@ public class AzureBlobArchiveRegistrationTests {
     await Assert.That(defaults.ContainerName).IsEqualTo("whizbang-archive").Because("a blank value keeps the default");
     await Assert.That(defaults.CompressionLevel).IsEqualTo(4);
     await Assert.That(defaults.MaxEventsPerChunk).IsEqualTo(10_000);
+    await Assert.That(bound.AccessTier).IsEqualTo(AccessTier.Cool);
+    await Assert.That(defaults.AccessTier).IsNull().Because("no tier configured leaves the storage account's default tier");
+  }
+
+  [Test]
+  [Arguments("Hot", "Hot")]
+  [Arguments("cool", "Cool")]
+  [Arguments("COLD", "Cold")]
+  public async Task Configuration_AccessTier_BindsHotCoolOrCold_InAnyCaseAsync(string value, string expected) {
+    var bound = new AzureBlobArchiveOptions();
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["AccessTier"] = value }), bound);
+
+    await Assert.That(bound.AccessTier.ToString()).IsEqualTo(expected)
+      .Because("the tier is stored in the SDK's own spelling, whatever case the configuration used");
+  }
+
+  [Test]
+  [Arguments("Archive", "rehydrat")]
+  [Arguments("Premium", "Hot, Cool or Cold")]
+  [Arguments("P10", "Hot, Cool or Cold")]
+  [Arguments("Glacier", "Hot, Cool or Cold")]
+  public async Task Configuration_AnAccessTierTheStoreCannotWriteAt_IsRefused_NamingTheKeyAndWhyAsync(string value, string why) {
+    var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
+        _config(new() { ["AccessTier"] = value }), new AzureBlobArchiveOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:AccessTier")
+      .Because("the operator is told which setting to change");
+    await Assert.That(refused.Message).Contains(why);
+  }
+
+  [Test]
+  [Arguments("Archive")]
+  [Arguments("Premium")]
+  public async Task Store_RefusesATierItCannotReadBackFromAsync(string tier) {
+    var options = new AzureBlobArchiveOptions { AccessTier = new AccessTier(tier) };
+
+    await Assert.That(() => new AzureBlobArchiveStore(_database, _container(), options)).Throws<ArgumentOutOfRangeException>()
+      .Because("a store built by hand is held to the same tiers as one built from configuration");
+  }
+
+  [Test]
+  [Arguments("Hot")]
+  [Arguments("Cool")]
+  [Arguments("Cold")]
+  [Arguments(null)]
+  public async Task Store_AcceptsHotCoolColdOrTheAccountDefaultAsync(string? tier) {
+    var options = new AzureBlobArchiveOptions { AccessTier = tier is null ? null : new AccessTier(tier) };
+
+    var store = new AzureBlobArchiveStore(_database, _container(), options);
+
+    await Assert.That(store).IsNotNull().Because("the control: every online tier, and no tier at all, is valid");
+  }
+
+  [Test]
+  public async Task Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync() {
+    var refusedServices = new ServiceCollection();
+    _driver(refusedServices);
+    refusedServices.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.AccessTier = AccessTier.Archive;
+    });
+    var acceptedServices = new ServiceCollection();
+    _driver(acceptedServices);
+    acceptedServices.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.AccessTier = AccessTier.Cool;
+    });
+    await using var refusedProvider = refusedServices.BuildServiceProvider();
+    await using var acceptedProvider = acceptedServices.BuildServiceProvider();
+
+    var refused = await Assert.That(() => refusedProvider.GetRequiredService<IStartupValidator>().Validate())
+      .Throws<OptionsValidationException>().Because("the host fails as it starts, not on the first archive write hours later");
+    await Assert.That(refused!.Message).Contains("rehydrat");
+    await Assert.That(() => acceptedProvider.GetRequiredService<IStartupValidator>().Validate()).ThrowsNothing()
+      .Because("the control: the validator runs and passes an online tier");
   }
 
   [Test]

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Azure.Storage.Blobs.Models;
+
 namespace Whizbang.Archive.AzureBlob;
 
 /// <summary>
@@ -58,4 +60,11 @@ public sealed class AzureBlobArchiveOptions {
   /// read ever holds more than one object's events in memory.
   /// </summary>
   public int MaxEventsPerChunk { get; set; } = DEFAULT_MAX_EVENTS_PER_CHUNK;
+
+  /// <summary>
+  /// The access tier every archive object is written at: <see cref="Azure.Storage.Blobs.Models.AccessTier.Hot"/>,
+  /// <see cref="Azure.Storage.Blobs.Models.AccessTier.Cool"/> or <see cref="Azure.Storage.Blobs.Models.AccessTier.Cold"/>.
+  /// <see langword="null"/> (the default) leaves the storage account's default tier.
+  /// </summary>
+  public AccessTier? AccessTier { get; set; }
 }
