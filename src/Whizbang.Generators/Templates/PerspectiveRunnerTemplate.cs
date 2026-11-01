@@ -776,6 +776,24 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
+        // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
+        // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
+        // rebuild/rewind mode, so this branch never runs during live drain.
+        // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
+        // live path, where the set-based sink never touches a row's cursor (#1931). Its stream may be archived whole, and a
+        // cursor naming it would name an event the hot store does not hold. A purged row has nothing to fold into, and the
+        // collective is still not the row's event, so it moves no checkpoint there either (#1957).
+        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+          if (_collectiveReplayApplier is not null && updatedModel is not null && !pendingPurge) {
+            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
+                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+            hasWrittenUpdate = true;
+          }
+          processedEvents.Add(envelope);
+          eventsProcessed++;
+          continue;
+        }
+
         // A purged stream stays purged (issue #1027): an event after the purge is skipped, not applied to an
         // empty model, unless its Apply returns Resurrect. The checkpoint still advances past a skipped event.
         if (pendingPurge) {
@@ -793,23 +811,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           updatedModel = resurrection;
           hasWrittenUpdate = true;
           lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
-          continue;
-        }
-
-        // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
-        // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
-        // rebuild/rewind mode, so this branch never runs during live drain.
-        // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
-        // live path, where the set-based sink never touches a row's cursor (#1931). Its stream may be archived whole, and a
-        // cursor naming it would name an event the hot store does not hold.
-        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
-          if (_collectiveReplayApplier is not null && updatedModel is not null) {
-            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
-                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
-            hasWrittenUpdate = true;
-          }
-          processedEvents.Add(envelope);
-          eventsProcessed++;
           continue;
         }
 
