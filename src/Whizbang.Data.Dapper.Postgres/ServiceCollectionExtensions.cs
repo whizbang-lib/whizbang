@@ -491,6 +491,9 @@ public static class ServiceCollectionExtensions {
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
       ArchiveRestoreRequestStep.FromServices));
+    // The maintenance step that distills staged event metadata into routes and traces (#1726).
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
+      MetadataDistillationStep.FromServices));
     // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
     // then refuses the stream's appends.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>

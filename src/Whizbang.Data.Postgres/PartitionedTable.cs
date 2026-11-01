@@ -111,6 +111,7 @@ internal sealed record PartitionedTable {
 internal static class PartitionedTables {
   private const string LIFECYCLE_COMPLETIONS = "wh_lifecycle_completions";
   private const string EVENT_ID = "event_id";
+  private const string RECORDED_AT = "recorded_at";
   private static readonly TimeSpan _day = TimeSpan.FromDays(1);
 
   /// <summary>
@@ -146,8 +147,26 @@ internal static class PartitionedTables {
       : PartitionedTable.RetainedIndefinitely(LIFECYCLE_COMPLETIONS, EVENT_ID, _day);
 
   /// <summary>
-  /// Registers the framework's partitioned tables: <c>wh_log</c>, and <c>wh_signals</c> and
-  /// <c>wh_lifecycle_completions</c> with the windows their options carry. Each driver calls this once per schema.
+  /// <c>wh_event_metadata_staging</c>: daily by <c>recorded_at</c>, kept for <c>metadata_staging_days</c> (default 2):
+  /// the staged full metadata only has to outlast maintenance catching up (#1725). Created partitioned, so it is never
+  /// converted.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PartitionedTableTests.cs:TheStagedMetadataAndTheTraces_AreDailyByRecordedAt_KeptForTheirSettingsAsync</tests>
+  public static PartitionedTable StagedMetadata { get; } =
+    PartitionedTable.RetainedBySetting("wh_event_metadata_staging", RECORDED_AT, _day, "metadata_staging_days", 2);
+
+  /// <summary>
+  /// <c>wh_traces</c>: daily by <c>recorded_at</c>, kept for <c>trace_retention_days</c> (default 30) (#1726). Created
+  /// partitioned, so it is never converted.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PartitionedTableTests.cs:TheStagedMetadataAndTheTraces_AreDailyByRecordedAt_KeptForTheirSettingsAsync</tests>
+  public static PartitionedTable Traces { get; } =
+    PartitionedTable.RetainedBySetting("wh_traces", RECORDED_AT, _day, "trace_retention_days", 30);
+
+  /// <summary>
+  /// Registers the framework's partitioned tables: <c>wh_log</c>, <c>wh_event_metadata_staging</c> and <c>wh_traces</c>,
+  /// and <c>wh_signals</c> and <c>wh_lifecycle_completions</c> with the windows their options carry. Each driver calls
+  /// this once per schema.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
@@ -161,6 +180,8 @@ internal static class PartitionedTables {
     services.TryAddSingleton<PartitionStrategyAnnouncer>();
     return services
       .AddPartitionedTable(Log)
+      .AddPartitionedTable(StagedMetadata)
+      .AddPartitionedTable(Traces)
       .AddPartitionedTable(sp => Signals(sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value.SignalRetention))
       .AddPartitionedTable(sp =>
         LifecycleCompletions(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.LifecycleCompletionRetentionDays));
