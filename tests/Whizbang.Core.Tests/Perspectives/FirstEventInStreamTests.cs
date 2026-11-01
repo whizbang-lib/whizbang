@@ -202,10 +202,15 @@ internal sealed class InMemoryRows<TModel> : IPerspectiveStore<TModel> where TMo
 
   public int Writes { get; private set; }
 
+  /// <summary>How many times a row was read.</summary>
+  public int Reads { get; private set; }
+
   public void Seed(Guid streamId, TModel model) => _rows[streamId] = model;
 
-  public Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-    Task.FromResult(_rows.TryGetValue(streamId, out var m) ? m : null);
+  public Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    Reads++;
+    return Task.FromResult(_rows.TryGetValue(streamId, out var m) ? m : null);
+  }
 
   public Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) {
     Writes++;
