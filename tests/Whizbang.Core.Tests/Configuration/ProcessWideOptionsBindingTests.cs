@@ -50,6 +50,58 @@ public sealed class ProcessWideOptionsBindingTests {
   }
 
   [Test]
+  public async Task EventStoreMetadata_BindsFromItsSectionAsync() {
+    await using var provider = _workers(new() {
+      ["Whizbang:EventStore:Metadata:WriteForm"] = "Slim",
+      ["Whizbang:EventStore:Metadata:FullFor:0"] = "MyApp.Payments",
+      ["Whizbang:EventStore:Metadata:FullFor:1"] = "MyApp.Orders.OrderPlaced",
+      ["Whizbang:EventStore:Metadata:StagingDays"] = "5",
+    });
+
+    var options = provider.GetRequiredService<IOptions<EventStoreMetadataOptions>>().Value;
+
+    await Assert.That(options.WriteForm).IsEqualTo(EventStoreMetadataWriteForm.Slim);
+    await Assert.That(options.FullFor).IsEquivalentTo(["MyApp.Payments", "MyApp.Orders.OrderPlaced"]);
+    await Assert.That(options.StagingDays).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task EventStoreMetadata_Unconfigured_IsLinkedWithNothingKeptFullAsync() {
+    await using var provider = _workers([]);
+
+    var options = provider.GetRequiredService<IOptions<EventStoreMetadataOptions>>().Value;
+
+    await Assert.That(options.WriteForm).IsEqualTo(EventStoreMetadataWriteForm.Linked)
+      .Because("the default form keeps the slim row and stages the full form for routes and traces (#1493 decision)");
+    await Assert.That(options.FullFor).IsEmpty();
+    await Assert.That(options.StagingDays).IsNull().Because("unset leaves the database default of two days");
+  }
+
+  [Test]
+  public async Task EventStoreMetadata_RegisteredTwice_BindsTheListOnceAsync() {
+    await using var provider = _withConfiguration(new() {
+      ["Whizbang:EventStore:Metadata:FullFor:0"] = "MyApp.Payments",
+    }, services => {
+      services.AddWhizbangWorkers();
+      services.AddWhizbangWorkers();
+    });
+
+    var options = provider.GetRequiredService<IOptions<EventStoreMetadataOptions>>().Value;
+
+    await Assert.That(options.FullFor).Count().IsEqualTo(1)
+      .Because("the binder appends to a list, so a second registration must not bind the section again");
+  }
+
+  [Test]
+  public async Task EventStoreMetadata_ANegativeStagingWindow_FailsWhenResolvedAsync() {
+    await using var provider = _workers(new() { ["Whizbang:EventStore:Metadata:StagingDays"] = "-1" });
+
+    var failure = Assert.Throws<OptionsValidationException>(() => _ = provider.GetRequiredService<IOptions<EventStoreMetadataOptions>>().Value);
+
+    await Assert.That(failure.Message).Contains("Whizbang:EventStore:Metadata:StagingDays");
+  }
+
+  [Test]
   public async Task RedeliveryPumpOptions_EveryKeyBindsAsync() {
     await using var provider = _workers(new() {
       ["Whizbang:Redelivery:MaxInnerEventsPerComposite"] = "11",
