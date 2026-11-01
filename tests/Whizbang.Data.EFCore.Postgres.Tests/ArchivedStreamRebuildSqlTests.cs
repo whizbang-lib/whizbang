@@ -148,6 +148,23 @@ public class ArchivedStreamRebuildSqlTests : EFCoreTestBase {
     await Assert.That(extents[whole]).IsEqualTo(ArchivedStreamExtent.Whole);
   }
 
+  // #1963: the driver registers the fence a snapshot of a row with collectives reads, on the same archive connection.
+  [Test]
+  public async Task TheDriver_RegistersTheCollectiveSnapshotFence_OnItsArchiveConnectionAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddDbContext<ArchiveRegistrationDbContext>(options => options.UseNpgsql(ConnectionString));
+    services.AddSingleton(NpgsqlDataSource.Create(ConnectionString));
+    var selector = new Whizbang.Core.Perspectives.WhizbangPerspectiveBuilder(services).WithEFCore<ArchiveRegistrationDbContext>();
+    _ = selector.WithDriver.Postgres;
+    await using var provider = services.BuildServiceProvider();
+
+    var reading = await provider.GetRequiredService<Whizbang.Core.Perspectives.ICollectiveSnapshotFence>()
+      .ReadAsync("tenant-a", ["Tests.Collective, Tests"], afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsFalse().Because("the control: it reads this database, which holds no collective");
+  }
+
   [Test]
   public async Task Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync() {
     var whole = await _streamAsync(3);

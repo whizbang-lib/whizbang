@@ -26,12 +26,29 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
   public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default)
     => CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence: null, snapshotData, ct);
 
+  public Task CreateSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      CancellationToken ct = default) =>
+    CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence, snapshotData, collectivesThroughSequence: null, ct);
+
+  /// <summary>
+  /// Writes a snapshot with its commit sequence and the commit sequence through which its row's collectives were complete
+  /// (#1963). The collectives mark is written with the data it describes, so a write of the same snapshot replaces it,
+  /// with none when the write records none; a commit sequence the write does not know keeps the one already recorded.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync</tests>
   public async Task CreateSnapshotAsync(
       Guid streamId,
       string perspectiveName,
       Guid snapshotEventId,
       long? snapshotCommitSequence,
       JsonDocument snapshotData,
+      long? collectivesThroughSequence,
       CancellationToken ct = default) {
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
@@ -40,17 +57,19 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
     // one that forgot would write a row nothing can place in the stream. A snapshot_event_id with no row
     // in the event store yields NULL, which selection and the reap gate both read as "cannot be placed".
     const string sql = """
-      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence, snapshot_version)
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence, snapshot_version, collectives_through_sequence)
       VALUES (@p_stream_id, @p_perspective_name, @p_snapshot_event_id, @p_snapshot_data::jsonb,
         COALESCE(
           (SELECT MAX(sequence_number) + 1 FROM wh_perspective_snapshots
            WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1),
         @p_snapshot_commit_sequence,
-        (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_snapshot_event_id))
+        (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_snapshot_event_id),
+        @p_collectives_through_sequence)
       ON CONFLICT (stream_id, perspective_name, snapshot_event_id) DO UPDATE
       SET snapshot_data = EXCLUDED.snapshot_data,
           snapshot_commit_sequence = COALESCE(EXCLUDED.snapshot_commit_sequence, wh_perspective_snapshots.snapshot_commit_sequence),
           snapshot_version = COALESCE(EXCLUDED.snapshot_version, wh_perspective_snapshots.snapshot_version),
+          collectives_through_sequence = EXCLUDED.collectives_through_sequence,
           created_at = NOW()
       """;
 
@@ -61,6 +80,9 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
     cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_data", NpgsqlDbType.Jsonb) { Value = snapshotData.RootElement.GetRawText() });
     cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_commit_sequence", NpgsqlDbType.Bigint) {
       Value = (object?)snapshotCommitSequence ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_collectives_through_sequence", NpgsqlDbType.Bigint) {
+      Value = (object?)collectivesThroughSequence ?? DBNull.Value
     });
 
     await cmd.ExecuteNonQueryAsync(ct);
@@ -114,6 +136,14 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
       Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
     await using var connection = await dataSource.OpenConnectionAsync(ct);
     return await SnapshotStreamOrderLookup.FindFloorAsync(connection, streamId, perspectiveName, beforeEventId, ct);
+  }
+
+  /// <summary>The stream's newest snapshot with its marks (#1963); the lookup is shared with the Dapper driver.</summary>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  public async Task<PerspectiveSnapshotFloor?> GetLatestSnapshotFloorAsync(
+      Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    return await SnapshotStreamOrderLookup.FindLatestFloorAsync(connection, streamId, perspectiveName, ct);
   }
 
   /// <summary>
