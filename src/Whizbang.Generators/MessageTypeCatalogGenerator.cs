@@ -131,6 +131,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     (string Destruction, string Storage)? ephemeral = kind == EVENT_KIND ? EphemeralResolver.Resolve(typeSymbol) : null;
     var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
     var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
+    // #1729: only an event is stored on a stream, so only an event can supersede another.
+    (bool IsSuperseding, string? Key) superseding = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, null);
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -149,7 +151,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
         DefaultRouting: _defaultRouting(typeSymbol),
         // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
-        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol)
+        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
+        IsSuperseding: superseding.IsSuperseding,
+        SupersedingKey: superseding.Key
     );
   }
 
@@ -357,6 +361,14 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     foreach (var info in ordered.Where(i => i.IsTerminal)) {
       source.AppendLine($"    global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof({info.TypeName}));");
     }
+    // [Superseding] (#1729), with a generated accessor for its [SupersedingKey], so the flag and the key are stamped on
+    // every path without reflection.
+    foreach (var info in ordered.Where(i => i.IsSuperseding)) {
+      var keyOf = info.SupersedingKey is null
+        ? "null"
+        : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey})";
+      source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {keyOf});");
+    }
     source.AppendLine("  }");
     source.AppendLine("}");
 
@@ -414,6 +426,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.IsTerminal) {
       initParts.Add("IsTerminal = true");
     }
+    if (info.IsSuperseding) {
+      initParts.Add("IsSuperseding = true");
+    }
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
@@ -449,5 +464,7 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsCompacted = false,
     long? MaxPayloadBytes = null,
     string? DefaultRouting = null,
-    bool IsTerminal = false
+    bool IsTerminal = false,
+    bool IsSuperseding = false,
+    string? SupersedingKey = null
 );

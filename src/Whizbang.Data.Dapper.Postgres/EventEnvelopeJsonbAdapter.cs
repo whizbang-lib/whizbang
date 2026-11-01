@@ -64,6 +64,11 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       metadataDict["pri"] = JsonElement.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    // #1729: wh_append_event stamps a superseding event's key from the metadata it stores ("sk", as EnvelopeMetadata names it).
+    if (Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(payload) is { } supersedingKey) {
+      metadataDict["sk"] = JsonElement.Parse(JsonSerializer.Serialize(supersedingKey, stringTypeInfo));
+    }
+
     var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
 

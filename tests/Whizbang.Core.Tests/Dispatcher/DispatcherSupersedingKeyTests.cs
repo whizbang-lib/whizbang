@@ -64,6 +64,23 @@ public sealed class DispatcherSupersedingKeyTests {
     await Assert.That(queued.Metadata!.SupersedingKey).IsEqualTo("model-b");
   }
 
+  private sealed class PayloadCapturingSerializer : IEnvelopeSerializer {
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var json = new MessageEnvelope<System.Text.Json.JsonElement> {
+        MessageId = envelope.MessageId,
+        Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+        Hops = [],
+        DispatchContext = envelope.DispatchContext,
+      };
+      return new SerializedEnvelope(json,
+        typeof(MessageEnvelope<>).MakeGenericType(typeof(TMessage)).AssemblyQualifiedName!,
+        typeof(TMessage).AssemblyQualifiedName!);
+    }
+
+    public object DeserializeMessage(MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope, string messageTypeName) =>
+      throw new NotSupportedException();
+  }
+
   private sealed class CapturingStrategy : IWorkCoordinatorStrategy {
     public List<OutboxMessage> Queued { get; } = [];
     public void QueueOutboxMessage(OutboxMessage message) => Queued.Add(message);
@@ -83,6 +100,7 @@ public sealed class DispatcherSupersedingKeyTests {
       new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
+    services.AddSingleton<IEnvelopeSerializer>(new PayloadCapturingSerializer());
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();
   }
