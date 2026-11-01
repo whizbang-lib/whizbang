@@ -245,6 +245,34 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
+  public async Task DrainDeadLetterQueueAsync_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var client = new FakeDrainClient();
+    client.Receiver.Batches.Enqueue([_dlqMessage(ID1)]);
+    var logger = new RecordingLogger();
+    await using var drainer = new AzureServiceBusDeadLetterDrainer(client, "orders", "billing", new FakeImporter().ImportAsync, logger,
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
+
+    await Assert.That(logger.Entries.Single(e => e.EventId == 1901).Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
+
+  /// <summary>#1901: the fleet hands its level to every per-subscription drainer it builds.</summary>
+  [Test]
+  public async Task Fleet_ConfiguredWarning_ItsSubscriptionDrainersLogTheRecordAtWarningAsync() {
+    var client = new FakeDrainClient();
+    client.Receiver.Batches.Enqueue([_dlqMessage(ID1)]);
+    var logger = new RecordingLogger();
+    await using var fleet = new AzureServiceBusFleetDeadLetterDrainer(
+      () => client, () => [("orders", "billing")], new FakeImporter().ImportAsync, new SingleLoggerFactory(logger),
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await fleet.DrainDeadLetterQueueAsync(10);
+
+    await Assert.That(logger.Entries.Single(e => e.EventId == 1901).Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
+
+  [Test]
   public async Task DrainDeadLetterQueueAsync_NonWhizbangMessage_AbandonsAndDoesNotImportAsync() {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
@@ -536,6 +564,13 @@ public class AzureServiceBusDeadLetterDrainerTests {
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter)
       => Entries.Add((logLevel, eventId.Id, formatter(state, exception)));
+  }
+
+  /// <summary>Hands out the one recording logger for the drainer category.</summary>
+  private sealed class SingleLoggerFactory(RecordingLogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public void Dispose() { }
   }
 
   // ===== Drain-loop test doubles =====

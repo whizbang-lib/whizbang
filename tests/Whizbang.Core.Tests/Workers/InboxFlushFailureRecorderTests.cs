@@ -174,6 +174,17 @@ public class InboxFlushFailureRecorderTests {
       .Because("nothing reached the dead-letter table, so no message was dead-lettered; the failed write is logged on its own");
   }
 
+  [Test]
+  public async Task RecordAsync_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var logger = new FakeLogger<InboxFlushFailureRecorder>();
+    var sut = _recorder(new DeadLetteringCoordinator(), [], logger: logger,
+      deadLetterLogging: new DeadLetterLoggingOptions { Level = LogLevel.Warning });
+
+    await sut.RecordAsync(_failure(InboxFlushFailureCause.RetriesExhausted, new TimeoutException("pool exhausted"), 1), CancellationToken.None);
+
+    await Assert.That(logger.Collector.GetSnapshot().Single(r => r.Id.Id == 1901).Level).IsEqualTo(LogLevel.Warning);
+  }
+
   private static InboxFlushFailureRecorder _recorder(
       IWorkCoordinator coordinator,
       IInboxFlushFailureObserver[] observers,
@@ -181,7 +192,8 @@ public class InboxFlushFailureRecorderTests {
       IGenerationProvider? generationProvider = null,
       DeadLetterMetrics? deadLetterMetrics = null,
       WorkCoordinatorGate? gate = null,
-      ILogger<InboxFlushFailureRecorder>? logger = null) {
+      ILogger<InboxFlushFailureRecorder>? logger = null,
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     var services = new ServiceCollection().AddScoped(_ => coordinator).BuildServiceProvider();
     return new InboxFlushFailureRecorder(
       services.GetRequiredService<IServiceScopeFactory>(),
@@ -190,7 +202,8 @@ public class InboxFlushFailureRecorderTests {
       generationProvider ?? new FixedGeneration("gen-0"),
       deadLetterMetrics,
       observers,
-      logger ?? NullLogger<InboxFlushFailureRecorder>.Instance);
+      logger ?? NullLogger<InboxFlushFailureRecorder>.Instance,
+      deadLetterLogging is null ? null : Microsoft.Extensions.Options.Options.Create(deadLetterLogging));
   }
 
   private static InboxFlushFailure _failure(InboxFlushFailureCause cause, Exception? error, int count, int attempts = 5) {

@@ -392,7 +392,14 @@ public class PrePublishGateForensicPreservationTests {
   /// recorded error, in place of the drain worker's own Warning.
   /// </summary>
   [Test]
-  public async Task PrePublishGate_Promotes_LogsTheDeadLetterRecordAtErrorAsync() {
+  public async Task PrePublishGate_Promotes_LogsTheDeadLetterRecordAtErrorAsync() => await _assertGateRecordLevelAsync(null, Microsoft.Extensions.Logging.LogLevel.Error);
+
+  [Test]
+  public async Task PrePublishGate_ConfiguredWarning_LogsTheDeadLetterRecordAtWarningAsync() =>
+    await _assertGateRecordLevelAsync(new DeadLetterLoggingOptions { Level = Microsoft.Extensions.Logging.LogLevel.Warning },
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+  private static async Task _assertGateRecordLevelAsync(DeadLetterLoggingOptions? deadLetterLogging, Microsoft.Extensions.Logging.LogLevel expected) {
     var streamId = (Guid)TrackedGuid.New();
     var msgId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
@@ -427,7 +434,8 @@ public class PrePublishGateForensicPreservationTests {
       deadLetterStore: new CapturingDeadLetterStore(),
       generationProvider: new FakeGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor(drainOptions),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -438,8 +446,8 @@ public class PrePublishGateForensicPreservationTests {
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
-      .Because("#1901: an outbox row dead-lettered by the drain will never be published on its own, so it is logged at Error by default");
+    await Assert.That(level).IsEqualTo(expected)
+      .Because("#1901: an outbox row dead-lettered by the drain will never be published on its own; Error by default, Warning when configured");
     await Assert.That(message).Contains(msgId.ToString())
       .And.Contains("Contracts.Billing.InvoiceIssued, Contracts")
       .And.Contains("broker send timed out");

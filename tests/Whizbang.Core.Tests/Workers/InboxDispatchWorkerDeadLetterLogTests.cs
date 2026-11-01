@@ -133,4 +133,15 @@ public sealed class InboxDispatchWorkerDeadLetterLogTests {
         MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default)
       => Task.FromResult<Guid?>(null);
   }
+
+  [Test]
+  public async Task MaxAttempts_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var h = new InboxDispatchUnitHarness(deadLetterLogging: new DeadLetterLoggingOptions { Level = LogLevel.Warning });
+    var work = InboxDispatchUnitHarness.Work(attempts: 11, error: "boom", messageType: DOMAIN_TYPE);
+
+    await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(_records(h).Single().Level).IsEqualTo(LogLevel.Warning)
+      .Because("#1901: a consumer whose alerting should not fire on dead letters keeps the old severity with the option");
+  }
 }

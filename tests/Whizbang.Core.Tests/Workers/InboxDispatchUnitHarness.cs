@@ -46,7 +46,8 @@ internal sealed class InboxDispatchUnitHarness {
       LeaseRegistry? leaseRegistry = null,
       LeaseHandleOptions? leaseHandleOptions = null,
       FakeTimeProvider? time = null,
-      ILifecycleMessageDeserializer? deserializer = null) {
+      ILifecycleMessageDeserializer? deserializer = null,
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     Time = time ?? new FakeTimeProvider(Start);
     Inbox = inbox ?? new FakeInboxChannelWriter();
     var instance = new FakeInstanceProvider();
@@ -78,7 +79,8 @@ internal sealed class InboxDispatchUnitHarness {
       leaseRegistry: leaseRegistry,
       timeProvider: Time,
       deserializeCache: cache,
-      completionMeter: Meter);
+      completionMeter: Meter,
+      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
   }
 
   /// <summary>An inbox row with an empty JSON payload, the given attempts, last error and message type.</summary>

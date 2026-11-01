@@ -229,6 +229,35 @@ public class RabbitMqDeadLetterDrainerTests {
   }
 
   [Test]
+  public async Task Drain_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var channel = new DrainFakeChannel();
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
+    var logger = new RecordingLogger();
+    var drainer = new RabbitMqDeadLetterDrainer(_connectionFor(channel), "orders.dlq", _noopImport, logger,
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await drainer.DrainDeadLetterQueueAsync(10);
+
+    await Assert.That(logger.Entries.Single(e => e.EventId == 1901).Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
+
+  /// <summary>#1901: the fleet hands its level to every per-queue drainer it builds.</summary>
+  [Test]
+  public async Task Fleet_ConfiguredWarning_ItsQueueDrainersLogTheRecordAtWarningAsync() {
+    var channel = new DrainFakeChannel();
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
+    var logger = new RecordingLogger();
+    var fleet = new RabbitMqFleetDeadLetterDrainer(
+      () => _connectionFor(channel), () => ["orders.dlq"], _noopImport, new SingleLoggerFactory(logger),
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await fleet.DrainDeadLetterQueueAsync(10);
+
+    await Assert.That(fleet.DeadLetterLogLevel).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(logger.Entries.Single(e => e.EventId == 1901).Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
+
+  [Test]
   public async Task Drain_ImportFails_RequeuesAndEndsPassAsync() {
     var channel = new DrainFakeChannel();
     channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
@@ -337,6 +366,13 @@ public class RabbitMqDeadLetterDrainerTests {
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter)
       => Entries.Add((logLevel, eventId.Id, formatter(state, exception)));
+  }
+
+  /// <summary>Hands out the one recording logger for the drainer category.</summary>
+  private sealed class SingleLoggerFactory(RecordingLogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public void Dispose() { }
   }
 
   // ===== Drain-loop test double =====

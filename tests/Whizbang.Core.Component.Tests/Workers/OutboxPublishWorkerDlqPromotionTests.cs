@@ -74,8 +74,10 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
+    public TaskCompletionSource? Routed { get; set; }
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
+      Routed?.TrySetResult();
       return ValueTask.CompletedTask;
     }
   }
@@ -163,7 +165,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
       int? maxOutboxAttempts,
       IMessagePublishStrategy strategy,
       bool wireDeadLetterStore = true,
-      Microsoft.Extensions.Logging.ILogger<OutboxPublishWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<OutboxPublishWorker>? logger = null,
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
@@ -192,7 +195,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
       deadLetterStore: wireDeadLetterStore ? dlq : null ?? NullDeadLetterStore.Instance,
       generationProvider: wireDeadLetterStore ? new FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      occurrenceGate: new NoOpOccurrencePublishGate());
+      occurrenceGate: new NoOpOccurrencePublishGate(),
+      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
     return (worker, channel, failure, dlq);
   }
 
@@ -481,6 +485,69 @@ public class OutboxPublishWorkerDlqPromotionTests {
       .And.Contains("broker refused the message: entity disabled");
     await Assert.That(logger.Entries.Any(e => e.EventId == 6)).IsFalse()
       .Because("the record replaces the outbox worker's own Warning for a dead letter");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  private sealed class FakeThrowingStrategy : IMessagePublishStrategy {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
+      throw new TimeoutException("broker send timed out");
+  }
+
+  [Test]
+  public async Task SingularPublish_ConfiguredWarning_LogsTheDeadLetterRecordAtWarningAsync() {
+    var logger = new DeadLetterRecordLogger<OutboxPublishWorker>();
+    var (worker, channel, _, _) = _build(maxOutboxAttempts: 3, new FakeFailingStrategy(), logger: logger,
+      deadLetterLogging: new DeadLetterLoggingOptions { Level = Microsoft.Extensions.Logging.LogLevel.Warning });
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await channel.WriteAsync(_work(attempts: 3), cts.Token);
+
+    var (level, _, _) = await logger.DeadLettered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SingularPublish_ThrowsAtCap_RecordCarriesTheExceptionAsync() {
+    var logger = new DeadLetterRecordLogger<OutboxPublishWorker>();
+    var (worker, channel, _, _) = _build(maxOutboxAttempts: 3, new FakeThrowingStrategy(), logger: logger);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await channel.WriteAsync(_work(attempts: 3), cts.Token);
+
+    var (level, message, exception) = await logger.DeadLettered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error);
+    await Assert.That(exception).IsTypeOf<TimeoutException>()
+      .Because("#1901: when the last failure's exception is in hand, the record carries it, stack trace and all");
+    await Assert.That(message).Contains("broker send timed out");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SingularPublish_ThrowsBelowCap_LogsTheAttemptAtWarningAndNoRecordAsync() {
+    var logger = new DeadLetterRecordLogger<OutboxPublishWorker>();
+    var (worker, channel, failure, _) = _build(maxOutboxAttempts: 5, new FakeThrowingStrategy(), logger: logger);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var routed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    failure.Routed = routed;
+
+    await channel.WriteAsync(_work(attempts: 1), cts.Token);
+
+    await routed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var attempt = logger.Entries.Single(e => e.EventId == 4);
+    await Assert.That(attempt.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .Because("#1901: an attempt that will be retried stays at Warning");
+    await Assert.That(logger.Records).IsEmpty();
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

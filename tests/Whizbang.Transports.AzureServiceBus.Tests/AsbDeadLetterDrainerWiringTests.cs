@@ -40,6 +40,23 @@ public class AsbDeadLetterDrainerWiringTests {
     }
   }
 
+  /// <summary>#1901: the registration builds the drainer with the configured dead-letter level.</summary>
+  [Test]
+  public async Task AddAzureServiceBusTransport_ConfiguredWarning_TheDrainerLogsDeadLettersAtWarningAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.Configure<Whizbang.Core.Workers.DeadLetterLoggingOptions>(o => o.Level = Microsoft.Extensions.Logging.LogLevel.Warning);
+    services.AddSingleton(new ServiceBusClient(
+      "Endpoint=sb://unit-test.example/;SharedAccessKeyName=unit;SharedAccessKey=dW5pdC10ZXN0LWtleQ=="));
+    services.AddAzureServiceBusTransport(
+      "Endpoint=sb://unit-test.example/;SharedAccessKeyName=unit;SharedAccessKey=dW5pdC10ZXN0LWtleQ==");
+    await using var provider = services.BuildServiceProvider();
+
+    var drainer = provider.GetServices<ITransportDeadLetterDrainer>().OfType<AzureServiceBusNamespacesDeadLetterDrainer>().Single();
+
+    await Assert.That(drainer.DeadLetterLogLevel).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
+
   [Test]
   public async Task AddAzureServiceBusTransport_RegistersADeadLetterDrainerAsync() {
     var services = new ServiceCollection();

@@ -78,7 +78,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       IGenerationProvider? gen,
       DeadLetterMetrics? metrics,
       Guid instanceId,
-      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null,
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddLogging();
@@ -112,7 +113,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       generationProvider: gen ?? new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value),
-      deadLetterMetrics: metrics);
+      deadLetterMetrics: metrics,
+      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
   }
 
   private static StreamEventData _row(int attempts, int failures = 0) {
@@ -289,5 +291,17 @@ public class PerspectiveWorkerDeadLetterFilterTests {
 
     await Assert.That(logger.Records).IsEmpty()
       .Because("a move that fails keeps the row in the apply set for a retry, so it is not dead-lettered");
+  }
+
+  [Test]
+  public async Task FailuresAboveMax_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var logger = new DeadLetterRecordLogger<PerspectiveWorker>();
+    var worker = _buildWorker(maxAttempts: 3, store: new CapturingDeadLetterStore(), gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.New(), logger: logger,
+      deadLetterLogging: new DeadLetterLoggingOptions { Level = Microsoft.Extensions.Logging.LogLevel.Warning });
+
+    await worker.FilterDeadLetteredAsync([_row(attempts: 4, failures: 4)], CancellationToken.None);
+
+    await Assert.That(logger.Records.Single().Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
   }
 }

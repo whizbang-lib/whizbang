@@ -189,6 +189,23 @@ public class TransportConsumerWorkerUnstorableMessageTests {
   }
 
   [Test]
+  public async Task SerializationFails_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var coordinator = new NoOpWorkCoordinator();
+    var serializer = new SelectivelyFailingSerializer(new EnvelopeSerializer(options), failOnMarker: "cannot-serialize");
+    var logger = new DeadLetterRecordLogger<TransportConsumerWorker>();
+    await using var sp = _provider(coordinator, options, s => s.AddSingleton<IEnvelopeSerializer>(serializer));
+    var (worker, transport) = await _startAsync(sp, logger, new DeadLetterLoggingOptions { Level = LogLevel.Warning });
+    var probeType = EnvelopeTypeNameHelper.Format(TypeNameFormatter.Format(typeof(UnstorableProbeEvent)));
+
+    await transport.DeliverBatchAsync([new TransportMessage(_probeEnvelope("cannot-serialize"), probeType)]);
+
+    await Assert.That(logger.Records.Single().Level).IsEqualTo(LogLevel.Warning);
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task SerializationFails_PayloadNoContextKnows_DeadLetteredWithDescriptorAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var coordinator = new NoOpWorkCoordinator();
@@ -391,7 +408,7 @@ public class TransportConsumerWorkerUnstorableMessageTests {
   }
 
   private static async Task<(TransportConsumerWorker Worker, BatchTransport Transport)> _startAsync(
-      IServiceProvider sp, ILogger<TransportConsumerWorker>? logger = null) {
+      IServiceProvider sp, ILogger<TransportConsumerWorker>? logger = null, DeadLetterLoggingOptions? deadLetterLogging = null) {
     var transport = new BatchTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination(TOPIC, SUBSCRIPTION));
@@ -413,7 +430,8 @@ public class TransportConsumerWorkerUnstorableMessageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      controlClass: Options.Create(new ControlClassOptions()));
+      controlClass: Options.Create(new ControlClassOptions()),
+      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
     await worker.StartAsync(CancellationToken.None);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
     return (worker, transport);
