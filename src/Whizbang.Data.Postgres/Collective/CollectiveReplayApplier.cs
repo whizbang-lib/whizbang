@@ -140,6 +140,40 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
+    var tenantId = streamEvents[0].GetCurrentScope()?.Scope.TenantId;
+    return await _interleaveAsync(modelType, streamEvents, new CollectiveReplayStart(tenantId), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The collectives are found as <see cref="InterleaveForReplayAsync"/> finds them, the collective streams archived whole
+  /// included on a rewind and, in a rebuild, only under <see cref="RebuildArchivedData.IncludeAll"/>; those
+  /// <paramref name="start"/> does not <see cref="CollectiveReplayStart.Follows"/> are left out before they are ordered.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_OutsideARebuild_MergesTheCollectivesAfterTheStart_OnlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_WithNoStreamEvents_ReturnsTheCollectivesAloneAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_RefusesNullArgumentsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_FromASnapshot_DoesNotFoldAgainACollectiveCommittedBeforeItAsync</tests>
+  public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveAfterAsync(
+      Type modelType,
+      IReadOnlyList<MessageEnvelope<IEvent>> streamEvents,
+      CollectiveReplayStart start,
+      CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(streamEvents);
+    ArgumentNullException.ThrowIfNull(start);
+    return _interleaveAsync(modelType, streamEvents, start, cancellationToken);
+  }
+
+  /// <summary>
+  /// Merges into <paramref name="streamEvents"/> the collectives of <paramref name="start"/>'s tenant for
+  /// <paramref name="modelType"/> committed after <paramref name="start"/>.
+  /// </summary>
+  private async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _interleaveAsync(
+      Type modelType,
+      IReadOnlyList<MessageEnvelope<IEvent>> streamEvents,
+      CollectiveReplayStart start,
+      CancellationToken cancellationToken) {
     var collectiveTypes = _entries
       .Where(e => e.ModelType == modelType)
       .Select(e => e.EventType)
@@ -149,7 +183,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
-    var tenantId = streamEvents[0].GetCurrentScope()?.Scope.TenantId;
+    var tenantId = start.TenantId;
     // The event store persists EventType via TypeNameFormatter ("Namespace.TypeName, AssemblyName"), not
     // Type.FullName — match that format so the filter finds the collective streams.
     var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);
@@ -178,6 +212,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       await foreach (var envelope in _eventStore
           .ReadPolymorphicAsync(streamId, null, collectiveTypes, cancellationToken)
           .Where(e => e.Payload is ICollectiveEvent)
+          .Where(start.Follows)
           .ConfigureAwait(false)) {
         collectives.Add(envelope);
       }

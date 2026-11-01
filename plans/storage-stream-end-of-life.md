@@ -265,7 +265,7 @@ duty) deletes them with confirm-then-clear and backoff retries. Open: no access-
 ### S9. Read-through, restore, and the append-to-archived policy
 
 **Status (2026-10-30):** implemented on `feat/1738-archive-read-through` (#1738), migration
-`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, also reserved, are unused). Owner decisions of 2026-10-30 on
+`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, first reserved for it, were later used by #1955 for the archived-collective index and the parked rebuild cursor; 274 by #1958 for the deleted-archive record). Owner decisions of 2026-10-30 on
 #1738, as built:
 
 - **Read-through by gap detection** (`ArchiveAwareEventStoreDecorator`, innermost in the event store's decorator chain

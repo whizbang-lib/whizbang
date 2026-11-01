@@ -165,6 +165,54 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
     await Assert.That(await _rowExistsAsync(whole)).IsFalse();
   }
 
+  // #1958: a stream whose prefix archive was deleted read as never archived, so an opt-in rebuild folded its hot events
+  // alone and reported the partial history as rebuilt.
+  [Test]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  [Arguments(RebuildArchivedData.IncludeAll)]
+  public async Task Rebuild_ThatReadsArchivedData_SkipsAStreamWhosePrefixArchiveWasDeleted_AndReportsItSkippedAsync(RebuildArchivedData choice) {
+    await using var sp = _services(readThrough: true);
+    var (_, _, prefix) = await _threeCopiesAsync(sp);
+    await Assert.That(await _archive().DeleteAsync(prefix)).IsGreaterThan(0L).Because("the control: the prefix archive held events");
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [prefix], new RebuildOrigin { ArchivedData = choice }, CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue().Because("a skipped stream is reported, not failed");
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1)
+      .Because("the history the rebuild was asked to read is deleted, and a replay of the hot events alone would fold part of it");
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0);
+    await Assert.That(await _rowExistsAsync(prefix)).IsFalse().Because("the row is left as it was");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_StartsAStreamWhosePrefixArchiveWasDeleted_FromItsNewestLiveSnapshotAsync() {
+    await using var sp = _services(readThrough: true, withSnapshots: true);
+    var (_, _, prefix) = await _threeCopiesAsync(sp);
+    await Assert.That(await _archive().DeleteAsync(prefix)).IsGreaterThan(0L).Because("the control: the prefix archive held events");
+    await _snapshotAsync(prefix, await _firstHotEventAsync(prefix), new RebuildBalanceModel { Id = prefix, Balance = 1000m });
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [prefix], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(0);
+    await Assert.That(await _rowAsync(prefix)).IsEqualTo((1005m, (string?)null))
+      .Because("the default never reads the archive, so a deleted one changes nothing: the stream starts from its newest live snapshot");
+  }
+
+  [Test]
+  public async Task Rebuild_IncludeAll_SkipsAStreamWhoseWholeArchiveWasDeleted_AndReportsItSkippedAsync() {
+    await using var sp = _services(readThrough: true);
+    var (_, whole, _) = await _threeCopiesAsync(sp);
+    await Assert.That(await _archive().DeleteAsync(whole)).IsEqualTo(5L);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(
+      PERSPECTIVE, [whole], new RebuildOrigin { ArchivedData = RebuildArchivedData.IncludeAll }, CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1).Because("nothing of the stream remains to replay");
+    await Assert.That(await _rowExistsAsync(whole)).IsFalse();
+  }
+
   [Test]
   public async Task Rebuild_IncludeAll_RebuildsAStreamArchivedWhole_ParksItsCursor_AndTheRestoreBringsTheCursorBackAsync() {
     await using var sp = _services(readThrough: true);

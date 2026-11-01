@@ -649,6 +649,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var purgedEventsSkipped = 0;  // Events skipped because the stream was purged
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
     PerspectiveScope? scopeEventScope = null;  // The scope an IScopeEvent set; forces a scope UPDATE (#1432)
+    // The row at its last event, taken when collectives committed after that event fold into it (#1956): a snapshot this
+    // run takes is taken at that event, so it must not hold them, or a rewind from it would fold them again.
+    JsonDocument? modelAtLastEvent = null;
 
     try {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event, and not again
@@ -776,6 +779,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
+        // Collective events have no per-stream Apply(): during replay/rebuild they are folded into this one
+        // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
+        // rebuild/rewind mode, so this branch never runs during live drain.
+        // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
+        // live path, where the set-based sink never touches a row's cursor (#1931). Its stream may be archived whole, and a
+        // cursor naming it would name an event the hot store does not hold. A purged row has nothing to fold into, and the
+        // collective is still not the row's event, so it moves no checkpoint there either (#1957).
+        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+          if (_collectiveReplayApplier is not null && updatedModel is not null && !pendingPurge) {
+            if (modelAtLastEvent is null && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true) {
+              modelAtLastEvent = ToSnapshotJson(updatedModel);
+            }
+            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
+                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+            hasWrittenUpdate = true;
+          }
+          processedEvents.Add(envelope);
+          eventsProcessed++;
+          continue;
+        }
+        // A stream event after collectives: the row at the last event is the one this event leaves.
+        modelAtLastEvent?.Dispose();
+        modelAtLastEvent = null;
+
         // A purged stream stays purged (issue #1027): an event after the purge is skipped, not applied to an
         // empty model, unless its Apply returns Resurrect. The checkpoint still advances past a skipped event.
         if (pendingPurge) {
@@ -793,23 +820,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           updatedModel = resurrection;
           hasWrittenUpdate = true;
           lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
-          continue;
-        }
-
-        // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
-        // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
-        // rebuild/rewind mode, so this branch never runs during live drain.
-        // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
-        // live path, where the set-based sink never touches a row's cursor (#1931). Its stream may be archived whole, and a
-        // cursor naming it would name an event the hot store does not hold.
-        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
-          if (_collectiveReplayApplier is not null && updatedModel is not null) {
-            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
-                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
-            hasWrittenUpdate = true;
-          }
-          processedEvents.Add(envelope);
-          eventsProcessed++;
           continue;
         }
 
@@ -931,7 +941,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId!.Value, cancellationToken),
               processedEvents,
               rebuilding);
-          snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
+          // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
+          snapshotBeforeWrite = snapshotDue ? modelAtLastEvent ?? SnapshotBeforeWrite(updatedModel) : null;
+          if (snapshotDue) {
+            modelAtLastEvent = null;  // handed to the snapshot write
+          }
           // The model's [InheritScope] decides the scope: OnCreate and Always fields on a new row, the Always
           // fields merged into the row's stored scope on an existing one (#1425).
           var scopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
@@ -1026,6 +1040,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
         }
         snapshotBeforeWrite?.Dispose(); // not due this run
+        modelAtLastEvent?.Dispose(); // not handed to the snapshot write
+        modelAtLastEvent = null;
 
         // Fire PostPerspectiveDetached lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveDetached is for early, non-blocking notification (data committed but checkpoint not yet saved)
@@ -1662,7 +1678,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // The row version this replay writes against, read before any event is (#1863): a writer that commits after this
     // read moves the version and the write below is refused, and one that committed before it stored its event first,
     // so the replay reads that event. A store that tracks no versions returns Unchecked and writes as it always did.
-    var rowVersion = (await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken)).Version;
+    var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
+    var rowVersion = applyRead.Version;
 
     var currentModel = initialModel ?? CreateEmptyModel(streamId);
     // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
@@ -1717,7 +1734,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // event in the stream, an Apply that returns no model or throws), and the full fold below runs instead. A stream
     // that starts purged is folded in full, because only the fold knows when an Apply resurrects it.
     // <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-    if (_isOverwriteOnly && !startedPurged
+    // A model with collectives is folded in full (#1956): a collective committed after the last event changes the row the
+    // last event alone would write.
+    var foldsCollectives = _modelHasCollectives();
+    if (_isOverwriteOnly && !startedPurged && !foldsCollectives
         && await _replayLastEventOnlyAsync(streamId, perspectiveName, perspective, rowVersion, replayFromEventId, eventTypes, cancellationToken)
           is { } lastEventOnly) {
       return lastEventOnly;
@@ -1742,6 +1762,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var rewindCatchUpIterations = 0;
     var anchorEventId = replayFromEventId;
 
+    // #1956: a rewind is a replay, so it folds the row's collectives as a rebuild does. It folds those committed after
+    // where it starts: after the snapshot's event, whose model already holds the ones committed before it, or every one
+    // for a replay from the stream's start. Each folds once across the catch-up passes, and none moves the checkpoint.
+    long? collectiveStartSequence = foldsCollectives && replayFromEventId is Guid snapshotEventId
+        ? await _eventStore.GetCommitSequenceAsync(snapshotEventId, cancellationToken)
+        : null;
+    var foldedCollectives = new HashSet<Guid>();
+    // The row at its last event, taken when collectives committed after that event fold into it: the snapshot this replay
+    // ends with is taken at that event, so it must not hold them, or a rewind from it would fold them again.
+    JsonDocument? modelAtLastEvent = null;
+    var snapshotsOn = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true;
+
     while (true) {
       rewindCatchUpIterations++;
       if (rewindCatchUpIterations > MAX_REWIND_CATCH_UP_ITERATIONS) {
@@ -1764,17 +1796,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         events.Add(envelope);
       }
 
-      if (events.Count == 0) {
-        // Event store quiescent — rewind has caught up to HEAD AT THIS COMMIT.
-        // This is the contract PerspectiveRewindCompleted now honours.
-        break;
-      }
-
       // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
       // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
       // would silently undo newer writes. The rule lives in ReplayEventOrder, which the rebuild shares.
       if (events.Count > 1) {
         events = [.. global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)];
+      }
+
+      // The row's collectives committed after the replay's start, merged among the stream's events in commit order (#1956).
+      // A first pass from a snapshot with no stream event after it still folds those committed since the snapshot, for the
+      // tenant the row is stored under.
+      if (foldsCollectives
+          && _collectiveTenant(events, applyRead, firstPassFromASnapshot: rewindCatchUpIterations == 1 && initialModel is not null)
+            is { Known: true } tenant) {
+        var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
+            typeof(__MODEL_TYPE_NAME__), events,
+            new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, replayFromEventId, collectiveStartSequence),
+            cancellationToken);
+        events = [.. merged.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent || foldedCollectives.Add(e.MessageId.Value))];
+      }
+
+      if (events.Count == 0) {
+        // Event store quiescent: the rewind has caught up to HEAD AT THIS COMMIT.
+        // This is the contract PerspectiveRewindCompleted now honors.
+        break;
       }
 
       // A batch whose last event always purges the row (#1151) discards whatever the events before it fold: they
@@ -1783,7 +1828,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (events.Count > 1 && IsUnconditionalPurge(events[^1].Payload)) {
         foldFrom = events.Count - 1;
         foreach (var skipped in events.Take(foldFrom)) {
-          (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
+          if (skipped.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
+            (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
+          }
           eventsProcessed++;
         }
       }
@@ -1791,6 +1838,24 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
       foreach (var envelope in events.Skip(foldFrom)) {
       var @event = envelope.Payload;
+
+      // A collective folds into the row and moves no checkpoint and no frontier (#1956), as in a rebuild (#1931). A purged
+      // row has nothing to fold into. Its scope is the collective's, not the row's, so it is not tracked for the write.
+      if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+        if (!pendingPurge && updatedModel is not null) {
+          if (snapshotsOn && modelAtLastEvent is null) {
+            modelAtLastEvent = ToSnapshotJson(updatedModel);
+          }
+          updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier!.ApplyInMemory(
+              typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+          producedByApply = true;
+        }
+        eventsProcessed++;
+        continue;
+      }
+      // A stream event after collectives: the row at the last event is the one this event leaves.
+      modelAtLastEvent?.Dispose();
+      modelAtLastEvent = null;
 
       // Track scope from envelope for perspective upsert
       var envelopeScope = envelope.GetCurrentScope();
@@ -1899,10 +1964,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // commit order, whose final event need not carry the window's largest id — an
       // id-anchored refetch from a smaller last-applied id would re-serve (and re-apply)
       // the window's tail every pass.
-      anchorEventId = events
+      // Collectives are other streams' events, so they never anchor this stream's read; a pass that folded only
+      // collectives leaves the anchor where it was.
+      var readIds = events
+        .Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent)
         .Select(e => e.MessageId.Value)
-        .OrderBy(id => id.ToString("D"), StringComparer.Ordinal)
-        .Last();
+        .ToList();
+      if (readIds.Count > 0) {
+        anchorEventId = readIds.OrderBy(id => id.ToString("D"), StringComparer.Ordinal).Last();
+      }
     } // closes while (true)
 
     return await _finishReplayAsync(new ReplayOutcome {
@@ -1924,6 +1994,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PurgedEventsSkipped = purgedEventsSkipped,
       FrontierEventId = frontierEventId,
       FrontierCommitSequence = frontierCommitSequence,
+      ModelAtLastEvent = modelAtLastEvent,
     }, cancellationToken);
   }
 
@@ -1974,7 +2045,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
         // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
-        snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
+        // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
+        snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
             streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken,
@@ -2026,6 +2098,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
       snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
+    outcome.ModelAtLastEvent?.Dispose(); // not handed to the store
 
     var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
 
@@ -2154,6 +2227,41 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public int PurgedEventsSkipped { get; set; }
     public Guid? FrontierEventId { get; set; }
     public long? FrontierCommitSequence { get; set; }
+    // The row at its last event, when collectives committed after that event folded into it (#1956).
+    public JsonDocument? ModelAtLastEvent { get; set; }
+  }
+
+  /// <summary>Hands the replay's row at its last event to the snapshot write, once.</summary>
+  private static JsonDocument? _takeModelAtLastEvent(ReplayOutcome outcome) {
+    var model = outcome.ModelAtLastEvent;
+    outcome.ModelAtLastEvent = null;
+    return model;
+  }
+
+  /// <summary>
+  /// Whether a replay of this model folds collectives (#1956): a collective replay applier is registered and names a
+  /// collective event for the model.
+  /// </summary>
+  private bool _modelHasCollectives() =>
+      _collectiveReplayApplier is not null
+      && _collectiveReplayApplier.CollectiveEventTypeNamesFor(
+          global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')).Count > 0;
+
+  /// <summary>
+  /// The tenant whose collectives a replay pass folds (#1956): the tenant of the stream's events when the pass read any;
+  /// on a first pass from a snapshot that read none, the tenant the row is stored under, when the store read the row. Not
+  /// known otherwise, and the pass then folds no collective.
+  /// </summary>
+  private static (bool Known, string? TenantId) _collectiveTenant(
+      System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
+      bool firstPassFromASnapshot) {
+    if (events.Count > 0) {
+      return (true, events[0].GetCurrentScope()?.Scope.TenantId);
+    }
+    return firstPassFromASnapshot && applyRead.Version.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present
+        ? (true, applyRead.Scope?.TenantId)
+        : (false, null);
   }
 
   public async Task BootstrapSnapshotAsync(

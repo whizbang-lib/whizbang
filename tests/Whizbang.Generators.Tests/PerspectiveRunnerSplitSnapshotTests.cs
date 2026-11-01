@@ -120,8 +120,10 @@ public class PerspectiveRunnerSplitSnapshotTests {
     var runner = _compact(_runner("SplitClassPerspective"));
 
     // The end of a run, and the end of a rewind: each captures the snapshot before it writes and hands
-    // it to the store in place of one taken afterwards.
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(2);
+    // it to the store in place of one taken afterwards. Each prefers the row at its last event when collectives
+    // folded after that event (#1956), which is serialized before the write too.
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
     await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
   }
 
