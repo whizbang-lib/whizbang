@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Containers;
 /// </summary>
 /// <remarks>
 /// A containment fixture seeded 200,000 rows on a connection with Npgsql's default 30-second command timeout.
-/// With another shard loading the same container the client cancelled the insert, and four of its tests failed
+/// With another shard loading the same container the client canceled the insert, and four of its tests failed
 /// in setup. These tests pin the policy that replaced it: the test's own timeout bounds a setup statement through
 /// its token, and a guard far above any measured wait catches a hang.
 /// </remarks>

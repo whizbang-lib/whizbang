@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.TestIsolation;
 /// <para>
 /// A statement that sets a test up does as much work under load as it does on an idle machine; only its duration
 /// changes. Two fixtures issued theirs on a connection with Npgsql's default 30-second command timeout, so when another
-/// shard was loading the same container the client cancelled them: the containment fixture's 200,000-row seed (the
+/// shard was loading the same container the client canceled them: the containment fixture's 200,000-row seed (the
 /// server logged <c>canceling statement due to user request</c> on the insert, then the fixture's own teardown ending
 /// the session), and the vector fixture's <c>CREATE DATABASE</c> and <c>DROP DATABASE</c>. The tests failed before an
 /// assertion ran.

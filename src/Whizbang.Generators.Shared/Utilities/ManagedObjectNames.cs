@@ -140,7 +140,7 @@ public static class ManagedObjectNames {
     while (end < sql.Length && (_isIdentifierStart(sql[end]) || char.IsDigit(sql[end]) || sql[end] == '$')) {
       end++;
     }
-    return sql.Substring(at, end - at);
+    return sql[at..end];
   }
 
   private static bool _isIdentifierStart(char c) => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or '_';

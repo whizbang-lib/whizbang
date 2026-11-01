@@ -108,8 +108,8 @@ public static class PerTestDatabaseFactory {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// What made these slow under load is measured, not guessed (#1940). Every cancelled statement in the build
-  /// servers' container logs was a <c>DROP DATABASE</c> (42 of them; no <c>CREATE DATABASE</c> was ever cancelled), and
+  /// What made these slow under load is measured, not guessed (#1940). Every canceled statement in the build
+  /// servers' container logs was a <c>DROP DATABASE</c> (42 of them; no <c>CREATE DATABASE</c> was ever canceled), and
   /// each sat behind a <c>checkpoint starting: immediate force wait</c>: since PostgreSQL 15 a drop forces an immediate
   /// checkpoint and waits for it, so its duration is the time to flush every dirty buffer the whole shared cluster
   /// holds, which is the other shards' write load. Those checkpoints took up to 137 seconds. It is not lingering
@@ -117,7 +117,7 @@ public static class PerTestDatabaseFactory {
   /// lock, never timed out).
   /// </para>
   /// <para>
-  /// A drop therefore waits for that checkpoint rather than being cancelled at 30 seconds, under the guard in
+  /// A drop therefore waits for that checkpoint rather than being canceled at 30 seconds, under the guard in
   /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, which is there to fail a hang loudly and is not the wait. A drop
   /// that still cannot finish is abandoned as before (see <see cref="DropAsync"/>), never failing the test.
   /// </para>
@@ -223,7 +223,7 @@ public static class PerTestDatabaseFactory {
   /// <para>
   /// Every test process on a machine shares one container, and a statement that takes seconds on an idle one takes
   /// tens of seconds beside another shard's load: the server log for the failed containment runs shows the client
-  /// cancelling the fill at Npgsql's default 30 seconds. The default is a guess at how long a query of the code
+  /// canceling the fill at Npgsql's default 30 seconds. The default is a guess at how long a query of the code
   /// under test should take, and it was failing tests for the load. Setup statements get a guard instead,
   /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, sized to catch a hang and not to bound the wait, and the test's own
   /// <c>[Timeout]</c> or the hook's still bounds them first through the token the statement is given.
