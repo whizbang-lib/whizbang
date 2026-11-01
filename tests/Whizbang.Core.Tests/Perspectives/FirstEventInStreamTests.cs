@@ -160,7 +160,8 @@ internal static class GeneratedRunners {
       IEventStore events,
       IPerspectiveStore<TModel> rows,
       IPerspectiveSnapshotStore? snapshots = null,
-      Microsoft.Extensions.Options.IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null) where TModel : class {
+      Microsoft.Extensions.Options.IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
+      ICollectiveReplayApplier? collectiveReplayApplier = null) where TModel : class {
     var runnerType = typeof(GeneratedRunners).Assembly.GetType(runnerTypeName, throwOnError: true)!;
     var ctor = runnerType.GetConstructors().Single();
     var args = new object?[ctor.GetParameters().Length];
@@ -171,6 +172,7 @@ internal static class GeneratedRunners {
     args[4] = provider.GetRequiredService<IServiceScopeFactory>();
     args[6] = snapshots;
     args[7] = snapshotOptions;
+    args[Array.FindIndex(ctor.GetParameters(), p => p.ParameterType == typeof(ICollectiveReplayApplier))] = collectiveReplayApplier;
     return (IPerspectiveRunner)ctor.Invoke(args);
   }
 
