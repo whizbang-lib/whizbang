@@ -159,6 +159,9 @@ internal static class ProcessWideOptionsBinding {
     services.AddOptions<DeadLetterLoggingOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DeadLetterLoggingOptions>, DeadLetterLoggingOptionsValidator>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<DeadLetterLoggingOptions>, DeadLetterLoggingBinding>());
+    // The dead-letter paths take the bound, validated instance itself, not IOptions<T>: an optional interface
+    // parameter is what WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
+    services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DeadLetterLoggingOptions>>().Value);
   }
 
   /// <summary>Applies <c>Whizbang:DeadLetterLogging</c> to <see cref="DeadLetterLoggingOptions"/>.</summary>

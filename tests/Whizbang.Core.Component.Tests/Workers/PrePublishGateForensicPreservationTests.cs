@@ -435,7 +435,7 @@ public class PrePublishGateForensicPreservationTests {
       generationProvider: new FakeGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor(drainOptions),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
+      deadLetterLogging: deadLetterLogging);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -58,7 +58,7 @@ public sealed partial class OutboxPublishWorker(
   TimeProvider? timeProvider = null,
   Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
   WorkCompletionMeter? completionMeter = null,
-  IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) : BackgroundService {
+  DeadLetterLoggingOptions? deadLetterLogging = null) : BackgroundService {
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool;
   // Defaults to the no-op gate, so hosts that never registered one publish exactly as before.

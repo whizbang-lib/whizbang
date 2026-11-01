@@ -102,7 +102,7 @@ public partial class PerspectiveWorker(
   // happens once, only the health endpoint does not see it.
   Whizbang.Core.Perspectives.StoredFormFailureRegistry? storedFormFailures = null,
   // The level a dead-lettered event's record is logged at (#1901); null logs it at Error.
-  IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null
+  DeadLetterLoggingOptions? deadLetterLogging = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";

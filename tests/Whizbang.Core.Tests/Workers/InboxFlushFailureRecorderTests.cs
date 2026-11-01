@@ -203,7 +203,7 @@ public class InboxFlushFailureRecorderTests {
       deadLetterMetrics,
       observers,
       logger ?? NullLogger<InboxFlushFailureRecorder>.Instance,
-      deadLetterLogging is null ? null : Microsoft.Extensions.Options.Options.Create(deadLetterLogging));
+      deadLetterLogging);
   }
 
   private static InboxFlushFailure _failure(InboxFlushFailureCause cause, Exception? error, int count, int attempts = 5) {

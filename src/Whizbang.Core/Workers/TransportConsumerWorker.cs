@@ -180,7 +180,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null,
     TimeProvider? timeProvider = null,
-    Microsoft.Extensions.Options.IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null
+    DeadLetterLoggingOptions? deadLetterLogging = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);

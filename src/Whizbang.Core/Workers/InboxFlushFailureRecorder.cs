@@ -55,7 +55,7 @@ public sealed partial class InboxFlushFailureRecorder {
       DeadLetterMetrics? deadLetterMetrics,
       IEnumerable<IInboxFlushFailureObserver> observers,
       ILogger<InboxFlushFailureRecorder> logger,
-      Microsoft.Extensions.Options.IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(generationProvider);

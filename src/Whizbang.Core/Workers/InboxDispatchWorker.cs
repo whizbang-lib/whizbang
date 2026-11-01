@@ -127,7 +127,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
     WorkCompletionMeter? completionMeter = null,
     Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null,
-    IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
+    DeadLetterLoggingOptions? deadLetterLogging = null) {
     _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     _integrityOptions = ArgumentGuard.NotNull(integrityOptions).Value;
     ArgumentNullException.ThrowIfNull(scopeFactory);

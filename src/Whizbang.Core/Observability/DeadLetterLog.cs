@@ -85,7 +85,18 @@ public static partial class DeadLetterLog {
   /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_Options_IsTheirLevelAsync</tests>
-  public static LogLevel LevelFrom(IOptions<DeadLetterLoggingOptions>? options) => options?.Value.Level ?? LogLevel.Error;
+  public static LogLevel LevelFrom(IOptions<DeadLetterLoggingOptions>? options) => LevelFrom(options?.Value);
+
+  /// <summary>
+  /// The level the dead-letter record is logged at: <paramref name="options"/>'s
+  /// <see cref="DeadLetterLoggingOptions.Level"/>, or <see cref="LogLevel.Error"/> when a path was built without them.
+  /// </summary>
+  /// <param name="options">The bound options, or null.</param>
+  /// <returns>The level to log the record at.</returns>
+  /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_PlainOptions_IsTheirLevelAsync</tests>
+  public static LogLevel LevelFrom(DeadLetterLoggingOptions? options) => options?.Level ?? LogLevel.Error;
 
   /// <summary>
   /// The payload type an envelope type name carries, the envelope type name itself when it does not name a payload,

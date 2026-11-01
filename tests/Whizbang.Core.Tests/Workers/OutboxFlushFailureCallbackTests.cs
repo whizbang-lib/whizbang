@@ -187,7 +187,7 @@ public class OutboxFlushFailureCallbackTests {
       deadLetterMetrics,
       observers,
       logger ?? NullLogger<OutboxFlushFailureRecorder>.Instance,
-      deadLetterLogging is null ? null : Microsoft.Extensions.Options.Options.Create(deadLetterLogging));
+      deadLetterLogging);
   }
 
   private static OutboxFlushFailure _failure(OutboxFlushFailureCause cause, Exception? error, int count, int attempts = 5) {

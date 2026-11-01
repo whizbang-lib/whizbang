@@ -114,7 +114,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value),
       deadLetterMetrics: metrics,
-      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
+      deadLetterLogging: deadLetterLogging);
   }
 
   private static StreamEventData _row(int attempts, int failures = 0) {

@@ -80,7 +80,7 @@ internal sealed class InboxDispatchUnitHarness {
       timeProvider: Time,
       deserializeCache: cache,
       completionMeter: Meter,
-      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
+      deadLetterLogging: deadLetterLogging);
   }
 
   /// <summary>An inbox row with an empty JSON payload, the given attempts, last error and message type.</summary>

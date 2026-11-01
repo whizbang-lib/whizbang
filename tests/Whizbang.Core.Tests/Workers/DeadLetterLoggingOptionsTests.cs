@@ -102,7 +102,27 @@ public sealed class DeadLetterLoggingOptionsTests {
 
   [Test]
   public async Task LevelFrom_NoOptions_IsErrorAsync() {
-    await Assert.That(DeadLetterLog.LevelFrom(null)).IsEqualTo(LogLevel.Error);
+    await Assert.That(DeadLetterLog.LevelFrom((DeadLetterLoggingOptions?)null)).IsEqualTo(LogLevel.Error);
+    await Assert.That(DeadLetterLog.LevelFrom((IOptions<DeadLetterLoggingOptions>?)null)).IsEqualTo(LogLevel.Error);
+  }
+
+  [Test]
+  public async Task LevelFrom_PlainOptions_IsTheirLevelAsync() {
+    await Assert.That(DeadLetterLog.LevelFrom(new DeadLetterLoggingOptions { Level = LogLevel.Warning })).IsEqualTo(LogLevel.Warning);
+  }
+
+  /// <summary>
+  /// The dead-letter paths take the plain options instance (an optional interface parameter is what WHIZ501 reports),
+  /// so the registration hands the container the bound, validated instance for every type-activated worker.
+  /// </summary>
+  [Test]
+  public async Task Turnkey_LevelWarning_ThePlainInstanceIsTheBoundOneAsync() {
+    await using var provider = _hostWith(new() { [LEVEL_KEY] = "Warning" });
+
+    var plain = provider.GetRequiredService<DeadLetterLoggingOptions>();
+
+    await Assert.That(plain).IsSameReferenceAs(provider.GetRequiredService<IOptions<DeadLetterLoggingOptions>>().Value);
+    await Assert.That(plain.Level).IsEqualTo(LogLevel.Warning);
   }
 
   [Test]

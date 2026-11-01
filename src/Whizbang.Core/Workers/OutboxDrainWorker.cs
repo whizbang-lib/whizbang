@@ -206,7 +206,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
-    IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
+    DeadLetterLoggingOptions? deadLetterLogging = null) {
     _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;

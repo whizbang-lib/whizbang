@@ -196,7 +196,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
       generationProvider: wireDeadLetterStore ? new FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       occurrenceGate: new NoOpOccurrencePublishGate(),
-      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
+      deadLetterLogging: deadLetterLogging);
     return (worker, channel, failure, dlq);
   }
 

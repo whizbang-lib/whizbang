@@ -431,7 +431,7 @@ public class TransportConsumerWorkerUnstorableMessageTests {
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
       controlClass: Options.Create(new ControlClassOptions()),
-      deadLetterLogging: deadLetterLogging is null ? null : Options.Create(deadLetterLogging));
+      deadLetterLogging: deadLetterLogging);
     await worker.StartAsync(CancellationToken.None);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
     return (worker, transport);
