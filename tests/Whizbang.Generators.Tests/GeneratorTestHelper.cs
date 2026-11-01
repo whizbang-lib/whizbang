@@ -234,7 +234,16 @@ public static class GeneratorTestHelper {
   /// Gets the generated source by file name from the generator result.
   /// Checks both GeneratedSources (for all files including SQL, JSON, etc.) and GeneratedTrees (C# syntax trees).
   /// </summary>
+  /// <remarks>
+  /// Null means the generators ran and did not write that file. A run in which a generator threw has no answer to
+  /// that question, because a generator that throws emits nothing, so it throws naming the file and carrying what
+  /// the generator threw (#1942): returned as null, it read as "not generated" and failed later as a
+  /// <see cref="NullReferenceException"/> that had discarded the cause.
+  /// </remarks>
   public static string? GetGeneratedSource(GeneratorDriverRunResult result, string fileName) {
+    ArgumentNullException.ThrowIfNull(result);
+    _throwIfAnyGeneratorFailed(result, $"so the run has no {fileName}");
+
     // First try GeneratedSources (works for all file types including SQL, JSON, etc.)
     foreach (var generatorResult in result.Results) {
       var source = generatorResult.GeneratedSources
@@ -248,6 +257,28 @@ public static class GeneratorTestHelper {
     return result.GeneratedTrees
         .FirstOrDefault(t => Path.GetFileName(t.FilePath) == fileName)
         ?.ToString();
+  }
+
+  /// <summary>
+  /// Gets a generated source the test needs, failing with a message that names it when the run did not write it.
+  /// </summary>
+  /// <remarks>
+  /// For a test that reads into the file it asks for: a missing file then fails here, naming the file and listing
+  /// what the run did write, instead of as a <see cref="NullReferenceException"/> wherever the test first touches it.
+  /// </remarks>
+  public static string GetRequiredGeneratedSource(GeneratorDriverRunResult result, string fileName) {
+    var source = GetGeneratedSource(result, fileName);
+    if (source is not null) {
+      return source;
+    }
+    var written = result.Results
+      .SelectMany(r => r.GeneratedSources)
+      .Select(s => Path.GetFileName(s.HintName))
+      .Order(StringComparer.Ordinal)
+      .ToList();
+    throw new InvalidOperationException(
+      $"The generators ran without error and wrote no {fileName}. They wrote: "
+      + (written.Count == 0 ? "nothing." : string.Join(", ", written) + "."));
   }
 
   /// <summary>
@@ -422,15 +453,19 @@ public static class GeneratorTestHelper {
   /// are the same answer. A develop run failed with one half of a comparison reporting zero errors
   /// against the other's three, and the harness had discarded the only record of why.
   /// </remarks>
-  private static void _throwIfAnyGeneratorFailed(GeneratorDriverRunResult result) {
+  private static void _throwIfAnyGeneratorFailed(GeneratorDriverRunResult result) =>
+    _throwIfAnyGeneratorFailed(result,
+      "so the compilation carries no errors and would otherwise have been reported as a clean compile");
+
+  /// <summary>The same, saying what the caller would otherwise have concluded from the empty run.</summary>
+  private static void _throwIfAnyGeneratorFailed(GeneratorDriverRunResult result, string consequence) {
     foreach (var generatorResult in result.Results) {
       if (generatorResult.Exception is null) {
         continue;
       }
       var name = generatorResult.Generator.GetGeneratorType().Name;
       throw new InvalidOperationException(
-        $"The generator {name} threw instead of generating. It emitted no source, so the compilation "
-        + "carries no errors and would otherwise have been reported as a clean compile.",
+        $"The generator {name} threw instead of generating. It emitted no source, {consequence}.",
         generatorResult.Exception);
     }
   }

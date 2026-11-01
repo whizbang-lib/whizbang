@@ -89,6 +89,64 @@ public class GeneratorTestHelperFailureSurfacingTests {
         + "error about the generated source, which is precisely what this helper exists to return");
   }
 
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task GetGeneratedSource_WhenTheGeneratorThrows_NamesTheFileAndWhatItThrewAsync() {
+    // #1942: a generator that threw emitted nothing, the lookup answered null as if the file were simply not
+    // generated, and the test failed later on a NullReferenceException that had thrown the cause away.
+    var result = GeneratorTestHelper.RunGenerator<ThrowingGenerator>(SOURCE);
+
+    var thrown = await Assert.That(() => GeneratorTestHelper.GetGeneratedSource(result, "Expected.g.cs"))
+      .Throws<InvalidOperationException>()
+      .Because("null means the generators ran and chose not to write the file; a run whose generator threw cannot "
+        + "say that, and answering null turns the failure into a NullReferenceException somewhere else");
+
+    await Assert.That(thrown!.ToString()).Contains("Expected.g.cs")
+      .Because("the failure has to name the output the test was waiting for");
+    await Assert.That(thrown!.ToString()).Contains(ThrowingGenerator.FAILURE)
+      .Because("and carry what the generator threw, the only record of why there is no output");
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task GetRequiredGeneratedSource_WhenTheRunWroteOtherFiles_NamesTheMissingOneAndWhatItWroteAsync() {
+    var result = GeneratorTestHelper.RunGenerator<EmitsBrokenCodeGenerator>(SOURCE);
+
+    var thrown = await Assert.That(() => GeneratorTestHelper.GetRequiredGeneratedSource(result, "Expected.g.cs"))
+      .Throws<InvalidOperationException>()
+      .Because("a test that reads into a file it needs fails here, by name, not on a null wherever it first reads");
+
+    await Assert.That(thrown!.Message).Contains("Expected.g.cs");
+    await Assert.That(thrown!.Message).Contains("Broken.g.cs")
+      .Because("what the run did write is the first clue to why it did not write the file the test wanted");
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task GetRequiredGeneratedSource_WhenTheRunWroteNothing_SaysSoAsync() {
+    var result = GeneratorTestHelper.RunGenerator<SilentGenerator>(SOURCE);
+
+    var thrown = await Assert.That(() => GeneratorTestHelper.GetRequiredGeneratedSource(result, "Expected.g.cs"))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains("Expected.g.cs");
+    await Assert.That(thrown!.Message).Contains("wrote: nothing");
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task GetRequiredGeneratedSource_WhenTheFileWasWritten_ReturnsItAsync() {
+    var result = GeneratorTestHelper.RunGenerator<EmitsBrokenCodeGenerator>(SOURCE);
+
+    await Assert.That(GeneratorTestHelper.GetRequiredGeneratedSource(result, "Broken.g.cs")).Contains("NoSuchBaseType");
+  }
+
+  /// <summary>A generator that runs and writes nothing.</summary>
+  private sealed class SilentGenerator : IIncrementalGenerator {
+    public void Initialize(IncrementalGeneratorInitializationContext context) =>
+      context.RegisterSourceOutput(context.CompilationProvider, static (_, _) => { });
+  }
+
   /// <summary>A generator that runs successfully and emits code that does not compile.</summary>
   private sealed class EmitsBrokenCodeGenerator : IIncrementalGenerator {
     public void Initialize(IncrementalGeneratorInitializationContext context) =>

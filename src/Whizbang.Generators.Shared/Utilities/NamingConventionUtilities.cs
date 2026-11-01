@@ -16,6 +16,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:StripCommonSuffixes_Model_StripsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:StripCommonSuffixes_ReadModel_StripsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:StripCommonSuffixes_Dto_StripsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:RemoveAllIgnoringCase_RemovesEveryOccurrenceInAnyCaseAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:ToDefaultRouteName_ReturnsApiPrefixedRouteAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:ToDefaultQueryName_ReturnsCamelCasePluralAsync</tests>
 /// <docs>fundamentals/perspectives/table-naming</docs>
@@ -82,6 +83,31 @@ public static class NamingConventionUtilities {
     }
 
     return name;
+  }
+
+  /// <summary>
+  /// Removes every occurrence of <paramref name="token"/>, compared ignoring case, in one pass from left to right.
+  /// E.g., ("InventoryWorker", "Worker") -> "Inventory"
+  /// </summary>
+  /// <remarks>
+  /// A scan rather than a regular-expression replace (#1942): a generator's regular expression runs under a match timeout,
+  /// which measures the wall clock, and a generator thread a loaded build machine deschedules past it throws and
+  /// emits nothing. Case is compared ordinally, so the result does not depend on the build machine's culture.
+  /// </remarks>
+  public static string RemoveAllIgnoringCase(string input, string token) {
+    if (string.IsNullOrEmpty(token)) {
+      return input;
+    }
+
+    var at = input.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+    var kept = new StringBuilder(input.Length);
+    var from = 0;
+    while (at >= 0) {
+      kept.Append(input, from, at - from);
+      from = at + token.Length;
+      at = input.IndexOf(token, from, StringComparison.OrdinalIgnoreCase);
+    }
+    return kept.Append(input, from, input.Length - from).ToString();
   }
 
   /// <summary>

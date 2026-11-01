@@ -104,6 +104,27 @@ public static class PerTestDatabaseFactory {
     exception is PostgresException { SqlState: DUPLICATE_DATABASE };
 
   /// <summary>
+  /// The connection the factory creates and drops databases on: the server's, under the setup policy.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// What made these slow under load is measured, not guessed (#1940). Every canceled statement in the build
+  /// servers' container logs was a <c>DROP DATABASE</c> (42 of them; no <c>CREATE DATABASE</c> was ever canceled), and
+  /// each sat behind a <c>checkpoint starting: immediate force wait</c>: since PostgreSQL 15 a drop forces an immediate
+  /// checkpoint and waits for it, so its duration is the time to flush every dirty buffer the whole shared cluster
+  /// holds, which is the other shards' write load. Those checkpoints took up to 137 seconds. It is not lingering
+  /// sessions (the drop is <c>WITH (FORCE)</c>) and not contention on <c>template1</c> (a create, which takes that
+  /// lock, never timed out).
+  /// </para>
+  /// <para>
+  /// A drop therefore waits for that checkpoint rather than being canceled at 30 seconds, under the guard in
+  /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, which is there to fail a hang loudly and is not the wait. A drop
+  /// that still cannot finish is abandoned as before (see <see cref="DropAsync"/>), never failing the test.
+  /// </para>
+  /// </remarks>
+  private static string _adminConnectionString() => ForSetup(SharedPostgresContainer.ConnectionString);
+
+  /// <summary>
   /// Runs one attempt at a time until it succeeds, it is not contention, or the attempts run out.
   /// </summary>
   /// <param name="attempt">The statement to run.</param>
@@ -150,10 +171,80 @@ public static class PerTestDatabaseFactory {
   /// Call it instead of issuing <c>CREATE DATABASE</c> in a fixture. A fixture that issues its own
   /// is one more entrant in the race this exists to absorb.
   /// </remarks>
-  public static async Task<PerTestDatabase> CreateAsync(
+  public static Task<PerTestDatabase> CreateAsync(
       string namePrefix,
       TimeProvider? timeProvider = null,
+      CancellationToken cancellationToken = default) =>
+    _createAsync(namePrefix, template: null, timeProvider, cancellationToken);
+
+  /// <summary>
+  /// Creates a database for one test as a copy of <paramref name="template"/>, and returns it with the
+  /// string that reaches it.
+  /// </summary>
+  /// <param name="namePrefix">A short prefix naming the fixture, so a leftover database is traceable.</param>
+  /// <param name="template">
+  /// The database to copy: one a fixture created and filled once, typically in <c>[Before(Class)]</c>. Nothing
+  /// may be connected to it while it is copied, so fill it over a connection string without pooling.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The database and its connection string.</returns>
+  /// <remarks>
+  /// A fixture whose tests each need the same large data set fills it once and copies it per test. The copy is
+  /// a file-level clone of the template, its indexes and its planner statistics included, so each test still
+  /// gets a database of its own to change, without repeating the work that filled it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/PerTestDatabaseTemplateTests.cs</tests>
+  public static Task<PerTestDatabase> CreateFromTemplateAsync(
+      string namePrefix,
+      string template,
       CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(template);
+    return _createAsync(namePrefix, template, timeProvider: null, cancellationToken);
+  }
+
+  /// <summary>
+  /// How long a setup statement may run before it is treated as hung: far above the longest honest wait measured
+  /// on the shared test container, so it is a hang guard and never the wait.
+  /// </summary>
+  /// <remarks>
+  /// The longest forced checkpoint a <c>DROP DATABASE</c> waited for on the build servers was 137 seconds; the
+  /// containment fixture's 200,000-row fill takes about 3 seconds idle. Four minutes stays under TUnit's five-minute
+  /// hook timeout, so a hung statement fails with its own statement in the message rather than a bare hook timeout.
+  /// </remarks>
+  public const int SETUP_STATEMENT_GUARD_SECONDS = 240;
+
+  /// <summary>
+  /// The connection string a fixture runs its own setup on: the statements that build, fill and migrate its
+  /// database, whose duration is the shared server's load rather than anything about the code under test.
+  /// </summary>
+  /// <param name="connectionString">The connection string to the fixture's database.</param>
+  /// <returns>The same connection string with the command timeout set to <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>.</returns>
+  /// <remarks>
+  /// <para>
+  /// Every test process on a machine shares one container, and a statement that takes seconds on an idle one takes
+  /// tens of seconds beside another shard's load: the server log for the failed containment runs shows the client
+  /// canceling the fill at Npgsql's default 30 seconds. The default is a guess at how long a query of the code
+  /// under test should take, and it was failing tests for the load. Setup statements get a guard instead,
+  /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, sized to catch a hang and not to bound the wait, and the test's own
+  /// <c>[Timeout]</c> or the hook's still bounds them first through the token the statement is given.
+  /// </para>
+  /// <para>
+  /// Use it for setup only. A query a test makes of the code under test keeps the ordinary connection string.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/PerTestDatabaseSetupPolicyTests.cs</tests>
+  public static string ForSetup(string connectionString) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    return new NpgsqlConnectionStringBuilder(connectionString) {
+      CommandTimeout = SETUP_STATEMENT_GUARD_SECONDS,
+    }.ConnectionString;
+  }
+
+  private static async Task<PerTestDatabase> _createAsync(
+      string namePrefix,
+      string? template,
+      TimeProvider? timeProvider,
+      CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrWhiteSpace(namePrefix);
     if (namePrefix.Length > MAX_PREFIX_LENGTH) {
       // Said here rather than discovered later: Postgres truncates an over-long identifier silently,
@@ -170,11 +261,12 @@ public static class PerTestDatabaseFactory {
     var clock = timeProvider ?? TimeProvider.System;
     var stamp = clock.GetUtcNow().UtcDateTime.ToString(STAMP_FORMAT, CultureInfo.InvariantCulture);
     var name = string.Create(CultureInfo.InvariantCulture, $"{namePrefix}_{stamp}_{Guid.NewGuid():N}");
+    var statement = template is null ? $"CREATE DATABASE {name}" : $"CREATE DATABASE {name} TEMPLATE {template}";
     await RunWithRetryAsync(
       async () => {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await using var admin = new NpgsqlConnection(_adminConnectionString());
         await admin.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var create = new NpgsqlCommand($"CREATE DATABASE {name}", admin);
+        await using var create = new NpgsqlCommand(statement, admin);
         await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       },
       IsAlreadyCreated,
@@ -210,7 +302,7 @@ public static class PerTestDatabaseFactory {
     try {
       await RunWithRetryAsync(
         async () => {
-          await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await using var admin = new NpgsqlConnection(_adminConnectionString());
           await admin.OpenAsync(cancellationToken).ConfigureAwait(false);
           await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {name} WITH (FORCE)", admin);
           await drop.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
