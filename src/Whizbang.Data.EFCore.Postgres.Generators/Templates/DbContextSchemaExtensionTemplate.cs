@@ -122,21 +122,24 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Electing one instance makes that one instance's work.
     //
     // Electing needs a registry row and a capability function, both of which a migration creates,
-    // so a marked subset is applied first by whichever instance gets there. None of this is
-    // allowed to be fatal: every failure below ends with this instance migrating under the
-    // advisory lock alone, which is exactly how it behaved before any of it existed.
+    // so a marked subset is applied first, in Preflight, by every instance in turn under the schema
+    // lock (#1636). The bootstrap waits for that lock rather than skipping, retries a transient
+    // failure itself, and throws a SchemaBootstrapException for any other, which fails this
+    // attempt in Preflight: it is deliberately outside the catch below. What follows it is not
+    // allowed to be fatal: every failure in the election ends with this instance migrating under
+    // the advisory lock alone, which is exactly how it behaved before any of it existed.
     // ═══════════════════════════════════════════════════════════════════════════
     var staging = new Whizbang.Data.Postgres.SchemaStaging(
       Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
 
     if (segmentConnectionFactory is not null) {
-      try {
-        // Phase 0 — the bootstrap. Reports whether an election is actually possible now rather
-        // than whether the scripts appeared to work.
-        var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
-          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
-          _schemaCommandTimeoutSeconds, logger, cancellationToken);
+      // Phase 0 — the bootstrap. Reports whether an election is actually possible now rather
+      // than whether the scripts appeared to work.
+      var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
+        segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
+        _schemaCommandTimeoutSeconds, serviceProvider, TimeProvider.System, logger, cancellationToken);
 
+      try {
         // Phase 1 — join the registry, then contend for the duty. Registration has to come first:
         // the capability function refuses an instance it cannot find, and that refusal would say
         // nothing about contention.
@@ -157,8 +160,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             "__SCHEMA__", logger, cancellationToken);
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Belt and braces. Both phases already answer rather than throw; this catches anything
-        // they could not foresee and keeps it out of the startup path.
+        // Belt and braces. The election already answers rather than throws; this catches anything
+        // it could not foresee and keeps it out of the startup path.
         logger?.LogWarning(ex,
           "Staged startup could not be arranged for schema {Schema}; this instance will migrate "
           + "under the advisory lock alone", "__SCHEMA__");

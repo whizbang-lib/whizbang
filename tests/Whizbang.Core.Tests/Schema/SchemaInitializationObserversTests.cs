@@ -66,12 +66,50 @@ public class SchemaInitializationObserversTests {
       .ThrowsNothing();
   }
 
+  [Test]
+  public async Task BootstrapRetryScheduled_TellsEveryRegisteredObserverTheAttemptAndTheDelayAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+    var failure = new TimeoutException("the server did not answer");
+
+    await SchemaInitializationObservers.BootstrapRetryScheduledAsync(
+      provider, "orders", 2, failure, TimeSpan.FromSeconds(2), CancellationToken.None);
+
+    await Assert.That(first.Retries).IsEquivalentTo(["orders/2/the server did not answer/00:00:02"]);
+    await Assert.That(second.Retries).IsEquivalentTo(["orders/2/the server did not answer/00:00:02"]);
+  }
+
+  [Test]
+  public async Task BootstrapRetryScheduled_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.BootstrapRetryScheduledAsync(
+      null, "orders", 1, new TimeoutException(), TimeSpan.FromSeconds(1), CancellationToken.None)).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnBootstrapRetryScheduledAsync(
+      "orders", 1, new TimeoutException(), TimeSpan.FromSeconds(1), CancellationToken.None)).ThrowsNothing();
+  }
+
   /// <summary>Watches nothing, so every member is the interface's default.</summary>
   private sealed class Silent : ISchemaInitializationObserver;
 
   private sealed class Recorder : ISchemaInitializationObserver {
     public List<string> Schemas { get; } = [];
     public List<string> Steps { get; } = [];
+    public List<string> Retries { get; } = [];
+
+    public ValueTask OnBootstrapRetryScheduledAsync(
+        string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) {
+      Retries.Add($"{schema}/{attempt}/{exception.Message}/{delay}");
+      return ValueTask.CompletedTask;
+    }
 
     public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
       Schemas.Add(schema);

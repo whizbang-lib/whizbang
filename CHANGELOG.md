@@ -1443,6 +1443,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     initialization was still running returned at once ("already initialized"); it now waits for it, and runs one of
     its own if that one failed. `app.Services` and the root scope the hosted initializer is built from are now one
     host to it.
+- **Preflight's bootstrap waits and retries instead of skipping and swallowing (part of #1636).** The schema bootstrap
+  closure (the subset applied before the migrator election so an election is possible) took the schema lock with a
+  try, so every instance but the holder applied nothing and, on an empty database, gave up the election and migrated
+  under the lock alone; and any failure in it was logged at Warning and carried on from, so a closure that could not be
+  applied surfaced only as an election that never happened. On the EF Core driver it now waits for the schema lock
+  (logged, the Preflight stage message says so, and `ISchemaInitializationObserver.OnSchemaLockContendedAsync` is
+  told), reads the closure record again once it has the lock so a holder's commit is not applied twice, retries a
+  transient database failure after 1 s doubling to a 30 s cap, logged at Warning with the step and SQLSTATE (new
+  `ISchemaInitializationObserver.OnBootstrapRetryScheduledAsync`), and fails any other failure at Error with a
+  `SchemaBootstrapException` naming the script or step that failed, which fails the initialization attempt in
+  Preflight. The Dapper driver keeps its lock-only start.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and

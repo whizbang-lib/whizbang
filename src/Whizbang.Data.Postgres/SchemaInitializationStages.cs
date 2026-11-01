@@ -26,6 +26,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task WaitingForTheBootstrapLockAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "waiting for the schema lock to apply the bootstrap closure", cancellationToken);
 
@@ -33,6 +34,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task BootstrapRetryingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure met a transient database failure; retrying", cancellationToken);
 
@@ -40,6 +42,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task BootstrapFailedAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure failed with an error that is not transient", cancellationToken);
 
@@ -152,9 +155,10 @@ public static class SchemaInitializationStages {
   }
 
   /// <summary>Progress within Preflight, in framework-authored words.</summary>
-  private static Task _preflightAsync(IServiceProvider? services, string message, CancellationToken cancellationToken) {
-    _ = (services, message, cancellationToken);
-    return Task.CompletedTask;
+  private static async Task _preflightAsync(IServiceProvider? services, string message, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Preflight, message, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   private static IStartupStageReporter? _reporter(IServiceProvider? services) =>

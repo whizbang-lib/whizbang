@@ -14,6 +14,8 @@ namespace Whizbang.Data.Postgres;
 /// instance migrated under the schema lock alone, so a broken closure surfaced only as a missing election.
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ANonTransientFailure_FailsStartupLoudly_NamingWhatFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Schema/SchemaBootstrapRetryTests.cs:TheStandardConstructors_NameNoSchemaOrStepAsync</tests>
 public sealed class SchemaBootstrapException : Exception {
   private const string UNKNOWN = "(unknown)";
 

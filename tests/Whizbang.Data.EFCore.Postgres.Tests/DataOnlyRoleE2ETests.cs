@@ -196,8 +196,11 @@ public class DataOnlyRoleE2ETests {
   public async Task UnderADataOnlyRole_WithNoInitConnection_StartupCannotMigrateAsync(CancellationToken cancellationToken) {
     using var host = _buildHost(withInitConnection: false, new ErrorLog());
 
-    await Assert.That(async () => await host.StartAsync(cancellationToken)).Throws<PostgresException>()
+    // #1636: the bootstrap, Preflight's first schema work, is what meets the refusal, and fails the start naming it.
+    var thrown = await Assert.That(async () => await host.StartAsync(cancellationToken)).Throws<SchemaBootstrapException>()
       .Because("the role cannot create the schema: without this, the test above would prove nothing about the role");
+    await Assert.That(thrown!.InnerException).IsTypeOf<PostgresException>()
+      .Because("the server's refusal is carried, not replaced");
   }
 
   /// <summary>Every log entry at Error or above, kept so a failure the service only logs still fails the test.</summary>
