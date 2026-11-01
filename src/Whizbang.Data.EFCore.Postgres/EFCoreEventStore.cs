@@ -341,10 +341,15 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
-    return await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .AnyAsync(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0, cancellationToken);
+    // #1933: one statement that also reads the stream's ledger row, so archived history counts and a stream never
+    // archived costs the one round trip it always did.
+    return await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.HasEventsBefore, streamId, beforeEventId,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return reader.GetBoolean(0);
+      }, cancellationToken);
   }
 
   /// <summary>
@@ -357,28 +362,45 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypes);
     if (eventTypes.Count == 0) {
       return false;
     }
-    var storedTypes = await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0)
-      .Select(e => e.EventType)
-      .Distinct()
-      .ToListAsync(cancellationToken);
-    return _anyStoredTypeIsHandled(storedTypes, eventTypes);
+    var storedTypes = await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBefore, streamId, beforeEventId,
+      async reader => {
+        var rows = new List<string?>();
+        while (await reader.ReadAsync(cancellationToken)) {
+          rows.Add(await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0));
+        }
+        return rows;
+      }, cancellationToken);
+    return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
   }
 
-  private static bool _anyStoredTypeIsHandled(IEnumerable<string> storedTypes, IReadOnlyList<Type> eventTypes) {
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    foreach (var stored in storedTypes) {
-      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
-        return true;
+  // Runs one of the version questions (#1933) on the context's connection and in its current transaction, qualified with
+  // the schema the event store table is mapped to.
+  private async Task<T> _queryHistoryAsync<T>(Func<string, string> sql, Guid streamId, Guid? beforeEventId,
+      Func<System.Data.Common.DbDataReader, Task<T>> read, CancellationToken cancellationToken) {
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(
+      EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null));
+    await _context.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+#pragma warning disable S2077 // The schema prefix is quoted from the EF model, never from input; values are parameters.
+      command.CommandText = sql(prefix);
+#pragma warning restore S2077
+      command.Parameters.Add(new NpgsqlParameter("StreamId", NpgsqlDbType.Uuid) { Value = streamId });
+      if (beforeEventId is { } before) {
+        command.Parameters.Add(new NpgsqlParameter("BeforeEventId", NpgsqlDbType.Uuid) { Value = before });
       }
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      return await read(reader);
+    } finally {
+      await _context.Database.CloseConnectionAsync();
     }
-    return false;
   }
 
   /// <summary>
@@ -594,16 +616,17 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithEmptyStream_ReturnsMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithExistingEvents_ReturnsHighestSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<long> GetLastSequenceAsync(
       Guid streamId,
       CancellationToken cancellationToken = default) {
 
-    var lastSequence = await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId)
-      .MaxAsync(e => (long?)e.Version, cancellationToken);
-
-    return lastSequence ?? -1;
+    // #1933: a stream archived whole keeps its versions on its tombstone; one statement either way.
+    return await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.LastSequence, streamId, beforeEventId: null,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return reader.GetInt64(0);
+      }, cancellationToken);
   }
 
   /// <summary>

@@ -163,6 +163,29 @@ public class ArchivedStreamHistoryProbeSqlTests : EFCoreTestBase {
     await Assert.That(await store.HasStreamEventsBeforeAsync(restored, restoredIds[0], _handled)).IsFalse();
   }
 
+  [Test]
+  public async Task Questions_InsideTheContextsTransaction_SeeWhatItHasNotCommittedAsync() {
+    // The questions run on the context's connection and in its transaction, as the append does.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    var ids = await _streamAsync(connection, stream, 1);
+    var store = _store(ctx);
+    await using var transaction = await ctx.Database.BeginTransactionAsync();
+    await using (var archive = connection.CreateCommand()) {
+      archive.CommandText = "SELECT archive_status FROM wh_archive_stream(@stream, NULL, 'postgres-table://wh_event_archive?codec=none&format=1')";
+      archive.Parameters.AddWithValue("stream", stream);
+      await Assert.That(await archive.ExecuteScalarAsync() as string).IsEqualTo(ArchiveStatus.ARCHIVED);
+    }
+
+    await Assert.That(await store.GetLastSequenceAsync(stream)).IsEqualTo(1L);
+    await Assert.That(await store.HasStreamEventsBeforeAsync(stream, ids[0])).IsTrue()
+      .Because("the uncommitted archive is visible, so the question ran in the context's transaction");
+
+    await transaction.RollbackAsync();
+    await Assert.That(await store.HasStreamEventsBeforeAsync(stream, ids[0])).IsFalse().Because("the control: rolled back");
+  }
+
   // ── Cost ─────────────────────────────────────────────────────────────────────────────────────────
 
   [Test]
