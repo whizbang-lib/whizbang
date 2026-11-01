@@ -228,6 +228,28 @@ public class CollectiveReplayRunnerTests {
     await Assert.That(start.Follows(later)).IsTrue().Because("without the start's sequence the ids decide, whatever the collective's");
   }
 
+  // #1963: a snapshot that records how far its row's collectives were complete is started from that mark, not from its
+  // event: a collective in flight when it was taken counts as after it, whatever its position against the event.
+  [Test]
+  public async Task AStart_FromASnapshotThatRecordsItsCollectives_FollowsTheStampedCollectivesAboveTheMark_OnlyAsync() {
+    var start = new CollectiveReplayStart("tenant-a", TrackedGuid.New().Value, AfterCommitSequence: 50) { CollectivesThroughSequence = 20 };
+    var held = _collective(commitSequence: 20);
+    var inFlight = _collective(commitSequence: 21);
+
+    await Assert.That(start.Follows(inFlight)).IsTrue()
+      .Because("a collective not complete when the snapshot was taken counts as after it, though it sits before the snapshot's event");
+    await Assert.That(start.Follows(held)).IsFalse().Because("the snapshot holds every collective complete through its mark");
+  }
+
+  [Test]
+  public async Task AStart_FromASnapshotThatRecordsItsCollectives_FollowsAnUnstampedCollective_WhateverItsIdAsync() {
+    var earlier = _collective(commitSequence: null);
+    var start = new CollectiveReplayStart("tenant-a", TrackedGuid.New().Value, AfterCommitSequence: 50) { CollectivesThroughSequence = 20 };
+
+    await Assert.That(start.Follows(earlier)).IsTrue()
+      .Because("every collective the snapshot holds was stamped when it was taken, so one still unstamped came after it");
+  }
+
   [Test]
   public async Task AStart_RefusesANullCollectiveAsync() {
     await Assert.That(() => new CollectiveReplayStart(null).Follows(null!)).ThrowsExactly<ArgumentNullException>();
