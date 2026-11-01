@@ -289,7 +289,7 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Registration_CarryingThePhase_MakesTheRowCurrentForTheNextClaimAsync() {
+  public async Task ARegistration_NoLongerMovesARecordedPhase_TheStageRecordMakesTheRowCurrentAsync() {
     var (self, _) = _pair();
     await using (var conn = await _openAsync()) {
       await _registerAsync(conn, self, nameof(LifecyclePhase.Migrating));
@@ -304,25 +304,31 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
 
     _ = await coordinator.RecordHeartbeatAsync(new Whizbang.Core.Messaging.HeartbeatRequest(
       self, "test", "test-host", 1, LifecyclePhase: nameof(LifecyclePhase.AcceptingCommands)));
-    var second = await coordinator.ClaimWorkAsync(request);
+    var afterTheBeat = await coordinator.ClaimWorkAsync(request);
+    _ = await coordinator.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      self, Whizbang.Core.Startup.StartupStage.AcceptingCommands, "accepting", LifecyclePhase.AcceptingCommands, null));
+    var afterTheTransition = await coordinator.ClaimWorkAsync(request);
 
     await Assert.That(first.InstanceRegistrationStale).IsTrue();
-    await Assert.That(second.InstanceRegistrationStale).IsFalse()
-      .Because("the registration the claim loop sends on the notice is the write that makes a ready instance eligible");
+    await Assert.That(afterTheBeat.InstanceRegistrationStale).IsTrue()
+      .Because("278 (#1636): a registration never overwrites a recorded phase, which is why the claim loop no longer "
+        + "announces one");
+    await Assert.That(afterTheTransition.InstanceRegistrationStale).IsFalse()
+      .Because("the stage record, the one writer of the phase, is what makes a ready instance's row current");
   }
 
   // --- the bootstrap registration --------------------------------------------------------------
 
   [Test]
-  public async Task BootstrapRegistration_RecordsTheInstanceAsMigrating_SoItIsNotACandidateAsync() {
+  public async Task BootstrapRegistration_RecordsTheInstanceAsConnecting_SoItIsNotACandidateAsync() {
     var instance = new ServiceInstanceProvider(Guid.CreateVersion7(), "test", "test-host", processId: 1);
 
     await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", instance);
 
     await using var conn = await _openAsync();
-    await Assert.That(await _phaseAsync(conn, instance.InstanceId)).IsEqualTo(nameof(LifecyclePhase.Migrating))
-      .Because("the bootstrap registers an instance before its migration pass; a row without a phase would read as an "
-        + "older build, eligible for work it cannot yet claim");
+    await Assert.That(await _phaseAsync(conn, instance.InstanceId)).IsEqualTo(nameof(LifecyclePhase.Connecting))
+      .Because("the bootstrap registers an instance at the end of Preflight (#1636), before its migration pass; a row "
+        + "without a phase would read as an older build, eligible for work it cannot yet claim");
     await Assert.That(await _candidatesAsync(conn)).DoesNotContain(instance.InstanceId);
   }
 

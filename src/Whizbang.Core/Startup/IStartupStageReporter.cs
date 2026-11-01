@@ -5,8 +5,9 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>
 /// The one owner of the stage this instance is in (#1636). Entering a stage logs it, records it on the instance's row
-/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>) and tells every
-/// <see cref="IStartupStageObserver"/>.
+/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>, with the lifecycle phase and
+/// the library version in the same write) and tells every <see cref="IStartupStageObserver"/>. It is the only writer
+/// of the instance's recorded phase: a pause or a stand-by is recorded through <see cref="EnterPhaseAsync"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -54,6 +55,9 @@ public interface IStartupStageReporter {
   /// <param name="phase">The phase.</param>
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task that completes once the phase is written (or held).</returns>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
   ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>
     ValueTask.CompletedTask;
 

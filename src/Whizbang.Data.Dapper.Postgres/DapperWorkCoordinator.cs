@@ -1018,6 +1018,28 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<bool> RecordInstanceTransitionAsync(
+      Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(transition);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    // 278 (#1636): one write per transition, stage, phase and version together, and the only write of the phase. A null
+    // stage is a phase-only write that keeps the stage; a null version keeps the recorded one.
+    return await connection.ExecuteScalarAsync<bool>(
+      $"SELECT {prefix}wh_record_instance_transition(@InstanceId, @Stage::smallint, @Message::text, @Phase, @LibraryVersion::text)",
+      new {
+        transition.InstanceId,
+        Stage = transition.Stage is { } stage ? (short?)stage : null,
+        transition.Message,
+        Phase = transition.Phase.ToString(),
+        transition.LibraryVersion,
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+  }
+
+  /// <inheritdoc />
   public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);

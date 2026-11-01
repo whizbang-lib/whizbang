@@ -139,16 +139,24 @@ public class InstanceTransitionSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Registration_RecordsNoPhase_TheStageRecordWritesItAsync() {
+  public async Task Registration_RecordsThePhaseItRegistersIn_AndNeverOverwritesARecordedOneAsync() {
     var instance = new ServiceInstanceProvider(Guid.CreateVersion7(), "transition-svc", "transition-host", processId: 1);
+    await using var conn = await _openAsync();
 
     await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", instance);
+    var registered = await _rowAsync(conn, instance.InstanceId);
+    await using var dbContext = CreateDbContext();
+    await _coordinator(dbContext).RecordInstanceTransitionAsync(new InstanceTransition(
+      instance.InstanceId, StartupStage.Running, "serving", LifecyclePhase.Running, null));
+    await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", instance);
+    var again = await _rowAsync(conn, instance.InstanceId);
 
-    await using var conn = await _openAsync();
-    var row = await _rowAsync(conn, instance.InstanceId);
-    await Assert.That(row.Phase).IsNull()
-      .Because("one writer (#1636): the registration's own stage write, held until the row existed, records the phase "
-        + "with the stage and the version in one update right after it");
+    await Assert.That(registered.Phase).IsEqualTo(nameof(LifecyclePhase.Connecting))
+      .Because("a row without a phase reads as an older build, eligible for work during its migration (#1638); the "
+        + "registration records Preflight's phase through the one recorder");
+    await Assert.That(registered.Stage).IsNull().Because("the stage is the held stage's own write, right after");
+    await Assert.That(again.Phase).IsEqualTo(nameof(LifecyclePhase.Running))
+      .Because("a registration fills a phase only where the row records none; the stage record is its only writer");
   }
 
   // ─────────────────────────────────────────────────────────────────────────

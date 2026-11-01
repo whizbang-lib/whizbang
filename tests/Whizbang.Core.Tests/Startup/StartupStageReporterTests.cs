@@ -391,6 +391,20 @@ public class StartupStageReporterTests {
   }
 
   [Test]
+  public async Task Skip_TheCurrentStageDuringAPause_ChangesNothingAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+
+    await reporter.SkipAsync(StartupStage.Running, "already serving");
+
+    await Assert.That(coordinator.Transitions.Select(t => t.Phase)).IsEquivalentTo(
+      [LifecyclePhase.Running, LifecyclePhase.Paused], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a skip of the stage the instance is in is no transition, and leaves the pause recorded");
+  }
+
+  [Test]
   public async Task Enter_ALaterStageDuringAPause_WritesThatStagesPhaseAsync() {
     var (reporter, coordinator, _, _, _) = _build();
     await reporter.InstanceRegisteredAsync();

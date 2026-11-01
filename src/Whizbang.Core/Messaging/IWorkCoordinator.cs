@@ -1790,36 +1790,6 @@ public interface IWorkCoordinator {
     Task.FromResult<long?>(null);
 
   /// <summary>
-  /// Records this instance's lifecycle phase (and, when known, library version) on its own
-  /// instance row, so peers and the status surface can observe it — the standby handshake cannot
-  /// wait for a state nobody can see. Returns false when the instance has no row yet (early
-  /// startup transitions precede the first heartbeat — expected, not an error). Must not refresh
-  /// liveness: state is not a heartbeat, and a standing-by zombie must still be reapable.
-  /// </summary>
-  Task<bool> RecordInstanceStateAsync(
-      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
-      CancellationToken cancellationToken = default) =>
-    Task.FromResult(false);
-
-  /// <summary>
-  /// Records the startup stage this instance is in on its own row (<c>startup_stage</c>,
-  /// <c>startup_stage_message</c>, and <c>startup_stage_entered_at</c> when the stage changed), with the lifecycle
-  /// phase the stage maps to (#1636). Returns false when the instance has no row yet, which is expected before it
-  /// registers. Like <see cref="RecordInstanceStateAsync"/>, it is not a heartbeat and does not refresh liveness.
-  /// Default: nothing is recorded.
-  /// </summary>
-  /// <param name="instanceId">This instance.</param>
-  /// <param name="stage">The stage.</param>
-  /// <param name="message">What the stage is doing.</param>
-  /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>Whether the instance's row now records the stage.</returns>
-  /// <docs>operations/startup/startup-status#startup-stages</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs</tests>
-  Task<bool> RecordStartupStageAsync(
-      Guid instanceId, Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) =>
-    Task.FromResult(false);
-
-  /// <summary>
   /// Records one transition on this instance's own row (#1636): the stage, what it is doing, the lifecycle phase and
   /// the library version, in one update. The only write of an instance's phase: a stage entered writes the phase it
   /// maps to, and a pause or a stand-by writes its phase and keeps the stage. Returns false when the instance has no row

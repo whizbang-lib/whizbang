@@ -174,15 +174,15 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangRunControl();
     services.AddHostedService<LifecyclePhaseWorker>();
     // Each lifecycle transition is recorded on this instance's own row so peers and the status
-    // surface can observe it — the standby handshake turns on states a peer can actually see.
-    // The instance identity this run control records against. TryAdd keeps AddWhizbang's own
+    // surface can observe it: the standby handshake turns on states a peer can actually see. One
+    // participant writes it (#1636), the startup stage one below, through the stage reporter.
+    // The instance identity it records against. TryAdd keeps AddWhizbang's own
     // registration authoritative when both run, and makes this extension self-contained: a
     // pipeline composed without AddWhizbang used to leave the identity silently null rather
     // than failing, so instance state was recorded against no instance at all.
     services.TryAddSingleton<Observability.IServiceInstanceProvider>(sp =>
       new Observability.ServiceInstanceProvider(
         sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
-    services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
     // The startup stage (#1636): one reporter owns it, logs each stage as "Stage X of 7" and records it on this
     // instance's row. The lifecycle moves it into Accept commands and Running (and Draining and Stopped on a
     // killswitch stop); the host's own lifecycle marks Preflight before anything starts, Draining before anything

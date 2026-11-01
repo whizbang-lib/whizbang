@@ -87,7 +87,8 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
   };
 
   /// <summary>A complete simulated instance: real coordinator, assessor, lifecycle machine (with
-  /// the REAL instance-state participant, so StandingBy lands on its row), and watcher.</summary>
+  /// the REAL stage participant and stage reporter, so StandingBy lands on its row as a phase-only write), and
+  /// watcher.</summary>
   private async Task<PodRig> _bootPodAsync(string version, CancellationToken ct) {
     var pod = new FakePod();
     var services = _servicesForPod();
@@ -96,14 +97,17 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     using (var scope = scopeFactory.CreateScope()) {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), ct);
-      await coordinator.RecordInstanceStateAsync(pod.InstanceId, nameof(LifecyclePhase.Running), version, ct);
     }
 
     var versionProvider = new LibraryVersionProvider(version);
+    // The one writer of the row's stage, phase and version (#1636): the pod is Running, as the stage record says.
+    var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance,
+      timeProvider: null, versionProvider);
+    await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    await stages.InstanceRegisteredAsync(ct);
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(
-      new WhizbangLifecycleCoordinator(
-        [new InstanceStateRunControl(scopeFactory: scopeFactory, instanceProvider: pod, versionProvider: versionProvider, logger: NullLogger<InstanceStateRunControl>.Instance)], lifecycleOptions),
+      new WhizbangLifecycleCoordinator([new StartupStageRunControl(stages)], lifecycleOptions),
       lifecycleOptions);
     var assessor = new EFCorePostgresStartupAssessor(scopeFactory, typeof(WorkCoordinationDbContext), versionProvider);
     var reviveProbe = new CountingStep();

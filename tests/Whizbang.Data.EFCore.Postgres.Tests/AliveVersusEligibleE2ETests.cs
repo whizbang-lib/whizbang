@@ -25,20 +25,20 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Alive versus eligible for work, end to end (#1638): instances composed the way a booting host composes them, on a
-/// real database. Each instance has the real lifecycle machine with the real instance-state participant, the real
-/// lifecycle driver walking the phases off its own startup gate, the real heartbeat worker, the real bootstrap
+/// real database. Each instance has the real lifecycle machine with the real stage participant and stage reporter (the
+/// one writer of the row's stage, phase and version since #1636), the real lifecycle driver walking the phases off its own startup gate, the real heartbeat worker, the real bootstrap
 /// registration the migrator election makes, and (where the assignment matters) the real elected partition assigner.
 /// Claims go through the real coordinator with the arguments the claim loop passes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An instance is "held in startup" by leaving its startup gate closed: its lifecycle stays at Migrating, exactly where
-/// a long migration pass leaves it, while its heartbeat keeps it alive. That is the state in which the stall happened:
+/// An instance is "held in startup" by leaving its startup gate closed: its lifecycle stays at Migrating and its row
+/// records the Migrate stage, exactly where a long migration pass leaves it, while its heartbeat keeps it alive. That is the state in which the stall happened:
 /// alive, registered, and counted for work it could not claim.
 /// </para>
 /// <para>
-/// Every wait is on the signal for the exact transition asserted: the instance-state participant having recorded a
-/// phase (observed by wrapping the real participant, never replacing it), the heartbeat worker's recorded beat, and the
+/// Every wait is on the signal for the exact transition asserted: the stage participant having recorded a phase
+/// (observed by wrapping the real participant, never replacing it), the heartbeat worker's recorded beat, and the
 /// assigner's publish. The deadlines only bound those waits.
 /// </para>
 /// </remarks>
@@ -89,7 +89,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
     await using var held = await _startHeldAsync(heldId, cancellationToken);
     var whileHeld = await _candidatesAsync(cancellationToken);
 
-    // The cause: the instance's migration pass ends. The wait: the instance-state participant recorded the transition.
+    // The cause: the instance's migration pass ends. The wait: the stage participant recorded the transition.
     held.StartupGate.MarkReady();
     await held.Recorded(LifecyclePhase.AcceptingCommands).WaitAsync(_signalDeadline, cancellationToken);
     var onceAccepting = await _candidatesAsync(cancellationToken);
@@ -216,10 +216,15 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
       services.AddScoped(_ => createDbContext());
       services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
         sp.GetRequiredService<WorkCoordinationDbContext>(), Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+      // The one writer of the row's stage, phase and version (#1636), as the worker pipeline registers it; the heartbeat
+      // tells it the row exists after every accepted beat.
+      services.AddSingleton<IStartupStageReporter>(sp => new StartupStageReporter(
+        sp.GetRequiredService<IServiceScopeFactory>(), Instance, [], NullLogger<StartupStageReporter>.Instance,
+        timeProvider: null, new LibraryVersionProvider("999.9.9")));
       _services = services.BuildServiceProvider();
       var scopeFactory = _services.GetRequiredService<IServiceScopeFactory>();
-      _instanceState = new RecordedRunControl(new InstanceStateRunControl(
-        scopeFactory, Instance, new LibraryVersionProvider("999.9.9"), NullLogger<InstanceStateRunControl>.Instance));
+      Stages = _services.GetRequiredService<IStartupStageReporter>();
+      _instanceState = new RecordedRunControl(new StartupStageRunControl(Stages));
       var lifecycleOptions = new WhizbangLifecycleOptions();
       Lifecycle = new WhizbangLifecycleState(new WhizbangLifecycleCoordinator([_instanceState], lifecycleOptions), lifecycleOptions);
       _driver = new LifecyclePhaseWorker(Lifecycle, StartupGate, ReadGate);
@@ -234,6 +239,8 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
 
     public ServiceInstanceProvider Instance { get; }
     public IWhizbangLifecycleState Lifecycle { get; }
+    /// <summary>The instance's stage reporter: the host lifecycle and the schema pass enter stages through it.</summary>
+    public IStartupStageReporter Stages { get; }
     /// <summary>Held closed, the instance stays in its migration pass; marked, it moves on to AcceptingCommands.</summary>
     public SchemaReadyGate StartupGate { get; } = new();
     public ReadModelsReadyGate ReadGate { get; } = new();
@@ -268,8 +275,8 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// The real instance-state participant, observed: each phase's signal completes once the real participant has
-  /// recorded it. Nothing is replaced; the write is the participant's own.
+  /// The real stage participant, observed: each phase's signal completes once the real participant has recorded it
+  /// through the stage reporter. Nothing is replaced; the write is the reporter's own.
   /// </summary>
   private sealed class RecordedRunControl(IWhizbangRunControl inner) : IWhizbangRunControl {
     private readonly ConcurrentDictionary<LifecyclePhase, TaskCompletionSource> _recorded = new();
@@ -289,8 +296,10 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   /// </summary>
   private async Task<Pod> _startReadyAsync(Guid id, CancellationToken cancellationToken) {
     var pod = new Pod(id, CreateDbContext);
+    await pod.Stages.EnterAsync(StartupStage.Preflight, "host starting", cancellationToken);
     await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", pod.Instance,
       cancellationToken: cancellationToken);
+    await pod.Stages.InstanceRegisteredAsync(cancellationToken);
     pod.StartupGate.MarkReady();
     pod.ReadGate.MarkReady();
     await pod.StartDriverAsync(cancellationToken);
@@ -305,10 +314,14 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   /// </summary>
   private async Task<Pod> _startHeldAsync(Guid id, CancellationToken cancellationToken) {
     var pod = new Pod(id, CreateDbContext);
+    await pod.Stages.EnterAsync(StartupStage.Preflight, "host starting", cancellationToken);
     await pod.StartDriverAsync(cancellationToken);
     await pod.Recorded(LifecyclePhase.Migrating).WaitAsync(_signalDeadline, cancellationToken);
     await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", pod.Instance,
       cancellationToken: cancellationToken);
+    await pod.Stages.InstanceRegisteredAsync(cancellationToken);
+    // The schema pass reports Migrate where the work happens, with the phase it maps to; the pass itself is held.
+    await pod.Stages.EnterAsync(StartupStage.Migrate, "applying migrations", cancellationToken);
     await pod.StartHeartbeatAsync(cancellationToken);
     return pod;
   }

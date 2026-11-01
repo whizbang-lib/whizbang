@@ -28,6 +28,23 @@ public class DapperHeartbeatPhaseOrderTests : PostgresTestBase {
   private const int PROCESS = 7;
 
   [Test]
+  public async Task AStaleBeat_AfterALaterBeat_KeepsTheLaterPhase_AndTheInstanceEligibleAsync() {
+    var coordinator = _build();
+    var instance = Guid.CreateVersion7();
+    await _beatAsync(coordinator, instance, HOST, LifecyclePhase.AcceptingCommands);
+
+    await _beatAsync(coordinator, instance, HOST, LifecyclePhase.Migrating);
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
+      .Because("the claim worker's registration and the heartbeat race the same way on this driver");
+    await Assert.That(await conn.ExecuteScalarAsync<bool>(
+        "SELECT wh_instance_is_eligible_for_work(si) FROM wh_service_instances si WHERE si.instance_id = @instance",
+        new { instance })).IsTrue();
+  }
+
+  [Test]
   public async Task ABeat_NeverMovesTheRecordedPhase_EitherWayAsync() {
     var coordinator = _build();
     var instance = Guid.CreateVersion7();

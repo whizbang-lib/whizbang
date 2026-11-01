@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -274,6 +275,61 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
       .IsEqualTo(rank).Because("the SQL ladder must name the phases exactly as LifecyclePhase does, in order");
   }
 
+  // --- 244's definition, as written -------------------------------------------------------------
+  // Migration 244 still names these tests as the ones that reach its record_heartbeat. 278 supersedes that definition,
+  // so each applies 244's file to its own database first and characterizes the definition 244 shipped: a database that
+  // runs it (an older release, or a replay before 278 runs again) behaves exactly so.
+
+  [Test]
+  public async Task ABeatAheadOfTheRow_MovesThePhaseForward_RepairingALostTransitionAsync() {
+    await _applyMigration244Async();
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
+    await _stageAsync(coordinator, instance, StartupStage.Migrate, "migrating");
+
+    await _beatAsync(coordinator, instance, LifecyclePhase.AcceptingCommands);
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
+      .Because("under 244 a transition whose own write was lost is repaired by the next beat");
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Running, LifecyclePhase.Paused)]
+  [Arguments(LifecyclePhase.StandingBy, LifecyclePhase.Running)]
+  public async Task APhaseOffTheLadder_IsTakenFromTheBeat_EitherWayAsync(LifecyclePhase recorded, LifecyclePhase beat) {
+    await _applyMigration244Async();
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await _beatAsync(coordinator, instance, LifecyclePhase.Running);
+    await _stageAsync(coordinator, instance, StartupStage.Running, "serving");
+    await _phaseOnlyAsync(coordinator, instance, recorded);
+
+    await _beatAsync(coordinator, instance, beat);
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(beat.ToString())
+      .Because("under 244 a pause, a stand-by and a revival are not rungs of the ladder, and the beat writes them");
+  }
+
+  [Test]
+  public async Task APhaseTheDatabaseDoesNotKnow_IsTakenFromTheBeatAsync() {
+    await _applyMigration244Async();
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await _beatAsync(coordinator, instance, LifecyclePhase.Running);
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LifecyclePhase: "Hibernating"));
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo("Hibernating")
+      .Because("under 244 a phase with no place on the ladder cannot be behind it, so the beat's value stands");
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   /// <summary>The coordinator as the heartbeat worker and the stage reporter resolve it: through the interface.</summary>
@@ -302,6 +358,15 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand("SELECT library_version FROM wh_service_instances WHERE instance_id = @id", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
     return await cmd.ExecuteScalarAsync() as string;
+  }
+
+  /// <summary>Puts 244's definition of <c>record_heartbeat</c> back on this test's own database, as 244 wrote it.</summary>
+  private async Task _applyMigration244Async() {
+    var sql = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, "public")
+      .GetMigration("244_HeartbeatNeverRollsThePhaseBack")!.Sql;
+    await using var conn = await _openAsync();
+    await using var apply = new NpgsqlCommand(sql, conn);
+    await apply.ExecuteNonQueryAsync();
   }
 
   private async Task<NpgsqlConnection> _openAsync() {

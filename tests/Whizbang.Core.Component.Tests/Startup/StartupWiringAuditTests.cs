@@ -240,12 +240,6 @@ public class StartupWiringAuditTests {
       return Task.FromResult(true);
     }
 
-    public Task<bool> RecordInstanceStateAsync(
-        Guid instanceId, string lifecyclePhase, string? libraryVersion = null, CancellationToken cancellationToken = default) {
-      Calls.Add($"state {lifecyclePhase}");
-      return Task.FromResult(true);
-    }
-
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());

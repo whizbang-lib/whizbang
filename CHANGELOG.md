@@ -1536,6 +1536,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time per host, whoever calls, the host being the context's application service provider (else the one passed in). A
   call made while another runs logs that it is waiting, waits, then runs its own pass, which finds the schema current
   and returns on the fast path. Two hosts in one process are two instances and still meet only at the schema lock.
+- **One write per transition: the stage record is the only writer of an instance's phase (part of #1636).** Three
+  writers set `lifecycle_phase` on each transition (the stage recorder, the instance-state participant with the
+  library version, and every heartbeat), so each transition cost two updates and raced the next beat; a pause or a
+  stand-by, which are off the startup ladder, could be undone by a beat built before it. Migration 278 adds
+  `wh_record_instance_transition`, one update of the stage, its message, the phase and the version (in the bootstrap
+  closure, since the registration's held write goes through it), and `IWorkCoordinator.RecordInstanceTransitionAsync`
+  on both drivers (the Dapper driver now records stages too). The stage reporter is its only caller:
+  `StartupStageRunControl` writes a pause or a stand-by through the new `IStartupStageReporter.EnterPhaseAsync`, which
+  keeps the stage, and re-entering the stage records its own phase again. `InstanceStateRunControl` and
+  `IWorkCoordinator.RecordInstanceStateAsync` and `RecordStartupStageAsync` are removed; the bootstrap registration
+  records Preflight's phase through the new function only where the row records none; the claim loop no longer
+  announces one. A heartbeat records the phase and version only as a
+  registration (the row it inserts, a row that records none, a new process under the same instance id) and never
+  overwrites them. `record_instance_state` and `wh_record_startup_stage` stay for older builds in a rolling upgrade.
 - **A fresh database's instance row records its startup stage at registration (part of #1636).** Registration ends
   Preflight and writes the stage held until the row existed, but on a fresh database that write failed (logged at
   Debug and held): the stage columns, the phase the recorder writes beside them and `wh_record_startup_stage` arrived
