@@ -621,6 +621,36 @@ public class PerspectiveSnapshotAndRewindTests {
              + "put every such store on the restore point the version anchor exists to stop using (#1355)");
   }
 
+  // #1963: a store written before snapshots recorded their collectives keeps working: the write that carries the mark
+  // falls through to the commit-sequence write and stores none, and the newest snapshot reads back with none.
+  [Test]
+  public async Task CreateSnapshotAsync_WithACollectivesMark_DefaultImpl_WritesTheSnapshotWithoutTheMarkAsync() {
+    var store = new LegacyOnlySnapshotStore();
+    var eventId = Guid.NewGuid();
+    using var data = System.Text.Json.JsonDocument.Parse("{}");
+
+    await ((IPerspectiveSnapshotStore)store).CreateSnapshotAsync(Guid.NewGuid(), "p", eventId, 7, data, collectivesThroughSequence: 40);
+
+    await Assert.That(store.Created).IsEquivalentTo([eventId]).Because("the snapshot is still written, by the oldest write");
+  }
+
+  [Test]
+  public async Task GetLatestSnapshotFloorAsync_DefaultImpl_WrapsTheNewestSnapshot_WithNoMarkAsync() {
+    var eventId = Guid.NewGuid();
+    using var data = System.Text.Json.JsonDocument.Parse("{}");
+    IPerspectiveSnapshotStore store = new LegacyOnlySnapshotStore { Result = (eventId, data) };
+    IPerspectiveSnapshotStore empty = new LegacyOnlySnapshotStore { Result = null };
+
+    var floor = await store.GetLatestSnapshotFloorAsync(Guid.NewGuid(), "p");
+
+    await Assert.That(floor!.SnapshotEventId).IsEqualTo(eventId);
+    await Assert.That(floor.SnapshotData).IsSameReferenceAs(data);
+    await Assert.That(floor.SnapshotVersion).IsNull();
+    await Assert.That(floor.ArchivedThroughVersion).IsNull();
+    await Assert.That(floor.CollectivesThroughSequence).IsNull().Because("a store that records no mark has none to return");
+    await Assert.That(await empty.GetLatestSnapshotFloorAsync(Guid.NewGuid(), "p")).IsNull();
+  }
+
   /// <summary>
   /// Minimal stub implementing only the legacy interface methods. Does NOT override
   /// the production forensic G7 sibling — so calls fall through to the interface default-impl, which is
@@ -628,7 +658,11 @@ public class PerspectiveSnapshotAndRewindTests {
   /// </summary>
   private sealed class LegacyOnlySnapshotStore : IPerspectiveSnapshotStore {
     public (Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)? Result { get; set; }
-    public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) => Task.CompletedTask;
+    public List<Guid> Created { get; } = [];
+    public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) {
+      Created.Add(snapshotEventId);
+      return Task.CompletedTask;
+    }
     public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
       Task.FromResult(Result);
     public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
