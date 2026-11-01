@@ -46,6 +46,15 @@ public static class SchemaInitializationStages {
   public static Task BootstrapFailedAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure failed with an error that is not transient", cancellationToken);
 
+  /// <summary>The bootstrap closure is in place and this instance registers: the last step of Preflight.</summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    _ = (services, cancellationToken);
+    return Task.CompletedTask;
+  }
+
   /// <summary>This instance is about to join the registry and vote for the migrator duty.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>

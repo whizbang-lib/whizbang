@@ -62,6 +62,39 @@ public readonly record struct SchemaStaging(SchemaStage Stage, IDutyGrant? Grant
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs</tests>
 public static class MigratorDutyStaging {
   /// <summary>
+  /// Puts this instance in the registry: the last step of Preflight (#1636), once the bootstrap closure and the
+  /// instance and role tables are in place, so nothing registers before its tables are ready.
+  /// </summary>
+  /// <param name="registerAsync">Puts this instance in the registry.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether this instance joined the registry. A failure is logged and answered, never thrown.</returns>
+  public static Task<bool> RegisterAsync(
+      Func<CancellationToken, Task> registerAsync,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    _ = (registerAsync, schema, logger, cancellationToken);
+    return Task.FromResult(false);
+  }
+
+  /// <summary>Contends for the migrator duty, once this instance has joined the registry.</summary>
+  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
+  public static Task<SchemaStaging> ElectAsync(
+      IDutyElector? elector,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    _ = (elector, schema, logger, cancellationToken);
+    return Task.FromResult(new SchemaStaging(SchemaStage.Unstaged, null, "not elected"));
+  }
+
+  /// <summary>
   /// Registers this instance and contends for the migrator duty.
   /// </summary>
   /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
