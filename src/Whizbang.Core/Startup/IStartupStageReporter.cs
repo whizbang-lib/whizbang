@@ -5,8 +5,9 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>
 /// The one owner of the stage this instance is in (#1636). Entering a stage logs it, records it on the instance's row
-/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>) and tells every
-/// <see cref="IStartupStageObserver"/>.
+/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>, with the lifecycle phase and
+/// the library version in the same write) and tells every <see cref="IStartupStageObserver"/>. It is the only writer
+/// of the instance's recorded phase: a pause or a stand-by is recorded through <see cref="EnterPhaseAsync"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -45,6 +46,20 @@ public interface IStartupStageReporter {
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task that completes once the skip is logged, written (or held) and observed.</returns>
   ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Enters a lifecycle phase off the startup ladder (pausing, paused, standing by, resuming, faulted, halted) while the
+  /// stage stays where it is: the row records the phase with the stage it is in. Entering a stage afterwards records
+  /// that stage's own phase again. A phase on the ladder is the stage's, and is refused.
+  /// </summary>
+  /// <param name="phase">The phase.</param>
+  /// <param name="cancellationToken">Canceled when the caller is.</param>
+  /// <returns>A task that completes once the phase is written (or held).</returns>
+  /// <docs>operations/startup/startup-status#pause-and-standby</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
+  ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
 
   /// <summary>
   /// The instance's row now exists: writes the stage held since before it did, or since a write failed. Called by

@@ -21,6 +21,7 @@ public class NullStartupStageReporterTests {
     await reporter.EnterAsync(StartupStage.Running, "serving");
     await reporter.SkipAsync(StartupStage.Draining, "never");
     await reporter.InstanceRegisteredAsync();
+    await ((IStartupStageReporter)reporter).EnterPhaseAsync(Whizbang.Core.RunControl.LifecyclePhase.Paused);
 
     await Assert.That(reporter.Current).IsNull();
     await Assert.That(NullStartupStageReporter.Instance).IsSameReferenceAs(reporter);

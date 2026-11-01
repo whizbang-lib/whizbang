@@ -129,6 +129,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(await _throwsArgumentNullAsync(() => c.FlushCompletionsAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.ResolveSyncInquiriesAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.ClaimWorkAsync(null!))).IsTrue();
+    await Assert.That(await _throwsArgumentNullAsync(() => c.RecordInstanceTransitionAsync(null!))).IsTrue();
   }
 
   // ----- empty-input short-circuits -----
@@ -189,6 +190,9 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     var instanceId = (Guid)TrackedGuid.New();
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-gate", "host-gate", 11));
+    await Assert.That(await c.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      instanceId, Whizbang.Core.Startup.StartupStage.Running, "serving", Whizbang.Core.RunControl.LifecyclePhase.Running,
+      "1.0.0"))).IsTrue();
 
     // Queues empty here — ClaimWorkAsync's gate branch plus the empty-batch path.
     var emptyBatch = await c.ClaimWorkAsync(new ClaimWorkRequest(

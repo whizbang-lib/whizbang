@@ -38,20 +38,33 @@ public class StartupStageRunControlTests {
   [Arguments(LifecyclePhase.Starting)]
   [Arguments(LifecyclePhase.Connecting)]
   [Arguments(LifecyclePhase.Migrating)]
-  [Arguments(LifecyclePhase.Pausing)]
-  [Arguments(LifecyclePhase.Paused)]
-  [Arguments(LifecyclePhase.StandingBy)]
-  [Arguments(LifecyclePhase.Resuming)]
-  [Arguments(LifecyclePhase.Faulted)]
-  [Arguments(LifecyclePhase.Halted)]
-  public async Task AnyOtherPhase_LeavesTheStageWhereItIsAsync(LifecyclePhase phase) {
+  public async Task AStartupPhase_LeavesTheStageWhereItIsAsync(LifecyclePhase phase) {
     var stages = new RecordingStageReporter();
     var control = new StartupStageRunControl(stages);
 
     await control.OnPhaseAsync(phase, CancellationToken.None);
 
     await Assert.That(stages.Calls).IsEmpty()
-      .Because("the startup phases are entered where the work happens, and a pause is not a stage");
+      .Because("the startup stages are entered where the work happens, and each records the phase it maps to");
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Pausing)]
+  [Arguments(LifecyclePhase.Paused)]
+  [Arguments(LifecyclePhase.StandingBy)]
+  [Arguments(LifecyclePhase.Resuming)]
+  [Arguments(LifecyclePhase.Faulted)]
+  [Arguments(LifecyclePhase.Halted)]
+  public async Task APhaseOffTheLadder_IsAPhaseOnlyWrite_ThatKeepsTheStageAsync(LifecyclePhase phase) {
+    var stages = new RecordingStageReporter();
+    var control = new StartupStageRunControl(stages);
+    using var cts = new CancellationTokenSource();
+
+    await control.OnPhaseAsync(phase, cts.Token);
+
+    await Assert.That(stages.Calls).IsEquivalentTo([$"Phase {phase}"])
+      .Because("the stage record is the only writer of the phase (#1636), so a pause and a stand-by are written there");
+    await Assert.That(stages.Tokens[0]).IsEqualTo(cts.Token);
   }
 
   [Test]

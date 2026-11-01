@@ -347,6 +347,10 @@ column a migration adds to an instance table and creates the recorder. Three rul
    adds them, and on a database the closure brought up it no longer adds them
    (`SchemaBootstrapPhaseTests.TheColumnsTheBootstrapAdds_AreDescribedAsync`).
 
+Migration 278 adds `wh_record_instance_transition` to the closure for the same reason: the registration's held write
+is one update of stage, phase and version through it, and since #1636 it is the only writer of a recorded phase (a
+heartbeat records the phase and version only as a registration).
+
 The descriptor ensure (`PostgresSchemaBuilder`) does not declare these columns, so it neither re-adds nor fights them.
 `SchemaBootstrapPhaseTests.AnEmptyDatabaseRecordsItsStageAtRegistrationAfterTheBootstrapAsync` and
 `StartupStageHostTests.AFreshDatabase_EntersEveryStageInOrder_LogsEach_AndRecordsEachTheRowCanHoldAsync` are the

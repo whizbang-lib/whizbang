@@ -141,7 +141,8 @@ public class StartupStageGateTests {
     var gate = new StartupStageGate(new SchemaReadyGate());
     await using var services = new ServiceCollection().BuildServiceProvider();
     using var reporter = new StartupStageReporter(
-      services.GetRequiredService<IServiceScopeFactory>(), new FixedInstance(), [gate], NullLogger<StartupStageReporter>.Instance);
+      services.GetRequiredService<IServiceScopeFactory>(), new FixedInstance(), [gate], NullLogger<StartupStageReporter>.Instance,
+      new Whizbang.Core.Observability.LibraryVersionProvider("1.0.0"));
 
     await reporter.EnterAsync(StartupStage.Preflight, "host starting");
     await Assert.That(gate.HasReached(StartupStage.Preflight)).IsTrue();

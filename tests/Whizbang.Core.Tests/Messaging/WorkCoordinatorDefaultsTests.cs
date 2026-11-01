@@ -466,22 +466,14 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
-  public async Task RecordInstanceStateAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+  public async Task RecordInstanceTransitionAsync_WithoutProviderSupport_RecordsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
-    var result = await coordinator.RecordInstanceStateAsync(Guid.Empty, "x", null);
-
-    await Assert.That(result).IsFalse();
-  }
-
-  [Test]
-  public async Task RecordStartupStageAsync_WithoutProviderSupport_RecordsNothingAsync() {
-    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
-
-    var result = await coordinator.RecordStartupStageAsync(Guid.Empty, Whizbang.Core.Startup.StartupStage.Running, "serving");
+    var result = await coordinator.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      Guid.Empty, Whizbang.Core.Startup.StartupStage.Running, "serving", Whizbang.Core.RunControl.LifecyclePhase.Running, null));
 
     await Assert.That(result).IsFalse()
-      .Because("a coordinator with no instance rows records no stage, so the reporter holds it as unwritten");
+      .Because("a coordinator with no instance rows records nothing, so the reporter holds the transition as unwritten");
   }
 
   [Test]

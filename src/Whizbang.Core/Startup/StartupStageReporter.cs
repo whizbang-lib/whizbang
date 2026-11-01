@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Startup;
 
@@ -36,34 +37,42 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   private readonly IStartupStageObserver[] _observers;
   private readonly ILogger<StartupStageReporter> _logger;
   private readonly TimeProvider _time;
+  private readonly string _libraryVersion;
   private readonly SemaphoreSlim _serialize = new(1, 1);
   private volatile StartupStageSnapshot? _current;
   // Whether the instance's row has been registered, so a write can land.
   private volatile bool _registered;
   // Whether the current stage is not on the row yet: entered before registration, or its write failed.
   private volatile bool _held;
+  // A phase off the startup ladder (a pause, a stand-by) in force, recorded with the stage; null: the stage's own phase.
+  // Read and written only under _serialize.
+  private LifecyclePhase? _phase;
 
   /// <summary>Creates the reporter.</summary>
   /// <param name="scopeFactory">Resolves the work coordinator that writes the instance's row.</param>
   /// <param name="instanceProvider">This instance's identity: the row each stage is written to.</param>
   /// <param name="observers">Told of every change.</param>
   /// <param name="logger">Where each stage is logged.</param>
+  /// <param name="libraryVersion">The library version every write records with the stage and phase.</param>
   /// <param name="timeProvider">The clock a stage's entry time and a write's timeout are read from.</param>
   public StartupStageReporter(
       IServiceScopeFactory scopeFactory,
       IServiceInstanceProvider instanceProvider,
       IEnumerable<IStartupStageObserver> observers,
       ILogger<StartupStageReporter> logger,
+      ILibraryVersionProvider libraryVersion,
       TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(observers);
     ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(libraryVersion);
     _scopeFactory = scopeFactory;
     _instanceProvider = instanceProvider;
     _observers = [.. observers];
     _logger = logger;
     _time = timeProvider ?? TimeProvider.System;
+    _libraryVersion = libraryVersion.LibraryVersion;
   }
 
   /// <inheritdoc />
@@ -82,6 +91,26 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   }
 
   /// <inheritdoc />
+  public async ValueTask EnterPhaseAsync(LifecyclePhase phase, CancellationToken cancellationToken = default) {
+    if (!_isOffTheLadder(phase)) {
+      throw new ArgumentOutOfRangeException(nameof(phase), phase,
+        "Not a phase off the startup ladder: a phase on it is the stage's own, recorded by entering the stage.");
+    }
+    await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      if (_phase == phase) {
+        return;
+      }
+      _phase = phase;
+      // A phase is not a stage: no stage line, and no stage observer has anything new to see. The row records it with
+      // the stage the instance is in, in the one write a transition makes.
+      _held = !(_registered && await _writeAsync(cancellationToken).ConfigureAwait(false));
+    } finally {
+      _serialize.Release();
+    }
+  }
+
+  /// <inheritdoc />
   public async ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) {
     // Called after every accepted heartbeat: once the row is known and nothing is held, there is nothing to do and no
     // reason to wait for a transition in progress.
@@ -92,7 +121,11 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
     try {
       _registered = true;
       if (_held) {
-        await _recordAndTellAsync(_current!, cancellationToken).ConfigureAwait(false);
+        var recorded = await _writeAsync(cancellationToken).ConfigureAwait(false);
+        _held = !recorded;
+        if (_current is { } current) {
+          await _tellAsync(current, recorded, cancellationToken).ConfigureAwait(false);
+        }
       }
     } finally {
       _serialize.Release();
@@ -109,9 +142,11 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
     await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
       var current = _current;
-      if (!_moves(current, stage, message, skipped)) {
+      if (!_moves(current, stage, message, skipped) && !_resumes(current!, stage, skipped)) {
         return;
       }
+      // A stage records its own phase: entering one ends a pause or a stand-by recorded with the stage before.
+      _phase = null;
       // Progress within a stage keeps the time it was entered.
       var enteredAt = current?.Stage == stage ? current.EnteredAt : _time.GetUtcNow();
       var snapshot = new StartupStageSnapshot(stage, message, skipped, enteredAt);
@@ -121,7 +156,9 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
       } else {
         LogShutdownStage(_logger, snapshot.Name, message);
       }
-      await _recordAndTellAsync(snapshot, cancellationToken).ConfigureAwait(false);
+      var recorded = _registered && await _writeAsync(cancellationToken).ConfigureAwait(false);
+      _held = !recorded;
+      await _tellAsync(snapshot, recorded, cancellationToken).ConfigureAwait(false);
     } finally {
       _serialize.Release();
     }
@@ -138,15 +175,32 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
     return !skipped && stage == current.Stage && !string.Equals(message, current.Message, StringComparison.Ordinal);
   }
 
-  private async Task _recordAndTellAsync(StartupStageSnapshot snapshot, CancellationToken cancellationToken) {
-    var recorded = _registered && await _writeAsync(snapshot, cancellationToken).ConfigureAwait(false);
-    _held = !recorded;
+  /// <summary>
+  /// Whether entering the current stage again ends a phase recorded off the ladder (a resume back into Running): the
+  /// row's phase changes though the stage does not. Asked only when <see cref="_moves"/> said no, so a stage is current.
+  /// </summary>
+  private bool _resumes(StartupStageSnapshot current, StartupStage stage, bool skipped) =>
+    _phase is not null && !skipped && stage == current.Stage;
+
+  /// <summary>The phases that are not a stage's own: a pause, a stand-by, a revival, a fault, a halt.</summary>
+  private static bool _isOffTheLadder(LifecyclePhase phase) => phase is LifecyclePhase.Pausing or LifecyclePhase.Paused
+    or LifecyclePhase.StandingBy or LifecyclePhase.Resuming or LifecyclePhase.Faulted or LifecyclePhase.Halted;
+
+  private async Task _tellAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
     foreach (var observer in _observers) {
       await observer.OnStageChangedAsync(snapshot, recorded, cancellationToken).ConfigureAwait(false);
     }
   }
 
-  private async Task<bool> _writeAsync(StartupStageSnapshot snapshot, CancellationToken cancellationToken) {
+  /// <summary>
+  /// Writes what the instance is in now, in one update (#1636): the current stage and its message, the phase (an
+  /// off-ladder phase in force, else the stage's own) and the library version. With no stage yet, the stage is left as
+  /// the row records it.
+  /// </summary>
+  private async Task<bool> _writeAsync(CancellationToken cancellationToken) {
+    var current = _current;
+    var transition = new InstanceTransition(_instanceProvider.InstanceId, current?.Stage, current?.Message,
+      _phase ?? StartupStages.LifecyclePhaseOf(current!.Stage), _libraryVersion);
     try {
       await using var scope = _scopeFactory.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -155,16 +209,15 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
       }
       using var timeout = new CancellationTokenSource(_writeTimeout, _time);
       using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-      return await coordinator.RecordStartupStageAsync(
-        _instanceProvider.InstanceId, snapshot.Stage, snapshot.Message, bounded.Token).ConfigureAwait(false);
+      return await coordinator.RecordInstanceTransitionAsync(transition, bounded.Token).ConfigureAwait(false);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
       throw;
     }
 #pragma warning disable CA1031, RCS1075 // a failed write is held and written again; it must never break the transition
-    // that entered the stage. The stage columns and the recorder are Preflight's (277), so from registration on a write
-    // fails only when the database cannot be reached in time, and the next registration signal writes it again.
+    // that entered the stage. The stage columns and the recorder are Preflight's (277, 278), so from registration on a
+    // write fails only when the database cannot be reached in time, and the next registration signal writes it again.
     catch (Exception ex) {
-      LogWriteFailed(_logger, snapshot.Stage, ex);
+      LogWriteFailed(_logger, transition.Stage, transition.Phase, ex);
       return false;
     }
 #pragma warning restore CA1031, RCS1075
@@ -178,6 +231,6 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   static partial void LogShutdownStage(ILogger logger, string stageName, string stageMessage);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Debug,
-    Message = "Recording startup stage {Stage} on the instance row failed; it is held and written on the next registration signal")]
-  static partial void LogWriteFailed(ILogger logger, StartupStage stage, Exception ex);
+    Message = "Recording startup stage {Stage} and phase {Phase} on the instance row failed; it is held and written on the next registration signal")]
+  static partial void LogWriteFailed(ILogger logger, StartupStage? stage, LifecyclePhase phase, Exception ex);
 }

@@ -85,7 +85,8 @@ namespace Whizbang.Core.Messaging;
 /// another phase (a transition write that was lost, or overwritten by a beat built before it), the claim reports the
 /// registration stale (<see cref="WorkBatch.InstanceRegistrationStale"/>) and the claim loop's registration writes the
 /// phase, so a ready instance cannot stay ineligible for work while it claims. Null: the row is judged by liveness
-/// alone, as before.
+/// alone, as before. The framework's claim loop passes null since #1636: the stage record is the only writer of the
+/// recorded phase and repairs its own lost writes, and a registration no longer overwrites a recorded phase.
 /// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
