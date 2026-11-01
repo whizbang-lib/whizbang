@@ -77,7 +77,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       IDeadLetterStore? store,
       IGenerationProvider? gen,
       DeadLetterMetrics? metrics,
-      Guid instanceId) {
+      Guid instanceId,
+      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddLogging();
@@ -92,7 +93,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
-      logger: NullLogger<PerspectiveWorker>.Instance,
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -253,5 +254,40 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     await Assert.That(survivors.Count).IsEqualTo(0);
     await Assert.That(store.Moves.Count).IsEqualTo(1);
     await Assert.That(metrics.Added).IsNotNull();
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // #1901: a dead-lettered perspective event gets the dead-letter record, at Error by default.
+  // -------------------------------------------------------------------------------------------
+
+  [Test]
+  public async Task FailuresAboveMax_MovedToDeadLetters_LogsTheDeadLetterRecordAtErrorAsync() {
+    var logger = new DeadLetterRecordLogger<PerspectiveWorker>();
+    var worker = _buildWorker(maxAttempts: 3, store: new CapturingDeadLetterStore(), gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.New(), logger: logger);
+    var row = _row(attempts: 4, failures: 4) with { EventType = "Contracts.Orders.OrderShipped, Contracts", PerspectiveName = "OrderSummary" };
+
+    await worker.FilterDeadLetteredAsync([row], CancellationToken.None);
+
+    var record = logger.Records.Single();
+    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+      .Because("#1901: a perspective event that is dead-lettered will never be applied on its own, so it is logged at Error by default");
+    await Assert.That(record.Message).Contains(row.EventWorkId.ToString())
+      .And.Contains("Contracts.Orders.OrderShipped, Contracts")
+      .And.Contains("perspective=OrderSummary");
+    await Assert.That(logger.Entries.Any(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning)).IsFalse()
+      .Because("the record replaces the perspective worker's own Warning for a dead letter");
+  }
+
+  [Test]
+  public async Task FailuresAboveMax_MoveThrows_LogsNoRecordAsync() {
+    var logger = new DeadLetterRecordLogger<PerspectiveWorker>();
+    var worker = _buildWorker(maxAttempts: 3, store: new CapturingDeadLetterStore { Throw = true }, gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.New(), logger: logger);
+
+    await worker.FilterDeadLetteredAsync([_row(attempts: 4, failures: 4)], CancellationToken.None);
+
+    await Assert.That(logger.Records).IsEmpty()
+      .Because("a move that fails keeps the row in the apply set for a retry, so it is not dead-lettered");
   }
 }

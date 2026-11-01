@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// dispatch decision can be asserted without a hosted worker. Shared by the inbox lease, logging and memory tests.
 /// </summary>
 internal sealed class InboxDispatchUnitHarness {
-  public ConcurrentQueue<(LogLevel Level, int EventId, string Message)> Logs { get; } = new();
+  public ConcurrentQueue<(LogLevel Level, int EventId, string Message, Exception? Exception, string? EventName)> Logs { get; } = new();
   public CapturingCommitChannel Commits { get; } = new();
   public CapturingFailureChannel Failures { get; } = new();
   public IInboxChannelWriter Inbox { get; }
@@ -155,11 +155,11 @@ internal sealed class InboxDispatchUnitHarness {
     public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
   }
 
-  private sealed class RecordingLogger(ConcurrentQueue<(LogLevel Level, int EventId, string Message)> entries) : ILogger<InboxDispatchWorker> {
+  private sealed class RecordingLogger(ConcurrentQueue<(LogLevel Level, int EventId, string Message, Exception? Exception, string? EventName)> entries) : ILogger<InboxDispatchWorker> {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter)
-      => entries.Enqueue((logLevel, eventId.Id, formatter(state, exception)));
+      => entries.Enqueue((logLevel, eventId.Id, formatter(state, exception), exception, eventId.Name));
   }
 }

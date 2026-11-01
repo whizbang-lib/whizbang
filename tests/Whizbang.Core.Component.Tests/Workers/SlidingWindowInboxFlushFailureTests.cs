@@ -220,11 +220,14 @@ public class SlidingWindowInboxFlushFailureTests {
     await Assert.That(failed[0].Value).IsEqualTo(1);
     await Assert.That(failed[0].Tags[WorkCoordinatorMetrics.CAUSE_TAG]).IsEqualTo(nameof(InboxFlushFailureCause.RetriesExhausted));
     await Assert.That(failed[0].Tags[WorkCoordinatorMetrics.OUTCOME_TAG]).IsEqualTo(WorkCoordinatorMetrics.OUTCOME_DEAD_LETTERED);
-    var error = log.Errors.Single();
-    await Assert.That(error).Contains(message.MessageId.ToString())
-      .Because("the error log names every message the batch held");
-    await Assert.That(error).Contains("wh_dead_letters").And.Contains("recover")
+    var summary = log.Informations.Single(e => e.Contains("wh_dead_letters", StringComparison.Ordinal));
+    await Assert.That(summary).Contains(message.MessageId.ToString())
+      .Because("the summary names every message the batch held");
+    await Assert.That(summary).Contains("wh_dead_letters").And.Contains("recover")
       .Because("it says where the messages went and how to get them back");
+    await Assert.That(log.Errors).IsEmpty()
+      .Because("#1901: each kept message gets its own dead-letter record, logged by the recorder at the configured level; "
+             + "an Error here would fire a second alert for the same messages, and one the level option could not turn down");
     await Assert.That(log.Warnings).Count().IsEqualTo(2)
       .Because("each retry is logged once: attempts one and two, before the third gave the batch up");
   }
@@ -468,6 +471,8 @@ public class SlidingWindowInboxFlushFailureTests {
     public IReadOnlyList<string> Errors => [.. _entries.Where(e => e.Level == LogLevel.Error).Select(e => e.Text)];
 
     public IReadOnlyList<string> Warnings => [.. _entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Text)];
+
+    public IReadOnlyList<string> Informations => [.. _entries.Where(e => e.Level == LogLevel.Information).Select(e => e.Text)];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -122,7 +123,55 @@ public class InboxFlushFailureRecorderTests {
 
     await Assert.That(kept).IsTrue();
     await Assert.That(later.Failures).Count().IsEqualTo(1);
-    await Assert.That(log.Errors.Single()).Contains(nameof(ThrowingObserver));
+    await Assert.That(log.Errors.Single(e => e.Contains(nameof(ThrowingObserver), StringComparison.Ordinal))).IsNotNull();
+  }
+
+  // #1901: every message the recorder keeps gets the dead-letter record, at Error by default, with the store failure.
+
+  [Test]
+  public async Task RecordAsync_CoordinatorDeadLetters_LogsOneDeadLetterRecordPerMessageAtErrorAsync() {
+    var logger = new FakeLogger<InboxFlushFailureRecorder>();
+    var sut = _recorder(new DeadLetteringCoordinator(), [], logger: logger);
+    var failure = _failure(InboxFlushFailureCause.RetriesExhausted, new TimeoutException("pool exhausted"), 2);
+
+    await sut.RecordAsync(failure, CancellationToken.None);
+
+    var records = logger.Collector.GetSnapshot().Where(r => r.Id.Id == 1901).ToList();
+    await Assert.That(records).Count().IsEqualTo(2)
+      .Because("each message that could not be stored is its own dead letter and gets its own record");
+    foreach (var (record, message) in records.Zip(failure.Messages)) {
+      await Assert.That(record.Level).IsEqualTo(LogLevel.Error)
+        .Because("#1901: a message the batcher could not store is dead-lettered, logged at Error by default");
+      await Assert.That(record.Exception).IsTypeOf<TimeoutException>()
+        .Because("the store failure is the last failure's exception, so the record carries it");
+      await Assert.That(record.Message).Contains(message.MessageId.ToString())
+        .And.Contains(message.MessageType)
+        .And.Contains(nameof(MessageFailureReason.InboxStoreFailed));
+    }
+  }
+
+  [Test]
+  public async Task RecordAsync_AbandonedWithoutAnError_RecordSaysWhyAsync() {
+    var logger = new FakeLogger<InboxFlushFailureRecorder>();
+    var sut = _recorder(new DeadLetteringCoordinator(), [], logger: logger);
+
+    await sut.RecordAsync(_failure(InboxFlushFailureCause.AbandonedAtShutdown, null, 1, attempts: 0), CancellationToken.None);
+
+    var record = logger.Collector.GetSnapshot().Single(r => r.Id.Id == 1901);
+    await Assert.That(record.Exception).IsNull();
+    await Assert.That(record.Message).Contains("abandoned at shutdown")
+      .Because("with no exception the record's last error is the reason the messages were not stored");
+  }
+
+  [Test]
+  public async Task RecordAsync_DeadLetterWriteFails_LogsNoDeadLetterRecordAsync() {
+    var logger = new FakeLogger<InboxFlushFailureRecorder>();
+    var sut = _recorder(new DeadLetteringCoordinator { Failure = new InvalidOperationException("database unreachable") }, [], logger: logger);
+
+    await sut.RecordAsync(_failure(InboxFlushFailureCause.NotRetryable, new InvalidOperationException("refused"), 1), CancellationToken.None);
+
+    await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Id.Id == 1901)).IsFalse()
+      .Because("nothing reached the dead-letter table, so no message was dead-lettered; the failed write is logged on its own");
   }
 
   private static InboxFlushFailureRecorder _recorder(

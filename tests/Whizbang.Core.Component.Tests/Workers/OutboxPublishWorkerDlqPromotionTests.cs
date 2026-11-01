@@ -162,7 +162,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
   private static (OutboxPublishWorker Worker, FakeWorkChannelWriter Channel, FakeFailureChannel Failure, FakeDeadLetterStore Dlq) _build(
       int? maxOutboxAttempts,
       IMessagePublishStrategy strategy,
-      bool wireDeadLetterStore = true) {
+      bool wireDeadLetterStore = true,
+      Microsoft.Extensions.Logging.ILogger<OutboxPublishWorker>? logger = null) {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
@@ -181,7 +182,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
         Enabled = true,
         MaxOutboxAttempts = maxOutboxAttempts,
       }),
-      logger: NullLogger<OutboxPublishWorker>.Instance,
+      logger: logger ?? NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: wireDeadLetterStore ? new FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
@@ -457,5 +458,31 @@ public class OutboxPublishWorkerDlqPromotionTests {
   // --- shared no-op channels for the catch/throw tests above ---
   private sealed class NoOpCompletionChannel : IOutboxCompletionChannel {
     public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
+  // --- #1901: the dead-letter record ---
+
+  [Test]
+  public async Task SingularPublish_AttemptsAtCap_LogsTheDeadLetterRecordAtErrorWithTypeAndErrorAsync() {
+    var strategy = new FakeFailingStrategy { ErrorMessage = "broker refused the message: entity disabled" };
+    var logger = new DeadLetterRecordLogger<OutboxPublishWorker>();
+    var (worker, channel, _, _) = _build(maxOutboxAttempts: 3, strategy, logger: logger);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _work(attempts: 3);
+    await channel.WriteAsync(work, cts.Token);
+
+    var (level, message, _) = await logger.DeadLettered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+      .Because("#1901: an outbox message moved to the dead-letter store will never be published on its own, so it is logged at Error by default");
+    await Assert.That(message).Contains(work.MessageId.ToString())
+      .And.Contains(work.MessageType)
+      .And.Contains("broker refused the message: entity disabled");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 6)).IsFalse()
+      .Because("the record replaces the outbox worker's own Warning for a dead letter");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 }

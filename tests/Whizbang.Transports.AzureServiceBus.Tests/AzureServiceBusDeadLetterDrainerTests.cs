@@ -216,6 +216,34 @@ public class AzureServiceBusDeadLetterDrainerTests {
     await Assert.That(client.Receiver.Abandoned).IsEmpty();
   }
 
+  /// <summary>
+  /// #1901: a broker dead letter the drain takes into custody gets the dead-letter record, at Error by default, with
+  /// its type, the broker's reason and where it came from. A duplicate was recorded when it was first taken, so it gets
+  /// none.
+  /// </summary>
+  [Test]
+  public async Task DrainDeadLetterQueueAsync_Imported_LogsTheDeadLetterRecordAtErrorAsync() {
+    var client = new FakeDrainClient();
+    var importer = new FakeImporter();
+    importer.PlannedOutcomes.Enqueue(true);
+    importer.PlannedOutcomes.Enqueue(false);   // the second is a duplicate
+    client.Receiver.Batches.Enqueue([_dlqMessage(ID1), _dlqMessage(ID2)]);
+    var logger = new RecordingLogger();
+    await using var drainer = new AzureServiceBusDeadLetterDrainer(client, "orders", "billing", importer.ImportAsync, logger);
+
+    await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
+
+    var record = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+      .Because("#1901: a message the broker dead-lettered will never be processed on its own, so taking it into custody logs it at Error by default");
+    await Assert.That(record.Message).Contains(ID1)
+      .And.Contains("Whizbang.Test.Envelope")
+      .And.Contains("TestReason")
+      .And.Contains("orders/billing");
+    await Assert.That(record.Message).DoesNotContain(ID2)
+      .Because("a duplicate import was recorded when custody was first taken; recording it again would report one message twice");
+  }
+
   [Test]
   public async Task DrainDeadLetterQueueAsync_NonWhizbangMessage_AbandonsAndDoesNotImportAsync() {
     var client = new FakeDrainClient();
@@ -499,6 +527,15 @@ public class AzureServiceBusDeadLetterDrainerTests {
         _ => Task.FromResult(true),
       };
     }
+  }
+
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<AzureServiceBusDeadLetterDrainer> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, eventId.Id, formatter(state, exception)));
   }
 
   // ===== Drain-loop test doubles =====

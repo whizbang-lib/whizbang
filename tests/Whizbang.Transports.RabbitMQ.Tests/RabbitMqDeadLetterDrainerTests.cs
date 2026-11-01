@@ -185,6 +185,49 @@ public class RabbitMqDeadLetterDrainerTests {
       .Because("duplicate custody still acks — the broker copy must leave the DLQ");
   }
 
+  /// <summary>
+  /// #1901: a broker dead letter the drain takes into custody gets the dead-letter record, at Error by default, with
+  /// its type, the broker's reason and the queue it came from. A duplicate was recorded when it was first taken.
+  /// </summary>
+  [Test]
+  public async Task Drain_Imported_LogsTheDeadLetterRecordAtErrorAsync() {
+    var channel = new DrainFakeChannel();
+    var headers = _xDeathHeaders("rejected", 3);
+    headers["EnvelopeType"] = System.Text.Encoding.UTF8.GetBytes("Whizbang.Test.Envelope");
+    channel.GetResults.Enqueue(_dlqResult(1, headers, messageId: ID1));
+    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: ID2));
+    var outcomes = new Queue<bool>([true, false]);
+    var logger = new RecordingLogger();
+    var drainer = new RabbitMqDeadLetterDrainer(
+      _connectionFor(channel), "orders.dlq", (_, _) => Task.FromResult(outcomes.Dequeue()), logger);
+
+    await drainer.DrainDeadLetterQueueAsync(10);
+
+    var record = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+      .Because("#1901: a message the broker dead-lettered will never be processed on its own, so taking it into custody logs it at Error by default");
+    await Assert.That(record.Message).Contains(ID1)
+      .And.Contains("Whizbang.Test.Envelope")
+      .And.Contains("rejected")
+      .And.Contains("orders.dlq");
+  }
+
+  [Test]
+  public async Task Drain_ImportedWithoutTypeOrReason_RecordSaysSoAsync() {
+    var channel = new DrainFakeChannel();
+    channel.GetResults.Enqueue(_dlqResult(1, headers: null, messageId: ID1));
+    var logger = new RecordingLogger();
+    var drainer = new RabbitMqDeadLetterDrainer(_connectionFor(channel), "orders.dlq", _noopImport, logger);
+
+    await drainer.DrainDeadLetterQueueAsync(10);
+
+    var record = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(record.Message).Contains("of type unknown")
+      .And.Contains("none given by the broker")
+      .And.Contains("none recorded")
+      .Because("a record with a missing field says it is missing rather than printing a null");
+  }
+
   [Test]
   public async Task Drain_ImportFails_RequeuesAndEndsPassAsync() {
     var channel = new DrainFakeChannel();
@@ -286,6 +329,15 @@ public class RabbitMqDeadLetterDrainerTests {
       },
     },
   };
+
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<RabbitMqDeadLetterDrainer> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, eventId.Id, formatter(state, exception)));
+  }
 
   // ===== Drain-loop test double =====
 
