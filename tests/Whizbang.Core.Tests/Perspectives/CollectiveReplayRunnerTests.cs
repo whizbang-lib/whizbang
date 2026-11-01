@@ -24,6 +24,9 @@ public class CollectiveReplayRunnerTests {
   private const string FOLDED_RUNNER = "Whizbang.Core.Tests.Generated.FoldedPermissionsPerspectiveRunner";
   private const string OVERWRITE_RUNNER = "Whizbang.Core.Tests.Generated.OverwritePermissionsPerspectiveRunner";
 
+  // The last UUIDv7 there is (a message id must be one), so any read anchored on it reads nothing.
+  private static readonly Guid _lastId = Guid.Parse("ffffffff-ffff-7fff-bfff-ffffffffffff");
+
   // #1957: the fold after a purge took the collective as the row's last event, so the checkpoint named another stream's
   // event, which may be archived and is never one of the row's own.
   [Test]
@@ -113,6 +116,28 @@ public class CollectiveReplayRunnerTests {
     await Assert.That(harness.Counter.Applies).IsEqualTo(1)
       .Because("an applier is registered for the service, but this model has no collective to fold");
     await Assert.That(applier.Starts).IsEmpty();
+  }
+
+  // The rewind re-reads the stream after each pass for events appended meanwhile, and the applier hands back every
+  // collective after the start on each pass: each folds once. A collective is another stream's event, so it never anchors
+  // the next read, even when its id sorts after every event of the stream.
+  [Test]
+  public async Task ARewindsCatchUpPasses_FoldEachCollectiveOnce_AndNeverAnchorTheReadOnOneAsync() {
+    var applier = new FakeCollectiveApplier();
+    var harness = new Harness(applier);
+    var userId = TrackedGuid.New().Value;
+    await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    applier.Collectives.Add(GeneratedRunners.Envelope(new PermissionsBulkGranted(), messageId: MessageId.From(_lastId)));
+    // Another writer appends while the first pass applies, so the rewind makes a catch-up pass.
+    harness.Counter.OnFirstApply = () => harness.AppendAsync(
+      userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" }).GetAwaiter().GetResult();
+
+    _ = await harness.RewindAsync(userId);
+
+    await Assert.That(applier.Starts.Count).IsEqualTo(2).Because("the control: the catch-up pass asked for the collectives again");
+    await Assert.That(applier.Applied).IsEqualTo(1).Because("the collective the first pass folded is not folded again");
+    await Assert.That(harness.Rows.Row(userId).Permissions).IsEqualTo("write")
+      .Because("the catch-up read resumes after the stream's own events; anchored on the collective's id it would read nothing after it");
   }
 
   // A snapshot taken at an event holds the collectives committed before it and none after (#1956), or a rewind from it
@@ -243,8 +268,12 @@ public class CollectiveReplayRunnerTests {
       return Task.FromResult<IReadOnlyList<MessageEnvelope<IEvent>>>([.. streamEvents, .. Collectives]);
     }
 
-    public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) =>
-      (PermissionSetModel)currentModel with { Permissions = ((PermissionSetModel)currentModel).Permissions + "+c" };
+    public int Applied { get; private set; }
+
+    public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) {
+      Applied++;
+      return (PermissionSetModel)currentModel with { Permissions = ((PermissionSetModel)currentModel).Permissions + "+c" };
+    }
 
     public IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) =>
       NamesCollectives && modelTypeName == typeof(PermissionSetModel).FullName ? ["PermissionsBulkGranted"] : [];

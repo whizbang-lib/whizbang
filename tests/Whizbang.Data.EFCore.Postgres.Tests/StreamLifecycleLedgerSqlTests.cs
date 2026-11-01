@@ -181,6 +181,13 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
       WHERE i.indrelid = 'wh_stream_lifecycle'::regclass
         AND i.indpred IS NOT NULL
         AND pg_get_expr(i.indpred, i.indrelid) ~ ('\m' || a.attname || '\M')
+      UNION
+      SELECT DISTINCT a.attname
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum > 0
+      WHERE i.indrelid = 'wh_stream_lifecycle'::regclass
+        AND i.indexprs IS NOT NULL
+        AND pg_get_expr(i.indexprs, i.indrelid) ~ ('\m' || a.attname || '\M')
       ORDER BY 1
       """);
     var predicate = await _stringsAsync(conn, """
@@ -192,7 +199,7 @@ public class StreamLifecycleLedgerSqlTests : EFCoreTestBase {
       "SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = 'wh_stream_lifecycle'::regclass");
 
     await Assert.That(indexed).IsEquivalentTo(_indexedColumns)
-      .Because("an update is heap-only only when no indexed column changes: the stream id, its type and its tenant are written once when the row is created (the type and tenant index, migration 272, serves the collective replay's lookup of archived streams), and state, the seal time and the due time change only at end of life");
+      .Because("an update is heap-only only when no indexed column changes: the stream id, its type and its tenant are written once when the row is created (the type and tenant index, migration 272, serves the collective replay's lookup of archived streams), and state, the seal time and the due time change only at end of life. Columns an index names in its key, its predicate or an expression all count, and none of the later columns (archive_locator, origin_generation, archive_deleted_at from migration 274) is indexed: a rebuild looks streams up by key");
     await Assert.That(predicate).IsEquivalentTo(_duePredicate)
       .Because("the due index holds only the streams that have a disposition scheduled");
     await Assert.That(options.Single()).Contains("fillfactor=45")
