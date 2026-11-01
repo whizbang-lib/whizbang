@@ -163,6 +163,33 @@ public class CollectiveReplayOrderingTests {
       .Because("Committed between the two, the collective folds between them, though its id is the lowest of the three.");
   }
 
+  [Test]
+  public async Task Interleave_AKeysCollectives_InAStreamArchivedWhole_FoldInTheCommitOrderTheirEventsCarryAsync() {
+    // #1932: a stream archived whole has no hot row, so no position names its collectives' commit order. The events read
+    // back through the archive carry it, and the key's collectives still fold in the order the live sink applied them.
+    var asked = new List<(IReadOnlyList<string> StreamTypes, string? Tenant)>();
+    var store = new StreamStore(new() {
+      [_keyStream] = [_envelope(_laterCommitId, "b", localCommitSequence: 11), _envelope(_earlierCommitId, "a", localCommitSequence: 10)],
+    });
+    var applier = new CollectiveReplayApplier(
+      [_entry()], new ServiceCollection().AddSingleton<FlipHandler>().BuildServiceProvider(), store, new RecordQuery([]),
+      [new FlipExecutor()],
+      archivedStreams: (streamTypes, tenant, _) => {
+        asked.Add((streamTypes, tenant));
+        return Task.FromResult<IReadOnlyList<Guid>>([_keyStream]);
+      });
+
+    var merged = await _interleaveAsync(applier, _perStream());
+
+    await Assert.That(asked).Count().IsEqualTo(1);
+    await Assert.That(asked[0].Tenant).IsEqualTo(_scope.TenantId).Because("the replayed stream's tenant scopes the lookup");
+    await Assert.That(asked[0].StreamTypes).IsEquivalentTo([typeof(FlipCollectiveEvent).FullName!])
+      .Because("a stream's type in the ledger is its first event's type name, without the assembly");
+    await Assert.That(merged.Select(e => e.MessageId.Value)).IsEquivalentTo(
+      [_perStreamId, _earlierCommitId, _laterCommitId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the archived events' own commit sequences put the key's collectives in commit order");
+  }
+
   // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 
   // A stream event of the tenant, stamped with the commit sequence the event store read carries.
@@ -185,19 +212,20 @@ public class CollectiveReplayOrderingTests {
 
   private static (CollectiveReplayApplier Applier, StreamStore Store) _applier(
       List<EventStoreRecord> records, Dictionary<Guid, List<MessageEnvelope<IEvent>>> streams) {
-    var entry = new CollectiveApplyEntry(
-      ModelType: typeof(FlipModel),
-      EventType: typeof(FlipCollectiveEvent),
-      HandlerType: typeof(FlipHandler),
-      MethodName: "Apply",
-      ScopeHandling: default,
-      SpecKind: default,
-      Invoker: (_, evt, _) => ((FlipCollectiveEvent)evt).Chosen);
     var store = new StreamStore(streams);
     var services = new ServiceCollection().AddSingleton<FlipHandler>().BuildServiceProvider();
-    var applier = new CollectiveReplayApplier([entry], services, store, new RecordQuery(records), [new FlipExecutor()]);
+    var applier = new CollectiveReplayApplier([_entry()], services, store, new RecordQuery(records), [new FlipExecutor()]);
     return (applier, store);
   }
+
+  private static CollectiveApplyEntry _entry() => new(
+    ModelType: typeof(FlipModel),
+    EventType: typeof(FlipCollectiveEvent),
+    HandlerType: typeof(FlipHandler),
+    MethodName: "Apply",
+    ScopeHandling: default,
+    SpecKind: default,
+    Invoker: (_, evt, _) => ((FlipCollectiveEvent)evt).Chosen);
 
   private static EventStoreRecord _record(Guid streamId, Guid eventId, Type eventType, long? commitSequence) => new() {
     Id = eventId,
