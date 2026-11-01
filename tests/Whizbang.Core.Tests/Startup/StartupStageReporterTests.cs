@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 
@@ -25,6 +26,7 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class StartupStageReporterTests {
   private static readonly DateTimeOffset _start = new(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
+  private const string VERSION = "1.2.3";
 
   // --- the log line ----------------------------------------------------------------------------
 
@@ -227,7 +229,7 @@ public class StartupStageReporterTests {
   public async Task AWriteThatFails_IsHeld_AndWrittenOnTheNextRegistrationSignalAsync() {
     var (reporter, coordinator, observer, logger, _) = _build();
     await reporter.InstanceRegisteredAsync();
-    coordinator.Failure = new InvalidOperationException("function wh_record_startup_stage does not exist");
+    coordinator.Failure = new InvalidOperationException("function wh_record_instance_transition does not exist");
     await reporter.EnterAsync(StartupStage.Migrate, "applying");
     coordinator.Failure = null;
 
@@ -282,6 +284,183 @@ public class StartupStageReporterTests {
       .Because("a host with no storage has no instance rows");
   }
 
+  // --- one write per transition: stage, phase and version together (#1636) -------------------------
+
+  [Test]
+  public async Task AStageWrite_CarriesTheStagesPhase_AndTheLibraryVersion_InOneCallAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+
+    await reporter.EnterAsync(StartupStage.AcceptingCommands, "accepting");
+
+    await Assert.That(coordinator.Transitions).IsEquivalentTo([
+      new InstanceTransition(coordinator.ExpectedInstanceId, StartupStage.AcceptingCommands, "accepting",
+        LifecyclePhase.AcceptingCommands, VERSION),
+    ]).Because("the stage record is the only writer of the phase, and the version rides the same update");
+  }
+
+  [Test]
+  public async Task WithoutAVersionProvider_NoVersionIsWrittenAsync() {
+    var (reporter, coordinator, _, _, _) = _build(libraryVersion: null);
+    await reporter.InstanceRegisteredAsync();
+
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+
+    await Assert.That(coordinator.Transitions.Single().LibraryVersion).IsNull()
+      .Because("a null version keeps whatever the row records");
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Pausing)]
+  [Arguments(LifecyclePhase.Paused)]
+  [Arguments(LifecyclePhase.StandingBy)]
+  [Arguments(LifecyclePhase.Resuming)]
+  [Arguments(LifecyclePhase.Faulted)]
+  [Arguments(LifecyclePhase.Halted)]
+  public async Task EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync(LifecyclePhase phase) {
+    var (reporter, coordinator, _, _, clock) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    var entered = reporter.Current!;
+    clock.Advance(TimeSpan.FromSeconds(3));
+
+    await reporter.EnterPhaseAsync(phase);
+
+    await Assert.That(coordinator.Transitions[^1]).IsEqualTo(
+      new InstanceTransition(coordinator.ExpectedInstanceId, StartupStage.Running, "serving", phase, VERSION))
+      .Because("a pause or a stand-by is a phase-only write: one update that keeps the stage");
+    await Assert.That(coordinator.Transitions.Count).IsEqualTo(2);
+    await Assert.That(reporter.Current).IsEqualTo(entered).Because("the stage, and when it was entered, stay");
+  }
+
+  [Test]
+  public async Task EnterPhase_IsNotAStage_SoNothingIsLogged_AndNoObserverIsToldAsync() {
+    var (reporter, _, observer, logger, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    var lines = logger.Collector.GetSnapshot().Count(r => r.Level >= LogLevel.Information);
+
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+
+    await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level >= LogLevel.Information)).IsEqualTo(lines);
+    await Assert.That(observer.Changes.Count).IsEqualTo(1).Because("observers watch stages, and the stage did not change");
+  }
+
+  [Test]
+  public async Task EnterPhase_TheSamePhaseAgain_WritesNothingAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+
+    await Assert.That(coordinator.Transitions.Select(t => t.Phase)).IsEquivalentTo(
+      [LifecyclePhase.Running, LifecyclePhase.Paused], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task Enter_TheCurrentStageAfterAPause_WritesItsOwnPhaseAgain_AndKeepsWhenItWasEnteredAsync() {
+    var (reporter, coordinator, observer, _, clock) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+    clock.Advance(TimeSpan.FromSeconds(3));
+
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+
+    await Assert.That(coordinator.Transitions.Select(t => t.Phase)).IsEquivalentTo(
+      [LifecyclePhase.Running, LifecyclePhase.Paused, LifecyclePhase.Running],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a resume back into Running is a transition the row has to record, though the stage never left Running");
+    await Assert.That(reporter.Current!.EnteredAt).IsEqualTo(_start);
+    await Assert.That(observer.Changes.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Enter_AnEarlierStageDuringAPause_ChangesNothingAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+
+    await reporter.EnterAsync(StartupStage.Migrate, "applying");
+
+    await Assert.That(coordinator.Transitions.Select(t => t.Phase)).IsEquivalentTo(
+      [LifecyclePhase.Running, LifecyclePhase.Paused], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task Enter_ALaterStageDuringAPause_WritesThatStagesPhaseAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    await reporter.EnterAsync(StartupStage.Running, "serving");
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+
+    await reporter.EnterAsync(StartupStage.Draining, "stopping");
+
+    await Assert.That(coordinator.Transitions[^1].Phase).IsEqualTo(LifecyclePhase.Stopping);
+  }
+
+  [Test]
+  public async Task EnterPhase_BeforeRegistration_IsHeld_AndWrittenWithTheStageAtRegistrationAsync() {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.EnterAsync(StartupStage.Preflight, "host starting");
+    await reporter.EnterPhaseAsync(LifecyclePhase.StandingBy);
+
+    await reporter.InstanceRegisteredAsync();
+
+    await Assert.That(coordinator.Transitions).IsEquivalentTo([
+      new InstanceTransition(coordinator.ExpectedInstanceId, StartupStage.Preflight, "host starting",
+        LifecyclePhase.StandingBy, VERSION),
+    ]);
+  }
+
+  [Test]
+  public async Task EnterPhase_BeforeAnyStage_IsWrittenWithNoStageAsync() {
+    var (reporter, coordinator, observer, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+
+    await reporter.EnterPhaseAsync(LifecyclePhase.Halted);
+
+    await Assert.That(coordinator.Transitions).IsEquivalentTo([
+      new InstanceTransition(coordinator.ExpectedInstanceId, null, null, LifecyclePhase.Halted, VERSION),
+    ]).Because("a null stage keeps whatever the row records");
+    await Assert.That(observer.Changes).IsEmpty();
+  }
+
+  [Test]
+  public async Task EnterPhase_ThatFindsNoRow_BeforeAnyStage_IsHeld_AndWrittenOnTheNextRegistrationSignalAsync() {
+    var (reporter, coordinator, observer, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+    coordinator.RowExists = false;
+    await reporter.EnterPhaseAsync(LifecyclePhase.Paused);
+    coordinator.RowExists = true;
+
+    await reporter.InstanceRegisteredAsync();
+
+    await Assert.That(coordinator.Transitions.Select(t => t.Phase)).IsEquivalentTo([LifecyclePhase.Paused]);
+    await Assert.That(observer.Changes).IsEmpty().Because("with no stage there is nothing for a stage observer to see");
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Starting)]
+  [Arguments(LifecyclePhase.Connecting)]
+  [Arguments(LifecyclePhase.Migrating)]
+  [Arguments(LifecyclePhase.AcceptingCommands)]
+  [Arguments(LifecyclePhase.Running)]
+  [Arguments(LifecyclePhase.Stopping)]
+  [Arguments(LifecyclePhase.Stopped)]
+  [Arguments((LifecyclePhase)99)]
+  public async Task EnterPhase_OnTheLadderOrUndefined_IsRefusedAsync(LifecyclePhase phase) {
+    var (reporter, coordinator, _, _, _) = _build();
+    await reporter.InstanceRegisteredAsync();
+
+    await Assert.That(async () => await reporter.EnterPhaseAsync(phase)).Throws<ArgumentOutOfRangeException>()
+      .Because("a phase on the ladder is the stage's own: entering the stage records it");
+    await Assert.That(coordinator.Transitions).IsEmpty();
+  }
+
   // --- arguments -------------------------------------------------------------------------------
 
   [Test]
@@ -328,7 +507,7 @@ public class StartupStageReporterTests {
 
   private static (StartupStageReporter Reporter, RecordingCoordinator Coordinator, RecordingObserver Observer,
       FakeLogger<StartupStageReporter> Logger, FakeTimeProvider Clock) _build(
-      bool withCoordinator = true) {
+      bool withCoordinator = true, string? libraryVersion = VERSION) {
     var instance = new StubInstanceProvider();
     var coordinator = new RecordingCoordinator(instance.InstanceId);
     var services = new ServiceCollection();
@@ -340,7 +519,8 @@ public class StartupStageReporterTests {
     var logger = new FakeLogger<StartupStageReporter>();
     var clock = new FakeTimeProvider(_start);
     var reporter = new StartupStageReporter(
-      scopes, instance, [observer], logger, clock);
+      scopes, instance, [observer], logger, clock,
+      libraryVersion is null ? null : new LibraryVersionProvider(libraryVersion));
     return (reporter, coordinator, observer, logger, clock);
   }
 
@@ -368,15 +548,19 @@ public class StartupStageReporterTests {
 
   private sealed class RecordingCoordinator(Guid expectedInstanceId) : IWorkCoordinator {
     public Guid ExpectedInstanceId { get; } = expectedInstanceId;
-    public List<(StartupStage Stage, string Message)> Writes { get; } = [];
+    /// <summary>Every transition written, whole: one call per write.</summary>
+    public List<InstanceTransition> Transitions { get; } = [];
+    /// <summary>The stage and message of each write that named a stage.</summary>
+    public List<(StartupStage Stage, string Message)> Writes =>
+      [.. Transitions.Where(t => t.Stage is not null).Select(t => (t.Stage!.Value, t.Message!))];
     public List<Guid> InstanceIds { get; } = [];
     public bool RowExists { get; set; } = true;
     public Exception? Failure { get; set; }
     public bool Hang { get; set; }
     public Action? OnWrite { get; set; }
 
-    public async Task<bool> RecordStartupStageAsync(
-        Guid instanceId, StartupStage stage, string message, CancellationToken cancellationToken = default) {
+    public async Task<bool> RecordInstanceTransitionAsync(
+        InstanceTransition transition, CancellationToken cancellationToken = default) {
       OnWrite?.Invoke();
       if (Failure is not null) {
         throw Failure;
@@ -390,8 +574,8 @@ public class StartupStageReporterTests {
       if (!RowExists) {
         return false;
       }
-      InstanceIds.Add(instanceId);
-      Writes.Add((stage, message));
+      InstanceIds.Add(transition.InstanceId);
+      Transitions.Add(transition);
       return true;
     }
 

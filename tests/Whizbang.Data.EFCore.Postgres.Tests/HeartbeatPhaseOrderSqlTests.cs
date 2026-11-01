@@ -13,25 +13,24 @@ using Whizbang.Core.Startup;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Migration 244 (#1781): a heartbeat never moves an instance's recorded lifecycle phase backwards along the startup
-/// and shutdown ladder (Starting, Connecting, Migrating, AcceptingCommands, Running, Stopping, Stopped). A beat reads
-/// the phase when it is built and writes it when it lands; when a startup stage or a transition was recorded in
-/// between, the beat carries the phase before it, and writing that back made a ready instance read as ineligible for
-/// work until its next beat.
+/// A heartbeat and an instance's recorded lifecycle phase. Migration 244 (#1781) stopped a stale beat moving the phase
+/// back down the startup and shutdown ladder; migration 278 (#1636) makes the stage record the only writer of a
+/// recorded phase, so a beat records the phase and version only as a registration: on the row it inserts, on a row
+/// that records none, and for a new process under the same instance id. Every other beat leaves them alone.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every stale beat here is sent as the worker sends it, through the coordinator, carrying exactly the phase a beat
-/// built before the transition carries. Nothing waits for a race: the order the race produces is written in sequence.
+/// Every beat here is sent as the worker sends it, through the coordinator. Nothing waits for a race: the order the
+/// race produces is written in sequence.
 /// </para>
 /// <para>
-/// What the guard must leave alone is covered too: a beat ahead of the row (a lost transition, repaired), a phase off
-/// the ladder (a pause, a stand-by and the revival from it), a phase the database does not know, and a restart, in
-/// which a new process legitimately starts behind the phase the row recorded for the old one.
+/// A beat ahead of the row, a phase off the ladder and a phase the database does not know were each taken from the
+/// beat under 244; under 278 none of them is, because the stage record repairs its own lost writes.
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/244_HeartbeatNeverRollsThePhaseBack.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/278_OneWriterOfTheInstancePhase.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Shard3")]
 public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
@@ -60,9 +59,9 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
-    await coordinator.RecordStartupStageAsync(instance, StartupStage.Coordinate, "coordinating");
+    await _stageAsync(coordinator, instance, StartupStage.Coordinate, "coordinating");
 
-    await coordinator.RecordStartupStageAsync(instance, StartupStage.AcceptingCommands, "accepting");
+    await _stageAsync(coordinator, instance, StartupStage.AcceptingCommands, "accepting");
     await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
 
     await using var conn = await _openAsync();
@@ -84,7 +83,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, stale);
-    await coordinator.RecordStartupStageAsync(instance, stage, "a stage");
+    await _stageAsync(coordinator, instance, stage, "a stage");
 
     await _beatAsync(coordinator, instance, stale);
 
@@ -99,7 +98,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
-    await coordinator.RecordInstanceStateAsync(instance, nameof(LifecyclePhase.AcceptingCommands));
+    await _phaseOnlyAsync(coordinator, instance, LifecyclePhase.AcceptingCommands);
 
     await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
 
@@ -112,18 +111,19 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   // --- what the guard leaves alone ---------------------------------------------------------------
 
   [Test]
-  public async Task ABeatAheadOfTheRow_MovesThePhaseForward_RepairingALostTransitionAsync() {
+  public async Task ABeatAheadOfTheRow_DoesNotMoveThePhase_TheStageRecordIsItsOnlyWriterAsync() {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
-    await coordinator.RecordStartupStageAsync(instance, StartupStage.Migrate, "migrating");
+    await _stageAsync(coordinator, instance, StartupStage.Migrate, "migrating");
 
     await _beatAsync(coordinator, instance, LifecyclePhase.AcceptingCommands);
 
     await using var conn = await _openAsync();
-    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
-      .Because("a transition whose own write was lost is repaired by the next beat, as it was before");
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.Migrating))
+      .Because("278 (#1636): the stage record is the only writer of a recorded phase, and repairs its own lost writes "
+        + "on the next registration signal; a beat that moved it would race the transition again");
   }
 
   [Test]
@@ -132,19 +132,19 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   [Arguments(LifecyclePhase.Running, LifecyclePhase.Faulted)]
   [Arguments(LifecyclePhase.StandingBy, LifecyclePhase.Running)]
   [Arguments(LifecyclePhase.Paused, LifecyclePhase.Resuming)]
-  public async Task APhaseOffTheLadder_IsTakenFromTheBeat_EitherWayAsync(LifecyclePhase recorded, LifecyclePhase beat) {
+  public async Task APhaseOffTheLadder_OnABeat_IsNotWritten_EitherWayAsync(LifecyclePhase recorded, LifecyclePhase beat) {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, LifecyclePhase.Running);
-    await coordinator.RecordStartupStageAsync(instance, StartupStage.Running, "serving");
-    await coordinator.RecordInstanceStateAsync(instance, recorded.ToString());
+    await _stageAsync(coordinator, instance, StartupStage.Running, "serving");
+    await _phaseOnlyAsync(coordinator, instance, recorded);
 
     await _beatAsync(coordinator, instance, beat);
 
     await using var conn = await _openAsync();
-    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(beat.ToString())
-      .Because("a pause, a stand-by and a revival are not rungs of the ladder; the beat still repairs them");
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(recorded.ToString())
+      .Because("a pause and a stand-by are written by the stage record's phase-only write, never by a beat");
   }
 
   [Test]
@@ -161,7 +161,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task APhaseTheDatabaseDoesNotKnow_IsTakenFromTheBeatAsync() {
+  public async Task APhaseTheDatabaseDoesNotKnow_OnABeat_IsNotWrittenAsync() {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
@@ -170,8 +170,54 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LifecyclePhase: "Hibernating"));
 
     await using var conn = await _openAsync();
-    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo("Hibernating")
-      .Because("a phase with no place on the ladder cannot be behind it, so the beat's value stands as before");
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.Running));
+  }
+
+  // --- what a beat still records: its registration (278) ---------------------------------------
+
+  [Test]
+  public async Task ABeatOnARowThatRecordsNoPhaseOrVersion_FillsThemAsync() {
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS));
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+      instance, SERVICE, HOST, PROCESS, LifecyclePhase: nameof(LifecyclePhase.Connecting), LibraryVersion: "2.0.0"));
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.Connecting))
+      .Because("a row that records no phase reads as an older build, eligible whenever live; the registration that "
+        + "created it could not say, so the beat does");
+    await Assert.That(await _versionAsync(conn, instance)).IsEqualTo("2.0.0");
+  }
+
+  [Test]
+  public async Task ABeat_NeverOverwritesARecordedVersionAsync() {
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LibraryVersion: "1.0.0"));
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LibraryVersion: "9.9.9"));
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _versionAsync(conn, instance)).IsEqualTo("1.0.0")
+      .Because("the version is recorded at registration; one process runs one version");
+  }
+
+  [Test]
+  public async Task ANewProcessUnderTheSameInstanceId_RecordsItsVersionAsync() {
+    var instance = Guid.CreateVersion7();
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LibraryVersion: "1.0.0"));
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS + 1, LibraryVersion: "2.0.0"));
+
+    await using var conn = await _openAsync();
+    await Assert.That(await _versionAsync(conn, instance)).IsEqualTo("2.0.0")
+      .Because("a new process registering under the old row is a registration, and runs its own version");
   }
 
   // --- restarts ----------------------------------------------------------------------------------
@@ -185,7 +231,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, instance, LifecyclePhase.Running);
-    await coordinator.RecordStartupStageAsync(instance, StartupStage.Running, "serving");
+    await _stageAsync(coordinator, instance, StartupStage.Running, "serving");
 
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       instance, SERVICE, hostName, processId, LifecyclePhase: nameof(LifecyclePhase.Connecting)));
@@ -204,7 +250,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     await _beatAsync(coordinator, previous, LifecyclePhase.Running);
-    await coordinator.RecordStartupStageAsync(previous, StartupStage.Running, "serving");
+    await _stageAsync(coordinator, previous, StartupStage.Running, "serving");
 
     await _beatAsync(coordinator, restarted, LifecyclePhase.Connecting);
 
@@ -241,6 +287,21 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     if (!accepted) {
       throw new InvalidOperationException($"the beat of {instance} was refused");
     }
+  }
+
+  /// <summary>A stage as the reporter writes it: one transition, with the phase the stage maps to.</summary>
+  private static async Task _stageAsync(IWorkCoordinator coordinator, Guid instance, StartupStage stage, string message) =>
+    _ = await coordinator.RecordInstanceTransitionAsync(
+      new InstanceTransition(instance, stage, message, StartupStages.LifecyclePhaseOf(stage), null));
+
+  /// <summary>A pause or a stand-by as the reporter writes it: the phase alone, keeping the stage.</summary>
+  private static async Task _phaseOnlyAsync(IWorkCoordinator coordinator, Guid instance, LifecyclePhase phase) =>
+    _ = await coordinator.RecordInstanceTransitionAsync(new InstanceTransition(instance, null, null, phase, null));
+
+  private static async Task<string?> _versionAsync(NpgsqlConnection conn, Guid instanceId) {
+    await using var cmd = new NpgsqlCommand("SELECT library_version FROM wh_service_instances WHERE instance_id = @id", conn);
+    cmd.Parameters.AddWithValue("id", instanceId);
+    return await cmd.ExecuteScalarAsync() as string;
   }
 
   private async Task<NpgsqlConnection> _openAsync() {

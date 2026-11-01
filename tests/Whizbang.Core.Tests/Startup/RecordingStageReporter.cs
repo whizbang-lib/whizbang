@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Startup;
 internal sealed class RecordingStageReporter : IStartupStageReporter {
   private readonly List<string> _calls = [];
 
-  /// <summary>Every call, in order: <c>Enter Stage: message</c>, <c>Skip Stage: reason</c>, <c>Registered</c>.</summary>
+  /// <summary>Every call, in order: <c>Enter Stage: message</c>, <c>Skip Stage: reason</c>, <c>Phase name</c>, <c>Registered</c>.</summary>
   public IReadOnlyList<string> Calls => _calls;
 
   /// <summary>The token each call was given, in order.</summary>
@@ -31,6 +31,12 @@ internal sealed class RecordingStageReporter : IStartupStageReporter {
     _calls.Add($"Skip {stage}: {reason}");
     Tokens.Add(cancellationToken);
     Current = new StartupStageSnapshot(stage, "skipped: " + reason, Skipped: true, DateTimeOffset.UnixEpoch);
+    return ValueTask.CompletedTask;
+  }
+
+  public ValueTask EnterPhaseAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) {
+    _calls.Add($"Phase {phase}");
+    Tokens.Add(cancellationToken);
     return ValueTask.CompletedTask;
   }
 

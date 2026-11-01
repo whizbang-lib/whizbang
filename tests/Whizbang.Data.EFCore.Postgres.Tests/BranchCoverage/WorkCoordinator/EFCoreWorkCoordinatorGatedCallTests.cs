@@ -116,6 +116,10 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await Assert.That(await c.RecordInstanceStateAsync(_newId(), "Running")).IsFalse());
     register("RecordStartupStage", "RecordStartupStageAsync", async (c, _) =>
       await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)c).RecordStartupStageAsync(_newId(), Whizbang.Core.Startup.StartupStage.Running, "serving")).IsFalse());
+    register("RecordInstanceTransition", "RecordInstanceTransitionAsync", async (c, _) =>
+      await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)c).RecordInstanceTransitionAsync(
+        new Whizbang.Core.Startup.InstanceTransition(_newId(), Whizbang.Core.Startup.StartupStage.Running, "serving",
+          Whizbang.Core.RunControl.LifecyclePhase.Running, null))).IsFalse());
     register("GetStandbyRequest", "GetStandbyRequestAsync", async (c, _) =>
       await Assert.That(await c.GetStandbyRequestAsync()).IsNull());
     register("ClearStandbyRequest", "_scalarFunctionAsync", (c, _) => c.ClearStandbyRequestAsync(_newId()));
