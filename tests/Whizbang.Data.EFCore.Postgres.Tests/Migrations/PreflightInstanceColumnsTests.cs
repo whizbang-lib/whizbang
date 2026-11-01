@@ -87,8 +87,8 @@ public sealed partial class PreflightInstanceColumnsTests {
       }
     }
     var bootstrapped = new Dictionary<string, string>(StringComparer.Ordinal);
-    foreach (var script in WorkCoordinationDbContextSchemaExtensions.GetBootstrapScripts()) {
-      foreach (var body in MigrationFunctionBodies.Extract(script.Sql)) {
+    foreach (var (_, sql) in WorkCoordinationDbContextSchemaExtensions.GetBootstrapScripts()) {
+      foreach (var body in MigrationFunctionBodies.Extract(sql)) {
         bootstrapped[body.Name] = body.NormalizedBody;
       }
     }
