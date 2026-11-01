@@ -76,6 +76,7 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
 
     services.AddScoped<RebuildBalancePerspective>();
     services.AddScoped<RebuildBalanceCollectiveHandler>();
+    services.AddScoped<RebuildBonusCollectiveHandler>();
 
     var asm = typeof(CollectiveReplayRebuildIntegrationTests).Assembly;
     services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner"));
@@ -581,5 +582,199 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       await Assert.That(metadata.CommitSequence).IsEqualTo(3L)
         .Because("the row is written at the stream's head position, which the ordering guard admits next time");
     }
+  }
+  // ===== #1969, #1970: a replay folds a collective into a row only as far as the live sink applied it, or will not =====
+
+  private const string BonusEntryKey =
+    "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBonusCollectiveHandler.Bonus:"
+    + "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalanceModel";
+
+  // Two rows credited 100, in the order the sink's batches take them (the order of their ids' text), and a bonus of 10.
+  private async Task<(ServiceProvider Services, Guid First, Guid Second, Guid Bonus, Guid BonusStream)> _twoRowsAndABonusAsync(
+      bool withSnapshots = false) {
+    var sp = _buildServices(withArchive: true, withSnapshots: withSnapshots, withFence: withSnapshots);
+    var rows = new[] { Guid.NewGuid(), Guid.NewGuid() }.OrderBy(id => id.ToString("D"), StringComparer.Ordinal).ToArray();
+    var bonus = Guid.CreateVersion7();
+    var bonusStream = Guid.NewGuid();
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var row in rows) {
+        await _appendMintedAsync(eventStore, row, new RebuildCreditedEvent { StreamId = row, Amount = 100m });
+      }
+      await _appendAsync(eventStore, bonusStream,
+        new RebuildBonusCollectiveEvent { StreamId = bonusStream, Scope = new TenantCollectiveScope(string.Empty), Amount = 10m },
+        bonus);
+    }
+    await _stampAsync();
+    return (sp, rows[0], rows[1], bonus, bonusStream);
+  }
+
+  private async Task _bonusRecordAsync(Guid bonus, Guid? through, bool completed) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "INSERT INTO wh_collective_apply_progress (event_id, entry_key, through_id, completed, applied_at) VALUES ($1, $2, $3, $4, now())", conn);
+    cmd.Parameters.AddWithValue(bonus);
+    cmd.Parameters.AddWithValue(BonusEntryKey);
+    cmd.Parameters.AddWithValue((object?)through ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(completed);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private Task<Guid> _queueBonusAsync(Guid bonus, Guid bonusStream) => _queueCollectiveAsync(bonus, bonusStream);
+
+  private async Task<Guid> _queueCollectiveAsync(Guid eventId, Guid stream) {
+    var workId = Guid.NewGuid();
+    await _executeAsync(
+      "INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at) "
+      + "VALUES ('" + workId + "', @s, '__collective__', @e, 0, 1, 0, now())", stream, eventId);
+    return workId;
+  }
+
+  private Task _deadLetterAsync(Guid workId) =>
+    _executeAsync(
+      "SELECT move_to_dead_letters(@s, 'wh_perspective_events', @e, 1, 'failed', gen_random_uuid(), 'test')",
+      Guid.NewGuid(), workId);
+
+  private static async Task<RebuildResult> _rebuildAsync(ServiceProvider sp) =>
+    await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+
+  [Test]
+  public async Task Rebuild_ACollectiveDeadLetteredPartway_FoldsOnlyIntoTheRowsItReachedAsync() {
+    var (sp, first, second, bonus, bonusStream) = await _twoRowsAndABonusAsync();
+    await using var _ = sp;
+    await _bonusRecordAsync(bonus, through: first, completed: false);
+    await _deadLetterAsync(await _queueBonusAsync(bonus, bonusStream));
+
+    var result = await _rebuildAsync(sp);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+    await Assert.That(await _balanceAsync(sp, first)).IsEqualTo(110m)
+      .Because("the dead-lettered apply had reached the first row, which holds the bonus live");
+    await Assert.That(await _balanceAsync(sp, second)).IsEqualTo(100m)
+      .Because("the apply never reached the second row, which does not hold it live");
+  }
+
+  [Test]
+  public async Task Rebuild_ACollectiveDeadLetteredBeforeItsFirstBatch_FoldsIntoNoRowAsync() {
+    var (sp, first, second, bonus, bonusStream) = await _twoRowsAndABonusAsync();
+    await using var _ = sp;
+    await _deadLetterAsync(await _queueBonusAsync(bonus, bonusStream));
+
+    await _rebuildAsync(sp);
+
+    await Assert.That((await _balanceAsync(sp, first), await _balanceAsync(sp, second))).IsEqualTo(((decimal?)100m, (decimal?)100m))
+      .Because("nothing was applied live before the dead letter");
+  }
+
+  [Test]
+  public async Task Rebuild_ACompletedCollective_AndOneWithNoRecord_FoldIntoEveryRowAsync() {
+    var (sp, first, second, bonus, _) = await _twoRowsAndABonusAsync();
+    await using var services = sp;
+    await _bonusRecordAsync(bonus, through: second, completed: true);
+
+    await _rebuildAsync(sp);
+
+    await Assert.That((await _balanceAsync(sp, first), await _balanceAsync(sp, second))).IsEqualTo(((decimal?)110m, (decimal?)110m))
+      .Because("a completed apply reached every row; a collective with no record (applied before records, or swept) too");
+  }
+
+  // #1981: a rewind run while a collective is still queued folded it in full, so the rewound row held a
+  // collective the live row did not, and the live sink then applied it to the row a second time. A collective the sink
+  // has not started is not folded: the rewound row is the live row, and the sink applies the collective to it once.
+  [Test]
+  public async Task Rewind_WhileACollectiveIsQueuedAndNotStarted_DoesNotFoldIt_AsTheLiveRowDoesNotHoldItYetAsync() {
+    var (sp, first, _, bonus, bonusStream) = await _twoRowsAndABonusAsync();
+    await using var services = sp;
+    await _applyLiveAsync(sp, first);
+    await _queueBonusAsync(bonus, bonusStream);
+    Guid trigger;
+    await using (var scope = sp.CreateAsyncScope()) {
+      trigger = await _appendMintedAsync(
+        scope.ServiceProvider.GetRequiredService<IEventStore>(), first, new RebuildCreditedEvent { StreamId = first, Amount = 5m });
+    }
+
+    _ = await _rewindAsync(sp, first, trigger);
+
+    await Assert.That(await _balanceAsync(sp, first)).IsEqualTo(105m)
+      .Because("the queued bonus has not reached the row live; folded here, the live sink would add it a second time");
+  }
+
+  [Test]
+  public async Task Rewind_WhileACollectiveIsMidApply_FoldsItOnlyIntoTheRowsItReachedAsync() {
+    var (sp, first, second, bonus, bonusStream) = await _twoRowsAndABonusAsync();
+    await using var services = sp;
+    await _applyLiveAsync(sp, first);
+    await _applyLiveAsync(sp, second);
+    await _queueBonusAsync(bonus, bonusStream);
+    await _bonusRecordAsync(bonus, through: first, completed: false);
+
+    _ = await _rewindAsync(sp, first, await _lastEventIdAsync(first));
+    _ = await _rewindAsync(sp, second, await _lastEventIdAsync(second));
+
+    await Assert.That(await _balanceAsync(sp, first)).IsEqualTo(110m).Because("the apply's committed batches reached the first row");
+    await Assert.That(await _balanceAsync(sp, second)).IsEqualTo(100m).Because("the sink applies the bonus to the second row later");
+  }
+
+  [Test]
+  public async Task Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync() {
+    var (sp, first, _, bonus, bonusStream) = await _twoRowsAndABonusAsync(withSnapshots: true);
+    await using var services = sp;
+    await _queueBonusAsync(bonus, bonusStream);
+    await _bonusRecordAsync(bonus, through: first, completed: false);
+
+    _ = await _rewindAsync(sp, first, await _lastEventIdAsync(first));
+
+    await Assert.That(await _balanceAsync(sp, first)).IsEqualTo(110m).Because("the control: the rewind wrote the row");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_snapshots")).IsEqualTo(0L)
+      .Because("a collective still in flight may yet reach the row, and no mark says which of its rows a snapshot holds");
+  }
+
+  [Test]
+  public async Task Rewind_ThatMeetsNoCollectiveInFlight_TakesItsSnapshotAsync() {
+    var (sp, first, _, bonus, _) = await _twoRowsAndABonusAsync(withSnapshots: true);
+    await using var services = sp;
+    await _bonusRecordAsync(bonus, through: first, completed: true);
+
+    _ = await _rewindAsync(sp, first, await _lastEventIdAsync(first));
+
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_snapshots")).IsGreaterThan(0L)
+      .Because("the control for the deferral: a rewind with nothing in flight ends with its snapshot");
+  }
+
+  [Test]
+  public async Task Rebuild_ThatFoldsACollectiveStillInFlight_TakesNoSnapshotOfTheRowsItFoldsItIntoAsync() {
+    var (sp, first, second, bonus, bonusStream) = await _twoRowsAndABonusAsync(withSnapshots: true);
+    await using var services = sp;
+    await _queueBonusAsync(bonus, bonusStream);
+    await _bonusRecordAsync(bonus, through: first, completed: false);
+
+    await _rebuildAsync(sp);
+
+    await Assert.That((await _balanceAsync(sp, first), await _balanceAsync(sp, second))).IsEqualTo(((decimal?)110m, (decimal?)100m))
+      .Because("the control: the rebuild folded the bonus into the row the apply reached, and not into the other");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_snapshots")).IsEqualTo(0L)
+      .Because("a rebuild snapshot records no collective mark, and the bonus may yet reach the second row live");
+  }
+
+  [Test]
+  public async Task Rebuild_ThatMeetsNoCollectiveInFlight_TakesItsSnapshotsAsync() {
+    var (sp, _, _, bonus, _) = await _twoRowsAndABonusAsync(withSnapshots: true);
+    await using var services = sp;
+    await _bonusRecordAsync(bonus, through: null, completed: true);
+
+    await _rebuildAsync(sp);
+
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_snapshots")).IsGreaterThan(0L)
+      .Because("the control for the deferral: with nothing in flight the rebuild snapshots every event");
+  }
+
+  private async Task<Guid> _lastEventIdAsync(Guid stream) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "SELECT event_id FROM wh_event_store WHERE stream_id = $1 ORDER BY commit_sequence DESC NULLS FIRST LIMIT 1", conn);
+    cmd.Parameters.AddWithValue(stream);
+    return (Guid)(await cmd.ExecuteScalarAsync())!;
   }
 }

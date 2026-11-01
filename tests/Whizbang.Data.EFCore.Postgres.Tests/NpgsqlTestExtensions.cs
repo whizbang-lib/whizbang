@@ -161,6 +161,22 @@ internal static class NpgsqlTestExtensions {
     return results;
   }
 
+  /// <summary>
+  /// Executes a parameterized query and returns every row: a scalar from the first column, or a value tuple from the
+  /// columns in order. Replaces Dapper's <c>conn.QueryAsync&lt;T&gt;(sql, param)</c>.
+  /// </summary>
+  public static async Task<List<T>> QueryAsync<T>(this NpgsqlConnection conn, string sql, object param) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    AddParameters(cmd, param);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    var results = new List<T>();
+    while (await reader.ReadAsync()) {
+      results.Add(typeof(T) == typeof(Guid) ? (T)(object)reader.GetGuid(0) : MapRow<T>(reader));
+    }
+    return results;
+  }
+
   private static T MapRow<T>(NpgsqlDataReader reader) {
     var type = typeof(T);
 

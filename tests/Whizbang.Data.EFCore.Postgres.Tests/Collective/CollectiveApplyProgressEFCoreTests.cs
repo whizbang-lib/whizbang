@@ -34,6 +34,10 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
   private const string TABLE = "wh_per_collective_progress";
   private const string TENANT = "t-progress";
 
+  // The archive handler's entry key: handler type, method and model, by name (CollectiveApplyEntry.EntryKey).
+  private const string ARCHIVE_KEY =
+    "Whizbang.Data.EFCore.Postgres.Tests.Collective.CollectiveApplyProgressEFCoreTests+ArchivePerspective.Archive:Whizbang.Data.EFCore.Postgres.Tests.Collective.CollectiveApplyProgressEFCoreTests+JobModel";
+
   // Five rows in batches of two: three batches, the last one short.
   private static readonly CollectiveApplyOptions _batchesOfTwo = new() { BatchSize = 2 };
 
@@ -180,10 +184,15 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
   public async Task AResumedApply_StampsTheRowsItReaches_WithTheTimeTheApplyStartedAsync() {
     await _seedAsync(5);
     var eventId = Guid.NewGuid();
+    DateTime? started = null;
     await using (var ctx = _context()) {
       await Assert.That(async () => await new EFCoreCollectiveEventExecutor<JobModel>(_batchesOfTwo).ApplyAsync(
           _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ctx, eventId,
-          onBatchApplied: _ => throw new InvalidOperationException("the host went down after the first batch")))
+          onBatchApplied: async ct => {
+            // The time the first batch stamped, then the host goes down.
+            started = await _scalarAsync<DateTime>($"SELECT max(updated_at) FROM {TABLE} WHERE version = 2", ct);
+            throw new InvalidOperationException("the host went down after the first batch");
+          }))
         .Throws<InvalidOperationException>();
     }
     await using (var ctx = _context()) {
@@ -191,12 +200,44 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
         _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ctx, eventId);
     }
 
+    await Assert.That(await _scalarAsync<long>($"SELECT count(DISTINCT updated_at) FROM {TABLE}", CancellationToken.None)).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync<DateTime>($"SELECT max(updated_at) FROM {TABLE}", CancellationToken.None)).IsEqualTo(started!.Value)
+      .Because("every row of one apply carries the time the apply started, the resumed rows included");
+  }
+
+  // A dead letter left the apply abandoned after its first batch; recovery re-queues the collective, and the apply resumes
+  // after that batch, completes the rest once, and is no longer abandoned (#1970).
+  [Test]
+  public async Task ARecoveredDeadLetter_ResumesTheAbandonedApply_AndCompletesTheRestOnceAsync() {
+    var ids = await _seedAsync(5);
+    var eventId = Guid.NewGuid();
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT count(DISTINCT updated_at) FROM {TABLE}";
-    await Assert.That((long)(await cmd.ExecuteScalarAsync())!).IsEqualTo(1L)
-      .Because("every row of one apply carries the apply's one timestamp, the resumed rows included");
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = $"UPDATE {TABLE} SET version = 2 WHERE id = ANY(@reached);"
+        + " INSERT INTO wh_collective_apply_progress (event_id, entry_key, through_id, completed, abandoned, applied_at)"
+        + " VALUES (@eventId, @key, @through, false, true, now()), (@eventId, '*', NULL, false, true, now())";
+      seed.Parameters.AddWithValue("reached", new[] { ids[0], ids[1] });
+      seed.Parameters.AddWithValue("eventId", eventId);
+      seed.Parameters.AddWithValue("key", ARCHIVE_KEY);
+      seed.Parameters.AddWithValue("through", ids[1]);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    int applied;
+    await using (var ctx = _context()) {
+      applied = await new EFCoreCollectiveEventExecutor<JobModel>(_batchesOfTwo).ApplyAsync(
+        _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ctx, eventId);
+    }
+
+    await using var check = conn.CreateCommand();
+    check.CommandText = "SELECT completed AND NOT abandoned FROM wh_collective_apply_progress WHERE event_id = @eventId AND entry_key = @key";
+    check.Parameters.AddWithValue("eventId", eventId);
+    check.Parameters.AddWithValue("key", ARCHIVE_KEY);
+    await Assert.That(applied).IsEqualTo(3);
+    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2 });
+    await Assert.That((bool)(await check.ExecuteScalarAsync())!).IsTrue()
+      .Because("the recovered apply finished, and is no longer abandoned");
   }
 
   // An apply with no event id has nothing to resume by: each one records under an id of its own and applies in full.
@@ -280,6 +321,14 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
       await insert.ExecuteNonQueryAsync();
     }
     return ids;
+  }
+
+  private async Task<T> _scalarAsync<T>(string sql, CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    return (T)(await cmd.ExecuteScalarAsync(cancellationToken))!;
   }
 
   private async Task<int[]> _versionsAsync() {

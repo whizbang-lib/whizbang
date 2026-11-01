@@ -28,6 +28,10 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 public class DapperCollectiveApplyProgressTests : PostgresTestBase {
   private const string TABLE = "wh_per_collective_dapper_progress";
   private const string TENANT = "t-progress";
+
+  // The archive handler's entry key: handler type, method and model, by name (CollectiveApplyEntry.EntryKey).
+  private const string ARCHIVE_KEY =
+    "Whizbang.Data.Dapper.Postgres.Tests.Collective.DapperCollectiveApplyProgressTests+ArchivePerspective.Archive:Whizbang.Data.Dapper.Postgres.Tests.Collective.DapperCollectiveApplyProgressTests+JobModel";
   private static readonly IReadOnlyDictionary<Type, string> _noSiblings = new Dictionary<Type, string>();
 
   // Five rows in batches of two: three batches, the last one short.
@@ -152,18 +156,50 @@ public class DapperCollectiveApplyProgressTests : PostgresTestBase {
   public async Task AResumedApply_StampsTheRowsItReaches_WithTheTimeTheApplyStartedAsync() {
     await _seedAsync(5);
     var eventId = Guid.NewGuid();
+    DateTime? started = null;
     await Assert.That(async () => await _executor(_batchesOfTwo).ApplyAsync(
         _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ConnectionFactory, eventId,
-        onBatchApplied: _ => throw new InvalidOperationException("the host went down after the first batch")))
+        onBatchApplied: async ct => {
+          // The time the first batch stamped, then the host goes down.
+          using var conn = await ConnectionFactory.CreateConnectionAsync(ct);
+          started = await conn.ExecuteScalarAsync<DateTime>($"SELECT max(updated_at) FROM {TABLE} WHERE version = 2");
+          throw new InvalidOperationException("the host went down after the first batch");
+        }))
       .Throws<InvalidOperationException>();
 
     _ = await _executor(_batchesOfTwo).ApplyAsync(
       _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ConnectionFactory, eventId);
 
-    using var conn = await ConnectionFactory.CreateConnectionAsync();
-    var stamps = (await conn.QueryAsync<DateTime>($"SELECT DISTINCT updated_at FROM {TABLE}")).ToList();
-    await Assert.That(stamps.Count).IsEqualTo(1)
-      .Because("every row of one apply carries the apply's one timestamp, the resumed rows included");
+    using var check = await ConnectionFactory.CreateConnectionAsync();
+    var stamps = (await check.QueryAsync<DateTime>($"SELECT DISTINCT updated_at FROM {TABLE}")).ToList();
+    await Assert.That(stamps).IsEquivalentTo(new[] { started!.Value })
+      .Because("every row of one apply carries the time the apply started, the resumed rows included");
+  }
+
+  // A dead letter left the apply abandoned after its first batch; recovery re-queues the collective, and the apply resumes
+  // after that batch, completes the rest once, and is no longer abandoned (#1970).
+  [Test]
+  public async Task ARecoveredDeadLetter_ResumesTheAbandonedApply_AndCompletesTheRestOnceAsync() {
+    var ids = await _seedAsync(5);
+    var eventId = Guid.NewGuid();
+    using (var conn = await ConnectionFactory.CreateConnectionAsync()) {
+      await conn.ExecuteAsync(
+        $"UPDATE {TABLE} SET version = 2 WHERE id = ANY(@reached);"
+        + " INSERT INTO wh_collective_apply_progress (event_id, entry_key, through_id, completed, abandoned, applied_at)"
+        + " VALUES (@eventId, @key, @through, false, true, now()), (@eventId, '*', NULL, false, true, now())",
+        new { reached = new[] { ids[0], ids[1] }, eventId, key = ARCHIVE_KEY, through = ids[1] });
+    }
+
+    var applied = await _executor(_batchesOfTwo).ApplyAsync(
+      _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ConnectionFactory, eventId);
+
+    using var check = await ConnectionFactory.CreateConnectionAsync();
+    var record = await check.QuerySingleAsync<(bool Completed, bool Abandoned)>(
+      "SELECT completed, abandoned FROM wh_collective_apply_progress WHERE event_id = @eventId AND entry_key = @key",
+      new { eventId, key = ARCHIVE_KEY });
+    await Assert.That(applied).IsEqualTo(3);
+    await Assert.That(await _versionsAsync()).IsEquivalentTo(new long[] { 2, 2, 2, 2, 2 });
+    await Assert.That(record).IsEqualTo((true, false)).Because("the recovered apply finished, and is no longer abandoned");
   }
 
   // An apply with no event id has nothing to resume by: each one records under an id of its own and applies in full.

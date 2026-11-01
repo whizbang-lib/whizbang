@@ -191,6 +191,14 @@ public class CollectiveReplayRunnerTests {
     await Assert.That(merged).IsSameReferenceAs(streamEvents);
   }
 
+  [Test]
+  public async Task AnApplierWrittenBeforeInFlightCollectivesWereKnown_SaysNoneIsInFlightAsync() {
+    ICollectiveReplayApplier minimal = new MinimalApplier();
+
+    await Assert.That(minimal.IsInFlight(new PermissionsNoted())).IsFalse()
+      .Because("an applier that reads no progress keeps every replay's snapshots as they were");
+  }
+
   // ===== #1963: a live snapshot records how far the row's collectives were complete =====
 
   [Test]

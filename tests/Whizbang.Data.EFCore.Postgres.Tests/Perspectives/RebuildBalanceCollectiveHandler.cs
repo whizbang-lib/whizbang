@@ -42,3 +42,20 @@ public sealed class RebuildBalanceCollectiveHandler {
       Setters: s => s.SetProperty(m => m.Balance, e.ResetTo),
       Where: r => r.Id == e.TargetId);
 }
+
+/// <summary>
+/// A collective that adds a bonus to every row of its tenant: an increment, so a row that receives it twice shows it
+/// (#1969, #1970). A replay folds it into a row only as far as the live sink applied it, or will not.
+/// </summary>
+public record RebuildBonusCollectiveEvent : CollectiveEventBase {
+  /// <summary>The amount added to <see cref="RebuildBalanceModel.Balance"/>.</summary>
+  public required decimal Amount { get; init; }
+}
+
+/// <summary>Handler discovered by the generator; adds the bonus to every row in scope.</summary>
+public sealed class RebuildBonusCollectiveHandler {
+  /// <summary>Add the bonus to the row's balance: a computed setter over the row's own value.</summary>
+  [CollectiveApplyFor]
+  public ICollectiveSpec<RebuildBalanceModel> Bonus(RebuildBonusCollectiveEvent e, ICollectiveQuery _) =>
+    new RebuildBalanceSpec(Setters: s => s.SetProperty(m => m.Balance, m => m.Balance + e.Amount));
+}
