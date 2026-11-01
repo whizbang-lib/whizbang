@@ -243,9 +243,9 @@ public class CollectiveReplayApplierCoverageTests {
     var (applier, _, _) = _twoCollectives();
     var start = new CollectiveReplayStart("tenant-a");
 
-    await Assert.That(() => applier.InterleaveAfterAsync(null!, [], start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => applier.InterleaveAfterAsync(typeof(ProbeModel), null!, start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => applier.InterleaveAfterAsync(typeof(ProbeModel), [], null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await applier.InterleaveAfterAsync(null!, [], start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await applier.InterleaveAfterAsync(typeof(ProbeModel), null!, start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await applier.InterleaveAfterAsync(typeof(ProbeModel), [], null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
   }
 
   // One registered collective for ProbeModel in tenant-a, twice: committed at 5 and at 15, each its own stream.
