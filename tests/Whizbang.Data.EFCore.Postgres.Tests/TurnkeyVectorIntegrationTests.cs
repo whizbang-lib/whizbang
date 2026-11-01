@@ -42,9 +42,9 @@ public class TurnkeyVectorIntegrationTests {
   /// </summary>
   /// <remarks>
   /// Through <see cref="PerTestDatabaseFactory"/> rather than a <c>CREATE DATABASE</c> of its own (#1940): issued
-  /// here on a connection with the default 30-second command timeout, the create and the drop were cancelled by the
-  /// client whenever another shard was loading the shared container. The factory issues both with no command
-  /// timeout, bounded by this hook's token.
+  /// here on a connection with the default 30-second command timeout, the drop (which waits for a forced checkpoint
+  /// of the whole shared cluster) was cancelled whenever another shard was writing, and the failure escaped. The
+  /// factory's drop waits for the checkpoint under a hang guard and never fails the test.
   /// </remarks>
   [Before(Test)]
   public async Task SetupAsync(CancellationToken cancellationToken) {

@@ -121,8 +121,8 @@ public class GinContainmentIntegrationTests {
   /// <para>
   /// Once per class rather than once per test (#1941). Each test used to insert the 200,000 bulk rows itself, on a
   /// connection with the default 30-second command timeout; beside another shard's load on the shared container
-  /// the client cancelled the insert and the test failed in setup. The fill now runs once, on a connection with no
-  /// command timeout (bounded by this hook's own timeout through the token), and each test copies the result.
+  /// the client cancelled the insert and the test failed in setup. The fill now runs once, on the setup connection
+  /// (bounded by this hook's own timeout through the token, with a hang guard behind it), and each test copies it.
   /// </para>
   /// <para>
   /// Nothing may stay connected to the template while it is copied, so the fill does not pool its connections.

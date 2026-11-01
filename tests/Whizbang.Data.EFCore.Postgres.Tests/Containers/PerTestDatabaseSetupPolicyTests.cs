@@ -10,14 +10,14 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Containers;
 
 /// <summary>
-/// The connection a fixture runs its own setup on has no command timeout, so how busy the shared server is
-/// decides how long setup takes and never whether it succeeds (#1941).
+/// The connection a fixture runs its own setup on carries a hang guard instead of the default command timeout, so
+/// how busy the shared server is decides how long setup takes and not whether it succeeds (#1940, #1941).
 /// </summary>
 /// <remarks>
 /// A containment fixture seeded 200,000 rows on a connection with Npgsql's default 30-second command timeout.
 /// With another shard loading the same container the client cancelled the insert, and four of its tests failed
-/// in setup. These tests pin the policy that replaced it; the bound on a setup statement is the test's own
-/// timeout, reached through the token the statement is given.
+/// in setup. These tests pin the policy that replaced it: the test's own timeout bounds a setup statement through
+/// its token, and a guard far above any measured wait catches a hang.
 /// </remarks>
 [Category("Unit")]
 [Category("Shard1")]
@@ -26,11 +26,11 @@ public class PerTestDatabaseSetupPolicyTests {
     "Host=localhost;Port=5432;Database=fixture_db;Username=whizbang_user;Command Timeout=30;Timezone=UTC";
 
   [Test]
-  public async Task ForSetup_TurnsTheCommandTimeoutOffAsync() {
+  public async Task ForSetup_ReplacesTheCommandTimeoutWithTheHangGuardAsync() {
     var setup = new NpgsqlConnectionStringBuilder(PerTestDatabaseFactory.ForSetup(CONNECTION_STRING));
 
-    await Assert.That(setup.CommandTimeout).IsEqualTo(0)
-      .Because("zero is Npgsql's 'no timeout': a setup statement ends when it finishes or when its token is canceled");
+    await Assert.That(setup.CommandTimeout).IsEqualTo(PerTestDatabaseFactory.SETUP_STATEMENT_GUARD_SECONDS)
+      .Because("a setup statement waits as long as the shared server's load makes it, up to a guard that only a hang reaches");
   }
 
   [Test]

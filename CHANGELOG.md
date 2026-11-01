@@ -1016,18 +1016,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked against the expressions they replace, and a guard fails any generator source that uses a regular
   expression. The generator test helper now fails naming the file it was asked for, with the generator's exception,
   when a generator threw, instead of answering null (Fixes #1942)
-- **A test's scratch database is created and dropped whatever the load on the shared test container.**
-  `PerTestDatabaseFactory` issued `CREATE DATABASE` and `DROP DATABASE ... WITH (FORCE)` with Npgsql's default
-  30-second command timeout, and the vector extension tests issued their own the same way, so beside another shard's
-  load the client cancelled them and the tests failed before an assertion ran. The factory now issues both with no
-  command timeout, bounded by the caller's token (the hook's or the test's), and the vector tests create and drop all
-  four of their databases through it, taking their teardown from `[After(Test)]` only (Fixes #1940)
+- **A test's scratch database is created and dropped whatever the load on the shared test container.** The vector
+  extension tests issued their own `DROP DATABASE ... WITH (FORCE)` with Npgsql's default 30-second command timeout
+  and let its failure escape. Since PostgreSQL 15 a drop forces an immediate checkpoint and waits for it, so it takes
+  as long as flushing every dirty buffer in the shared cluster; beside another shard's writes those checkpoints took
+  up to 137 seconds, and every statement the build servers' container logs show cancelled was such a drop (none was a
+  create). The vector tests now create and drop all four of their databases through `PerTestDatabaseFactory`, whose
+  drop never fails a test and tears down from `[After(Test)]` only. The factory's create and drop, and fixture setup
+  through `PerTestDatabaseFactory.ForSetup`, run under `SETUP_STATEMENT_GUARD_SECONDS` (240 s), a guard sized to catch
+  a hang rather than to bound the wait, with the test's or hook's token bounding them first (Fixes #1940)
 - **The jsonb containment tests no longer fail in setup when another shard loads the shared test container.** Each
   test inserted 200,000 rows on a connection with Npgsql's default 30-second command timeout; beside another shard's
   load the client cancelled the insert (the server logged `canceling statement due to user request` on it, then the
   test's own teardown ending the session), so the test failed before an assertion ran. The rows are now inserted once
-  per class into a template that each test copies, on a connection with no command timeout whose bound is the hook's
-  own, and the class drops its copy once, from its `[After(Test)]` hook only, instead of a second time as
+  per class into a template that each test copies, on a setup connection whose bound is the hook's own timeout
+  (with a hang guard behind it), and the class drops its copy once, from its `[After(Test)]` hook only, instead of a second time as
   `IAsyncDisposable`. `PerTestDatabaseFactory` gains `CreateFromTemplateAsync` and `ForSetup`, the connection string a
   fixture runs its own setup on, and a guard fails any fixture that issues its own `CREATE DATABASE` outside the
   shrinking list of fixtures that predate the factory (Fixes #1941, Fixes #1935)

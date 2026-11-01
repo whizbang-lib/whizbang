@@ -107,10 +107,20 @@ public static class PerTestDatabaseFactory {
   /// The connection the factory creates and drops databases on: the server's, under the setup policy.
   /// </summary>
   /// <remarks>
-  /// <c>CREATE DATABASE</c> copies a template and <c>DROP DATABASE ... WITH (FORCE)</c> waits for the sessions it
-  /// ends, so how long either takes is a fact about the shared server's load. Under Npgsql's default 30-second
-  /// command timeout the client cancelled both beside a busy shard (#1940); with no command timeout they finish,
-  /// and the caller's token, from the hook or the test, is the bound.
+  /// <para>
+  /// What made these slow under load is measured, not guessed (#1940). Every cancelled statement in the build
+  /// servers' container logs was a <c>DROP DATABASE</c> (42 of them; no <c>CREATE DATABASE</c> was ever cancelled), and
+  /// each sat behind a <c>checkpoint starting: immediate force wait</c>: since PostgreSQL 15 a drop forces an immediate
+  /// checkpoint and waits for it, so its duration is the time to flush every dirty buffer the whole shared cluster
+  /// holds, which is the other shards' write load. Those checkpoints took up to 137 seconds. It is not lingering
+  /// sessions (the drop is <c>WITH (FORCE)</c>) and not contention on <c>template1</c> (a create, which takes that
+  /// lock, never timed out).
+  /// </para>
+  /// <para>
+  /// A drop therefore waits for that checkpoint rather than being cancelled at 30 seconds, under the guard in
+  /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, which is there to fail a hang loudly and is not the wait. A drop
+  /// that still cannot finish is abandoned as before (see <see cref="DropAsync"/>), never failing the test.
+  /// </para>
   /// </remarks>
   private static string _adminConnectionString() => ForSetup(SharedPostgresContainer.ConnectionString);
 
@@ -193,29 +203,41 @@ public static class PerTestDatabaseFactory {
   }
 
   /// <summary>
+  /// How long a setup statement may run before it is treated as hung: far above the longest honest wait measured
+  /// on the shared test container, so it is a hang guard and never the wait.
+  /// </summary>
+  /// <remarks>
+  /// The longest forced checkpoint a <c>DROP DATABASE</c> waited for on the build servers was 137 seconds; the
+  /// containment fixture's 200,000-row fill takes about 3 seconds idle. Four minutes stays under TUnit's five-minute
+  /// hook timeout, so a hung statement fails with its own statement in the message rather than a bare hook timeout.
+  /// </remarks>
+  public const int SETUP_STATEMENT_GUARD_SECONDS = 240;
+
+  /// <summary>
   /// The connection string a fixture runs its own setup on: the statements that build, fill and migrate its
-  /// database, which have no command timeout and end only when the caller's cancellation token says so.
+  /// database, whose duration is the shared server's load rather than anything about the code under test.
   /// </summary>
   /// <param name="connectionString">The connection string to the fixture's database.</param>
-  /// <returns>The same connection string with the command timeout turned off.</returns>
+  /// <returns>The same connection string with the command timeout set to <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>.</returns>
   /// <remarks>
   /// <para>
-  /// How long a setup statement takes is a fact about how busy the shared server is, not about the code under
-  /// test: every test process on a machine shares one container, and a seed that takes seconds on an idle one
-  /// takes minutes beside another shard's load. Under Npgsql's default 30-second command timeout the client
-  /// cancelled such statements, and the test failed before an assertion ran. Without a timeout the statement
-  /// finishes whatever the load, and the bound is the test's own: its <c>[Timeout]</c> or the hook's, through
-  /// the token the statement is given.
+  /// Every test process on a machine shares one container, and a statement that takes seconds on an idle one takes
+  /// tens of seconds beside another shard's load: the server log for the failed containment runs shows the client
+  /// cancelling the fill at Npgsql's default 30 seconds. The default is a guess at how long a query of the code
+  /// under test should take, and it was failing tests for the load. Setup statements get a guard instead,
+  /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>, sized to catch a hang and not to bound the wait, and the test's own
+  /// <c>[Timeout]</c> or the hook's still bounds them first through the token the statement is given.
   /// </para>
   /// <para>
-  /// Use it for setup only. A query a test makes of the code under test keeps the ordinary connection string,
-  /// so a statement that hangs because of a defect still fails at the usual timeout.
+  /// Use it for setup only. A query a test makes of the code under test keeps the ordinary connection string.
   /// </para>
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/PerTestDatabaseSetupPolicyTests.cs</tests>
   public static string ForSetup(string connectionString) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-    return new NpgsqlConnectionStringBuilder(connectionString) { CommandTimeout = 0 }.ConnectionString;
+    return new NpgsqlConnectionStringBuilder(connectionString) {
+      CommandTimeout = SETUP_STATEMENT_GUARD_SECONDS,
+    }.ConnectionString;
   }
 
   private static async Task<PerTestDatabase> _createAsync(
