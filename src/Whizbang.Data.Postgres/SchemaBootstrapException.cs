@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres;
 /// rejects, a missing permission, a database that does not exist. Before #1636 those were logged at Warning and the
 /// instance migrated under the schema lock alone, so a broken closure surfaced only as a missing election.
 /// </remarks>
-/// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <docs>operations/diagnostics/error-reference#schema-bootstrap-exception</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ANonTransientFailure_FailsStartupLoudly_NamingWhatFailedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaBootstrapRetryTests.cs:TheStandardConstructors_NameNoSchemaOrStepAsync</tests>
 public sealed class SchemaBootstrapException : Exception {

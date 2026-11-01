@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// them.
 /// </para>
 /// </remarks>
-/// <docs>data/turnkey-initialization#a-second-call-waits</docs>
+/// <docs>data/turnkey-initialization#a-direct-call-waits</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationBarrierTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupPreflightHostTests.cs:ADirectDbContextInitialization_WaitsForTheHostsOwn_AndAppliesNothingAsync</tests>
 public static partial class SchemaInitializationBarrier {

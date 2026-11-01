@@ -70,6 +70,7 @@ public interface ISchemaInitializationObserver {
   /// Called once the wait has been scheduled on the initializer's clock and before it is awaited, so a test driving a
   /// fake clock can advance it by <paramref name="delay"/> as soon as this is called.
   /// </remarks>
+  /// <docs>data/turnkey-initialization#bootstrap-retry-scheduled</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ATransientFailure_IsRetriedOnceItsDelayHasPassed_ThenTheClosureLandsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
   ValueTask OnBootstrapRetryScheduledAsync(

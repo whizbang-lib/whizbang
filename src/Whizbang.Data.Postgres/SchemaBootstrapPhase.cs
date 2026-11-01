@@ -61,7 +61,7 @@ namespace Whizbang.Data.Postgres;
 /// releases it on commit and on rollback alike.
 /// </para>
 /// </remarks>
-/// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <docs>operations/infrastructure/migrations#bootstrap-waits-for-the-lock</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs</tests>
 public static class SchemaBootstrapPhase {
   /// <summary>

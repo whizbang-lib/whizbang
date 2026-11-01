@@ -229,7 +229,7 @@ heartbeated yet", which is every instance of every service. That shipped once as
 
 `SchemaBootstrapPhase` applies a marked subset first: the core tables, then the regions marked
 `-- @whizbang:bootstrap-begin` / `-- @whizbang:bootstrap-end`. `MigratorDutyStaging` then registers
-the instance and elects. Three properties, each of which is a test:
+the instance and elects. The properties, each of which is a test:
 
 1. **It writes no ledger rows.** Making objects exist and claiming to have migrated them are
    different things. If the bootstrap wrote hashes, the ordinary pass would read them, conclude
