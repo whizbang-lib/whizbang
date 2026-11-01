@@ -44,6 +44,14 @@ public class EventFlagsTests {
   }
 
   [Test]
+  public async Task EventFlags_Superseding_BitPositionLocked_AndItIsNotStateBasedAsync() {
+    await Assert.That(_asInt(EventFlags.Superseding)).IsEqualTo(128)
+      .Because("Bit position 7. The emit chains and wh_append_event stamp the key only on (flags & 128), and the superseded-event reaper deletes only those rows (#1729); moving the bit silently stops every superseding event from being reaped.");
+    await Assert.That(EventFlags.Superseding.IsStateBased()).IsFalse()
+      .Because("The newest event of each key stays in the log, so a rebuild or a rewind still replays it. Counting it StateBased would make the rebuild skip every stream that holds one, and the mixed-stream guard refuse a superseding event on a stream of ordinary events.");
+  }
+
+  [Test]
   public async Task IsStateBased_TrueForEphemeralAndCompacted_FalseOtherwiseAsync() {
     await Assert.That(EventFlags.Ephemeral.IsStateBased()).IsTrue()
       .Because("Ephemeral is StateBased (no-replay) — self-destructing.");

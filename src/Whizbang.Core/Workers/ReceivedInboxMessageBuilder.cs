@@ -117,7 +117,9 @@ internal static class ReceivedInboxMessageBuilder {
       string guardSite,
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver,
-      ReceivedOriginStampMonitor? originMonitor = null) {
+      ReceivedOriginStampMonitor? originMonitor = null,
+      JsonSerializerOptions? jsonOptions = null) {
+    _ = jsonOptions;
     var (envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent) = received;
     // The stream its producer stored it on, read the way every storing site reads it (#1798).
     var streamId = StreamIdentity.Of(envelope);

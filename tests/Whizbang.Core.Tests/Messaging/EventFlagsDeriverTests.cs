@@ -21,6 +21,9 @@ public class EventFlagsDeriverTests {
   [Whizbang.Core.Attributes.TerminalEvent]
   public sealed record Closed([property: StreamId] Guid StreamId = default) : IEvent;
 
+  [Whizbang.Core.Attributes.Superseding]
+  public sealed record Replaced([property: StreamId] Guid StreamId = default) : IEvent;
+
   [Test]
   public async Task FromPayload_Plain_NoneAsync() =>
     await Assert.That(EventFlagsDeriver.FromPayload(new Plain(), null)).IsEqualTo(EventFlags.None);
@@ -37,6 +40,11 @@ public class EventFlagsDeriverTests {
   public async Task FromPayload_ATerminalEvent_CarriesTheTerminalBitAsync() =>
     await Assert.That(EventFlagsDeriver.FromPayload(new Closed(), null)).IsEqualTo(EventFlags.Terminal)
       .Because("the generated catalog registers [TerminalEvent] types, and the dispatch path stamps the bit from that registration");
+
+  [Test]
+  public async Task FromPayload_ASupersedingEvent_CarriesTheSupersedingBitAsync() =>
+    await Assert.That(EventFlagsDeriver.FromPayload(new Replaced(), null)).IsEqualTo(EventFlags.Superseding)
+      .Because("the generated catalog registers [Superseding] types, and the dispatch path stamps the bit from that registration");
 
   [Test]
   public async Task FromPayload_NoPayload_NoneAsync() =>

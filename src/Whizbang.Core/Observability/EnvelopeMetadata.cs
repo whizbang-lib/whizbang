@@ -51,6 +51,15 @@ public sealed class EnvelopeMetadata {
   public int? EphemeralTtlSeconds { get; init; }
 
   /// <summary>
+  /// The key of a superseding event (<c>[Superseding]</c>, <c>[SupersedingKey]</c>), stamped at dispatch and on receipt.
+  /// The emit chains copy it into <c>wh_event_store.supersede_key</c> for an event flagged
+  /// <c>EventFlags.Superseding</c>. Empty for a superseding type that declares no key; null otherwise.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#the-key</docs>
+  [System.Text.Json.Serialization.JsonPropertyName("sk")]
+  public string? SupersedingKey { get; init; }
+
+  /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
   /// ephemeral TTL, and one Current hop carrying the message timestamp, correlation id, causation id, stream id and
   /// trace parent as the first hop holds them (where readers take them from), and the scope folded over every Current

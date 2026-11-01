@@ -424,6 +424,72 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_SupersedingEvent_StampsTheEntryAndRegistersTheKeyAsync() {
+    // A superseding event (#1729) is flagged from the generated registration on the dispatch path and from the catalog
+    // entry on the receive path, and its key is read by a generated accessor, never by reflection. The attribute is
+    // inherited, a key may sit on a property or a record parameter or a base type, and only an event can supersede.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Superseding]
+      public record EmbeddingUpdated([property: SupersedingKey] string Model, float[] Vector) : IEvent;
+
+      [Superseding]
+      public record OwnerSnapshot : IEvent {
+        [SupersedingKey] public Guid Owner { get; init; }
+      }
+
+      public record DerivedOwnerSnapshot : OwnerSnapshot;
+
+      [Superseding]
+      public record ParameterKeyed([SupersedingKey] int Slot) : IEvent;
+
+      [Superseding]
+      public record PermissionsReplaced(string[] Grants) : IEvent;
+
+      [Superseding]
+      public record ReplaceAll : ICommand;
+
+      public record ProfileRenamed : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+    const string REGISTER = "global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof(global::MyApp.";
+    const string KEY_TEXT = "global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText";
+
+    await Assert.That(entry("EmbeddingUpdated")).Contains("IsSuperseding = true");
+    await Assert.That(entry("DerivedOwnerSnapshot")).Contains("IsSuperseding = true")
+      .Because("the attribute is inherited, so an event derived from a superseding event supersedes too");
+    await Assert.That(entry("ReplaceAll").Contains("IsSuperseding")).IsFalse()
+      .Because("a command is never stored on a stream, so nothing can supersede it");
+    await Assert.That(entry("ProfileRenamed").Contains("IsSuperseding")).IsFalse();
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model));")
+      .Because("a key on a record's positional property is read through that property");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner));");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner));")
+      .Because("a key declared on a base type is the derived type's key");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot));")
+      .Because("on a primary-constructor parameter the attribute marks the property of the same name");
+    await Assert.That(generated).Contains($"{REGISTER}PermissionsReplaced), null);")
+      .Because("a superseding type with no key has one key per stream");
+    await Assert.That(generated.Contains($"{REGISTER}ReplaceAll)")).IsFalse();
+    await Assert.That(generated.Contains($"{REGISTER}ProfileRenamed)")).IsFalse();
+  }
+
+  [Test]
   public async Task Generator_CombinedDefaultRoutingFlags_RenderAsACastAsync() {
     const string source = """
 
