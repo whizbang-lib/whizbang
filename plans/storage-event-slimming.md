@@ -200,9 +200,18 @@ the end of this slice.
 
 ### S9. A3b: slim at write time, full metadata staged, route hash stamped
 
-**Status (2026-10-24):** open. Nothing is built: `src/` has no `wh_event_metadata_staging`,
-`EventStoreMetadataOptions` or `[StoredMetadata]`. Its prerequisite, the WS-5 S4 partition manager, is done
-(PR #1623).
+**Status (2026-11-01):** built in #1725 with S9b (#1726), migration 285, on `feat/1725-storage`. Every write path
+(both emit chains and `wh_append_event`, which both direct appends call) keeps the slim form plus `rid` and stages the
+full form under `Linked`; `EventStoreMetadataOptions`, `[StoredMetadata]` (a generator registers the kept types by name)
+and the `metadata_*` settings published every maintenance tick ahead of the idle gate. Choices beyond the text below:
+the route id is computed in SQL on all four paths (both direct appends go through `wh_append_event` since #1555), with
+`RouteNormalizer` as the C# mirror pinned by a corpus test and used by the in-memory trace store; the route includes the
+event's type name; the slim form reduces only the hop list (`Hops`, or the Dapper store's `hops`), drops `dc` and `rin`
+and keeps every other key, so each store's reader still finds its keys; decision 4 (drop `sc`) is not applied and is
+back with the owner: `wh_event_store.scope` holds only the perspective scope, while the hop's delta also carries roles,
+permissions, principals, claims, the actual and effective principal and the context type, and the EF Core direct
+append writes no scope column at all. Measured on 500-event batches: see the event-store docs page
+(`data/event-store#what-slim-metadata-costs`).
 
 Decided 2026-10-21 (#1493). Stored metadata is split the way bodies are split from pointers: the event
 row keeps a slim form for good, and the full form is kept for a short staging window in a separate,
@@ -278,8 +287,13 @@ stops growing; only traces and counters grow.
 
 ### S9b. Routes and traces: distill staged metadata, and the persistent trace store
 
-**Status (2026-10-24):** open. `src/` has no `wh_routes`, `wh_traces` or `IRouteStore`. Depends on S9. The
-related defect #1601 (unbounded default trace store) is done in PR #1610.
+**Status (2026-11-01):** built in #1726 with S9 (#1725), migration 286: `wh_routes`, `wh_traces`,
+`wh_distill_event_metadata` (consumes staged rows in the statement that distills them, so each counts once with no
+cursor), the `metadata-distillation` maintenance step on both drivers (batches of 2,000, at most 50 per cycle),
+`wh_trace_metadata` reconstruction, the three retention windows (`reap_unbounded_ledgers` row sweeps plus the partition
+manager), `IRouteStore`, `ITraceStore.GetRouteIdAsync` and `PostgresRouteTraceStore` with its two registrations. Not
+built: serving routes from the apply-stack HTTP and GraphQL surfaces (the docs show `GetRoutesForApplyPathAsync`
+beside them). The related defect #1601 (unbounded default trace store) is done in PR #1610.
 
 - **Tables.**
   - `wh_routes`: one row per route id. The normalized hop sequence (service names, receptor class and
