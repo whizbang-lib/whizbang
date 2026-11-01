@@ -113,6 +113,24 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     await Assert.That(rebuilder.LastOrigin.Trigger).IsEqualTo(RebuildTrigger.Requested);
   }
 
+  // #1931: what a rebuild may read of the archive travels on the origin, so a run recorded for the streams' owners and
+  // the background queue carry it as they carry the requester.
+  [Test]
+  [Arguments(RebuildArchivedData.Skip)]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  [Arguments(RebuildArchivedData.IncludeAll)]
+  public async Task HandleAsync_CarriesTheCommandsArchivedDataChoice_OnTheOriginAsync(RebuildArchivedData choice) {
+    var rebuilder = new RecordingRebuilder();
+    var receptor = _receptor(rebuilder);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+      Mode: RebuildMode.InPlace,
+      IncludeStreamIds: [Guid.NewGuid()]) { ArchivedData = choice }, CancellationToken.None);
+
+    await Assert.That(rebuilder.LastOrigin).IsNotNull();
+    await Assert.That(rebuilder.LastOrigin!.ArchivedData).IsEqualTo(choice);
+  }
+
   // Without a caller id each service mints its own, so the rebuild's events still carry an origin
   // id ("did anything run here" stays answerable per service) rather than none at all.
   [Test]

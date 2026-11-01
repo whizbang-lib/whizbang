@@ -3,13 +3,16 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Archival;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -34,15 +37,26 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       ValueTask.CompletedTask;
   }
 
-  private ServiceProvider _buildServices() {
+  private PostgresTableArchiveStore _archive() => new(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync);
+
+  // withArchive: the event store reads through the table archive, as the driver's registration chains it, and the
+  // database is reachable the way the driver registers it for archive work.
+  private ServiceProvider _buildServices(bool withArchive = false) {
     var services = new ServiceCollection();
     services.AddLogging();
 
     services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
 
-    services.AddScoped<IEventStore>(sp =>
-        new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()));
+    services.AddScoped<IEventStore>(sp => {
+      var driver = new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>());
+      return withArchive ? new ArchiveAwareEventStoreDecorator(driver, _archive(), readThrough: true) : driver;
+    });
+    if (withArchive) {
+      var database = new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null);
+      services.AddSingleton(database);
+      services.AddSingleton<IArchivedStreamExtents>(new PostgresArchivedStreamExtents(database));
+    }
     services.AddScoped<IEventStoreQuery>(sp =>
         new EFCoreFilterableEventStoreQuery(sp.GetRequiredService<WorkCoordinationDbContext>()));
 
@@ -132,6 +146,88 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       await Assert.That(b!.Balance).IsEqualTo(500m)
         .Because("the collective event's Where targets only stream A — stream B must be unaffected");
     }
+  }
+
+  // #1932 and #1931: a collective is its own stream, and once that stream is archived whole the hot store holds none of
+  // it. The collective is the newest event of the tenant here, so it is the last event folded into stream A's row.
+  [Test]
+  public async Task Rebuild_IncludeAll_FoldsACollectiveArchivedWhole_ThatIsTheRowsLastEvent_AndCheckpointsOnTheRowsOwnEventAsync() {
+    var (sp, streamA, streamB, creditA) = await _archivedCollectiveIsTheLastEventAsync();
+    await using var _ = sp;
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(
+      RebuildBalancePerspectiveName, new RebuildOrigin { ArchivedData = RebuildArchivedData.IncludeAll }, CancellationToken.None);
+
+    await Assert.That(result.Error).IsNull()
+      .Because("the cursor of a row must name an event of its own stream the hot store holds, never the archived collective");
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(0m)
+      .Because("the archived collective is listed from the lifecycle ledger and read back through the archive");
+    await Assert.That(await _balanceAsync(sp, streamB)).IsEqualTo(500m).Because("the collective targets stream A only");
+    await Assert.That(await _cursorAsync(streamA)).IsEqualTo(creditA)
+      .Because("a collective folds into the row but does not move its checkpoint, as on the live path");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_LeavesOutACollectiveArchivedWhole_AndSucceedsAsync() {
+    var (sp, streamA, streamB, creditA) = await _archivedCollectiveIsTheLastEventAsync();
+    await using var _ = sp;
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(
+      RebuildBalancePerspectiveName, CancellationToken.None);
+
+    await Assert.That(result.Error).IsNull();
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(100m)
+      .Because("a rebuild reads no archived data by default, and the collective's stream is archived whole");
+    await Assert.That(await _balanceAsync(sp, streamB)).IsEqualTo(500m);
+    await Assert.That(await _cursorAsync(streamA)).IsEqualTo(creditA);
+  }
+
+  // Streams A and B credited, then a collective that resets A, archived whole: the tenant's newest event.
+  private async Task<(ServiceProvider Services, Guid StreamA, Guid StreamB, Guid CreditA)> _archivedCollectiveIsTheLastEventAsync() {
+    var streamA = Guid.NewGuid();
+    var streamB = Guid.NewGuid();
+    var collectiveStream = Guid.NewGuid();
+    var creditA = Guid.CreateVersion7();
+    var sp = _buildServices(withArchive: true);
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 100m }, creditA);
+      await _appendAsync(eventStore, streamB, new RebuildCreditedEvent { StreamId = streamB, Amount = 500m });
+      await _appendAsync(eventStore, collectiveStream, new RebuildResetBalanceCollectiveEvent {
+        StreamId = collectiveStream,
+        Scope = new TenantCollectiveScope(string.Empty),
+        TargetId = streamA,
+        ResetTo = 0m,
+      });
+    }
+    var archived = await _archive().WriteAsync(ArchiveBatch.WholeStream(collectiveStream));
+    await Assert.That(archived.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand("SELECT count(*) FROM wh_event_store WHERE stream_id = $1", conn);
+    cmd.Parameters.AddWithValue(collectiveStream);
+    await Assert.That((long)(await cmd.ExecuteScalarAsync())!).IsEqualTo(0L)
+      .Because("the control: the collective's stream is archived whole, so the hot store holds none of it");
+    return (sp, streamA, streamB, creditA);
+  }
+
+  private static async Task<decimal?> _balanceAsync(ServiceProvider sp, Guid stream) {
+    await using var scope = sp.CreateAsyncScope();
+    var row = await scope.ServiceProvider.GetRequiredService<IPerspectiveStore<RebuildBalanceModel>>()
+      .GetByStreamIdAsync(stream, CancellationToken.None);
+    return row?.Balance;
+  }
+
+  private async Task<Guid?> _cursorAsync(Guid stream) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = $1 AND perspective_name = $2", conn);
+    cmd.Parameters.AddWithValue(stream);
+    cmd.Parameters.AddWithValue(RebuildBalancePerspectiveName);
+    return await cmd.ExecuteScalarAsync() as Guid?;
   }
 
   [Test]

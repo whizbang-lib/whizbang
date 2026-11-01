@@ -258,6 +258,10 @@ public sealed partial class PerspectiveRebuilder(
       run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin) {
         PartOfRun = partOfRun,
         PurgeMarkers = sp.GetService<IPerspectivePurgeMarkerStore>(),
+        // #1931: what the rebuild may read of the archive, and what the ledger says each stream has archived. A host
+        // with no archive registers no extents, and every stream rebuilds as it always did.
+        ArchivedData = origin?.ArchivedData ?? RebuildArchivedData.Skip,
+        ArchivedExtents = sp.GetService<Archival.IArchivedStreamExtents>(),
       };
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
@@ -293,7 +297,10 @@ public sealed partial class PerspectiveRebuilder(
       // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
       // unless they opt in with [FireDuringReplay]
       var previousMode = Current;
+      var previousArchivedData = RebuildArchivedDataAccessor.Current;
       Current = ProcessingMode.Rebuild;
+      // The readers a replay calls (the event store's archive seam, the collective replay) honor the choice (#1931).
+      RebuildArchivedDataAccessor.Current = run.ArchivedData;
       try {
         if (swapper is null) {
           await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct);
@@ -303,6 +310,7 @@ public sealed partial class PerspectiveRebuilder(
         }
       } finally {
         Current = previousMode;
+        RebuildArchivedDataAccessor.Current = previousArchivedData;
       }
 
       // The staged rebuild's EVICT stage (stream groups): a rebuild replays from the log, so it
@@ -318,7 +326,11 @@ public sealed partial class PerspectiveRebuilder(
       sw.Stop();
       // A caller that names streams is asserting they exist. Rebuilding none of them is not success, whether every
       // one was refused or none had events: reporting it green is how 32 rows sat unrepaired through a clean run.
-      if (requested > 0 && run.StreamsProcessed == 0) {
+      if (run.StreamsSkipped > 0) {
+        LogStreamsSkippedForArchivedData(logger, perspectiveName, run.StreamsSkipped, run.ArchivedData);
+      }
+      // A stream skipped for its archived data is reported as skipped, not as a stream nothing rebuilt (#1931).
+      if (requested > 0 && run.StreamsProcessed == 0 && run.StreamsSkipped == 0) {
         var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused, run.StreamsUnchanged);
         LogRebuildNothingRebuilt(logger, mode, perspectiveName, requested, run.StreamsRefused);
         await _emitAsync(new PerspectiveRebuildFailed(
@@ -341,6 +353,7 @@ public sealed partial class PerspectiveRebuilder(
         StreamsRequested = requested,
         StreamsRefused = run.StreamsRefused,
         StreamsPurged = run.StreamsPurged,
+        StreamsSkipped = run.StreamsSkipped,
       };
     } catch (Exception ex) {
       sw.Stop();
@@ -402,10 +415,15 @@ public sealed partial class PerspectiveRebuilder(
     var processed = 0;
     // The run collects the events re-keyed onto each row while it reads the streams, and folds each such row once,
     // from its own stream and every source it found (#1820).
+    // What the ledger says each stream of the phase has archived, asked once for the phase (#1931).
+    var extents = run.ArchivedExtents is null
+      ? _noArchivedStreams
+      : await run.ArchivedExtents.GetExtentsAsync(streamIds, ct);
     using (RebuildRekeyLedger.Begin(run.Rekeys)) {
       foreach (var streamId in streamIds) {
         ct.ThrowIfCancellationRequested();
-        processed = await _replayStreamAsync(run, streamId, status, processed, ct);
+        processed = await _replayStreamAsync(
+          run, streamId, extents.GetValueOrDefault(streamId, Archival.ArchivedStreamExtent.None), status, processed, ct);
       }
     }
     foreach (var (row, sources) in run.Rekeys.TakeTouched()) {
@@ -595,7 +613,7 @@ public sealed partial class PerspectiveRebuilder(
   /// doesn't kill the rebuild. Returns the phase's processed count.
   /// </summary>
   private async Task<int> _replayStreamAsync(
-      RebuildRun run, Guid streamId, RebuildStatus status, int processed, CancellationToken ct) {
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, RebuildStatus status, int processed, CancellationToken ct) {
     var streamSw = Stopwatch.StartNew();
     try {
       // RunRebuildAsync replays the physical stream and returns one completion per TARGET stream.
@@ -603,9 +621,16 @@ public sealed partial class PerspectiveRebuilder(
       // old RunAsync path); with a re-key upcaster, events fan out onto their target rows and a
       // cursor is queued for each. Processed counts physical streams (one per call) so the
       // rebuild result stays keyed to the resolved stream list.
-      var completions = await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
+      var rebuilt = await _rebuildStreamAsync(run, streamId, extent, ct);
       streamSw.Stop();
       processed++;
+      if (rebuilt is null) {
+        run.StreamsSkipped++;
+        LogStreamSkippedForArchivedData(logger, run.PerspectiveName, streamId, extent, run.ArchivedData);
+        await _reportProgressAsync(run, status, processed);
+        return processed;
+      }
+      var completions = rebuilt;
       // A stream with no events for this perspective comes back as one placeholder completion with no position.
       // It was looked at, not rebuilt, so it does not count as processed.
       //
@@ -635,23 +660,51 @@ public sealed partial class PerspectiveRebuilder(
         }
       }
 
-      if (processed % 100 == 0 || processed == status.TotalStreams) {
-        _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
-        if (!run.PartOfRun) {
-          LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
-              run.Elapsed.ElapsedMilliseconds);
-        }
-        // Documented as emitted "periodically during rebuild", so it is emitted on the same bounded cadence the
-        // log uses rather than per stream. A long rebuild reports progress; a short one reports once at the end.
-        await _emitAsync(new PerspectiveRebuildProgress(
-            run.RebuildStreamId, run.PerspectiveName, run.Mode, processed, status.TotalStreams,
-            run.EventsReplayed, run.StartedAt, run.Origin), run.PartOfRun);
-      }
+      await _reportProgressAsync(run, status, processed);
     } catch (Exception ex) {
       streamSw.Stop();
       LogStreamFailed(logger, ex, run.PerspectiveName, streamId, processed, status.TotalStreams);
     }
     return processed;
+  }
+
+  private static readonly IReadOnlyDictionary<Guid, Archival.ArchivedStreamExtent> _noArchivedStreams =
+    new Dictionary<Guid, Archival.ArchivedStreamExtent>();
+
+  /// <summary>
+  /// Rebuilds one stream as the rebuild's archived-data choice allows (#1931), or returns <see langword="null"/> when the
+  /// stream is skipped. A stream archived whole is replayed through the archive only under
+  /// <see cref="RebuildArchivedData.IncludeAll"/>. A stream archived through a prefix replays from its start through the
+  /// archive under either opt-in; by default it starts from its newest live snapshot, and is skipped with none. A stream
+  /// with nothing archived replays from its start under every choice.
+  /// </summary>
+  private static async Task<IReadOnlyList<PerspectiveCursorCompletion>?> _rebuildStreamAsync(
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, CancellationToken ct) {
+    if (extent == Archival.ArchivedStreamExtent.Whole && run.ArchivedData != RebuildArchivedData.IncludeAll) {
+      return null;
+    }
+    if (extent == Archival.ArchivedStreamExtent.Prefix && run.ArchivedData == RebuildArchivedData.Skip) {
+      return await run.Runner.RunRebuildFromLatestSnapshotAsync(streamId, run.PerspectiveName, ct);
+    }
+    return await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
+  }
+
+  /// <summary>
+  /// Reports the phase's progress on a bounded cadence: documented as emitted "periodically during rebuild", so the event
+  /// is emitted on the same cadence the log uses rather than per stream. A long rebuild reports progress; a short one
+  /// reports once at the end.
+  /// </summary>
+  private async Task _reportProgressAsync(RebuildRun run, RebuildStatus status, int processed) {
+    if (processed % 100 != 0 && processed != status.TotalStreams) {
+      return;
+    }
+    _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
+    if (!run.PartOfRun) {
+      LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams, run.Elapsed.ElapsedMilliseconds);
+    }
+    await _emitAsync(new PerspectiveRebuildProgress(
+        run.RebuildStreamId, run.PerspectiveName, run.Mode, processed, status.TotalStreams,
+        run.EventsReplayed, run.StartedAt, run.Origin), run.PartOfRun);
   }
 
   /// <summary>
@@ -709,6 +762,12 @@ public sealed partial class PerspectiveRebuilder(
     public int EventsReplayed { get; set; }
     public int StreamsRefused { get; set; }
     public int StreamsPurged { get; set; }
+    /// <summary>Streams skipped for their archived data (#1931).</summary>
+    public int StreamsSkipped { get; set; }
+    /// <summary>What the rebuild may read of the archive (#1931).</summary>
+    public RebuildArchivedData ArchivedData { get; init; }
+    /// <summary>What the ledger says each stream has archived; null in a host with no archive.</summary>
+    public Archival.IArchivedStreamExtents? ArchivedExtents { get; init; }
     public int StreamsUnchanged { get; set; }
     /// <summary>Where a stream the fold left untouched is checked for a purge; null when the host has no store.</summary>
     public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
@@ -829,6 +888,15 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild {Perspective}: refused ephemeral stream {StreamId} — ephemeral streams are not a rebuildable source of truth (events self-destruct, bodies are reaped). Skipped.")]
   private static partial void LogRebuildRefusedEphemeral(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Rebuild of {Perspective} skipped stream {StreamId}: it is archived ({Extent}) and the rebuild reads archived data {ArchivedData}")]
+  private static partial void LogStreamSkippedForArchivedData(
+    ILogger logger, string perspective, Guid streamId, Archival.ArchivedStreamExtent extent, RebuildArchivedData archivedData);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Rebuild of {Perspective} skipped {Count} stream(s) for their archived data (ArchivedData {ArchivedData}); their rows are left as they are. IncludeWhileLive replays a stream archived through a prefix from its start, IncludeAll a stream archived whole too")]
+  private static partial void LogStreamsSkippedForArchivedData(ILogger logger, string perspective, int count, RebuildArchivedData archivedData);
 
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Rebuild {Perspective}: stream {StreamId} replayed to event {LastEventId} (status {Status}) in {ElapsedMs}ms ({Processed}/{Total})")]

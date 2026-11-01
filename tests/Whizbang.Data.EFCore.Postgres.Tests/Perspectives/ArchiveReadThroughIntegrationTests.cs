@@ -99,15 +99,14 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
 
   // ===== Rebuild and rewind =====
 
+  // #1931 flipped #1738's rebuild: reading an archived prefix through the archive is now an opt-in (IncludeWhileLive).
   [Test]
-  public async Task Rebuild_AHotStream_AndOneArchivedThroughAPrefix_FoldToTheSameRowAsync() {
+  public async Task Rebuild_IncludeWhileLive_AHotStream_AndOneArchivedThroughAPrefix_FoldToTheSameRowAsync() {
     await using var sp = _services(readThrough: true);
     var (hot, _, prefix) = await _threeCopiesAsync(sp);
-    var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
 
-    // A stream archived whole is not rebuilt here: its rebuilt cursor would name an event the hot store no longer holds,
-    // which the EF Core schema's fk_perspective_cursors_event refuses; that case is left for a decision (#1738 report).
-    var result = await rebuilder.RebuildStreamsAsync(PERSPECTIVE, [hot, prefix], CancellationToken.None);
+    var result = await _rebuilder(sp).RebuildStreamsAsync(
+      PERSPECTIVE, [hot, prefix], new RebuildOrigin { ArchivedData = RebuildArchivedData.IncludeWhileLive }, CancellationToken.None);
 
     await Assert.That(result.Error).IsNull();
     await Assert.That(result.Success).IsTrue();
@@ -115,6 +114,84 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
     await Assert.That(expected).IsEqualTo((55m, (string?)null)).Because("the control: the hot stream folds to the value the events set (a credit after the label drops it, as this perspective folds)");
     await Assert.That(await _rowAsync(prefix)).IsEqualTo(expected)
       .Because("the prefix's archived credit and debit are read back ahead of its hot events");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_SkipsAStreamArchivedThroughAPrefix_WithNoLiveSnapshot_AndReportsItSkippedAsync() {
+    var archive = new CountingArchive(_archive());
+    await using var sp = _services(readThrough: true, archive: archive);
+    var (hot, _, prefix) = await _threeCopiesAsync(sp);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [hot, prefix], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue().Because("a skipped stream is reported, not failed");
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+    await Assert.That(await _rowExistsAsync(prefix)).IsFalse()
+      .Because("without a live snapshot the stream cannot be rebuilt from hot events alone, so it is left as it was");
+    await Assert.That(archive.Reads).IsEqualTo(0).Because("the default never reads the archive");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_StartsAStreamArchivedThroughAPrefix_FromItsNewestLiveSnapshot_AndReadsNoArchivedEventAsync() {
+    var archive = new CountingArchive(_archive());
+    await using var sp = _services(readThrough: true, archive: archive, withSnapshots: true);
+    var (_, _, prefix) = await _threeCopiesAsync(sp);
+    // A snapshot at the stream's first hot event (version 3, the balance set). Its model says 1000 where the events say
+    // 50, so the row shows whether the rebuild started from it or replayed the stream from its start.
+    await _snapshotAsync(prefix, await _firstHotEventAsync(prefix), new RebuildBalanceModel { Id = prefix, Balance = 1000m });
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [prefix], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(0);
+    await Assert.That(await _rowAsync(prefix)).IsEqualTo((1005m, (string?)null))
+      .Because("the rebuild starts from the snapshot and folds the hot events after it: the label, then the credit of 5");
+    await Assert.That(archive.Reads).IsEqualTo(0).Because("the default never reads the archive");
+  }
+
+  [Test]
+  [Arguments(RebuildArchivedData.Skip)]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  public async Task Rebuild_WithoutIncludeAll_SkipsAStreamArchivedWhole_AndReportsItSkippedAsync(RebuildArchivedData choice) {
+    await using var sp = _services(readThrough: true);
+    var (_, whole, _) = await _threeCopiesAsync(sp);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(
+      PERSPECTIVE, [whole], new RebuildOrigin { ArchivedData = choice }, CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1);
+    await Assert.That(await _rowExistsAsync(whole)).IsFalse();
+  }
+
+  [Test]
+  public async Task Rebuild_IncludeAll_RebuildsAStreamArchivedWhole_ParksItsCursor_AndTheRestoreBringsTheCursorBackAsync() {
+    await using var sp = _services(readThrough: true);
+    var (hot, whole, _) = await _threeCopiesAsync(sp);
+    await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [hot], CancellationToken.None);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(
+      PERSPECTIVE, [whole], new RebuildOrigin { ArchivedData = RebuildArchivedData.IncludeAll }, CancellationToken.None);
+
+    await Assert.That(result.Error).IsNull().Because("the cursor names an archived event, so it is parked rather than written");
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(await _rowAsync(whole)).IsEqualTo(await _rowAsync(hot));
+    var lastArchived = await _scalarAsync<Guid>(
+      "SELECT event_id FROM wh_event_archive WHERE stream_id = @s ORDER BY version DESC LIMIT 1", whole);
+    await Assert.That(await _scalarAsync<long>(
+        "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @s", whole)).IsEqualTo(0L)
+      .Because("no live cursor may name an event the hot store does not hold");
+    await Assert.That(await _scalarAsync<string>(
+        "SELECT cursor_row ->> 'last_event_id' FROM wh_event_archive_cursors WHERE stream_id = @s AND perspective_name = @p",
+        whole, PERSPECTIVE)).IsEqualTo(lastArchived.ToString())
+      .Because("the cursor is parked with the stream while it is archived whole");
+
+    await Assert.That((await _archive().RestoreAsync(whole)).Status).IsEqualTo(ArchiveStatus.RESTORED);
+
+    await Assert.That(await _scalarAsync<Guid>(
+        "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p", whole, PERSPECTIVE))
+      .IsEqualTo(lastArchived).Because("the restore brings the parked cursor back with the events it names");
   }
 
   [Test]
@@ -164,12 +241,18 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
 
   private PostgresTableArchiveStore _archive() => new(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync);
 
-  private ServiceProvider _services(bool readThrough, bool withArchive = true) {
+  private ServiceProvider _services(bool readThrough, bool withArchive = true, IArchiveStore? archive = null, bool withSnapshots = false) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
-    var archive = _archive();
+    archive ??= _archive();
+    // What a rebuild knows of each stream's archive (#1931), as both drivers register it.
+    services.AddSingleton<IArchivedStreamExtents>(new PostgresArchivedStreamExtents(
+      new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null)));
+    if (withSnapshots) {
+      services.AddSingleton<IPerspectiveSnapshotStore>(new EFCorePerspectiveSnapshotStore(NpgsqlDataSource.Create(ConnectionString)));
+    }
     services.AddScoped<IEventStore>(sp => {
       var driver = new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>());
       return withArchive ? new ArchiveAwareEventStoreDecorator(driver, archive, readThrough) : driver;
@@ -190,6 +273,46 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
     services.AddScoped<IPerspectiveCheckpointCompleter>(sp =>
       new EFCorePostgresPerspectiveCheckpointCompleter(sp.GetRequiredService<WorkCoordinationDbContext>()));
     return services.BuildServiceProvider();
+  }
+
+  private static PerspectiveRebuilder _rebuilder(ServiceProvider sp) =>
+    new(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+
+  private async Task _snapshotAsync(Guid stream, Guid atEvent, RebuildBalanceModel model) {
+    var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<RebuildBalanceModel>)
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RebuildBalanceModel));
+    // Stamped with the serialization version as the runner writes a snapshot, so the runner reads it back.
+    using var modelData = System.Text.Json.JsonSerializer.SerializeToDocument(model, typeInfo);
+    using var data = SnapshotEnvelope.Wrap(modelData.RootElement, Whizbang.Core.Serialization.SerializationVersion.CURRENT);
+    await new EFCorePerspectiveSnapshotStore(NpgsqlDataSource.Create(ConnectionString))
+      .CreateSnapshotAsync(stream, PERSPECTIVE, atEvent, data);
+  }
+
+  private async Task<bool> _rowExistsAsync(Guid stream) =>
+    await _scalarAsync<long>("SELECT count(*) FROM wh_per_rebuild_balance WHERE id = @s", stream) > 0;
+
+  private async Task<T> _scalarAsync<T>(string sql, Guid stream, string? perspective = null) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(sql, conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    if (perspective is not null) {
+      cmd.Parameters.AddWithValue("p", perspective);
+    }
+    return (T)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>The table store, counting the reads that reach it.</summary>
+  private sealed class CountingArchive(IArchiveStore inner) : IArchiveStore {
+    private int _reads;
+    public int Reads => _reads;
+    public Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) => inner.WriteAsync(batch, cancellationToken);
+    public IAsyncEnumerable<ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _reads);
+      return inner.ReadAsync(streamId, fromVersion, cancellationToken);
+    }
+    public Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) => inner.RestoreAsync(streamId, cancellationToken);
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => inner.DeleteAsync(streamId, cancellationToken);
   }
 
   /// <summary>Lifecycle receptors are not under test here.</summary>

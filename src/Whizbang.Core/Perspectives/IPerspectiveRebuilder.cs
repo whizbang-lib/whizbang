@@ -136,6 +136,16 @@ public record RebuildResult(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync</tests>
   public int StreamsPurged { get; init; }
 
+  /// <summary>
+  /// How many streams were skipped for their archived data (#1931): under the default
+  /// (<see cref="RebuildArchivedData.Skip"/>) a stream archived whole, or one archived through a prefix with no live
+  /// snapshot to start from; under <see cref="RebuildArchivedData.IncludeWhileLive"/> a stream archived whole. Their rows
+  /// are left as they are. A skipped stream is reported here, never as a failure.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:Rebuild_ByDefault_SkipsAStreamArchivedWhole_AndReportsItSkippedNotFailedAsync</tests>
+  public int StreamsSkipped { get; init; }
+
 }
 
 /// <summary>
@@ -183,7 +193,16 @@ public enum RebuildPhase {
 public record RebuildOrigin(
     Guid? RequestId = null,
     RebuildTrigger Trigger = RebuildTrigger.Unknown,
-    string? RequestedBy = null);
+    string? RequestedBy = null) {
+  /// <summary>
+  /// What the rebuild may read of a stream's archived events (#1931). <see cref="RebuildArchivedData.Skip"/> by default:
+  /// the rebuild never reads the archive unless it opts in. Carried with the request, so a run recorded for the streams'
+  /// owners and the background queue honor it, and recorded on the rebuild's events.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:RebuildArchivedData_DefaultsToSkip_OnTheEnumAndOnARebuildRequestAsync</tests>
+  public RebuildArchivedData ArchivedData { get; init; }
+}
 
 /// <summary>
 /// What caused a rebuild. Distinguishes an operator repairing data from the framework rebuilding on its own,

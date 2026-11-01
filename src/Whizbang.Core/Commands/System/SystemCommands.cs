@@ -58,6 +58,16 @@ public record RebuildPerspectiveCommand(
   private static readonly string[] _idLists = [nameof(IncludeStreamIds), nameof(ExcludeStreamIds)];
 
   /// <summary>
+  /// What the rebuild may read of a stream's archived events (#1931): <see cref="Perspectives.RebuildArchivedData.Skip"/>
+  /// (the default) reads none, <see cref="Perspectives.RebuildArchivedData.IncludeWhileLive"/> reads the archived prefix
+  /// of a stream that still has live events, <see cref="Perspectives.RebuildArchivedData.IncludeAll"/> also rebuilds a
+  /// stream archived whole. Carried onto the rebuild's <see cref="Perspectives.RebuildOrigin"/>.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RebuildPerspectiveCommandReceptorCoverageTests.cs:HandleAsync_CarriesTheCommandsArchivedDataChoice_OnTheOriginAsync</tests>
+  public Perspectives.RebuildArchivedData ArchivedData { get; init; }
+
+  /// <summary>
   /// The most streams one command names when <see cref="SplitByStreams"/> splits a selection, and the documented
   /// size guidance for <see cref="IncludeStreamIds"/>: 500, the same bound a stream redelivery request uses
   /// (<see cref="Messaging.StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST"/>), about 20 KB of ids.

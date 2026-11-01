@@ -72,7 +72,9 @@ public static class CollectiveEventsDapperExtensions {
       sp,
       sp.GetRequiredService<IEventStore>(),
       sp.GetRequiredService<IEventStoreQuery>(),
-      [.. sp.GetServices<ICollectiveInMemoryExecutor>()]));
+      [.. sp.GetServices<ICollectiveInMemoryExecutor>()],
+      // The driver's database: a collective stream archived whole is listed from its lifecycle ledger (#1932).
+      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>()));
     return services;
   }
 
