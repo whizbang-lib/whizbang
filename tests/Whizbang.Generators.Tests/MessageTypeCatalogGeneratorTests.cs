@@ -490,6 +490,43 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_ASupersedingTypeAnAnalyzerRefuses_IsNotRegistered_SoEveryEventIsKeptAsync() {
+    // WHIZ135 (also ephemeral) and WHIZ136 (two keys) are errors, but an error can be suppressed. The generator then
+    // registers nothing, so the type is never reaped as superseding: keeping events is the recoverable direction.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Ephemeral, Superseding]
+      public record PresenceReplaced : IEvent;
+
+      [Superseding]
+      public record TwoKeys([property: SupersedingKey] string Model, [property: SupersedingKey] Guid Owner) : IEvent;
+
+      [Superseding]
+      public record OneKey([property: SupersedingKey] string Model) : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+
+    await Assert.That(entry("PresenceReplaced").Contains("IsSuperseding")).IsFalse()
+      .Because("an ephemeral event is reaped by the ephemeral reaper; it is never also superseding");
+    await Assert.That(entry("TwoKeys").Contains("IsSuperseding")).IsFalse()
+      .Because("with two keys the generator cannot tell which one the type means");
+    await Assert.That(generated.Contains("SupersedingEvents.Register(typeof(global::MyApp.PresenceReplaced)")).IsFalse();
+    await Assert.That(generated.Contains("SupersedingEvents.Register(typeof(global::MyApp.TwoKeys)")).IsFalse();
+    await Assert.That(entry("OneKey")).Contains("IsSuperseding = true").Because("the control: a valid superseding type is registered");
+  }
+
+  [Test]
   public async Task Generator_CombinedDefaultRoutingFlags_RenderAsACastAsync() {
     const string source = """
 
