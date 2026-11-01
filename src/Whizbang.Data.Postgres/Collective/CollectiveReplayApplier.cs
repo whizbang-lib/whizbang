@@ -221,13 +221,18 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// (<c>wh_collective_sink_queue</c>: <c>commit_sequence</c>, an unstamped event last, <c>event_id</c> breaking the
   /// tie). An event id is minted before commit, so two of them can have ids in the opposite order; left in id order
   /// the replay would fold the earlier commit last and end where live did not. They change places among themselves
-  /// only, in the slots their ids gave them, so every other event keeps its place in the fold.
+  /// only, in the slots their ids gave them, so every other event keeps its place in the fold. A collective whose stream
+  /// is archived whole has no hot position, and its commit sequence is the one its event carries back from the archive.
   /// </summary>
   private static void _putSharedStreamsInCommitOrder(
       List<MessageEnvelope<IEvent>> ordered, List<List<MessageEnvelope<IEvent>>> byStream, List<CollectivePosition> positions) {
     var commitSequence = new Dictionary<Guid, long?>();
     foreach (var position in positions) {
       commitSequence.TryAdd(position.EventId, position.CommitSequence);
+    }
+    // A collective with no hot row, read back through the archive (#1932), carries its commit sequence on its event.
+    foreach (var collective in byStream.SelectMany(c => c)) {
+      commitSequence.TryAdd(collective.MessageId.Value, collective.LocalCommitSequence);
     }
 
     foreach (var collectives in byStream.Where(c => c.Count > 1)) {
