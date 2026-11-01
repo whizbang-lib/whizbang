@@ -242,6 +242,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
@@ -408,6 +409,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
@@ -605,4 +607,23 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<WorkCoordinatorGate>()));
   }
+
+  /// <summary>
+  /// Registers <see cref="IDeadLetterRecoveryService"/>: the recovery SQL both Postgres drivers share, over a connection
+  /// opened per call. The dead-letter recovery worker drives it, so a dead letter this driver writes is redriven, held or
+  /// failed by policy as on the EF Core driver; an <see cref="MessageFailureReason.AwaitingRestore"/> dead letter is
+  /// redriven once its stream's restore makes it due (#1934). Scoped, as the EF Core driver's: the worker resolves it
+  /// from a scope per scan. A recovered outbox or perspective row is stored with the claim's partition count (#1722).
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/recovery</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveRestoreRedriveTests.cs:AddWhizbangPostgres_AnAwaitingRestoreDeadLetter_IsRedrivenThroughTheOutbox_OnceItsRestoreCompletesAsync</tests>
+  internal static void _addDeadLetterRecoveryService(IServiceCollection services, string connectionString) =>
+    services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
+      new Whizbang.Data.Postgres.PostgresDeadLetterRecoveryService(
+        async ct => await OpenConnectionAsync(connectionString, ct).ConfigureAwait(false),
+        ownsConnection: true,
+        // This driver's SQL names the framework's objects bare and reaches them through the connection's search path.
+        static name => name,
+        sp.GetService<WorkCoordinatorGate>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.ClaimWorkerOptions>>().Value.PartitionCount));
 }
