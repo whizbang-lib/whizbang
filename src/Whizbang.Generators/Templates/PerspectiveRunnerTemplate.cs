@@ -779,7 +779,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
-        // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
+        // Collective events have no per-stream Apply(): during replay/rebuild they are folded into this one
         // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
         // rebuild/rewind mode, so this branch never runs during live drain.
         // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
@@ -1817,8 +1817,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       if (events.Count == 0) {
-        // Event store quiescent — rewind has caught up to HEAD AT THIS COMMIT.
-        // This is the contract PerspectiveRewindCompleted now honours.
+        // Event store quiescent: the rewind has caught up to HEAD AT THIS COMMIT.
+        // This is the contract PerspectiveRewindCompleted now honors.
         break;
       }
 
