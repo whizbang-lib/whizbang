@@ -1820,6 +1820,22 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// Records one transition on this instance's own row (#1636): the stage, what it is doing, the lifecycle phase and
+  /// the library version, in one update. The only write of an instance's phase: a stage entered writes the phase it
+  /// maps to, and a pause or a stand-by writes its phase and keeps the stage. Returns false when the instance has no row
+  /// yet, which is expected before it registers. Not a heartbeat: liveness is not refreshed. Default: nothing is
+  /// recorded.
+  /// </summary>
+  /// <param name="transition">What the row records.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether the instance's row now records the transition.</returns>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceTransitionSqlTests.cs</tests>
+  Task<bool> RecordInstanceTransitionAsync(
+      Startup.InstanceTransition transition, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Records the single fleet-wide standby request: this instance asking live older peers to
   /// drain and stand by before a breaking migration. True when this instance now holds the
   /// active request (first claim or idempotent re-request); false when another instance's

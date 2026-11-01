@@ -192,7 +192,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Observability.IServiceInstanceProvider>(),
       sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
-      sp.GetService<TimeProvider>()));
+      sp.GetService<TimeProvider>(),
+      sp.GetService<Observability.ILibraryVersionProvider>()));
     // The stage gate (#1636): what a worker registered to start at a stage waits on. It hears every stage the reporter
     // enters, and reads the schema-ready gate for every stage up to Coordinate, which that gate opening implies.
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupStageGate(sp.GetRequiredService<ISchemaReadyGate>()));

@@ -47,6 +47,17 @@ public interface IStartupStageReporter {
   ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Enters a lifecycle phase off the startup ladder (pausing, paused, standing by, resuming, faulted, halted) while the
+  /// stage stays where it is: the row records the phase with the stage it is in. Entering a stage afterwards records
+  /// that stage's own phase again. A phase on the ladder is the stage's, and is refused.
+  /// </summary>
+  /// <param name="phase">The phase.</param>
+  /// <param name="cancellationToken">Canceled when the caller is.</param>
+  /// <returns>A task that completes once the phase is written (or held).</returns>
+  ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
+
+  /// <summary>
   /// The instance's row now exists: writes the stage held since before it did, or since a write failed. Called by
   /// whatever registers the instance, and after each accepted heartbeat; does nothing when nothing is held.
   /// </summary>
