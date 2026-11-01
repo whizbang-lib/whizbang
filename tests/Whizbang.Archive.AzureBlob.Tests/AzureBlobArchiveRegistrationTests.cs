@@ -238,7 +238,7 @@ public class AzureBlobArchiveRegistrationTests {
   [Arguments("Cold")]
   [Arguments(null)]
   public async Task Store_AcceptsHotCoolColdOrTheAccountDefaultAsync(string? tier) {
-    var options = new AzureBlobArchiveOptions { AccessTier = tier is null ? null : new AccessTier(tier) };
+    var options = new AzureBlobArchiveOptions { AccessTier = tier is null ? (AccessTier?)null : new AccessTier(tier) };
 
     var store = new AzureBlobArchiveStore(_database, _container(), options);
 

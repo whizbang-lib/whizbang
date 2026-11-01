@@ -130,6 +130,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service's database. New API: `AzureBlobArchiveStore`, `AzureBlobArchiveOptions`,
   `AzureBlobArchiveServiceCollectionExtensions`, `ArchiveObjectCorruptedException`, `ArchiveObjectDeletionStep`,
   `PostgresArchiveConnection`.
+- **The Azure Blob archive store writes its objects at a chosen access tier (#1897).** `AzureBlobArchiveOptions.AccessTier`
+  (`Whizbang:Archive:AzureBlob:AccessTier`) takes `Hot`, `Cool` or `Cold` in any case; unset, objects take the storage
+  account's default tier as before. `Archive` and every other value are refused when the setting is bound, when the
+  store is built, and when the host starts (`ValidateOnStart`), because an object in the Archive tier cannot be read
+  until it is rehydrated, which takes hours, so a read-through restore or a rebuild that reads the archive would fail.
+  Cool and Cold charge for an object deleted within 30 or 90 days, which a restore or a purge soon after archiving pays.
 - **Archived streams read back transparently, restore themselves on append when their type says so, and refuse an
   append per event otherwise (#1738, WS-3 S9).** A read from the start of a stream (a load, a rebuild, a rewind with no
   snapshot) reads archived events back when the hot store shows a gap at its start: no hot event, or a first hot
