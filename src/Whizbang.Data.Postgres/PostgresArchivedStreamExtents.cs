@@ -20,6 +20,7 @@ namespace Whizbang.Data.Postgres;
 /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_NameTheStreamsArchivedWhole_AndThroughAPrefix_AndNoOtherAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_OfNoStreams_AskNothingAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_RefuseANullArchiveConnectionAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamRebuildTests.cs:AddWhizbangPostgres_RegistersTheArchivedStreamExtents_ThatNameTheStreamsArchivedWholeAndThroughAPrefixAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema identifier is formatted in, quoted by PgIdentifier; the stream ids are a bound parameter.")]
 internal sealed class PostgresArchivedStreamExtents(PostgresArchiveConnection database) : IArchivedStreamExtents {

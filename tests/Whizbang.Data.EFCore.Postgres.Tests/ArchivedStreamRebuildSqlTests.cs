@@ -58,6 +58,11 @@ public class ArchivedStreamRebuildSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Extents_RefuseANullArchiveConnectionAsync() {
+    await Assert.That(() => new PostgresArchivedStreamExtents(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task TheDriver_RegistersTheArchivedStreamExtents_OnItsArchiveConnectionAsync() {
     var whole = await _streamAsync(2);
     await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(whole))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
