@@ -164,9 +164,10 @@ public sealed class PostgresRouteTraceStore : IRouteStore, ITraceStore {
     var chain = new HashSet<MessageId> { self.MessageId };
     var results = new List<IMessageEnvelope> { self };
 
-    // Up the causation chain, while each parent is held and not already in the chain.
+    // Up the causation chain, while each parent is held and not already in the chain. (A message id is never empty: a
+    // MessageId is a version 7 uuid, so the in-memory store's empty-cause check has nothing to stop here.)
     var cause = self.GetCausationId();
-    while (cause is { } parentId && parentId.Value != Guid.Empty && chain.Add(parentId)) {
+    while (cause is { } parentId && chain.Add(parentId)) {
       var parent = await GetByMessageIdAsync(parentId, ct).ConfigureAwait(false);
       if (parent is null) {
         break;

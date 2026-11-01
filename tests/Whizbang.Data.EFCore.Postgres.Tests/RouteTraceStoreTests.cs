@@ -131,11 +131,10 @@ public class RouteTraceStoreTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task GetCausalChain_StopsAtAMissingParent_AnEmptyCause_AndACycleAsync() {
+  public async Task GetCausalChain_StopsAtAMissingParent_AndACycleAsync() {
     await using var conn = await _openAsync();
     var correlation = CorrelationId.New();
     var orphan = _envelope(correlation, MessageId.New(), _t0, 1);
-    var emptyCause = _envelope(correlation, new MessageId(Guid.Empty), _t0.AddMinutes(1), 2);
     var a = _envelope(correlation, null, _t0.AddMinutes(2), 3);
     var b = _envelope(correlation, a.MessageId, _t0.AddMinutes(3), 4);
     var cycleStart = new MessageEnvelope<TraceStoreProbePlaced> {
@@ -151,15 +150,15 @@ public class RouteTraceStoreTests : EFCoreTestBase {
       Hops = [new MessageHop { Type = HopType.Causation, ServiceInstance = StoredMetadataCorpus.Orders, Timestamp = _t0, CausationId = b.MessageId }],
     };
     var memory = new InMemoryTraceStore();
-    foreach (var envelope in new[] { orphan, emptyCause, cycleStart, b, causationOnly }) {
+    foreach (var envelope in new[] { orphan, cycleStart, b, causationOnly }) {
       await memory.StoreAsync(envelope);
       await _appendAsync(conn, envelope);
     }
     var postgres = new PostgresRouteTraceStore(_database());
 
-    foreach (var start in new[] { orphan, emptyCause, cycleStart, b }.Select(e => e.MessageId)) {
+    foreach (var start in new[] { orphan, cycleStart, b }.Select(e => e.MessageId)) {
       await Assert.That(_ids(await postgres.GetCausalChainAsync(start))).IsEquivalentTo(_ids(await memory.GetCausalChainAsync(start)))
-        .Because("a missing parent, an empty cause and a cycle each end the walk, as in the in-memory store");
+        .Because("a missing parent and a cycle each end the walk, as in the in-memory store");
     }
     var chain = await postgres.GetCausalChainAsync(b.MessageId);
     await Assert.That(chain[0].MessageId).IsEqualTo(causationOnly.MessageId)

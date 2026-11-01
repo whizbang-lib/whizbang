@@ -135,16 +135,22 @@ COMMENT ON FUNCTION __SCHEMA__._wh_try_timestamptz(TEXT) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MetadataDistillationSqlTests.cs:Distill_AddsDurationStatistics_InOneUpdatePerRouteAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_timespan_ms(p_text TEXT)
 RETURNS DOUBLE PRECISION AS $$
-  SELECT CASE WHEN m IS NULL THEN NULL ELSE
-    (CASE WHEN m[1] = '-' THEN -1 ELSE 1 END) * (
-      COALESCE(m[2]::DOUBLE PRECISION, 0) * 86400000
-      + m[3]::DOUBLE PRECISION * 3600000
-      + m[4]::DOUBLE PRECISION * 60000
-      + m[5]::DOUBLE PRECISION * 1000
-      + COALESCE(('0.' || m[6])::DOUBLE PRECISION * 1000, 0))
-  END
-  FROM regexp_match(COALESCE(p_text, ''), '^(-)?(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?$') AS m;
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  m TEXT[];
+BEGIN
+  -- Plain assignments rather than a query: distillation calls this once a hop.
+  m := regexp_match(COALESCE(p_text, ''), '^(-)?(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?$');
+  IF m IS NULL THEN
+    RETURN NULL;
+  END IF;
+  RETURN (CASE WHEN m[1] = '-' THEN -1 ELSE 1 END) * (
+    COALESCE(m[2]::DOUBLE PRECISION, 0) * 86400000
+    + m[3]::DOUBLE PRECISION * 3600000
+    + m[4]::DOUBLE PRECISION * 60000
+    + m[5]::DOUBLE PRECISION * 1000
+    + COALESCE(('0.' || m[6])::DOUBLE PRECISION * 1000, 0));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_timespan_ms(TEXT) IS
   'Issue #1726: a TimeSpan written in its constant form ([-][d.]hh:mm:ss[.fffffff]) in milliseconds, NULL otherwise.';
@@ -188,17 +194,27 @@ COMMENT ON FUNCTION __SCHEMA__._wh_route_hops(JSONB) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MetadataDistillationSqlTests.cs:Reconstruct_WithinTheTraceWindow_IsLosslessAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_trace_hops(p_hops JSONB)
 RETURNS JSONB AS $$
-  SELECT COALESCE(jsonb_agg(
-    CASE WHEN jsonb_typeof(h.hop) = 'object' THEN
-      (h.hop - 'ty' - 'to' - 'es' - 'cm' - 'si')
-      || CASE WHEN jsonb_typeof(h.hop -> 'si') = 'object' THEN jsonb_build_object('si', (h.hop -> 'si') - 'sn')
-              WHEN h.hop ? 'si' THEN jsonb_build_object('si', h.hop -> 'si')
-              ELSE '{}'::jsonb END
-    ELSE h.hop END
-    ORDER BY h.ord), '[]'::jsonb)
-  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_hops) = 'array' THEN p_hops ELSE '[]'::jsonb END)
-    WITH ORDINALITY AS h(hop, ord);
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  v_out JSONB := '[]'::jsonb;
+  v_hop JSONB;
+BEGIN
+  -- A loop rather than a query: distillation calls this once an event.
+  IF jsonb_typeof(p_hops) IS DISTINCT FROM 'array' THEN
+    RETURN v_out;
+  END IF;
+  FOR i IN 0 .. jsonb_array_length(p_hops) - 1 LOOP
+    v_hop := p_hops -> i;
+    IF jsonb_typeof(v_hop) = 'object' THEN
+      v_hop := (v_hop - 'ty' - 'to' - 'es' - 'cm' - 'si')
+        || CASE WHEN jsonb_typeof(p_hops -> i -> 'si') = 'object' THEN jsonb_build_object('si', (p_hops -> i -> 'si') - 'sn')
+                WHEN p_hops -> i ? 'si' THEN jsonb_build_object('si', p_hops -> i -> 'si')
+                ELSE '{}'::jsonb END;
+    END IF;
+    v_out := v_out || jsonb_build_array(v_hop);
+  END LOOP;
+  RETURN v_out;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_trace_hops(JSONB) IS
   'Issue #1726: the per-message part of a hop list: each hop without ty, to, es, cm and si.sn, which its route holds.';
@@ -207,13 +223,18 @@ COMMENT ON FUNCTION __SCHEMA__._wh_trace_hops(JSONB) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RouteTraceStoreTests.cs:TraceStore_AnswersEveryQuery_LikeTheInMemoryStore_OnTheSameCorpusAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_first_current_hop_at(p_hops JSONB)
 RETURNS TIMESTAMPTZ AS $$
-  SELECT __SCHEMA__._wh_try_timestamptz(h.hop ->> 'ts')
-  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_hops) = 'array' THEN p_hops ELSE '[]'::jsonb END)
-    WITH ORDINALITY AS h(hop, ord)
-  WHERE COALESCE(h.hop ->> 'ty', '0') = '0'
-  ORDER BY h.ord
-  LIMIT 1;
-$$ LANGUAGE sql STABLE PARALLEL SAFE;
+BEGIN
+  IF jsonb_typeof(p_hops) IS DISTINCT FROM 'array' THEN
+    RETURN NULL;
+  END IF;
+  FOR i IN 0 .. jsonb_array_length(p_hops) - 1 LOOP
+    IF COALESCE(p_hops -> i ->> 'ty', '0') = '0' THEN
+      RETURN __SCHEMA__._wh_try_timestamptz(p_hops -> i ->> 'ts');
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_first_current_hop_at(JSONB) IS
   'Issue #1726: the timestamp of the first Current hop, the moment the trace store orders and ranges events by.';
@@ -223,9 +244,22 @@ COMMENT ON FUNCTION __SCHEMA__._wh_first_current_hop_at(JSONB) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MetadataDistillationSqlTests.cs:Distill_AddsDurationStatistics_InOneUpdatePerRouteAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_hops_duration_ms(p_hops JSONB)
 RETURNS DOUBLE PRECISION AS $$
-  SELECT SUM(__SCHEMA__._wh_timespan_ms(h.hop ->> 'du'))
-  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_hops) = 'array' THEN p_hops ELSE '[]'::jsonb END) AS h(hop);
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  v_total DOUBLE PRECISION;
+  v_ms DOUBLE PRECISION;
+BEGIN
+  IF jsonb_typeof(p_hops) IS DISTINCT FROM 'array' THEN
+    RETURN NULL;
+  END IF;
+  FOR i IN 0 .. jsonb_array_length(p_hops) - 1 LOOP
+    v_ms := __SCHEMA__._wh_timespan_ms(p_hops -> i ->> 'du');
+    IF v_ms IS NOT NULL THEN
+      v_total := COALESCE(v_total, 0) + v_ms;
+    END IF;
+  END LOOP;
+  RETURN v_total;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_hops_duration_ms(JSONB) IS
   'Issue #1726: the sum of a hop list''s durations in milliseconds, NULL when no hop carries one.';

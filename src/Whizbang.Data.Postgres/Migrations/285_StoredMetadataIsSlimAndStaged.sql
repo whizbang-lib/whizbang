@@ -121,11 +121,21 @@ COMMENT ON FUNCTION __SCHEMA__._wh_metadata_write_settings() IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:FullListedType_KeepsTheFullRow_ByTypeAndByNamespaceAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_metadata_kept_full(p_type_name TEXT, p_full_for TEXT[])
 RETURNS BOOLEAN AS $$
-  SELECT cardinality(p_full_for) > 0 AND EXISTS (
-    SELECT 1 FROM unnest(p_full_for) AS f(entry)
-    WHERE p_type_name = f.entry
-       OR left(p_type_name, length(f.entry) + 1) IN (f.entry || '.', f.entry || '+'));
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  v_entry TEXT;
+BEGIN
+  -- A loop rather than a query: every write path asks this once per event, and an empty list (the default) answers at once.
+  IF p_full_for IS NULL OR cardinality(p_full_for) = 0 THEN
+    RETURN FALSE;
+  END IF;
+  FOREACH v_entry IN ARRAY p_full_for LOOP
+    IF p_type_name = v_entry OR left(p_type_name, length(v_entry) + 1) IN (v_entry || '.', v_entry || '+') THEN
+      RETURN TRUE;
+    END IF;
+  END LOOP;
+  RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_metadata_kept_full(TEXT, TEXT[]) IS
   'Issue #1725: whether a type name is kept full by the full-for list: an entry equal to it, or a namespace (entry + '
@@ -136,32 +146,47 @@ COMMENT ON FUNCTION __SCHEMA__._wh_metadata_kept_full(TEXT, TEXT[]) IS
 -- ===========================================================================================
 
 -- RouteNormalizer.CanonicalText in SQL. Fields join with U+001F, a decision's fields with U+001D, decisions with U+001C,
--- the type and each hop with U+001E. Only the short hop names the hop writer emits are read.
+-- the type and each hop with U+001E. Only the short hop names the hop writer emits are read. Written as loops over the
+-- arrays rather than as a query: every write path calls it once per event, and a SQL function with a subquery is never
+-- inlined, so each call would run the executor (measured at hundreds of microseconds an event).
 -- <docs>data/event-store#routes-and-traces</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRouteCorpusTests.cs:EveryCorpusEntry_HasTheSameRouteId_InSqlAndInCSharpAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_route_text(p_type_name TEXT, p_hops JSONB)
 RETURNS TEXT AS $$
-  SELECT COALESCE(p_type_name, '') || COALESCE((
-    SELECT string_agg(
-      chr(30) || concat_ws(chr(31),
-        COALESCE(h.hop ->> 'ty', '0'),
-        COALESCE(h.hop -> 'si' ->> 'sn', ''),
-        COALESCE(h.hop ->> 'to', ''),
-        COALESCE(h.hop ->> 'es', ''),
-        regexp_replace(regexp_replace(COALESCE(h.hop ->> 'cf', ''), '^.*[/\\]', ''), '\.[^.]*$', ''),
-        COALESCE(h.hop ->> 'cm', ''),
-        COALESCE((
-          SELECT string_agg(
-            concat_ws(chr(29), COALESCE(d.decision ->> 'pn', ''), COALESCE(d.decision ->> 'r', ''),
-                      CASE WHEN d.decision ->> 'm' = 'true' THEN '1' ELSE '0' END),
-            chr(28) ORDER BY d.ord)
-          FROM jsonb_array_elements(
-            CASE WHEN jsonb_typeof(h.hop -> 'tr' -> 'd') = 'array' THEN h.hop -> 'tr' -> 'd' ELSE '[]'::jsonb END)
-            WITH ORDINALITY AS d(decision, ord)), '')),
-      '' ORDER BY h.ord)
-    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_hops) = 'array' THEN p_hops ELSE '[]'::jsonb END)
-      WITH ORDINALITY AS h(hop, ord)), '');
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  v_text TEXT := COALESCE(p_type_name, '');
+  v_hop JSONB;
+  v_decisions JSONB;
+  v_decision JSONB;
+  v_trail TEXT;
+BEGIN
+  IF jsonb_typeof(p_hops) IS DISTINCT FROM 'array' THEN
+    RETURN v_text;
+  END IF;
+  FOR i IN 0 .. jsonb_array_length(p_hops) - 1 LOOP
+    v_hop := p_hops -> i;
+    v_trail := '';
+    v_decisions := v_hop -> 'tr' -> 'd';
+    IF jsonb_typeof(v_decisions) = 'array' THEN
+      FOR j IN 0 .. jsonb_array_length(v_decisions) - 1 LOOP
+        v_decision := v_decisions -> j;
+        v_trail := v_trail || CASE WHEN j > 0 THEN chr(28) ELSE '' END
+          || COALESCE(v_decision ->> 'pn', '') || chr(29) || COALESCE(v_decision ->> 'r', '') || chr(29)
+          || CASE WHEN v_decision ->> 'm' = 'true' THEN '1' ELSE '0' END;
+      END LOOP;
+    END IF;
+    v_text := v_text || chr(30)
+      || COALESCE(v_hop ->> 'ty', '0') || chr(31)
+      || COALESCE(v_hop -> 'si' ->> 'sn', '') || chr(31)
+      || COALESCE(v_hop ->> 'to', '') || chr(31)
+      || COALESCE(v_hop ->> 'es', '') || chr(31)
+      || regexp_replace(regexp_replace(COALESCE(v_hop ->> 'cf', ''), '^.*[/\\]', ''), '\.[^.]*$', '') || chr(31)
+      || COALESCE(v_hop ->> 'cm', '') || chr(31)
+      || v_trail;
+  END LOOP;
+  RETURN v_text;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_route_text(TEXT, JSONB) IS
   'Issue #1725: the canonical route text of an event (RouteNormalizer.CanonicalText): its type name and, per hop, the '
@@ -201,10 +226,16 @@ DECLARE
   v_change JSONB;
   v_collections JSONB;
 BEGIN
-  SELECT array_agg(h.hop -> 'sc' ORDER BY h.ord) INTO v_deltas
-  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_hops) = 'array' THEN p_hops ELSE '[]'::jsonb END)
-    WITH ORDINALITY AS h(hop, ord)
-  WHERE COALESCE(h.hop ->> 'ty', '0') = '0' AND jsonb_typeof(h.hop -> 'sc') = 'object';
+  -- A loop rather than a query, so the common call (one scoped hop) runs no statement.
+  IF jsonb_typeof(p_hops) IS DISTINCT FROM 'array' THEN
+    RETURN NULL;
+  END IF;
+  FOR i IN 0 .. jsonb_array_length(p_hops) - 1 LOOP
+    v_delta := p_hops -> i;
+    IF COALESCE(v_delta ->> 'ty', '0') = '0' AND jsonb_typeof(v_delta -> 'sc') = 'object' THEN
+      v_deltas := array_append(v_deltas, v_delta -> 'sc');
+    END IF;
+  END LOOP;
 
   IF v_deltas IS NULL THEN
     RETURN NULL;
@@ -272,33 +303,41 @@ COMMENT ON FUNCTION __SCHEMA__._wh_fold_scope_deltas(JSONB) IS
 -- (Hops, or hops in the Dapper store's form): the slim hop keeps the first hop's ts, co, ca, st and tp and the scope
 -- folded over every Current hop. The dispatch context (dc) and receptor invocations (rin) are dropped, as ToSlim drops
 -- them. Every other top-level key is kept as written, so each store's reader finds its own keys (the message id, the
--- Dapper store's correlation_id, causation_id and pri, the ephemeral expiry and TTL).
+-- Dapper store's correlation_id, causation_id and pri, the ephemeral expiry and TTL). Plain assignments rather than a
+-- query, for the reason _wh_route_text gives.
 -- <docs>messaging/message-envelopes#stored-form</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRouteCorpusTests.cs:SlimForm_InSql_ReadsLikeToSlim_ForEveryCorpusEntryAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:OutboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:DirectAppend_KeysTheSlimFormDoesNotReduce_AreKeptAsWrittenAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_slim_event_metadata(p_full JSONB, p_route_id UUID)
 RETURNS JSONB AS $$
-  SELECT (COALESCE(p_full, '{}'::jsonb) - 'dc' - 'rin')
-    || COALESCE((
-      SELECT jsonb_build_object(k.hops_key,
-        CASE
-          WHEN jsonb_typeof(p_full -> k.hops_key) = 'array' AND jsonb_array_length(p_full -> k.hops_key) > 0 THEN
-            jsonb_build_array(
-              jsonb_strip_nulls(jsonb_build_object(
-                'ts', p_full -> k.hops_key -> 0 -> 'ts',
-                'co', p_full -> k.hops_key -> 0 -> 'co',
-                'ca', p_full -> k.hops_key -> 0 -> 'ca',
-                'st', p_full -> k.hops_key -> 0 -> 'st',
-                'tp', p_full -> k.hops_key -> 0 -> 'tp'))
-              || (SELECT CASE WHEN f.sc IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sc', f.sc) END
-                  FROM (SELECT __SCHEMA__._wh_fold_scope_deltas(p_full -> k.hops_key) AS sc) f))
-          ELSE p_full -> k.hops_key
-        END)
-      FROM (SELECT CASE WHEN p_full ? 'Hops' THEN 'Hops' WHEN p_full ? 'hops' THEN 'hops' END AS hops_key) k
-      WHERE k.hops_key IS NOT NULL), '{}'::jsonb)
-    || CASE WHEN p_route_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rid', p_route_id) END;
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+DECLARE
+  v_out JSONB := COALESCE(p_full, '{}'::jsonb) - 'dc' - 'rin';
+  v_key TEXT := CASE WHEN p_full ? 'Hops' THEN 'Hops' WHEN p_full ? 'hops' THEN 'hops' END;
+  v_hops JSONB;
+  v_first JSONB;
+  v_hop JSONB;
+  v_scope JSONB;
+BEGIN
+  IF v_key IS NOT NULL THEN
+    v_hops := p_full -> v_key;
+    IF jsonb_typeof(v_hops) = 'array' AND jsonb_array_length(v_hops) > 0 THEN
+      v_first := v_hops -> 0;
+      v_hop := jsonb_strip_nulls(jsonb_build_object(
+        'ts', v_first -> 'ts', 'co', v_first -> 'co', 'ca', v_first -> 'ca', 'st', v_first -> 'st', 'tp', v_first -> 'tp'));
+      v_scope := __SCHEMA__._wh_fold_scope_deltas(v_hops);
+      IF v_scope IS NOT NULL THEN
+        v_hop := v_hop || jsonb_build_object('sc', v_scope);
+      END IF;
+      v_out := v_out || jsonb_build_object(v_key, jsonb_build_array(v_hop));
+    END IF;
+  END IF;
+  IF p_route_id IS NOT NULL THEN
+    v_out := v_out || jsonb_build_object('rid', p_route_id);
+  END IF;
+  RETURN v_out;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_slim_event_metadata(JSONB, UUID) IS
   'Issue #1725: the slim stored form of a full metadata document (EnvelopeMetadata.ToSlim): the hop list (Hops, or '
@@ -475,16 +514,19 @@ BEGIN
   ),
   -- 285 (#1725): each event's route id, and the metadata its row keeps: the full form (plus the route id) under debug
   -- mode, under the Full form or for a listed type, otherwise the slim form. Pure CPU on values already in hand.
-  computed AS (
-    SELECT cf.*,
-      rt.route_id,
-      CASE
-        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cf.event_type, ',', 1), v_full_for)
-        THEN cf.full_meta || jsonb_build_object('rid', rt.route_id)
-        ELSE __SCHEMA__._wh_slim_event_metadata(cf.full_meta, rt.route_id)
-      END AS body_meta
+  -- Materialized, so each event's route id is computed once however many times the next step reads it.
+  computed_routes AS MATERIALIZED (
+    SELECT cf.*, __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id
     FROM computed_full cf
-    CROSS JOIN LATERAL (SELECT __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id) rt
+  ),
+  computed AS (
+    SELECT cr.*,
+      CASE
+        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
+        THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
+      END AS body_meta
+    FROM computed_routes cr
   ),
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
@@ -1006,16 +1048,19 @@ BEGIN
   ),
   -- 285 (#1725): each event's route id, and the metadata its row keeps: the full form (plus the route id) under debug
   -- mode, under the Full form or for a listed type, otherwise the slim form. Pure CPU on values already in hand.
-  computed AS (
-    SELECT cf.*,
-      rt.route_id,
-      CASE
-        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cf.event_type, ',', 1), v_full_for)
-        THEN cf.full_meta || jsonb_build_object('rid', rt.route_id)
-        ELSE __SCHEMA__._wh_slim_event_metadata(cf.full_meta, rt.route_id)
-      END AS body_meta
+  -- Materialized, so each event's route id is computed once however many times the next step reads it.
+  computed_routes AS MATERIALIZED (
+    SELECT cf.*, __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id
     FROM computed_full cf
-    CROSS JOIN LATERAL (SELECT __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id) rt
+  ),
+  computed AS (
+    SELECT cr.*,
+      CASE
+        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
+        THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
+      END AS body_meta
+    FROM computed_routes cr
   ),
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
