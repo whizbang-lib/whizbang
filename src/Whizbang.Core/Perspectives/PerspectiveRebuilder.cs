@@ -676,17 +676,26 @@ public sealed partial class PerspectiveRebuilder(
   /// stream is skipped. A stream archived whole is replayed through the archive only under
   /// <see cref="RebuildArchivedData.IncludeAll"/>. A stream archived through a prefix replays from its start through the
   /// archive under either opt-in; by default it starts from its newest live snapshot, and is skipped with none. A stream
-  /// with nothing archived replays from its start under every choice.
+  /// with nothing archived replays from its start under every choice. A stream whose archive was deleted (#1958) has lost
+  /// the history its archive held: one archived whole is skipped under every choice, and one archived through a prefix
+  /// starts from its newest live snapshot by default, which never reads the archive, and is skipped under either opt-in,
+  /// whose replay from the start would fold the hot events alone.
   /// </summary>
-  private static async Task<IReadOnlyList<PerspectiveCursorCompletion>?> _rebuildStreamAsync(
+  private async Task<IReadOnlyList<PerspectiveCursorCompletion>?> _rebuildStreamAsync(
       RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, CancellationToken ct) {
-    if (extent == Archival.ArchivedStreamExtent.Whole && run.ArchivedData != RebuildArchivedData.IncludeAll) {
-      return null;
+    var fromSnapshot = run.ArchivedData == RebuildArchivedData.Skip;
+    switch (extent) {
+      case Archival.ArchivedStreamExtent.WholeDeleted:
+      case Archival.ArchivedStreamExtent.PrefixDeleted when !fromSnapshot:
+        LogStreamSkippedForDeletedArchive(logger, run.PerspectiveName, streamId, extent, run.ArchivedData);
+        return null;
+      case Archival.ArchivedStreamExtent.Whole when run.ArchivedData != RebuildArchivedData.IncludeAll:
+        return null;
+      case Archival.ArchivedStreamExtent.Prefix or Archival.ArchivedStreamExtent.PrefixDeleted when fromSnapshot:
+        return await run.Runner.RunRebuildFromLatestSnapshotAsync(streamId, run.PerspectiveName, ct);
+      default:
+        return await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
     }
-    if (extent == Archival.ArchivedStreamExtent.Prefix && run.ArchivedData == RebuildArchivedData.Skip) {
-      return await run.Runner.RunRebuildFromLatestSnapshotAsync(streamId, run.PerspectiveName, ct);
-    }
-    return await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
   }
 
   /// <summary>
@@ -892,6 +901,11 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Debug,
     Message = "Rebuild of {Perspective} skipped stream {StreamId}: it is archived ({Extent}) and the rebuild reads archived data {ArchivedData}")]
   private static partial void LogStreamSkippedForArchivedData(
+    ILogger logger, string perspective, Guid streamId, Archival.ArchivedStreamExtent extent, RebuildArchivedData archivedData);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Rebuild of {Perspective} skipped stream {StreamId}: its archive was deleted ({Extent}), so the history the archive held is gone and a replay under ArchivedData {ArchivedData} would fold only what is left. Its row is left as it is")]
+  private static partial void LogStreamSkippedForDeletedArchive(
     ILogger logger, string perspective, Guid streamId, Archival.ArchivedStreamExtent extent, RebuildArchivedData archivedData);
 
   [LoggerMessage(Level = LogLevel.Information,
