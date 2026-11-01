@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Event bodies compress with lz4 (#1728, WS-2 S11).** Migration 290 sets `lz4` on both `wh_event_body` columns
+  (each only when it is not lz4 already; a server built without lz4 keeps pglz and logs a warning). Measured on copies
+  of the table, lz4 at the default target was 1.1% smaller, 26% faster to write and 11% faster to read in full than
+  pglz. `toast_tuple_target` stays at the server's value: PostgreSQL compresses nothing in a row under its 2 KB toast
+  threshold whatever the target says, and on larger rows a lower target moved values out of line (1.7% to 2.7%
+  smaller, 12% to 23% more buffers per body read). Existing bodies keep their compression until rewritten.
+- **Audit records can be re-derived (#1724, WS-2 S7).** Every audit writer names a record
+  `AuditLedger.RecordIdFor(originalEventId)`, a UUIDv5 under `sys-audit-record`, so a record derived again is the same
+  record and the audit perspective holds one row per audited event. `RequestAuditRebuildCommand`, handled on the
+  origin by the built-in `AuditRebuildRequestReceptor`, selects stored events as a redelivery does (tenant, streams,
+  commit-sequence range, capped and paged by `RedeliveryPumpOptions`), keeps the types audit eligibility admits, and
+  queues their records to the outbox with the event's own time, correlation and causation. **Upgrade note:** audit
+  record ids are no longer random; a reader that treated two records of one event as two entries now sees one.
+- **Ephemeral event types are excluded from audit unless they keep their body (#1730, WS-2 decision 2).** An
+  ephemeral event's origin reaps it, so a record that only points at it would point at nothing. Every writer (the
+  outbox builder, the event store decorator and the emitter) skips an ephemeral type unless it sets
+  `[AuditEvent(IncludeBody = true)]`; `AuditBodyDefault = Include` does not opt one in, and an `IAuditDecisionHook`
+  cannot reopen one. `AuditEligibility.Decide` takes `isEphemeral`. **Upgrade note:** an ephemeral type that was
+  audited by default no longer is; add `IncludeBody = true` to keep auditing it.
 - **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
   (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
   last append, last version, approximate bytes, state `Active`/`Sealed`/`Archived`, and the seal, disposition and
