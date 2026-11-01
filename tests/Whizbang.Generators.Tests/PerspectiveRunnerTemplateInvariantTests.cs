@@ -142,9 +142,17 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
     var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", guardIdx, StringComparison.Ordinal);
-    var namedIdx = template.IndexOf("DroppedStragglers = [triggeringEventId]", guardIdx, StringComparison.Ordinal);
+    // The skip branch builds its completion with the shared dropped-straggler helper (#1964 refuses the same way).
+    var namedIdx = template.IndexOf("result = _droppedStraggler(streamId, perspectiveName, triggeringEventId)", guardIdx, StringComparison.Ordinal);
     await Assert.That(namedIdx).IsGreaterThan(guardIdx)
       .Because("the skipped rewind's completion names the dropped straggler");
+    var helperIdx = template.IndexOf("private static PerspectiveCursorCompletion _droppedStraggler(", StringComparison.Ordinal);
+    await Assert.That(helperIdx).IsGreaterThan(0);
+    var helperEnd = template.IndexOf("};", helperIdx, StringComparison.Ordinal);
+    await Assert.That(template[helperIdx..helperEnd]).Contains("DroppedStragglers = [triggeringEventId]")
+      .Because("the helper's completion names the late event, so the worker retires its work");
+    await Assert.That(template[helperIdx..helperEnd]).Contains("LastEventId = Guid.Empty")
+      .Because("nothing was replayed, so the cursor is not moved");
     await Assert.That(namedIdx).IsLessThan(replayCallIdx)
       .Because("it is the skip branch, not the replay, that names it");
     var skipBranch = template[guardIdx..replayCallIdx];

@@ -1489,6 +1489,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
     // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
     var replaysWithoutAFloor = !_isEphemeralPerspective;
+    // The lines that announce the replay, logged once the rewind knows it replays: a rewind that needs archived history
+    // whose archive was deleted (#1964) refuses instead, and its refusal is the one line it logs.
+    Action? announceReplay = null;
 
     if (_snapshotStore is not null) {
       // The snapshot has to sit before the triggering event IN THE STREAM, because the rewind restores
@@ -1508,9 +1511,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // #1738: a snapshot an archive covers, but that records no version, cannot say where the archive's events after it
       // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
       if (snapshot is not null && snapshot.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
-        _logger.LogWarning(
+        var coveredSnapshotEventId = snapshot.SnapshotEventId;
+        announceReplay = () => _logger.LogWarning(
             "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
-            perspectiveName, streamId, snapshot.SnapshotEventId, triggeringEventId);
+            perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId);
         snapshot = null;
       }
 
@@ -1521,21 +1525,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           snapshotData = snapshot.SnapshotData;
           hasSnapshot = true;
           readThroughArchiveAfterVersion = snapshot.ArchivedThroughVersion is null ? null : snapshot.SnapshotVersion;
-          _logger.LogWarning(
+          var restoredFrom = snapshot;
+          announceReplay = () => _logger.LogWarning(
               "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
-              perspectiveName, streamId, snapshot.SnapshotEventId, snapshot.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
+              perspectiveName, streamId, restoredFrom.SnapshotEventId, restoredFrom.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
         } else if (replaysWithoutAFloor) {
-          _logger.LogWarning(
+          announceReplay = () => _logger.LogWarning(
               "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
               perspectiveName, streamId, triggeringEventId);
         }
       } else if (replaysWithoutAFloor) {
-        _logger.LogWarning(
+        announceReplay += () => _logger.LogWarning(
             "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
             perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
       }
     } else if (replaysWithoutAFloor) {
-      _logger.LogWarning(
+      announceReplay = () => _logger.LogWarning(
           "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
           perspectiveName, streamId, triggeringEventId);
     }
@@ -1580,17 +1585,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       _logger.LogWarning(
           "Skipping ephemeral rewind for {PerspectiveName} stream {StreamId}: late event {TriggeringEventId} has no readable snapshot floor and this stream's ephemeral bodies are reaped; a full replay would corrupt the authoritative model. Straggler dropped: out-of-order rewind window exceeded. Its work is retired and the cursor is not moved.",
           perspectiveName, streamId, triggeringEventId);
-      result = new PerspectiveCursorCompletion {
-        StreamId = streamId,
-        PerspectiveName = perspectiveName,
-        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-        LastEventId = Guid.Empty,
-        Status = PerspectiveProcessingStatus.None,
-        EventsProcessed = 0,
-        RowChanged = false,  // the rewind was skipped, so nothing was written
-        DroppedStragglers = [triggeringEventId],
-      };
+      result = _droppedStraggler(streamId, perspectiveName, triggeringEventId);
+    } else if ((!hasSnapshot || readThroughArchiveAfterVersion is not null)
+        && await _deletedArchiveExtentAsync(streamId, cancellationToken) is { } deletedExtent) {
+      // #1964: the replay needs archived history (from the stream's start it reads the archived prefix through the gap;
+      // from a snapshot an archive covers it reads the archived events after it), and that archive was deleted. A replay
+      // would fold the hot events alone and write a partial row as the whole. A rewind always reads through the archive,
+      // as a rebuild that opts in to archived data does, so it refuses as that rebuild skips the stream (#1958): the row
+      // and the cursor are left as they are, and the late event is named dropped so the worker retires its work instead
+      // of refusing it again on every claim. A rewind from a snapshot no archive covers never reads the archive and
+      // never asks.
+      // <docs>fundamentals/perspectives/rewind#deleted-archive</docs>
+      _logger.LogWarning(
+          "Refusing rewind of {PerspectiveName} stream {StreamId} for late event {TriggeringEventId}: the replay needs the stream's archived history and its archive was deleted ({ArchivedExtent}), so a replay would fold only the hot events. The row and the cursor are left as they are, and the late event is dropped.",
+          perspectiveName, streamId, triggeringEventId, deletedExtent);
+      result = _droppedStraggler(streamId, perspectiveName, triggeringEventId);
     } else {
+      announceReplay?.Invoke();
       result = await _replayCheckedAsync(
           streamId, perspectiveName, snapshotModel, snapshotData, replayFromEventId, readThroughArchiveAfterVersion, cancellationToken);
     }
@@ -1609,6 +1620,40 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     return result;
+  }
+
+  /// <summary>
+  /// The completion of a rewind that replayed nothing and dropped its late event: the cursor is not moved (an empty last
+  /// event skips the checkpoint write), nothing was written, and the late event is named so the worker retires its work.
+  /// </summary>
+  private static PerspectiveCursorCompletion _droppedStraggler(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
+      new() {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+        LastEventId = Guid.Empty,
+        Status = PerspectiveProcessingStatus.None,
+        EventsProcessed = 0,
+        RowChanged = false,  // the rewind was skipped, so nothing was written
+        DroppedStragglers = [triggeringEventId],
+      };
+
+  /// <summary>
+  /// How much of the stream's archive was deleted (#1964), from the stream lifecycle ledger: the extent when the stream
+  /// lost archived history, or null when it did not, or when the host registers no ledger (it has no archive).
+  /// </summary>
+  private async Task<global::Whizbang.Core.Archival.ArchivedStreamExtent?> _deletedArchiveExtentAsync(
+      Guid streamId, CancellationToken cancellationToken) {
+    var ledger = _serviceProvider.GetService<global::Whizbang.Core.Archival.IArchivedStreamExtents>();
+    if (ledger is null) {
+      return null;
+    }
+    var extents = await ledger.GetExtentsAsync(new[] { streamId }, cancellationToken);
+    return extents.TryGetValue(streamId, out var extent)
+        && extent is global::Whizbang.Core.Archival.ArchivedStreamExtent.PrefixDeleted
+          or global::Whizbang.Core.Archival.ArchivedStreamExtent.WholeDeleted
+      ? extent
+      : null;
   }
 
   /// <summary>

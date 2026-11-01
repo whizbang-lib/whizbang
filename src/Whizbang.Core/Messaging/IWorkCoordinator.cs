@@ -4000,8 +4000,12 @@ public record PerspectiveCursorCompletion {
   /// a replay would read bodies that are already reaped. The runner keeps the row as it is, leaves the cursor where it
   /// is, and names the straggler here so the worker retires its work. Before the runner reported it, the work stayed
   /// pending, so every claim found the same event again and dropped it again (#1862).
+  /// A rewind whose replay needs a stream's archived history, after that archive was deleted, drops its late event the
+  /// same way (#1964): a replay would fold the hot events alone, so the row and the cursor are left as they are.
   /// </remarks>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <docs>fundamentals/perspectives/rewind#deleted-archive</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindDeletedArchiveTests.cs:ARewindFromTheStreamsStart_OfAStreamWhoseArchiveWasDeleted_IsRefused_AndNamesTheLateEventDroppedAsync</tests>
   [JsonIgnore]
   public Guid[] DroppedStragglers { get; init; } = [];
 }
