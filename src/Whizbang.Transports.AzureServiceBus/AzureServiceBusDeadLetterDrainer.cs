@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
 namespace Whizbang.Transports.AzureServiceBus;
@@ -54,6 +55,7 @@ public sealed class AzureServiceBusDeadLetterDrainer(
       : throw new ArgumentException("Subscription name required", nameof(subscriptionName));
   private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
   private readonly ILogger<AzureServiceBusDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusDeadLetterDrainer>.Instance;
+  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
   private ServiceBusReceiver? _receiver;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;
@@ -105,11 +107,15 @@ public sealed class AzureServiceBusDeadLetterDrainer(
           var imported = await _importAsync(import, ct).ConfigureAwait(false);
           await receiver.CompleteMessageAsync(msg, ct).ConfigureAwait(false);
           drained++;
+          if (imported) {
+            DeadLetterLog.BrokerMessageDeadLettered(_logger, _deadLetterLevel, import);
+          } else {
 #pragma warning disable CA1848, CA1873
-          _logger.LogInformation(
-            "ASB DLQ imported message {MessageId} from topic={Topic}/sub={Sub} into wh_dead_letters (duplicate={Duplicate}, brokerReason={Reason})",
-            msg.MessageId, _topicName, _subscriptionName, !imported, msg.DeadLetterReason);
+            _logger.LogInformation(
+              "ASB DLQ message {MessageId} from topic={Topic}/sub={Sub} was already in wh_dead_letters (brokerReason={Reason}); settled the broker copy",
+              msg.MessageId, _topicName, _subscriptionName, msg.DeadLetterReason);
 #pragma warning restore CA1848, CA1873
+          }
         } catch (OperationCanceledException) {
           throw;
         } catch (Exception ex) {

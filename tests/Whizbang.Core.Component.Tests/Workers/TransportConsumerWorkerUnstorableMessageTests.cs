@@ -180,6 +180,8 @@ public class TransportConsumerWorkerUnstorableMessageTests {
       .And.Contains(nameof(MessageFailureReason.SerializationError))
       .And.Contains(SelectivelyFailingSerializer.FAILURE_TEXT)
       .And.Contains($"{TOPIC}/{SUBSCRIPTION}");
+    await Assert.That(record.Exception).IsTypeOf<NotSupportedException>()
+      .Because("the serializer's exception is the last failure, so the record carries it with its stack trace");
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(1)
       .Because("the record replaces the consumer's own Error line for the same message, so it is reported once");
 

@@ -23,6 +23,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public sealed partial class OutboxFlushFailureRecorder {
+  private const string ABANDONED_AT_SHUTDOWN = "abandoned at shutdown: the stop's deadline passed before the messages were stored";
   private const string GATE_CALLER = "OutboxFlushDeadLetter";
 
   private readonly IServiceScopeFactory _scopeFactory;
@@ -32,6 +33,7 @@ public sealed partial class OutboxFlushFailureRecorder {
   private readonly DeadLetterMetrics? _deadLetterMetrics;
   private readonly IOutboxFlushFailureObserver[] _observers;
   private readonly ILogger _logger;
+  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
 
   /// <summary>Creates the recorder.</summary>
   /// <param name="scopeFactory">Opens the scope the coordinator is resolved from.</param>
@@ -78,7 +80,7 @@ public sealed partial class OutboxFlushFailureRecorder {
   public async Task<bool> RecordAsync(OutboxFlushFailure failure, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(failure);
     var errorText = failure.Error?.ToString()
-      ?? "abandoned at shutdown: the stop's deadline passed before the messages were stored";
+      ?? ABANDONED_AT_SHUTDOWN;
     var deadLettered = false;
     try {
       deadLettered = await _deadLetterAsync(failure, errorText, cancellationToken).ConfigureAwait(false);
@@ -91,6 +93,9 @@ public sealed partial class OutboxFlushFailureRecorder {
         new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.OutboxStoreFailed)));
       _deadLetterMetrics.RecordArrival(DeadLetterSourceTable.OUTBOX, (int)MessageFailureReason.OutboxStoreFailed, errorText);
     }
+    if (deadLettered) {
+      _logDeadLettered(failure);
+    }
 
     var reported = failure with { DeadLettered = deadLettered };
     foreach (var observer in _observers) {
@@ -101,6 +106,21 @@ public sealed partial class OutboxFlushFailureRecorder {
       }
     }
     return deadLettered;
+  }
+
+  /// <summary>
+  /// Logs the dead-letter record (#1901) for each message the batch held: the store failure is the last failure's
+  /// exception, and a batch abandoned at shutdown, which has none, records why it was not stored.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs:RecordAsync_CoordinatorDeadLetters_LogsOneDeadLetterRecordPerMessageAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs:RecordAsync_AbandonedWithoutAnError_RecordSaysWhyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs:RecordAsync_DeadLetterWriteFails_LogsNoDeadLetterRecordAsync</tests>
+  private void _logDeadLettered(OutboxFlushFailure failure) {
+    var lastError = failure.Error?.Message ?? ABANDONED_AT_SHUTDOWN;
+    foreach (var message in failure.Messages) {
+      DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, failure.Error, message.MessageId, message.MessageType,
+        nameof(MessageFailureReason.OutboxStoreFailed), lastError);
+    }
   }
 
   private async Task<bool> _deadLetterAsync(OutboxFlushFailure failure, string errorText, CancellationToken cancellationToken) {

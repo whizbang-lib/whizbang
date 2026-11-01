@@ -92,6 +92,7 @@ public sealed partial class OutboxPublishWorker(
   // since this worker has no pre-publish gate.
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
+  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
   private readonly IGenerationProvider _generationProvider = generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics = dlqMetrics;
 
@@ -401,6 +402,7 @@ public sealed partial class OutboxPublishWorker(
   /// caller falls through to the failure-channel path; the next claim will retry
   /// the move via OutboxDrainWorker's pre-publish gate.</para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AttemptsAtCap_LogsTheDeadLetterRecordAtErrorWithTypeAndErrorAsync</tests>
   private async Task<bool> _tryPromoteToDlqAsync(OutboxWork work, string errorText, CancellationToken ct) {
     if (!_deadLetterStore.IsConfigured
         || _instanceProvider is null
@@ -418,7 +420,8 @@ public sealed partial class OutboxPublishWorker(
         instanceId: _instanceProvider.InstanceId,
         generation: _generationProvider.GetGeneration(),
         ct: ct).ConfigureAwait(false);
-      LogOutboxDlqPromoted(_logger, work.MessageId, work.Attempts, maxAttempts);
+      DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, work.MessageId, work.MessageType,
+        nameof(MessageFailureReason.MaxAttemptsExceeded), errorText);
       _dlqMetrics?.Added.Add(1,
         new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
         new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
@@ -640,9 +643,7 @@ public sealed partial class OutboxPublishWorker(
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "OutboxPublishWorker has no IMessagePublishStrategy registered — publish loop skipped (host did not register a transport)")]
   static partial void LogNoTransportRegistered(ILogger logger);
 
-  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
-    Message = "OutboxPublishWorker dead-lettered {MessageId} at attempts={Attempts} (cap={MaxAttempts}) — moved to wh_dead_letters")]
-  static partial void LogOutboxDlqPromoted(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+  // EventId 6 (a dead letter, at Warning) is retired: every dead letter is the DeadLetterLog record (#1901).
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "OutboxPublishWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to failure channel")]

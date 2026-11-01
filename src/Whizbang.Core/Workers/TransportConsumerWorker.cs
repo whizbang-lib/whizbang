@@ -63,6 +63,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
+  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
 
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
@@ -721,7 +722,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         partitionCount: _partitionCount,
         cancellationToken: cancellationToken);
       await _quarantinePoisonRedeliveriesAsync(
-        observations, poisonDetector, scopedProvider, cancellationToken);
+        observations, inboxMessages, poisonDetector, scopedProvider, cancellationToken);
     }
     _metrics?.InboxMessagesProcessed.Add(inboxMessages.Count);
 
@@ -745,10 +746,14 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>
   /// A received message that cannot become an inbox row, with everything a dead-letter record needs:
-  /// its wire id and envelope type, the body to replay it from, and why it failed.
+  /// its wire id and envelope type, the body to replay it from, why it failed, and the exception that made it fail
+  /// when there was one.
   /// </summary>
   private sealed record UnstorableMessage(
-    Guid MessageId, string? EnvelopeType, string EnvelopeJson, MessageFailureReason Reason, string? Description);
+    Guid MessageId, string? EnvelopeType, string EnvelopeJson, MessageFailureReason Reason, string? Description) {
+    /// <summary>The exception that made the message unstorable, or null when the failure was reported as a result.</summary>
+    public Exception? Cause { get; init; }
+  }
 
   /// <summary>
   /// Gives an unstorable message durable custody in the dead-letter store through the same entry the
@@ -760,29 +765,29 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// could not be given, in which case the caller must not let the transport treat it as handled.</returns>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_LogsTheDeadLetterRecordAtErrorWithTypeAndCauseAsync</tests>
   private async Task<bool> _giveDeadLetterCustodyAsync(
       IWorkCoordinator workCoordinator, UnstorableMessage message, TransportDestination destination,
       CancellationToken cancellationToken) {
     var destinationName = destination.RoutingKey is null
       ? destination.Address
       : $"{destination.Address}/{destination.RoutingKey}";
+    var import = new BrokerDeadLetterImport(
+      MessageId: message.MessageId,
+      StreamId: null,
+      MessageType: message.EnvelopeType,
+      Destination: destinationName,
+      EnvelopeJson: message.EnvelopeJson,
+      BrokerReason: message.Reason.ToString(),
+      BrokerDescription: message.Description,
+      EnqueuedAt: null,
+      DeliveryCount: null);
     try {
-      await workCoordinator.ImportBrokerDeadLetterAsync(
-        new BrokerDeadLetterImport(
-          MessageId: message.MessageId,
-          StreamId: null,
-          MessageType: message.EnvelopeType,
-          Destination: destinationName,
-          EnvelopeJson: message.EnvelopeJson,
-          BrokerReason: message.Reason.ToString(),
-          BrokerDescription: message.Description,
-          EnqueuedAt: null,
-          DeliveryCount: null),
-        cancellationToken).ConfigureAwait(false);
-      LogUnstorableDeadLettered(_logger, message.MessageId, message.EnvelopeType, message.Reason, destinationName, message.Description);
+      await workCoordinator.ImportBrokerDeadLetterAsync(import, cancellationToken).ConfigureAwait(false);
+      DeadLetterLog.BrokerMessageDeadLettered(_logger, _deadLetterLevel, import, message.Cause);
       return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogUnstorableCustodyFailed(_logger, ex, message.MessageId, message.EnvelopeType, message.Reason);
+      LogUnstorableCustodyFailed(_logger, ex, message.MessageId, message.EnvelopeType, message.Reason, message.Description);
       return false;
     }
   }
@@ -917,7 +922,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       var rehydrate = await Whizbang.Core.Offloads.BodyClaimRehydrator.MaybeRehydrateAsync(
         envelope, envelopeType, jsonOptions, scopedProvider, cancellationToken);
       if (rehydrate.IsDeadLetter) {
-        _logger.LogError(
+        // Warning: the dead-letter record that follows is the message's terminal record, at the configured level (#1901).
+        _logger.LogWarning(
           "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dead-lettering",
           envelope.MessageId, rehydrate.FailureReason, rehydrate.FailureDescription);
         _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
@@ -951,14 +957,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     } catch (Exception ex) {
       // Never a silent skip (#915): a message that cannot become an inbox row is dead-lettered with
       // its body by the batch handler; the reflective serializer call wraps the real cause.
-      _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — dead-lettering", envelope.MessageId);
-      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
-      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       var cause = ex.GetBaseException();
       var description = $"{cause.GetType().Name}: {cause.Message}";
+      // Not logged here: the dead-letter record logged when the message is given custody carries this exception and is
+      // its one terminal record, at the configured level (#1901); a custody failure is logged with the cause instead.
+      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       return (null, null, new UnstorableMessage(
         envelope.MessageId.Value, envelopeType, _custodyBody(envelope, envelopeType, description),
-        MessageFailureReason.SerializationError, description));
+        MessageFailureReason.SerializationError, description) { Cause = cause });
     } finally {
       inboxActivity?.Dispose();
     }
@@ -977,8 +984,11 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// batch, because failing here would nack the whole delivery and feed the very redelivery loop
   /// being quarantined.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerPoisonQuarantineTests.cs:Batch_RedeliveryLoopQuarantined_LogsTheDeadLetterRecordAtErrorWithTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerPoisonQuarantineTests.cs:Batch_RedeliveryLoopForAMessageNotInTheBatch_RecordHasNoTypeAsync</tests>
   private async Task _quarantinePoisonRedeliveriesAsync(
       IReadOnlyList<InboxRedeliveryObservation> observations,
+      IReadOnlyList<InboxMessage> batch,
       Routing.IPoisonMessageDetector poisonDetector,
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
@@ -1021,6 +1031,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
           instanceId: instanceProvider.InstanceId,
           generation: generationProvider.GetGeneration(),
           ct: cancellationToken).ConfigureAwait(false);
+        // The store can report a message from an earlier batch, whose type this batch cannot tell.
+        var messageType = batch.FirstOrDefault(m => m.MessageId == observation.MessageId)?.MessageType;
+        DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, observation.MessageId, messageType,
+          nameof(MessageFailureReason.PoisonRedeliveryLoop), verdict.Detail);
       } catch (Exception ex) {
         _logger.LogError(
           ex,
@@ -1430,25 +1444,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   )]
   private static partial void LogStoredSettledOnReceive(ILogger logger, Guid messageId, string messageType, string reason);
 
-  /// <summary>Logs that a message which could not become an inbox row was given dead-letter custody.</summary>
-  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
-  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
-  [LoggerMessage(
-    Level = LogLevel.Error,
-    Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox and was dead-lettered with its body from {Destination}: {Reason} — {Description}. It can be replayed through dead-letter recovery once the cause is fixed."
-  )]
-  private static partial void LogUnstorableDeadLettered(
-    ILogger logger, Guid messageId, string? envelopeType, MessageFailureReason reason, string destination, string? description);
-
   /// <summary>Logs that an unstorable message could not be given dead-letter custody either, so its batch fails.</summary>
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
   [LoggerMessage(
     Level = LogLevel.Critical,
-    Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox ({Reason}) and dead-letter custody failed too; its batch is failed so the message is not reported handled."
+    Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox ({Reason}: {Description}) and dead-letter custody failed too; its batch is failed so the message is not reported handled."
   )]
   private static partial void LogUnstorableCustodyFailed(
-    ILogger logger, Exception exception, Guid messageId, string? envelopeType, MessageFailureReason reason);
+    ILogger logger, Exception exception, Guid messageId, string? envelopeType, MessageFailureReason reason, string? description);
 
   /// <summary>
   /// Checks if the message originated from this service (self-echo).

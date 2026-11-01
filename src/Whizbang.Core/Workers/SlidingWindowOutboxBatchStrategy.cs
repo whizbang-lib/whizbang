@@ -84,7 +84,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
   /// Creates the strategy with the given flush callback and what to do with a batch it cannot store (#1871).
   /// </summary>
   /// <param name="flush">Called with each per-stream batch. Typically resolves <see cref="IWorkCoordinator"/> from a DI scope and calls <see cref="IWorkCoordinator.StoreOutboxMessagesAsync"/>.</param>
-  /// <param name="logger">Logger; a retry is logged at Warning and a batch that was not stored at Error, with its message ids.</param>
+  /// <param name="logger">Logger; a retry is logged at Warning, a batch that was not stored and was dead-lettered at Information (each message gets its dead-letter record from the recorder), and a batch that could not be dead-lettered either at Error, with its message ids.</param>
   /// <param name="options">Tuning knobs; null uses the defaults.</param>
   /// <param name="timeProvider">Time source for the windows and the retry backoff. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
   /// <param name="onFlushFailed">Records a batch that could not be stored; the registered one dead-letters it. Null only logs and counts it.</param>
@@ -321,7 +321,7 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
     Message = "Storing {BatchSize} outbox message(s) for stream {StreamKey} failed with a transient {Reason}; attempt {Attempt} of {MaxAttempts}, retrying in {Delay}")]
   private partial void LogFlushRetrying(Exception exception, int batchSize, Guid streamKey, string reason, int attempt, int maxAttempts, TimeSpan delay);
 
-  [LoggerMessage(Level = LogLevel.Error,
+  [LoggerMessage(Level = LogLevel.Information,
     Message = "{BatchSize} outbox message(s) for stream {StreamKey} were not stored ({Cause}, {Attempts} attempt(s)) and were written to wh_dead_letters with reason OutboxStoreFailed. Dead-letter recovery stores them again; to do it now, recover the dead letters whose source_id is one of these message ids: {MessageIds}")]
   private static partial void LogFlushDeadLettered(ILogger logger, Exception? exception, int batchSize, Guid streamKey, OutboxFlushFailureCause cause, int attempts, string messageIds);
 

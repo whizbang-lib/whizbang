@@ -348,6 +348,7 @@ public partial class PerspectiveWorker(
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
+  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
   private readonly IGenerationProvider _generationProvider = generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _deadLetterMetrics = deadLetterMetrics;
 
@@ -2080,6 +2081,8 @@ public partial class PerspectiveWorker(
   /// policy as <see cref="InboxDispatchWorker"/>.
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs:FailuresAboveMax_MovedToDeadLetters_LogsTheDeadLetterRecordAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs:FailuresAboveMax_MoveThrows_LogsNoRecordAsync</tests>
   internal async Task<List<StreamEventData>> FilterDeadLetteredAsync(
       List<StreamEventData> rawEvents,
       CancellationToken cancellationToken) {
@@ -2092,23 +2095,21 @@ public partial class PerspectiveWorker(
     foreach (var raw in rawEvents) {
       if (raw.Failures > maxAttempts.Value) {
         try {
+          var errorText = $"PerspectiveWorker dead-lettered perspective event: failures={raw.Failures} > max={maxAttempts.Value} (leases={raw.Attempts}) perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}";
           await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
             sourceId: raw.EventWorkId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
-            errorText: $"PerspectiveWorker dead-lettered perspective event: failures={raw.Failures} > max={maxAttempts.Value} (leases={raw.Attempts}) perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}",
+            errorText: errorText,
             instanceId: _instanceProvider.InstanceId,
             generation: generation,
             ct: cancellationToken).ConfigureAwait(false);
           _deadLetterMetrics?.Added.Add(1,
             new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
             new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
-#pragma warning disable CA1848
-          _logger.LogWarning(
-            "PerspectiveWorker dead-lettered perspective event {EventWorkId} perspective={Perspective} stream={StreamId} event={EventId} failures={Failures} > max={Max} (leases={Leases})",
-            raw.EventWorkId, raw.PerspectiveName, raw.StreamId, raw.EventId, raw.Failures, maxAttempts.Value, raw.Attempts);
-#pragma warning restore CA1848
+          DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, raw.EventWorkId, raw.EventType,
+            nameof(Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded), errorText);
           // Row was DELETEd by move_to_dead_letters() inside the SQL function; do not
           // include it in survivors.
           continue;
