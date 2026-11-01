@@ -634,7 +634,7 @@ public class SchemaBootstrapPhaseTests {
   [Test]
   public async Task AMissingRequest_IsRefusedAsync() =>
     await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
-      null!, null, TimeProvider.System, null, CancellationToken.None)).Throws<ArgumentNullException>();
+      null!, null, new FakeTimeProvider(), null, CancellationToken.None)).Throws<ArgumentNullException>();
 
   /// <summary>
   /// A failure that is not transient fails startup loudly (#1636): it is thrown as a
