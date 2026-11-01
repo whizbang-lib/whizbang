@@ -55,6 +55,8 @@ internal static class DefaultSystemEventEmitter {
       serviceProvider.GetRequiredService<IOptions<SystemEventOptions>>(),
       new ScopePerAppendSystemEventSink(serviceProvider.GetRequiredService<IServiceScopeFactory>()),
       serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>());
+      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>(),
+      // A singleton built once from the catalog, so the emitter holds no scoped service by holding it.
+      serviceProvider.GetService<IEphemeralModeResolver>());
   }
 }

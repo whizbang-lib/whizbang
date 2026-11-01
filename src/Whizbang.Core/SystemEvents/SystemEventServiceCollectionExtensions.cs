@@ -121,7 +121,8 @@ public static class SystemEventServiceCollectionExtensions {
                 inner, channel, opts,
                 sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
                 sp.GetRequiredService<IAuditDecisionHook>(),
-                sp.GetRequiredService<ILogger<AuditingEventStoreDecorator>>());
+                sp.GetRequiredService<ILogger<AuditingEventStoreDecorator>>(),
+                sp.GetService<IEphemeralModeResolver>());
             },
             captured.Lifetime));
       }
@@ -243,7 +244,8 @@ public static class SystemEventServiceCollectionExtensions {
             inner, channel, opts,
             sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
             sp.GetRequiredService<IAuditDecisionHook>(),
-            sp.GetRequiredService<ILogger<AuditingEventStoreDecorator>>());
+            sp.GetRequiredService<ILogger<AuditingEventStoreDecorator>>(),
+            sp.GetService<IEphemeralModeResolver>());
         },
         descriptor.Lifetime));
 

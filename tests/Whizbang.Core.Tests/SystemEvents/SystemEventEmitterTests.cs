@@ -1292,7 +1292,7 @@ public class SystemEventEmitterTests {
     await _emitterFor(eventStore, resolver: null).EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterEphemeralBodyKept("typing")));
 
     var emitted = (MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single();
-    await Assert.That(emitted.Payload.OriginalBody).IsNotNull();
+    await Assert.That(emitted.Payload.OriginalBody.HasValue).IsTrue();
   }
 
   [Test]
