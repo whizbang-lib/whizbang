@@ -59,6 +59,11 @@ public class MaintenanceWorkerRetentionSyncTests {
     public int MaintenanceCalls;
 
     public virtual Task SyncRetentionSettingsAsync(IReadOnlyList<RetentionSetting> settings, CancellationToken cancellationToken = default) {
+      // The stored-metadata settings are published on every tick through the same call (#1725); this class records
+      // the retention write, so it leaves that one out (MaintenanceWorkerEventStoreMetadataSyncTests covers it).
+      if (_isStoredMetadataPublish(settings)) {
+        return Task.CompletedTask;
+      }
       Syncs.Add(settings);
       return SyncThrows is not null ? Task.FromException(SyncThrows) : Task.CompletedTask;
     }
@@ -86,6 +91,9 @@ public class MaintenanceWorkerRetentionSyncTests {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
+
+  private static bool _isStoredMetadataPublish(IReadOnlyList<RetentionSetting> settings) =>
+    settings.Any(s => s.Key == Whizbang.Core.Messaging.EventStoreMetadataSettings.WRITE_FORM_KEY);
 
   /// <summary>A coordinator that implements only the older debug-only sync, as a third-party engine might.</summary>
   private sealed class DebugOnlyCoordinator : IWorkCoordinator {
@@ -163,7 +171,9 @@ public class MaintenanceWorkerRetentionSyncTests {
 
   private sealed class OrderRecordingCoordinator(List<string> order) : SyncingCoordinator {
     public override Task SyncRetentionSettingsAsync(IReadOnlyList<RetentionSetting> settings, CancellationToken cancellationToken = default) {
-      order.Add("sync");
+      if (!_isStoredMetadataPublish(settings)) {
+        order.Add("sync");
+      }
       return Task.CompletedTask;
     }
     public override Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
