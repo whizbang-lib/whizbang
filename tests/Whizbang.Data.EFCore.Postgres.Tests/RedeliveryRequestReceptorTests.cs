@@ -268,8 +268,8 @@ public class RedeliveryRequestReceptorTests {
 
     var stages = registry.Registered.Where(r => r.Msg == typeof(Whizbang.Core.SystemEvents.RequestAuditRebuildCommand))
       .Select(r => r.Stage).ToList();
-    await Assert.That(stages).IsEquivalentTo(new[] {
-      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline })
+    await Assert.That(stages).IsEquivalentTo([
+      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])
       .Because("an audit rebuild is asked of the origin in-process by an operator or over the inbox by the audit service (#1724)");
   }
 

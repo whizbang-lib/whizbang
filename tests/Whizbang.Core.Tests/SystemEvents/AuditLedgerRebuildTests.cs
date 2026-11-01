@@ -270,6 +270,14 @@ public class AuditLedgerRebuildTests {
     await Assert.That(_record(message).GetProperty("Scope").TryGetProperty("TenantId", out _)).IsFalse();
   }
 
+  [Test]
+  public async Task Rederive_AScopeWithOnlyATenant_KeepsTheTenantAsync() {
+    var message = _rebuild().Rederive(_stored(typeof(RebuildOrderPlaced), scope: """{"t":"tenant-a"}"""))!;
+
+    await Assert.That(_record(message).GetProperty("Scope").GetProperty("TenantId").GetString()).IsEqualTo("tenant-a");
+    await Assert.That(_record(message).GetProperty("Scope").TryGetProperty("UserId", out _)).IsFalse();
+  }
+
   #endregion
 
   #region Deriving again
@@ -430,7 +438,7 @@ public class AuditLedgerRebuildTests {
     var command = new RequestAuditRebuildCommand { StreamIds = [Guid.NewGuid()] };
 
     await Assert.That(((Whizbang.Core.Audit.IBoundedCommandAudit)command).ListsAuditedAsLengths())
-      .IsEquivalentTo(new[] { nameof(RequestAuditRebuildCommand.StreamIds) })
+      .IsEquivalentTo([nameof(RequestAuditRebuildCommand.StreamIds)])
       .Because("a rebuild can name any number of streams, and its own audit record keeps how many, not every id");
   }
 
@@ -448,7 +456,7 @@ public class AuditLedgerRebuildTests {
 
     var request = history.Requests.Single();
     await Assert.That(request.TenantScope).IsEqualTo("tenant-a");
-    await Assert.That(request.StreamIds).IsEquivalentTo(new[] { stream });
+    await Assert.That(request.StreamIds).IsEquivalentTo([stream]);
     await Assert.That(request.FromCommitSequence).IsEqualTo(10L);
     await Assert.That(request.ToCommitSequence).IsEqualTo(20L);
     await Assert.That(request.EventTypes).IsNull()

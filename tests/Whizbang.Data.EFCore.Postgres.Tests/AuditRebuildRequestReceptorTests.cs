@@ -117,7 +117,7 @@ public class AuditRebuildRequestReceptorTests : EFCoreTestBase {
     await receptor.HandleAsync(new RequestAuditRebuildCommand { TenantScope = TENANT, StreamIds = [stream] });
 
     var audited = channel.Queued.ConvertAll(m => m.Envelope.Payload.GetProperty("OriginalEventId").GetGuid());
-    await Assert.That(audited).IsEquivalentTo(new[] { placed, placedAgain })
+    await Assert.That(audited).IsEquivalentTo([placed, placedAgain])
       .Because("the heartbeat is excluded and the presence is ephemeral; only the two order events are audited");
     await Assert.That(channel.Queued[0].StreamId).IsEqualTo(AuditLedger.StreamFor(TENANT));
   }
@@ -137,8 +137,8 @@ public class AuditRebuildRequestReceptorTests : EFCoreTestBase {
 
     var recordIds = channel.Queued.Select(m => m.Envelope.Payload.GetProperty("Id").GetGuid()).Distinct().ToList();
     await Assert.That(channel.Queued).Count().IsEqualTo(6);
-    await Assert.That(recordIds).IsEquivalentTo(new[] {
-      AuditLedger.RecordIdFor(first), AuditLedger.RecordIdFor(second), AuditLedger.RecordIdFor(third) })
+    await Assert.That(recordIds).IsEquivalentTo([
+      AuditLedger.RecordIdFor(first), AuditLedger.RecordIdFor(second), AuditLedger.RecordIdFor(third)])
       .Because("every delivery of a record carries the id derived from its event, so the audit perspective holds one row each");
   }
 
