@@ -94,7 +94,7 @@ public class AuditRebuildRequestReceptorTests : EFCoreTestBase {
       """;
     command.Parameters.AddWithValue("event", eventId);
     command.Parameters.AddWithValue("stream", streamId);
-    command.Parameters.AddWithValue("type", TypeNameFormatter.Format(type));
+    command.Parameters.AddWithValue(nameof(type), TypeNameFormatter.Format(type));
     command.Parameters.AddWithValue("scope", $$"""{"t":"{{TENANT}}"}""");
     command.Parameters.AddWithValue(nameof(version), version);
     command.Parameters.AddWithValue(nameof(flags), flags);
@@ -116,7 +116,7 @@ public class AuditRebuildRequestReceptorTests : EFCoreTestBase {
 
     await receptor.HandleAsync(new RequestAuditRebuildCommand { TenantScope = TENANT, StreamIds = [stream] });
 
-    var audited = channel.Queued.Select(m => m.Envelope.Payload.GetProperty("OriginalEventId").GetGuid()).ToList();
+    var audited = channel.Queued.ConvertAll(m => m.Envelope.Payload.GetProperty("OriginalEventId").GetGuid());
     await Assert.That(audited).IsEquivalentTo(new[] { placed, placedAgain })
       .Because("the heartbeat is excluded and the presence is ephemeral; only the two order events are audited");
     await Assert.That(channel.Queued[0].StreamId).IsEqualTo(AuditLedger.StreamFor(TENANT));
@@ -140,6 +140,33 @@ public class AuditRebuildRequestReceptorTests : EFCoreTestBase {
     await Assert.That(recordIds).IsEquivalentTo(new[] {
       AuditLedger.RecordIdFor(first), AuditLedger.RecordIdFor(second), AuditLedger.RecordIdFor(third) })
       .Because("every delivery of a record carries the id derived from its event, so the audit perspective holds one row each");
+  }
+
+  [Test]
+  public async Task Rebuild_DoesNotConsultTheRegisteredDecisionHookAsync() {
+    var stream = TrackedGuid.New().Value;
+    await _seedAsync(stream, 1, typeof(LedgerOrderPlaced));
+    var channel = new RecordingChannel();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      CreateDbContext(), Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+    services.AddSingleton<IDeferredOutboxChannel>(channel);
+    var options = new SystemEventOptions();
+    options.EnableEventAudit();
+    services.AddSingleton(Options.Create(options));
+    services.AddSingleton<IMessageTypeCatalog>(new Catalog());
+    services.AddSingleton<IAuditDecisionHook>(new RefuseEverything());
+    await using var provider = services.BuildServiceProvider();
+    var receptor = new AuditRebuildRequestReceptor(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<AuditRebuildRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestAuditRebuildCommand { StreamIds = [stream] });
+
+    await Assert.That(channel.Queued).Count().IsEqualTo(1)
+      .Because("a hook judges a payload and a rebuild never rehydrates one, so only the type rules apply on a rebuild");
+  }
+
+  private sealed class RefuseEverything : IAuditDecisionHook {
+    public AuditDecision Decide(object payload, Type eventType) => AuditDecision.Skip;
   }
 
   [Test]

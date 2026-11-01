@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -37,11 +38,11 @@ public static partial class AuditOutboxMessageBuilder {
     // Check if this event type should be audited based on AuditMode
     // One place decides, shared with the decorator: the attribute gates the TYPE, the hook may
     // veto or name the OCCURRENCE. These two call sites previously each had their own copy.
+    // The dispatcher stamped the ephemeral flag on the message, so it decides here without the type (#1730).
+    var isEphemeral = (eventMessage.Flags & EventFlags.Ephemeral) != 0;
     var eventType = _resolveEventType(eventMessage.MessageType, logger ?? NullLogger.Instance);
-    var auditDecision = eventType != null
-      ? AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, auditDecisionHook)
-      : AuditDecision.Record();
-    if (eventType != null && !auditDecision.ShouldAudit) {
+    var auditDecision = _decide(eventMessage, eventType, isEphemeral, options, auditDecisionHook);
+    if (!auditDecision.ShouldAudit) {
       return null;
     }
 
@@ -65,7 +66,8 @@ public static partial class AuditOutboxMessageBuilder {
 
     // Build the EventAudited payload
     var auditEvent = new EventAudited {
-      Id = TrackedGuid.New(),
+      // Derived from the event it audits, so a record derived again is the same record (#1724).
+      Id = AuditLedger.RecordIdFor(eventMessage.MessageId),
       OriginalEventId = eventMessage.MessageId,
       OriginalEventType = eventTypeName,
       OriginalStreamId = eventMessage.StreamId?.ToString() ?? string.Empty,
@@ -86,6 +88,24 @@ public static partial class AuditOutboxMessageBuilder {
       Scope = scope
     };
 
+    // The source hops are kept for their LINEAGE and demoted to Causation; see ToOutboxMessage.
+    var sourceHops = (eventMessage.Envelope.Hops ?? [])
+      .ConvertAll(h => h with { Type = HopType.Causation });
+    return ToOutboxMessage(auditEvent, sourceHops, eventMessage.Scope, options);
+  }
+
+  /// <summary>
+  /// The outbox row that carries <paramref name="auditEvent"/> to the audit topic, on its tenant's ledger. Shared by the
+  /// live outbox path and the ledger rebuild (#1724), so a re-derived record travels exactly as the original did.
+  /// </summary>
+  /// <param name="auditEvent">The record.</param>
+  /// <param name="causationHops">The audited event's hops, already demoted to causation; the record's own hop goes first.</param>
+  /// <param name="scope">The audited event's scope, stored on the row.</param>
+  /// <param name="options">The audit options, which give the record its priority band.</param>
+  /// <returns>The outbox row.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnEligibleEvent_IsARecordOfItOnTheTenantLedgerAsync</tests>
+  internal static OutboxMessage ToOutboxMessage(
+      EventAudited auditEvent, List<MessageHop> causationHops, PerspectiveScope? scope, SystemEventOptions options) {
     // Serialize EventAudited to JsonElement
     var auditJson = AuditJsonSerializer.SerializeToJsonElement(auditEvent);
 
@@ -98,15 +118,12 @@ public static partial class AuditOutboxMessageBuilder {
     // resolution merges Current hops only, so the trace back to the audited event survives while
     // its authority does not. The consumer still establishes a context, because the extractor needs
     // either a tenant or a user and the tenant is present.
-    var sourceHops = (eventMessage.Envelope.Hops ?? [])
-      .ConvertAll(h => h with { Type = HopType.Causation })
-;
-    sourceHops.Insert(0, new MessageHop {
+    causationHops.Insert(0, new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
       TraceParent = HopStamping.AmbientTraceParent,
-      Scope = AuditRecordScope.For(eventMessage.Scope?.TenantId),
+      Scope = AuditRecordScope.For(auditEvent.TenantId),
       // The record's own stream, which the receiver stores it on, as it does a record shipped in a bundle. Unnamed,
       // the receiver stored it on this envelope's id (#1798). The outbox row below rides the tenant's ledger lane.
       Metadata = StreamIdentity.HopMetadata(auditEvent.Id),
@@ -115,7 +132,7 @@ public static partial class AuditOutboxMessageBuilder {
     var auditEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = auditJson,
-      Hops = sourceHops,
+      Hops = causationHops,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       // An audit record is written on the audit band, whatever number the audited event carried. It
       // never competes with the work it records. The band is SystemEventOptions.AuditPriority,
@@ -142,11 +159,20 @@ public static partial class AuditOutboxMessageBuilder {
       Priority = options.AuditPriority,
       // The tenant's audit ledger: one deterministic stream per tenant, so a tenant's records are one
       // orderable ledger and a fold of them inherits it (see AuditLedger).
-      StreamId = AuditLedger.StreamFor(eventMessage.Scope?.TenantId),
+      StreamId = AuditLedger.StreamFor(auditEvent.TenantId),
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
-      Scope = eventMessage.Scope,
+      Scope = scope,
       MessageType = TypeNameFormatter.AssemblyQualifiedName(auditEventType)
     };
+  }
+
+  private static AuditDecision _decide(
+      OutboxMessage eventMessage, Type? eventType, bool isEphemeral, SystemEventOptions options, IAuditDecisionHook? hook) {
+    if (eventType is null) {
+      // An unresolvable type is audited as it always was, unless it is ephemeral: it cannot have asked for its body.
+      return isEphemeral ? AuditDecision.Skip : AuditDecision.Record();
+    }
+    return AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, hook, isEphemeral);
   }
 
   private static Type? _resolveEventType(string assemblyQualifiedName, ILogger logger) {

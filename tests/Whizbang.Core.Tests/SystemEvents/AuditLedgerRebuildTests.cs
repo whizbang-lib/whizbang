@@ -83,6 +83,10 @@ public class AuditLedgerRebuildTests {
 
   private static JsonElement _record(OutboxMessage message) => message.Envelope.Payload;
 
+  /// <summary>A null member is left out of the serialized record, so absent and null both read as not set.</summary>
+  private static bool _isAbsent(JsonElement record, string name) =>
+    !record.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null;
+
   #region What a re-derived record holds
 
   [Test]
@@ -225,8 +229,8 @@ public class AuditLedgerRebuildTests {
     var record = _record(_rebuild().Rederive(_stored(typeof(RebuildOrderPlaced), useDefaultMetadata: false))!);
 
     await Assert.That(record.GetProperty("Timestamp").GetDateTimeOffset()).IsEqualTo(_now);
-    await Assert.That(record.GetProperty("CorrelationId").ValueKind).IsEqualTo(JsonValueKind.Null);
-    await Assert.That(record.GetProperty("CausationId").ValueKind).IsEqualTo(JsonValueKind.Null);
+    await Assert.That(_isAbsent(record, "CorrelationId")).IsTrue();
+    await Assert.That(_isAbsent(record, "CausationId")).IsTrue();
   }
 
   [Test]
@@ -242,7 +246,7 @@ public class AuditLedgerRebuildTests {
     var record = _record(_rebuild().Rederive(_stored(typeof(RebuildOrderPlaced), metadata: metadata))!);
 
     await Assert.That(record.GetProperty("Timestamp").GetDateTimeOffset()).IsEqualTo(_now);
-    await Assert.That(record.GetProperty("CorrelationId").ValueKind).IsEqualTo(JsonValueKind.Null);
+    await Assert.That(_isAbsent(record, "CorrelationId")).IsTrue();
   }
 
   [Test]
@@ -253,7 +257,7 @@ public class AuditLedgerRebuildTests {
     var message = _rebuild().Rederive(_stored(typeof(RebuildOrderPlaced), scope: scope))!;
 
     await Assert.That(message.StreamId).IsEqualTo(AuditLedger.StreamFor(null));
-    await Assert.That(_record(message).GetProperty("TenantId").ValueKind).IsEqualTo(JsonValueKind.Null);
+    await Assert.That(_isAbsent(_record(message), "TenantId")).IsTrue();
     await Assert.That(message.Scope).IsNull();
   }
 
@@ -262,7 +266,7 @@ public class AuditLedgerRebuildTests {
     var message = _rebuild().Rederive(_stored(typeof(RebuildOrderPlaced), scope: """{"u":"user-1","t":7}"""))!;
 
     await Assert.That(_record(message).GetProperty("UserId").GetString()).IsEqualTo("user-1");
-    await Assert.That(_record(message).GetProperty("TenantId").ValueKind).IsEqualTo(JsonValueKind.Null);
+    await Assert.That(_isAbsent(_record(message), "TenantId")).IsTrue();
     await Assert.That(_record(message).GetProperty("Scope").TryGetProperty("TenantId", out _)).IsFalse();
   }
 
@@ -289,8 +293,12 @@ public class AuditLedgerRebuildTests {
       MessageId = stored.EventId,
       Envelope = new Whizbang.Core.Observability.MessageEnvelope<JsonElement> {
         MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId),
-        Payload = JsonDocument.Parse(stored.EventData).RootElement.Clone(),
+        Payload = JsonElement.Parse(stored.EventData),
         Hops = [],
+        DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+          Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
+          Source = MessageSource.Outbox,
+        },
       },
       Metadata = new Whizbang.Core.Observability.EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId), Hops = [] },
       EnvelopeType = "MessageEnvelope",
@@ -332,6 +340,7 @@ public class AuditLedgerRebuildTests {
     public List<RedeliveryRequest> Requests { get; } = [];
 
     public Task<IReadOnlyList<RedeliveryEvent>> SelectAsync(RedeliveryRequest request, CancellationToken cancellationToken) {
+      cancellationToken.ThrowIfCancellationRequested();
       Requests.Add(request);
       IReadOnlyList<RedeliveryEvent> page = [.. events
         .Where(e => request.AfterStreamId is null
@@ -439,7 +448,7 @@ public class AuditLedgerRebuildTests {
 
     var request = history.Requests.Single();
     await Assert.That(request.TenantScope).IsEqualTo("tenant-a");
-    await Assert.That(request.StreamIds!).IsEquivalentTo(new[] { stream });
+    await Assert.That(request.StreamIds).IsEquivalentTo(new[] { stream });
     await Assert.That(request.FromCommitSequence).IsEqualTo(10L);
     await Assert.That(request.ToCommitSequence).IsEqualTo(20L);
     await Assert.That(request.EventTypes).IsNull()

@@ -78,7 +78,8 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   public async Task RedeliveryRequest_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
   }

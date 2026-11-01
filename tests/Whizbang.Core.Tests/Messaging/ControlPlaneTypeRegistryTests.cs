@@ -32,6 +32,7 @@ public class ControlPlaneTypeRegistryTests {
       typeof(IntegrityCheckpoint), typeof(IntegrityManifest), typeof(RequestIntegrityManifest),
       typeof(RequestRedeliveryCommand), typeof(IntegrityDivergenceDetected),
       typeof(IntegrityGapDetected), typeof(PerspectiveCoverageGapDetected),
+      typeof(Whizbang.Core.SystemEvents.RequestAuditRebuildCommand),
     }) {
       await Assert.That(ControlPlaneTypeRegistry.IsControlPlane(TypeNameFormatter.Format(type))).IsTrue()
         .Because($"{type.Name} is framework control-plane traffic and must never reach the DLQ");

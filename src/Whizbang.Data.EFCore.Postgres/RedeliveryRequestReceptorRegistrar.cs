@@ -19,14 +19,18 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// from another service. So the
 /// command reaches it whether dispatched in-process (operator-initiated) or arriving over the inbox from
 /// a damaged consumer. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
+/// <see cref="AuditRebuildRequestReceptor"/> joins the same three stages for the same reasons: an operator dispatches
+/// <see cref="Whizbang.Core.SystemEvents.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
+/// there (#1724).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the loggers for the receptors it constructs and hands them straight over, so each category names the type that actually writes the entries.")]
 internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
-    ILogger<RedeliveryRequestReceptor> receptorLogger) : IHostedService {
+    ILogger<RedeliveryRequestReceptor> receptorLogger,
+    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
@@ -40,6 +44,10 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.LocalImmediateInline);
     registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PreOutboxInline);
     registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PostInboxInline);
+    var auditRebuild = new AuditRebuildRequestReceptor(scopeFactory, auditRebuildLogger);
+    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
+    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);
+    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PostInboxInline);
     return Task.CompletedTask;
   }
 
