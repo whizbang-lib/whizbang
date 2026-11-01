@@ -42,6 +42,10 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
   // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
   private readonly IServiceInstanceProvider _instanceProvider;
 
+  // Recognizes a type declared ephemeral through a base record or interface (#1730). The public constructor has none,
+  // so it recognizes the IEphemeralEvent marker only; the default emitter AddWhizbang registers is given the resolver.
+  private readonly IEphemeralModeResolver? _ephemeralModeResolver;
+
   /// <summary>
   /// Creates a system event emitter that appends every record to <paramref name="systemEventStore"/>.
   /// </summary>
@@ -69,22 +73,26 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
   /// <paramref name="sink"/>.
   /// </summary>
   /// <remarks>A factory rather than an internal constructor, so a null store given to the public constructor is not ambiguous.</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitEventAuditedAsync_ATypeTheCatalogDeclaresEphemeral_RecordsNothingAsync</tests>
   internal static SystemEventEmitter ForSink(
       IOptions<SystemEventOptions> options,
       ISystemEventSink sink,
       IServiceInstanceProvider instanceProvider,
-      ILogger<SystemEventEmitter> logger) =>
-    new(options, sink, instanceProvider, logger);
+      ILogger<SystemEventEmitter> logger,
+      IEphemeralModeResolver? ephemeralModeResolver = null) =>
+    new(options, sink, instanceProvider, logger, ephemeralModeResolver);
 
   private SystemEventEmitter(
       IOptions<SystemEventOptions> options,
       ISystemEventSink sink,
       IServiceInstanceProvider instanceProvider,
-      ILogger<SystemEventEmitter> logger) {
+      ILogger<SystemEventEmitter> logger,
+      IEphemeralModeResolver? ephemeralModeResolver = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _sink = sink;
     _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
     _instanceProvider = instanceProvider;
+    _ephemeralModeResolver = ephemeralModeResolver;
   }
 
   /// <inheritdoc />
@@ -121,7 +129,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       CancellationToken cancellationToken) {
     // One place decides, shared with the other audit writers: the attribute and the mode gate the TYPE,
     // the registered hook may veto or name the OCCURRENCE.
-    var decision = AuditEligibility.Decide(envelope.Payload, typeof(TEvent), _options.AuditMode, session.AuditDecisionHook);
+    var decision = AuditEligibility.Decide(envelope.Payload, typeof(TEvent), _options.AuditMode, session.AuditDecisionHook,
+      isEphemeral: EphemeralFlagDeriver.Derive(envelope.Payload, _ephemeralModeResolver) == EventFlags.Ephemeral);
     if (!decision.ShouldAudit) {
       return;
     }
@@ -140,7 +149,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
-      Id = TrackedGuid.New(),
+      // Derived from the event it audits, so a record derived again is the same record (#1724).
+      Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
       OriginalEventType = typeof(TEvent).Name,
       OriginalStreamId = streamId.ToString(),

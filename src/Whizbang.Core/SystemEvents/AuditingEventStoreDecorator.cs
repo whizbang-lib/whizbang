@@ -42,13 +42,18 @@ namespace Whizbang.Core.SystemEvents;
 /// <param name="inner">The inner event store to wrap.</param>
 /// <param name="outboxChannel">The deferred outbox channel for queuing audit events.</param>
 /// <param name="options">System event configuration options.</param>
+/// <param name="ephemeralModeResolver">
+/// Recognizes ephemeral types, which are excluded from audit unless they keep their body (#1730); null recognizes the
+/// <see cref="IEphemeralEvent"/> marker only.
+/// </param>
 public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
     Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
     IAuditDecisionHook auditDecisionHook,
-    ILogger<AuditingEventStoreDecorator> logger) : ForwardingEventStoreDecorator(inner) {
+    ILogger<AuditingEventStoreDecorator> logger,
+    IEphemeralModeResolver? ephemeralModeResolver = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -66,6 +71,10 @@ public sealed class AuditingEventStoreDecorator(
 
   // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
   private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
+
+  // Recognizes a type declared ephemeral through a base record or interface (#1730). Without one, only the
+  // IEphemeralEvent marker is recognized, as at every other flag-derivation site.
+  private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(
@@ -105,7 +114,8 @@ public sealed class AuditingEventStoreDecorator(
     }
     // One place decides: the attribute gates the TYPE, the hook may veto or name the OCCURRENCE.
     var auditDecision = AuditEligibility.Decide(
-      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook);
+      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook,
+      isEphemeral: EphemeralFlagDeriver.Derive(envelope.Payload, _ephemeralModeResolver) == EventFlags.Ephemeral);
     if (!auditDecision.ShouldAudit) {
       return;
     }
@@ -149,7 +159,8 @@ public sealed class AuditingEventStoreDecorator(
       : null;
 
     return new EventAudited {
-      Id = TrackedGuid.New(),
+      // Derived from the event it audits, so a record derived again is the same record (#1724).
+      Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
       OriginalEventType = typeof(TMessage).Name,
       OriginalStreamId = streamId.ToString(),

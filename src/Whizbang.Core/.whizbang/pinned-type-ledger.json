@@ -236,6 +236,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "1cd01d44-ef74-4cd5-881e-08e958aada64",
+      "clrTypeName": "Whizbang.Core.SystemEvents.RequestAuditRebuildCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "cbc33f2c-db1d-4554-8090-db41875e280f",
       "clrTypeName": "Whizbang.Core.SystemEvents.Security.AccessDenied",
       "kind": "event",

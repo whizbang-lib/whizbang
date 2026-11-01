@@ -41,9 +41,15 @@ public static class AuditEligibility {
   /// <param name="eventType">The event's CLR type.</param>
   /// <param name="mode">OptOut audits everything not excluded; OptIn audits only what is marked.</param>
   /// <param name="hook">Optional per-occurrence hook. Null behaves exactly as before hooks existed.</param>
+  /// <param name="isEphemeral">
+  /// Whether this occurrence is an ephemeral event. An ephemeral type is audited only when it keeps its body
+  /// (<see cref="AuditEventAttribute.IncludeBody"/>): its origin reaps the event, and a record that only points at it
+  /// would point at nothing (#1730).
+  /// </param>
   /// <returns>The decision, carrying any name or description the hook supplied.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEphemeralExclusionTests.cs</tests>
   public static AuditDecision Decide(
-      object? payload, Type eventType, AuditMode mode, IAuditDecisionHook? hook) {
+      object? payload, Type eventType, AuditMode mode, IAuditDecisionHook? hook, bool isEphemeral = false) {
     ArgumentNullException.ThrowIfNull(eventType);
 
     // Auditing an audit record is an infinite loop. Checked before the hook so no hook and no mode
@@ -53,6 +59,13 @@ public static class AuditEligibility {
     }
 
     var attr = AttributeOf(eventType);
+
+    // Also before the hook: a hook judges an occurrence but cannot keep its body, so it cannot undo the dangling
+    // pointer. Only the type's own IncludeBody opts an ephemeral type in; the process-wide body default does not,
+    // because it would turn every high-churn ephemeral type into audit traffic at once.
+    if (isEphemeral && attr?.IncludeBody != true) {
+      return AuditDecision.Skip;
+    }
 
     var eligibleByType = mode == AuditMode.OptOut
       ? attr?.Exclude != true    // audit unless excluded

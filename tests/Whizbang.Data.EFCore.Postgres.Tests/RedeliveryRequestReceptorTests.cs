@@ -236,14 +236,15 @@ public class RedeliveryRequestReceptorTests {
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
 
-    await Assert.That(registry.Registered.Count).IsEqualTo(3);
+    var redelivery = registry.Registered.Where(r => r.Msg == typeof(RequestRedeliveryCommand)).ToList();
+    await Assert.That(redelivery.Count).IsEqualTo(3);
     var stages = new HashSet<LifecycleStage>();
-    foreach (var (msg, stage) in registry.Registered) {
-      await Assert.That(msg).IsEqualTo(typeof(RequestRedeliveryCommand));
+    foreach (var (_, stage) in redelivery) {
       stages.Add(stage);
     }
     await Assert.That(stages.Contains(LifecycleStage.LocalImmediateInline)).IsTrue();
@@ -251,6 +252,25 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(stages.Contains(LifecycleStage.PostInboxInline)).IsTrue()
       .Because("A receptor without [FireAt] fires at all three default stages, so the command reaches it " +
                "in-process (operator) and over the inbox (damaged consumer).");
+  }
+
+  [Test]
+  public async Task Registrar_RegistersTheAuditRebuildReceptorAtTheSameThreeStagesAsync() {
+    var registry = new RecordingRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new RedeliveryRequestReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+
+    var stages = registry.Registered.Where(r => r.Msg == typeof(Whizbang.Core.SystemEvents.RequestAuditRebuildCommand))
+      .Select(r => r.Stage).ToList();
+    await Assert.That(stages).IsEquivalentTo([
+      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])
+      .Because("an audit rebuild is asked of the origin in-process by an operator or over the inbox by the audit service (#1724)");
   }
 
   /// <summary>
@@ -269,7 +289,8 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull();
 
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);   // must not throw
   }

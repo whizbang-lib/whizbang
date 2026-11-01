@@ -155,10 +155,12 @@ and a coalesced bundle rides the ledger; PR #1598 (#1555) finished the per-tenan
 
 ### S7. A2e: audit is excluded from digests (defect 10) and re-derivable
 
-**Status (2026-10-24):** partly done. The digest half is done: #1492 in PR #1553 (both emit chains, sealed
-epochs and the sweeps skip `EventAudited` and `CommandAudited`; migration 216) and #1554 in PR #1568 (checkpoint
-counts). Still open: the audit backfill (a redelivery filtered by audit eligibility) and name-based audit ids on
-`OriginalEventId`. All three writers still mint `TrackedGuid.New()`.
+**Status (2026-11-01):** done. The digest half: #1492 in PR #1553 (both emit chains, sealed epochs and the sweeps
+skip `EventAudited` and `CommandAudited`; migration 216) and #1554 in PR #1568 (checkpoint counts). The rest is #1724:
+every writer names a record `AuditLedger.RecordIdFor(OriginalEventId)` (UUIDv5 under `sys-audit-record`), and
+`RequestAuditRebuildCommand` (receptor `AuditRebuildRequestReceptor`, driver assembly) runs `AuditLedgerRebuild` over the
+redelivery selection, filtered by `AuditEligibility.Decide`, queueing records through the deferred outbox channel.
+The decision hook is not re-applied on a rebuild (it judges payloads, which a rebuild never rehydrates).
 
 - **Changes.** Audit is a pure function of the origin event plus scope, so audit rows never need
   digest sync. On the subscriber a composite-fanned `EventAudited` folds into the origin's digest
@@ -370,8 +372,11 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
 
 ### S11. A6: `toast_tuple_target` on `wh_event_body`, measured first
 
-**Status (2026-10-24):** open. No migration sets `toast_tuple_target` on `wh_event_body` (the only uses in
-`src/` are the perspective-table storage attributes), and no measurement is recorded.
+**Status (2026-11-01):** done, #1728, migration 290. Measured on copies of the table (numbers on the docs page,
+`data/postgres#event-body-storage`): no target compresses a row under the 2 KB toast threshold, and a lower target only
+moves larger values out of line (1.7% to 2.7% smaller, 12% to 23% more buffers per body read), so the target stays at
+the server's value. lz4 on both columns helps (1.1% smaller, 26% faster writes, 11% faster full reads) and is set. The
+small-row win moves to K3 (WS-7) as this slice planned.
 
 - **Changes.** `toast_tuple_target` is per table, not per column, and lz4 is often already the
   server default. Lowering it on `wh_event_body` (created at `072_EphemeralBodyOffload.sql:19`,
@@ -436,8 +441,9 @@ Questions 2 to 6 were decided on 2026-10-22 in #1674 (the owner accepted the rec
 
 2. **Audited ephemeral types** are excluded from audit by default, with an opt-in that keeps the
    body, so no audit pointer dangles once the origin reaps the event.
-   **Status (2026-10-24):** not built. Nothing under `src/Whizbang.Core/SystemEvents/` checks whether an
-   audited type is ephemeral.
+   **Status (2026-11-01):** done, #1730. `AuditEligibility.Decide` takes `isEphemeral`; the outbox builder reads the
+   stamped `EventFlags.Ephemeral`, the decorator and the emitter derive it with the ephemeral resolver. The opt-in is
+   the type's own `IncludeBody`; the global body default does not opt in and a hook cannot reopen.
 3. **`OriginalStreamPosition` on the outbox path** is filled at emit.
 4. **The current hop's `sc`** is dropped from stored metadata, and scope is rebuilt from
    `wh_event_store.scope` on read. This saves about 100 B per event.
