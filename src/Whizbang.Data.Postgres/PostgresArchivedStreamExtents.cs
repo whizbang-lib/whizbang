@@ -19,7 +19,7 @@ namespace Whizbang.Data.Postgres;
 /// The ledger is keyed by stream, so each lookup is one primary-key probe per stream. The streams are looked up
 /// <see cref="LOOKUP_BATCH_SIZE"/> at a time on one connection, so a rebuild of every stream sends bounded arrays.
 /// </remarks>
-/// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+/// <docs>fundamentals/perspectives/rebuild#archived-data-deleted</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_NameTheStreamsArchivedWhole_AndThroughAPrefix_AndNoOtherAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_TellAStreamWhoseArchiveWasDeleted_FromOneThatNeverHadAnArchiveAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Extents_OfNoStreams_AskNothingAsync</tests>

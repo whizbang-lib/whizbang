@@ -176,8 +176,8 @@ internal static class GeneratedRunners {
     return (IPerspectiveRunner)ctor.Invoke(args);
   }
 
-  public static MessageEnvelope<IEvent> Envelope(IEvent payload, Guid sourceServiceId = default, long sourceCommitSequence = 0) => new() {
-    MessageId = MessageId.New(),
+  public static MessageEnvelope<IEvent> Envelope(IEvent payload, Guid sourceServiceId = default, long sourceCommitSequence = 0, MessageId? messageId = null) => new() {
+    MessageId = messageId ?? MessageId.New(),
     SourceServiceId = sourceServiceId,
     SourceCommitSequence = sourceCommitSequence,
     Payload = payload,

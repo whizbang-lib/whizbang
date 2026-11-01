@@ -127,6 +127,23 @@ public class PerspectiveRunnerSplitSnapshotTests {
     await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
   }
 
+  // #1956: the row at its last event is serialized only for a snapshot, so with snapshots off the fold of a collective
+  // costs no serialization. The copy has no other effect a run could observe, so the generated runner is read: each of
+  // its two copies sits behind the snapshots-on condition, and there is no third.
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_CopiesTheRowAtItsLastEvent_OnlyWhenSnapshotsAreOnAsync() {
+    var runner = _compact(_runner("SplitClassPerspective"));
+
+    await Assert.That(runner.Split("modelAtLastEvent=ToSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
+      .Because("the rewind's replay and the run each take the copy at one place");
+    await Assert.That(runner).Contains("varsnapshotsOn=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true;")
+      .Because("the rewind's replay decides once whether snapshots are on");
+    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+    await Assert.That(runner).Contains(
+      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Runner_DecidesWhetherASnapshotIsDueBeforeTheWrite_AndSnapshotsOnThatDecisionAsync() {

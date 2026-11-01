@@ -52,7 +52,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="start">Where the replay starts, and the tenant whose collectives it folds.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The events to fold, in order.</returns>
-  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeRewindsFoldedCollectives_InterleavesNoneAfterAStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_FromASnapshot_FoldsTheCollectivesCommittedAfterItAsync</tests>
   Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveAfterAsync(

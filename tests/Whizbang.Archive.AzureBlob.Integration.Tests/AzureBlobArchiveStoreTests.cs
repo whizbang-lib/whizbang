@@ -504,6 +504,27 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(reuse!.SqlState).IsEqualTo("WHA01");
   }
 
+  // #1958: the blob store's delete records the deletion on the ledger as the table store's does, so a rebuild tells a
+  // stream whose prefix archive was deleted from one never archived. A prefix leaves the row Active, so the stamp is the
+  // only record that the deleted history existed.
+  [Test]
+  public async Task Delete_OfAPrefixArchive_StampsTheLedgersArchiveDeletedAtAsync() {
+    var (stream, _) = await _seedAsync(5);
+    var store = _store(maxEventsPerChunk: 2);
+    await Assert.That((await store.WriteAsync(ArchiveBatch.Prefix(stream, 2))).Archived).IsTrue();
+    await Assert.That(await _deletionAsync(stream)).IsEquivalentTo(["Active|named|not deleted"])
+      .Because("the control: before the delete the row names its archive and records no deletion");
+
+    _ = await store.DeleteAsync(stream);
+
+    await Assert.That(await _deletionAsync(stream)).IsEquivalentTo(["Active|none|deleted"])
+      .Because("the delete clears the locator and stamps when the archive was deleted");
+  }
+
+  private Task<List<string>> _deletionAsync(Guid stream) => _rowsAsync(
+    "SELECT concat_ws('|', state, CASE WHEN archive_locator IS NULL THEN 'none' ELSE 'named' END, " +
+    "CASE WHEN archive_deleted_at IS NULL THEN 'not deleted' ELSE 'deleted' END) FROM wh_stream_lifecycle WHERE stream_id = @s", stream);
+
   [Test]
   public async Task Delete_AnObjectThatCannotBeRemoved_IsLogged_AndTheDeleteStillCompletesAsync() {
     var (stream, _) = await _seedAsync(3);

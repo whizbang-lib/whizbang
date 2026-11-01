@@ -83,6 +83,44 @@ public class ArchivedStreamRebuildSqlTests : EFCoreTestBase {
     }).Because("a deleted archive's history is gone for good, whatever is archived after it; a hot stream and a restored one lost nothing");
   }
 
+  // A delete before migration 274 cleared the locator and stamped nothing. A whole-stream archive leaves its row Archived,
+  // so that row still says its archive is gone: Archived, with no locator to read it from.
+  [Test]
+  public async Task Extents_AnArchivedRowWithNoLocator_ReadsWholeDeleted_EvenWithoutTheDeletionStampAsync() {
+    var whole = await _streamAsync(3);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(whole))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var cmd = new NpgsqlCommand(
+        "UPDATE wh_stream_lifecycle SET archive_locator = NULL, archive_deleted_at = NULL WHERE stream_id = @s", conn);
+      cmd.Parameters.AddWithValue("s", whole);
+      await Assert.That(await cmd.ExecuteNonQueryAsync()).IsEqualTo(1);
+    }
+
+    var extents = await _extents().GetExtentsAsync([whole]);
+
+    await Assert.That(extents).IsEquivalentTo(new Dictionary<Guid, ArchivedStreamExtent> { [whole] = ArchivedStreamExtent.WholeDeleted })
+      .Because("an Archived row names where its archive is; one that names nowhere has lost it");
+  }
+
+  // The deletion stamp is never cleared: a restore brings back only what the later archive held, and the history the
+  // deleted archive held stays gone.
+  [Test]
+  public async Task Extents_AStreamRestoredFromALaterArchive_AfterItsEarlierArchiveWasDeleted_StillReadsPrefixDeletedAsync() {
+    var stream = await _streamAsync(4);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(stream, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(await _archive().DeleteAsync(stream)).IsGreaterThan(0L);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(stream, 2))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+
+    await Assert.That((await _archive().RestoreAsync(stream)).Status).IsEqualTo(ArchiveStatus.RESTORED);
+
+    var extents = await _extents().GetExtentsAsync([stream]);
+    await Assert.That(extents).IsEquivalentTo(new Dictionary<Guid, ArchivedStreamExtent> { [stream] = ArchivedStreamExtent.PrefixDeleted })
+      .Because("the restore puts back the later archive's events, never the ones the deleted archive held");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream))
+      .IsLessThan(4L).Because("the control: the stream's first event is gone for good");
+  }
+
   [Test]
   public async Task Extents_OfNoStreams_AskNothingAsync() {
     await Assert.That(await _extents().GetExtentsAsync([])).IsEmpty();
