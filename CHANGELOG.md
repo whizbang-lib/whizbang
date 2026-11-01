@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Rebuilds
+- **A rebuild reads archived data only when it opts in (#1931).** `RebuildArchivedData` on `RebuildOrigin` and
+  `RebuildPerspectiveCommand`: `Skip` (the default) never reads the archive, starting a stream archived through a
+  prefix from its newest live snapshot and skipping a stream archived whole (counted in `RebuildResult.StreamsSkipped`,
+  never a failure); `IncludeWhileLive` replays a partly archived stream from its start through the archive;
+  `IncludeAll` also replays streams archived whole, parking their rebuilt cursor until the stream is restored
+  (migration 273). Rewinds still read through the archive. **Upgrade note:** a rebuild that relied on reading an
+  archived prefix now needs `IncludeWhileLive`.
+
 #### Storage
 - **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
   (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
@@ -1008,6 +1017,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A replay finds collective streams archived whole (#1932).** It listed a tenant's collective streams from the hot
+  event store only, so a rewind (or an `IncludeAll` rebuild) silently dropped the mutations of an archived collective.
+  They are now listed from the lifecycle ledger (indexed by migration 272), read through the archive and folded in
+  the commit order their events carry. A collective no longer moves a row's checkpoint during a rebuild.
+- **The Dapper driver recovers dead letters (#1934).** Only the EF Core driver registered a dead-letter recovery
+  service, so on Dapper no dead letter was ever redriven, including one held until its archived stream was restored.
+  Both drivers now share one recovery service.
 - **The perspective schema generator no longer emits nothing on a heavily loaded build machine.** It read the managed
   index and constraint names out of each table's DDL with two regular expressions under a one-second match timeout,
   which measures elapsed time rather than work, so a generator thread descheduled for a second threw

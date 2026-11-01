@@ -93,7 +93,7 @@ public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
       new MessageHop {
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
+        Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         Scope = Whizbang.Core.Security.ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = TENANT }),
       },
     ]),
