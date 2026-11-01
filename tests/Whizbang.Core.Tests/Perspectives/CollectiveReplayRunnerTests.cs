@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// event: it folds into the row, and it never moves the row's checkpoint, as on the live path, where the set-based sink
 /// never touches a row's cursor.
 /// </summary>
-/// <docs>fundamentals/messaging/collective-events</docs>
+/// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
 public class CollectiveReplayRunnerTests {
   private const string FOLDED_RUNNER = "Whizbang.Core.Tests.Generated.FoldedPermissionsPerspectiveRunner";
   private const string OVERWRITE_RUNNER = "Whizbang.Core.Tests.Generated.OverwritePermissionsPerspectiveRunner";

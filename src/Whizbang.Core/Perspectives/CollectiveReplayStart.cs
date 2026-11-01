@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="TenantId">The tenant whose collectives fold into the row; null for a row whose events carry no tenant.</param>
 /// <param name="AfterEventId">The event the replay starts after (the snapshot's), or null for a replay from the stream's start.</param>
 /// <param name="AfterCommitSequence">That event's commit sequence, or null when it carries none.</param>
-/// <docs>fundamentals/messaging/collective-events</docs>
+/// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AReplayFromTheStart_FollowsEveryCollectiveAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesCommitSequences_WhenBothCarryOneAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesMessageIds_WhenTheCollectiveCarriesNoCommitSequenceAsync</tests>

@@ -4,7 +4,7 @@
 namespace Whizbang.Core.Archival;
 
 /// <summary>How much of a stream is archived (#1931).</summary>
-/// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+/// <docs>fundamentals/perspectives/rebuild#archived-data-deleted</docs>
 public enum ArchivedStreamExtent {
   /// <summary>Nothing of the stream is archived.</summary>
   None = 0,
@@ -33,7 +33,7 @@ public enum ArchivedStreamExtent {
 /// about to replay and decides per stream what it may read (<see cref="Perspectives.RebuildArchivedData"/>). Both Postgres
 /// drivers register one; a host without one rebuilds every stream as if nothing were archived.
 /// </summary>
-/// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+/// <docs>fundamentals/perspectives/rebuild#archived-data-deleted</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamRebuildTests.cs</tests>
 public interface IArchivedStreamExtents {
