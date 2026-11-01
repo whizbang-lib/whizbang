@@ -22,13 +22,45 @@ namespace Whizbang.Data.Postgres;
 public static class SchemaInitializationStages {
   private const string UNSTAGED = "this instance migrates under the schema lock";
 
-  /// <summary>This instance is about to join the registry and vote for the migrator duty.</summary>
+  /// <summary>The bootstrap closure found the schema lock held and waits for it, within Preflight.</summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  public static Task WaitingForTheBootstrapLockAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "waiting for the schema lock to apply the bootstrap closure", cancellationToken);
+
+  /// <summary>The bootstrap closure met a transient database failure and is retried, within Preflight.</summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  public static Task BootstrapRetryingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "the bootstrap closure met a transient database failure; retrying", cancellationToken);
+
+  /// <summary>The bootstrap closure failed with an error that is not transient; Preflight does not finish.</summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  public static Task BootstrapFailedAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "the bootstrap closure failed with an error that is not transient", cancellationToken);
+
+  /// <summary>The bootstrap closure is in place and this instance registers: the last step of Preflight.</summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:Registering_IsTheLastStepOfPreflightAsync</tests>
+  public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "the bootstrap closure is in place; registering this instance", cancellationToken);
+
+  /// <summary>This instance has joined the registry, at the end of Preflight, and votes for the migrator duty.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
   public static async Task ElectingAsync(IServiceProvider? services, CancellationToken cancellationToken) {
     if (_reporter(services) is { } stages) {
-      await stages.EnterAsync(StartupStage.Elect, "joining the registry and voting for the migrator duty", cancellationToken)
+      await stages.EnterAsync(StartupStage.Elect, "voting for the migrator duty", cancellationToken)
         .ConfigureAwait(false);
     }
   }
@@ -127,6 +159,13 @@ public static class SchemaInitializationStages {
     if (_reporter(services) is { } stages) {
       await stages.EnterAsync(StartupStage.Coordinate, "recomputing partitions before the schema-ready gate opens", cancellationToken)
         .ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>Progress within Preflight, in framework-authored words.</summary>
+  private static async Task _preflightAsync(IServiceProvider? services, string message, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Preflight, message, cancellationToken).ConfigureAwait(false);
     }
   }
 

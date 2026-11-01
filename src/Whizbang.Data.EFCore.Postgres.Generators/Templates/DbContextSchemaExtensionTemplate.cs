@@ -66,6 +66,25 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     IServiceProvider? serviceProvider = null,
     CancellationToken cancellationToken = default,
     int? commandTimeoutSeconds = null) {
+    // #1636: one initialization of this database and schema at a time in a host, whoever calls. The host's own
+    // initialization goes through the registry's per-host barrier; a direct call does not, and used to run a pass
+    // beside the host's. A call made while another runs waits for it, then runs its own, which finds the schema
+    // current and returns on the fast path. The host is the context's application service provider, else the one
+    // passed here.
+    await using var turn = await Whizbang.Data.EFCore.Postgres.SchemaInitializationBarrier.EnterAsync(
+      dbContext, serviceProvider, "__SCHEMA__", logger, cancellationToken);
+    await _ensureWhizbangDatabaseInitializedCoreAsync(
+      dbContext, logger, initConnectionString, serviceProvider, commandTimeoutSeconds, cancellationToken);
+  }
+
+  /// <summary>The initialization itself, run inside the in-process barrier.</summary>
+  private static async Task _ensureWhizbangDatabaseInitializedCoreAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    string? initConnectionString,
+    IServiceProvider? serviceProvider,
+    int? commandTimeoutSeconds,
+    CancellationToken cancellationToken) {
 
     // The managed-object reconcile's settings, read before anything touches the database: a setting that is not one
     // fails the start here, before this instance registers itself or migrates, as on the Dapper driver.
@@ -122,32 +141,35 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Electing one instance makes that one instance's work.
     //
     // Electing needs a registry row and a capability function, both of which a migration creates,
-    // so a marked subset is applied first by whichever instance gets there. None of this is
-    // allowed to be fatal: every failure below ends with this instance migrating under the
-    // advisory lock alone, which is exactly how it behaved before any of it existed.
+    // so a marked subset is applied first, in Preflight, by every instance in turn under the schema
+    // lock (#1636). The bootstrap waits for that lock rather than skipping, retries a transient
+    // failure itself, and throws a SchemaBootstrapException for any other, which fails this
+    // attempt in Preflight: it is deliberately outside the catch below. What follows it is not
+    // allowed to be fatal: every failure in the election ends with this instance migrating under
+    // the advisory lock alone, which is exactly how it behaved before any of it existed.
     // ═══════════════════════════════════════════════════════════════════════════
     var staging = new Whizbang.Data.Postgres.SchemaStaging(
       Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
 
     if (segmentConnectionFactory is not null) {
-      try {
-        // Phase 0 — the bootstrap. Reports whether an election is actually possible now rather
-        // than whether the scripts appeared to work.
-        var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
-          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
-          _schemaCommandTimeoutSeconds, logger, cancellationToken);
+      // Phase 0: the bootstrap. Reports whether an election is actually possible now rather
+      // than whether the scripts appeared to work.
+      var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
+        new Whizbang.Data.Postgres.SchemaBootstrapRequest(
+          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__", _schemaCommandTimeoutSeconds),
+        serviceProvider, TimeProvider.System, logger, cancellationToken);
 
-        // Phase 1 — join the registry, then contend for the duty. Registration has to come first:
-        // the capability function refuses an instance it cannot find, and that refusal would say
-        // nothing about contention.
+      try {
+        // Phase 1: join the registry, then contend for the duty. Registering is Preflight's last step
+        // (#1636): it comes after the bootstrap closure and the instance and role table DDL, so the row
+        // is written once its tables are ready, and the stages held until then (log-only before the row
+        // existed) are written with it. It has to precede the vote: the capability function refuses an
+        // instance it cannot find, and that refusal would say nothing about contention.
         if (canElect
             && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
                is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
-          // #1636: Elect is entered before the registration, so the row records it from the moment it exists.
-          await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
-          staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
-            serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
-              as Whizbang.Core.Startup.IDutyElector,
+          await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteringAsync(serviceProvider, cancellationToken);
+          var registered = await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
             async ct => {
               await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
                 segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct);
@@ -155,10 +177,20 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
             },
             "__SCHEMA__", logger, cancellationToken);
+          if (registered) {
+            await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
+            staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
+              serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
+                as Whizbang.Core.Startup.IDutyElector,
+              "__SCHEMA__", logger, cancellationToken);
+          } else {
+            staging = new Whizbang.Data.Postgres.SchemaStaging(
+              Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "this instance could not join the registry");
+          }
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Belt and braces. Both phases already answer rather than throw; this catches anything
-        // they could not foresee and keeps it out of the startup path.
+        // Belt and braces. The election already answers rather than throws; this catches anything
+        // it could not foresee and keeps it out of the startup path.
         logger?.LogWarning(ex,
           "Staged startup could not be arranged for schema {Schema}; this instance will migrate "
           + "under the advisory lock alone", "__SCHEMA__");

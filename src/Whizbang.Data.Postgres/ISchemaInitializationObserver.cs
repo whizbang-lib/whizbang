@@ -56,4 +56,23 @@ public interface ISchemaInitializationObserver {
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationStepTransactionTests.cs</tests>
   ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+  /// <summary>
+  /// The bootstrap closure for <paramref name="schema"/> failed with a transient database failure (a deadlock, a
+  /// dropped connection, a timeout), and is applied again once <paramref name="delay"/> has passed.
+  /// </summary>
+  /// <param name="schema">The schema being bootstrapped, unquoted.</param>
+  /// <param name="attempt">Which attempt failed, from 1.</param>
+  /// <param name="exception">Why it failed.</param>
+  /// <param name="delay">How long the bootstrap waits before its next attempt.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <remarks>
+  /// Called once the wait has been scheduled on the initializer's clock and before it is awaited, so a test driving a
+  /// fake clock can advance it by <paramref name="delay"/> as soon as this is called.
+  /// </remarks>
+  /// <docs>data/turnkey-initialization#bootstrap-retry-scheduled</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ATransientFailure_IsRetriedOnceItsDelayHasPassed_ThenTheClosureLandsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
+  ValueTask OnBootstrapRetryScheduledAsync(
+      string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }

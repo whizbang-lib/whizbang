@@ -225,11 +225,11 @@ records a win through `record_capability`, which
 must not do exclusive work", and on an established database it actually means "nobody has
 heartbeated yet", which is every instance of every service. That shipped once as a throw.
 
-### The bootstrap, and the three properties that make it safe
+### The bootstrap, and the properties that make it safe
 
 `SchemaBootstrapPhase` applies a marked subset first: the core tables, then the regions marked
 `-- @whizbang:bootstrap-begin` / `-- @whizbang:bootstrap-end`. `MigratorDutyStaging` then registers
-the instance and elects. Three properties, each of which is a test:
+the instance and elects. The properties, each of which is a test:
 
 1. **It writes no ledger rows.** Making objects exist and claiming to have migrated them are
    different things. If the bootstrap wrote hashes, the ordinary pass would read them, conclude
@@ -237,10 +237,32 @@ the instance and elects. Three properties, each of which is a test:
 2. **It does not assume its own success.** Having applied the scripts it asks the database whether
    an election is now possible (`CanElectAsync`) and reports *that*. An incomplete closure
    therefore costs the election, not the startup.
-3. **Nothing about staging is fatal.** A refusal, a missing function, a failed registration, no
+3. **Nothing about the election is fatal.** A refusal, a missing function, a failed registration, no
    elector registered, an elector that throws: every path ends `Unstaged`, migrating under the
    advisory lock exactly as before. Never migrating needs a human to clear; duplicated work does
    not.
+
+The bootstrap itself is the exception to 3 (#1636): it is Preflight's work, every instance needs its
+objects before it registers, and a failure in it used to be swallowed into a lost election that
+nobody could explain. It **waits** for the schema lock (try first; when held, say so, wait, and read
+the closure record again under the lock so the holder's commit serves this instance), **retries** a
+`TransientDatabaseFailure` after `RetryDelay` (1 s doubling to 30 s, no limit), and **throws**
+`SchemaBootstrapException` naming the step for anything else, at Error. The generated initializer
+calls it outside the election's catch, so that exception fails the attempt. Exclude
+`OperationCanceledException` before classifying: Npgsql wraps a canceled statement's `57014`, which
+the classifier reads as transient, and a canceled start would otherwise retry.
+
+### Two barriers, and why the generated method has its own
+
+`DbContextInitializationRegistry.InitializeAllAsync` keeps one attempt per host (keyed on the host's
+`IServiceScopeFactory`) and a second call joins it. A direct `dbContext.EnsureWhizbangDatabaseInitializedAsync()`
+never reaches the registry, so the generated method enters `SchemaInitializationBarrier` itself (#1636): one
+initialization per host, data source, database and schema. The host is the context's application service provider
+(what `AddDbContext` gives it), else the provider passed in, keyed on its `IServiceScopeFactory`; a context built by
+hand with no provider is not barriered. Keyed per host, not per process, on purpose: two hosts in one process are two
+instances (tests rely on that to hold one instance mid-pass while another continues), and a process-wide key
+deadlocked exactly those tests. It serializes and does not join: the key comes from the connection string, which
+cannot prove two calls target one database, so a waiter runs its own pass and the fast path returns it.
 
 ### The bootstrap lock must be transaction scoped, not session scoped
 
@@ -257,7 +279,8 @@ Both advisory scopes share one lock space. So the leaked session lock then block
 `pg_try_advisory_xact_lock` on the same key, on every instance, for ever. Nothing migrates the
 schema again, and every instance reports only that it is waiting.
 
-`pg_try_advisory_xact_lock` inside one transaction has none of that: a pooler pins the backend for
+`pg_try_advisory_xact_lock` (and, when that finds it held, `pg_advisory_xact_lock`, bounded by the
+command timeout) inside one transaction has none of that: a pooler pins the backend for
 the transaction's duration, and the server releases the lock on commit **and** on rollback, so there
 is no path that leaks it. It also makes the bootstrap atomic, which costs nothing here because every
 statement in it is idempotent DDL, none of it needs to run outside a transaction, and a partly

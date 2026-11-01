@@ -33,4 +33,18 @@ public static class SchemaInitializationObservers {
       await observer.OnSchemaStepCommittedAsync(schema, step, cancellationToken).ConfigureAwait(false);
     }
   }
+
+  /// <summary>The bootstrap closure for <paramref name="schema"/> failed transiently and retries after <paramref name="delay"/>.</summary>
+  /// <param name="services">Where the observers are registered; null tells none.</param>
+  /// <param name="schema">The schema being bootstrapped, unquoted.</param>
+  /// <param name="attempt">Which attempt failed, from 1.</param>
+  /// <param name="exception">Why it failed.</param>
+  /// <param name="delay">How long the bootstrap waits before its next attempt.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  public static async Task BootstrapRetryScheduledAsync(
+      IServiceProvider? services, string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) {
+    foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
+      await observer.OnBootstrapRetryScheduledAsync(schema, attempt, exception, delay, cancellationToken).ConfigureAwait(false);
+    }
+  }
 }

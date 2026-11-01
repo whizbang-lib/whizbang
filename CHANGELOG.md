@@ -1465,6 +1465,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     initialization was still running returned at once ("already initialized"); it now waits for it, and runs one of
     its own if that one failed. `app.Services` and the root scope the hosted initializer is built from are now one
     host to it.
+- **Preflight's bootstrap waits and retries instead of skipping and swallowing (part of #1636).** The schema bootstrap
+  closure (the subset applied before the migrator election so an election is possible) took the schema lock with a
+  try, so every instance but the holder applied nothing and, on an empty database, gave up the election and migrated
+  under the lock alone; and any failure in it was logged at Warning and carried on from, so a closure that could not be
+  applied surfaced only as an election that never happened. On the EF Core driver it now waits for the schema lock
+  (logged, the Preflight stage message says so, and `ISchemaInitializationObserver.OnSchemaLockContendedAsync` is
+  told), reads the closure record again once it has the lock so a holder's commit is not applied twice, retries a
+  transient database failure after 1 s doubling to a 30 s cap, logged at Warning with the step and SQLSTATE (new
+  `ISchemaInitializationObserver.OnBootstrapRetryScheduledAsync`), and fails any other failure at Error with a
+  `SchemaBootstrapException` naming the script or step that failed, which fails the initialization attempt in
+  Preflight. The Dapper driver keeps its lock-only start.
+- **The instance row is registered at the end of Preflight, before Elect (part of #1636).** The EF Core driver entered
+  Elect and then registered the instance as part of the election, so the row's first recorded stage was Elect and the
+  registration belonged to no stage. Registration is now Preflight's last step, after the bootstrap closure and the
+  instance and role table DDL: the stage line `Stage 1 of 7: Preflight - the bootstrap closure is in place; registering
+  this instance` is the first one the row records (the stage lines before it are log-only), and Elect only votes
+  (`Stage 2 of 7: Elect - voting for the migrator duty`). `MigratorDutyStaging.RegisterAsync` and an `ElectAsync`
+  overload for an instance that has already registered are the two steps; the combined `ElectAsync` is kept and runs
+  both.
+- **A direct `EnsureWhizbangDatabaseInitializedAsync` call waits for the initialization in progress (part of #1636).**
+  The host's own initialization waits for one already running through the registry's per-host barrier, but a direct
+  `dbContext.EnsureWhizbangDatabaseInitializedAsync()` call (an application initializing again from
+  `ApplicationStarted`, say) bypassed it and ran a pass beside the host's, applying steps the host had not reached.
+  The generated method now enters `SchemaInitializationBarrier` first: one initialization of a database and schema at a
+  time per host, whoever calls, the host being the context's application service provider (else the one passed in). A
+  call made while another runs logs that it is waiting, waits, then runs its own pass, which finds the schema current
+  and returns on the fast path. Two hosts in one process are two instances and still meet only at the schema lock.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and

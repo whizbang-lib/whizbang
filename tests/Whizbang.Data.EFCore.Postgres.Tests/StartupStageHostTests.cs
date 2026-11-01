@@ -89,7 +89,9 @@ public sealed partial class StartupStageHostTests {
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because($"each stage is entered once, in order, and logged as it is; logged: {string.Join(" | ", log.Lines)}");
     await Assert.That(log.Lines).Contains("Information Stage 1 of 7: Preflight - host starting");
-    await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - joining the registry and voting for the migrator duty");
+    await Assert.That(log.Lines).Contains(
+      "Information Stage 1 of 7: Preflight - the bootstrap closure is in place; registering this instance");
+    await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - voting for the migrator duty");
     await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - this instance migrates the schema");
     await Assert.That(log.Lines).Contains(l => _migrateLine().IsMatch(l));
     await Assert.That(log.Lines).Contains("Information Stage 4 of 7: Converge - analyzing new indexes and reconciling managed objects");
@@ -130,8 +132,9 @@ public sealed partial class StartupStageHostTests {
   }
 
   /// <summary>
-  /// A restart against a current schema: the held Elect stage is written when the election registers the row, Migrate
-  /// is skipped because the schema is already current, and every stage after it is recorded.
+  /// A restart against a current schema: the row is registered at the end of Preflight, which writes the held
+  /// Preflight stage (#1636), Migrate is skipped because the schema is already current, and every stage after it is
+  /// recorded.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -154,7 +157,8 @@ public sealed partial class StartupStageHostTests {
     await Assert.That(log.Lines).DoesNotContain(l => _migrateLine().IsMatch(l));
     var recorded = watch.Recorded;
     await Assert.That(recorded.Select(r => $"{r.Stage} {r.Message}")).IsEquivalentTo([
-      "20 joining the registry and voting for the migrator duty",
+      "10 the bootstrap closure is in place; registering this instance",
+      "20 voting for the migrator duty",
       "20 this instance migrates the schema",
       "30 skipped: the schema is already current",
       "40 analyzing new indexes and reconciling managed objects",
@@ -162,8 +166,8 @@ public sealed partial class StartupStageHostTests {
       "60 the schema is ready; commands are accepted while the read models catch up",
       "70 reads and writes are served",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("Elect, held until the election registered the row, is written at registration; every stage after it as it is entered");
-    await Assert.That(recorded[0].EnteredAt).IsEqualTo(recorded[1].EnteredAt)
+      .Because("Preflight, held until its last step registered the row, is written at registration; every stage after it as it is entered");
+    await Assert.That(recorded[1].EnteredAt).IsEqualTo(recorded[2].EnteredAt)
       .Because("the election's outcome is progress within Elect, not a new stage");
 
     await host.StopAsync(cancellationToken);

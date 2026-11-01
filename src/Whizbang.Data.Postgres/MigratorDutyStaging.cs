@@ -62,36 +62,52 @@ public readonly record struct SchemaStaging(SchemaStage Stage, IDutyGrant? Grant
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs</tests>
 public static class MigratorDutyStaging {
   /// <summary>
-  /// Registers this instance and contends for the migrator duty.
+  /// Puts this instance in the registry: the last step of Preflight (#1636), once the bootstrap closure and the
+  /// instance and role tables are in place, so nothing registers before its tables are ready.
   /// </summary>
-  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
-  /// <param name="registerAsync">Puts this instance in the registry. Must run before electing.</param>
+  /// <param name="registerAsync">Puts this instance in the registry.</param>
   /// <param name="schema">The schema being staged, for reporting.</param>
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
-  public static async Task<SchemaStaging> ElectAsync(
-      IDutyElector? elector,
+  /// <returns>Whether this instance joined the registry. A failure is logged and answered, never thrown.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_RunsTheRegistration_AndAnswersThatTheInstanceJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_IsSaidAndAnsweredAsNotJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_WithNoLogger_IsAnsweredAsNotJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupPreflightHostTests.cs:TheInstanceRow_IsRegisteredAtTheEndOfPreflight_BeforeElectAsync</tests>
+  public static async Task<bool> RegisterAsync(
       Func<CancellationToken, Task> registerAsync,
       string schema,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(registerAsync);
     cancellationToken.ThrowIfCancellationRequested();
+    try {
+      await registerAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Electing now would be refused anyway, and the refusal would say "unregistered" rather than
+      // what actually went wrong. Report the real reason; the caller falls back.
+      MigratorDutyStagingLog.RegistrationFailed(logger ?? NullLogger.Instance, ex, schema);
+      return false;
+    }
+  }
+
+  /// <summary>Contends for the migrator duty, once this instance has joined the registry.</summary>
+  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Elect_AfterRegistering_AsksTheElectorOnce_AndHandsOverTheGrantAsync</tests>
+  public static async Task<SchemaStaging> ElectAsync(
+      IDutyElector? elector,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
 
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
-
-    // Joining the registry comes first, elector or not: an instance that starts after this one reads this one's
-    // managed-object declarations only while it is registered, and the Dapper driver registers at start the same way.
-    try {
-      await registerAsync(cancellationToken).ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Electing now would be refused anyway, and the refusal would say "unregistered" rather than
-      // what actually went wrong. Report the real reason and fall back.
-      MigratorDutyStagingLog.RegistrationFailed(log, ex, schema);
-      return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
-    }
 
     if (elector is null) {
       // A deployment that never wired the notification services. The lock is the only guard, as
@@ -134,6 +150,32 @@ public static class MigratorDutyStaging {
 
     MigratorDutyStagingLog.Unavailable(log, schema, detail);
     return new SchemaStaging(SchemaStage.Unstaged, null, detail);
+  }
+
+  /// <summary>
+  /// Registers this instance and contends for the migrator duty.
+  /// </summary>
+  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
+  /// <param name="registerAsync">Puts this instance in the registry. Must run before electing.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
+  public static async Task<SchemaStaging> ElectAsync(
+      IDutyElector? elector,
+      Func<CancellationToken, Task> registerAsync,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(registerAsync);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Joining the registry comes first, elector or not: an instance that starts after this one reads this one's
+    // managed-object declarations only while it is registered, and the Dapper driver registers at start the same way.
+    if (!await RegisterAsync(registerAsync, schema, logger, cancellationToken).ConfigureAwait(false)) {
+      return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
+    }
+    return await ElectAsync(elector, schema, logger, cancellationToken).ConfigureAwait(false);
   }
 }
 
