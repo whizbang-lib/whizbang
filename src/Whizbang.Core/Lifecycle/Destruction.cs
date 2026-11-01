@@ -30,7 +30,10 @@ public enum DestructionReason {
   /// domain's carry-forward event survives as the new origin and the detail below the close point is
   /// truncated / archived. Unlike the others this destroys <em>Sourced</em> detail, gated on consumption.
   /// </summary>
-  PeriodClose = 4
+  PeriodClose = 4,
+
+  /// <summary>A sealed stream's grace (<c>Whizbang:StreamLifecycle:FinalizeGrace</c>) has passed (#1734).</summary>
+  FinalizeGraceElapsed = 5
 }
 
 /// <summary>

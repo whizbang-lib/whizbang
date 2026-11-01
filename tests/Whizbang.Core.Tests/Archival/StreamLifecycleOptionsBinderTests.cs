@@ -14,8 +14,8 @@ namespace Whizbang.Core.Tests.Archival;
 
 /// <summary>
 /// <c>Whizbang:Archive:ReadThrough</c> and <c>Whizbang:StreamLifecycle:Types:&lt;StreamType&gt;:AppendToArchived</c>
-/// (#1738): bound by hand, so a value the framework cannot use is refused at startup naming the key, and
-/// <c>NewGeneration</c>, which ships with #1734, is refused with a message that says so rather than read as a default.
+/// (#1738), and <c>FinalizeGrace</c> and <c>SweepBatchSize</c> (#1734): bound by hand, so a value the framework cannot
+/// use is refused at startup naming the key rather than read as a default.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
 public class StreamLifecycleOptionsBinderTests {
@@ -67,16 +67,47 @@ public class StreamLifecycleOptionsBinderTests {
   }
 
   [Test]
-  public async Task AppendToArchived_NewGeneration_IsRefusedAtStartup_Naming1734Async() {
+  public async Task AppendToArchived_NewGeneration_IsAPolicy_AndIsStoredByItsNameAsync() {
     var options = new StreamLifecycleOptions();
 
-    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(
-        _config(("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived", "NewGeneration")), options))
+    ArchiveOptionsBinder.Bind(_config(("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived", "newgeneration")), options);
+
+    await Assert.That(options.Types["Shop.Order"].AppendToArchived).IsEqualTo(AppendToArchivedPolicy.NewGeneration)
+      .Because("#1734 ships the final snapshot NewGeneration starts from, so the policy is no longer refused");
+  }
+
+  [Test]
+  public async Task FinalizeGraceAndSweepBatchSize_DefaultToSevenDaysAnd500_AndBindAsync() {
+    var unset = new StreamLifecycleOptions();
+    ArchiveOptionsBinder.Bind(_config(), unset);
+    var set = new StreamLifecycleOptions();
+    ArchiveOptionsBinder.Bind(_config(
+      ("Whizbang:StreamLifecycle:FinalizeGrace", "1.12:00:00"),
+      ("Whizbang:StreamLifecycle:SweepBatchSize", "40")), set);
+    var edges = new StreamLifecycleOptions();
+    ArchiveOptionsBinder.Bind(_config(
+      ("Whizbang:StreamLifecycle:FinalizeGrace", "00:00:00"),
+      ("Whizbang:StreamLifecycle:SweepBatchSize", "1")), edges);
+
+    await Assert.That(unset.FinalizeGrace).IsEqualTo(TimeSpan.FromDays(7));
+    await Assert.That(unset.SweepBatchSize).IsEqualTo(500);
+    await Assert.That(set.FinalizeGrace).IsEqualTo(TimeSpan.FromHours(36));
+    await Assert.That(set.SweepBatchSize).IsEqualTo(40);
+    await Assert.That(edges.FinalizeGrace).IsEqualTo(TimeSpan.Zero).Because("no grace is a choice: dispose on the next cycle");
+    await Assert.That(edges.SweepBatchSize).IsEqualTo(1);
+  }
+
+  [Test]
+  [Arguments("Whizbang:StreamLifecycle:FinalizeGrace", "soon")]
+  [Arguments("Whizbang:StreamLifecycle:FinalizeGrace", "-00:00:01")]
+  [Arguments("Whizbang:StreamLifecycle:SweepBatchSize", "0")]
+  [Arguments("Whizbang:StreamLifecycle:SweepBatchSize", "many")]
+  public async Task FinalizeGraceOrSweepBatchSize_ThatCannotBeUsed_IsRefusedNamingTheKeyAsync(string key, string value) {
+    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(_config((key, value)), new StreamLifecycleOptions()))
       .Throws<InvalidOperationException>();
 
-    await Assert.That(thrown!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived");
-    await Assert.That(thrown.Message).Contains("#1734")
-      .Because("NewGeneration starts a new generation from the final snapshot finalization takes, which ships with #1734");
+    await Assert.That(thrown!.Message).Contains(key);
+    await Assert.That(thrown.Message).Contains(value);
   }
 
   [Test]
@@ -87,7 +118,7 @@ public class StreamLifecycleOptionsBinderTests {
         .Throws<InvalidOperationException>();
 
       await Assert.That(thrown!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived");
-      await Assert.That(thrown.Message).Contains("Refuse, AutoRestore")
+      await Assert.That(thrown.Message).Contains("Refuse, AutoRestore, NewGeneration")
         .Because($"'{value}' names no policy; a number would bind a policy by position, which a reader cannot check");
     }
   }
@@ -109,7 +140,7 @@ public class StreamLifecycleOptionsBinderTests {
   [Test]
   public async Task Registration_APolicyThatCannotBeRead_FailsTheHostsStartupValidationAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton(_config(("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived", "NewGeneration")));
+    services.AddSingleton(_config(("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived", "Restore")));
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
     Exception? failure = null;
@@ -122,6 +153,6 @@ public class StreamLifecycleOptionsBinderTests {
 
     await Assert.That(failure).IsNotNull()
       .Because("a policy that cannot be read fails the host's start, not the first archived write");
-    await Assert.That(failure!.Message).Contains("#1734");
+    await Assert.That(failure!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived");
   }
 }
