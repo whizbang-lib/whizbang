@@ -1017,6 +1017,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A rewind folds collective events (#1956).** A rewind replays a row from a snapshot or from its stream's start, and it
+  never folded collectives, so every collective mutation of the rows it replayed was lost. Since #1931 a default rebuild
+  of a stream archived through a prefix starts from the stream's newest snapshot through the same replay, so it lost
+  the collectives committed after that snapshot too. Both now fold the row's collectives committed after where they
+  start, in commit order among the stream's events, as a full rebuild does: every collective for a replay from the
+  stream's start, and only those committed after the snapshot's event for a replay from a snapshot, which already holds
+  the earlier ones. Collectives archived whole fold on a rewind always and on a rebuild only under `IncludeAll`. A
+  snapshot a replay takes no longer holds the collectives committed after its event, so a rewind from it never folds
+  one twice, and an overwrite-only perspective whose model has collectives is rewound by a full fold. A collective
+  replay applier implements the new `ICollectiveReplayApplier.InterleaveAfterAsync` (with `CollectiveReplayStart`);
+  one that does not keeps its old behavior, folding nothing on a rewind.
+- **A collective folded into a row after a purge no longer moves the row's checkpoint (#1957).** A rebuild that met a
+  collective after the row's purge recorded the collective, another stream's event, as the row's position. It now
+  leaves the checkpoint on the row's own event, like every other collective fold.
+- **A rebuild tells a stream whose archive was deleted from one never archived (#1958).** Deleting an archive cleared
+  the lifecycle ledger's record of it, so a rebuild replayed a stream whose prefix archive was deleted from its first
+  hot event and folded a partial history as the whole. Migration 274 records the deletion (`archive_deleted_at` on
+  `wh_stream_lifecycle`), and the rebuild sees such a stream as `ArchivedStreamExtent.PrefixDeleted` or `WholeDeleted`.
+  `IncludeWhileLive` and `IncludeAll` skip a stream whose prefix archive was deleted, with a warning naming the
+  deleted archive, and count it in `RebuildResult.StreamsSkipped`; the default (`Skip`) never reads the archive, so it
+  still starts such a stream from its newest live snapshot. A stream whose whole archive was deleted is skipped under
+  every choice. A prefix archive deleted before migration 274 left no record and is not detected.
 - **A replay finds collective streams archived whole (#1932).** It listed a tenant's collective streams from the hot
   event store only, so a rewind (or an `IncludeAll` rebuild) silently dropped the mutations of an archived collective.
   They are now listed from the lifecycle ledger (indexed by migration 272), read through the archive and folded in
