@@ -31,6 +31,22 @@ public class SchemaInitializationStagesTests {
     await Assert.That(stages.Tokens[0]).IsEqualTo(cts.Token);
   }
 
+  /// <summary>The bootstrap's waits and its failure are progress within Preflight, in framework-authored words.</summary>
+  [Test]
+  public async Task TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync() {
+    var (stages, services) = _build();
+
+    await SchemaInitializationStages.WaitingForTheBootstrapLockAsync(services, CancellationToken.None);
+    await SchemaInitializationStages.BootstrapRetryingAsync(services, CancellationToken.None);
+    await SchemaInitializationStages.BootstrapFailedAsync(services, CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo([
+      "Enter Preflight: waiting for the schema lock to apply the bootstrap closure",
+      "Enter Preflight: the bootstrap closure met a transient database failure; retrying",
+      "Enter Preflight: the bootstrap closure failed with an error that is not transient",
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
   [Test]
   public async Task Registered_WritesTheHeldStageAsync() {
     var (stages, services) = _build();
@@ -162,6 +178,9 @@ public class SchemaInitializationStagesTests {
         await SchemaInitializationStages.MigrationNotNeededAsync(services, "current", CancellationToken.None);
         await SchemaInitializationStages.ConvergingAsync(services, CancellationToken.None);
         await SchemaInitializationStages.CoordinatingAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.WaitingForTheBootstrapLockAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.BootstrapRetryingAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.BootstrapFailedAsync(services, CancellationToken.None);
       }).ThrowsNothing();
     }
   }

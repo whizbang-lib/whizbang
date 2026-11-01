@@ -166,6 +166,41 @@ public sealed partial class StartupPreflightHostTests {
     }
   }
 
+  /// <summary>
+  /// A bootstrap closure that fails for a reason that is not transient fails the initialization attempt, naming what
+  /// failed, at Error (#1636): the instance does not go on to migrate under the schema lock as though nothing happened.
+  /// The closure's record table is stood up in a shape the bootstrap cannot read, which no retry can fix.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ABootstrapThatCannotBeApplied_FailsTheInitialization_NamingWhatFailedAsync(CancellationToken cancellationToken) {
+    await _executeAsync("CREATE TABLE public.wh_bootstrap_closure (unrelated int)");
+    var failures = new AttemptFailures();
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<ISchemaInitializationObserver>(failures));
+    // Not awaited: the host's start does not return before the schema is ready, and here it never is. Canceling this
+    // token ends the start, so the host can be stopped.
+    using var start = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var starting = instance.Host.StartAsync(start.Token);
+    try {
+      var first = await Task.WhenAny(failures.First, instance.Stages.Reached(StartupStage.Running)).WaitAsync(_deadline, cancellationToken);
+      await Assert.That(first == failures.First).IsTrue()
+        .Because("a bootstrap that cannot be applied stops the start in Preflight; it is not skipped on the way to Running");
+      var failed = _chain(await failures.First).OfType<SchemaBootstrapException>().FirstOrDefault();
+      await Assert.That(failed).IsNotNull().Because("the attempt fails with the bootstrap's own failure, not a later symptom");
+      await Assert.That(failed!.Step).IsEqualTo("<closure record>");
+      await Assert.That(instance.Log.Lines.Any(l => l.StartsWith("Error", StringComparison.Ordinal)
+          && l.Contains("<closure record>", StringComparison.Ordinal)))
+        .IsTrue().Because("what failed is said at Error");
+      await Assert.That(instance.Log.Lines.Any(l => l.Contains("Staged startup could not be arranged", StringComparison.Ordinal)))
+        .IsFalse().Because("the failure is not swallowed into a lost election");
+    } finally {
+      await start.CancelAsync();
+      await Task.WhenAny(starting);
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   private static Regex _succeeded(string file) =>
@@ -179,6 +214,31 @@ public sealed partial class StartupPreflightHostTests {
       command.Parameters.AddWithValue(parameter);
     }
     return (T)(await command.ExecuteScalarAsync())!;
+  }
+
+  private async Task _executeAsync(string sql) {
+    await using var connection = new NpgsqlConnection(_database.ConnectionString);
+    await connection.OpenAsync();
+    await using var command = new NpgsqlCommand(sql, connection);
+    await command.ExecuteNonQueryAsync();
+  }
+
+  private static IEnumerable<Exception> _chain(Exception exception) {
+    for (Exception? current = exception; current is not null; current = current.InnerException) {
+      yield return current;
+    }
+  }
+
+  /// <summary>Completes with the first initialization attempt's failure.</summary>
+  private sealed class AttemptFailures : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource<Exception> _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<Exception> First => _first.Task;
+
+    public ValueTask OnAttemptFailedAsync(int attempt, Exception exception, CancellationToken cancellationToken) {
+      _first.TrySetResult(exception);
+      return ValueTask.CompletedTask;
+    }
   }
 
   /// <summary>One instance of a service, composed as a consumer composes it, on the shared database.</summary>
