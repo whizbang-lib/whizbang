@@ -201,6 +201,49 @@ public sealed partial class StartupPreflightHostTests {
     }
   }
 
+  /// <summary>
+  /// The instance row is registered at the end of Preflight (#1636), after the bootstrap closure and the instance and
+  /// role table DDL, and before Elect: the first stage the row records is Preflight's last step, written as the row is
+  /// registered, and every stage line before it was log-only. A first instance migrates the database, so the stage
+  /// columns exist when the second registers.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheInstanceRow_IsRegisteredAtTheEndOfPreflight_BeforeElectAsync(CancellationToken cancellationToken) {
+    var migrator = new Instance(_database.ConnectionString);
+    try {
+      await migrator.Host.StartAsync(cancellationToken);
+      await migrator.Stages.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+    } finally {
+      await migrator.Host.StopAsync(CancellationToken.None);
+      migrator.Host.Dispose();
+    }
+
+    var recorder = new RowAtFirstRecord(_database.ConnectionString);
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<IStartupStageObserver>(recorder));
+    recorder.InstanceId = instance.Host.Services.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId;
+    try {
+      await instance.Host.StartAsync(cancellationToken);
+      await instance.Stages.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+
+      var changes = recorder.Changes;
+      var first = changes.FindIndex(c => c.Recorded);
+      await Assert.That(first).IsGreaterThanOrEqualTo(0);
+      await Assert.That(changes[first].Snapshot.Stage).IsEqualTo(StartupStage.Preflight)
+        .Because("the row is registered at the end of Preflight, so Preflight's last step is the first stage it records; "
+          + "changes: " + string.Join(" | ", changes.Select(c => $"{c.Snapshot.Stage}:{c.Snapshot.Message}:{c.Recorded}")));
+      await Assert.That(changes[first].Snapshot.Message)
+        .IsEqualTo("the bootstrap closure is in place; registering this instance");
+      await Assert.That(changes.Take(first).All(c => c.Snapshot.Stage == StartupStage.Preflight && !c.Recorded)).IsTrue()
+        .Because("every stage before the row exists is log-only, and none of them is past Preflight");
+      await Assert.That(recorder.StageOnTheRow).IsEqualTo((int)StartupStage.Preflight)
+        .Because("the row exists, holding Preflight, when its first stage is recorded");
+    } finally {
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   private static Regex _succeeded(string file) =>
@@ -226,6 +269,40 @@ public sealed partial class StartupPreflightHostTests {
   private static IEnumerable<Exception> _chain(Exception exception) {
     for (Exception? current = exception; current is not null; current = current.InnerException) {
       yield return current;
+    }
+  }
+
+  /// <summary>Every stage change and whether the row recorded it; reads the row's stage at the first one it did.</summary>
+  private sealed class RowAtFirstRecord(string connectionString) : IStartupStageObserver {
+    private readonly Lock _lock = new();
+    private readonly List<(StartupStageSnapshot Snapshot, bool Recorded)> _changes = [];
+
+    public Guid InstanceId { get; set; }
+
+    public int? StageOnTheRow { get; private set; }
+
+    public List<(StartupStageSnapshot Snapshot, bool Recorded)> Changes {
+      get {
+        lock (_lock) {
+          return [.. _changes];
+        }
+      }
+    }
+
+    public async ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
+      bool firstRecorded;
+      lock (_lock) {
+        firstRecorded = recorded && !_changes.Exists(c => c.Recorded);
+        _changes.Add((snapshot, recorded));
+      }
+      if (firstRecorded) {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var read = new NpgsqlCommand(
+          "SELECT startup_stage FROM public.wh_service_instances WHERE instance_id = $1", connection);
+        read.Parameters.AddWithValue(InstanceId);
+        StageOnTheRow = await read.ExecuteScalarAsync(cancellationToken) is short stage ? stage : null;
+      }
     }
   }
 

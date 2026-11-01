@@ -276,4 +276,73 @@ public class MigratorDutyStagingTests {
     await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
       new Elector(() => DutyAttempt.Granted(new FakeGrant())), null!, SCHEMA))
       .Throws<ArgumentNullException>();
+
+  /// <summary>
+  /// Registering is its own step, the last of Preflight (#1636): it runs the registration and answers whether this
+  /// instance joined.
+  /// </summary>
+  [Test]
+  public async Task Register_RunsTheRegistration_AndAnswersThatTheInstanceJoinedAsync() {
+    var calls = 0;
+
+    var joined = await MigratorDutyStaging.RegisterAsync(_registers(() => calls++), SCHEMA);
+
+    await Assert.That(joined).IsTrue();
+    await Assert.That(calls).IsEqualTo(1);
+  }
+
+  /// <summary>A registration that fails is said at Warning and answered, not thrown: the election is given up, not the start.</summary>
+  [Test]
+  public async Task Register_ThatFails_IsSaidAndAnsweredAsNotJoinedAsync() {
+    var logger = new RecordingLogger();
+
+    var joined = await MigratorDutyStaging.RegisterAsync(
+      _ => throw new InvalidOperationException("relation \"wh_service_instances\" does not exist"), SCHEMA, logger);
+
+    await Assert.That(joined).IsFalse();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue();
+  }
+
+  /// <summary>Cancellation, before or during the registration, propagates.</summary>
+  [Test]
+  public async Task Register_Cancellation_PropagatesAsync() {
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(_registers(), SCHEMA, null, cts.Token))
+      .Throws<OperationCanceledException>();
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(
+      _ => throw new OperationCanceledException(), SCHEMA)).Throws<OperationCanceledException>();
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(null!, SCHEMA))
+      .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// Electing an instance that has already registered asks the elector once, registers nothing, and hands over the
+  /// grant.
+  /// </summary>
+  [Test]
+  public async Task Elect_AfterRegistering_AsksTheElectorOnce_AndHandsOverTheGrantAsync() {
+    var grant = new FakeGrant();
+    var elector = new Elector(() => DutyAttempt.Granted(grant));
+
+    var staging = await MigratorDutyStaging.ElectAsync(elector, SCHEMA);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Migrator);
+    await Assert.That(staging.Grant).IsSameReferenceAs(grant);
+    await Assert.That(elector.Attempts).IsEqualTo(1);
+  }
+
+  /// <summary>Electing with no elector registered leaves the instance unstaged, and cancellation still propagates.</summary>
+  [Test]
+  public async Task Elect_AfterRegistering_WithNoElector_IsUnstaged_AndCancellationPropagatesAsync() {
+    var staging = await MigratorDutyStaging.ElectAsync(null, SCHEMA);
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(staging.Detail).IsEqualTo("no elector is registered");
+    await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
+      new Elector(() => DutyAttempt.Granted(new FakeGrant())), SCHEMA, null, cts.Token)).Throws<OperationCanceledException>();
+  }
 }

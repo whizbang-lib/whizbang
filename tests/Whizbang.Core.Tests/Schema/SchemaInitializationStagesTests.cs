@@ -27,7 +27,7 @@ public class SchemaInitializationStagesTests {
 
     await SchemaInitializationStages.ElectingAsync(services, cts.Token);
 
-    await Assert.That(stages.Calls).IsEquivalentTo(["Enter Elect: joining the registry and voting for the migrator duty"]);
+    await Assert.That(stages.Calls).IsEquivalentTo(["Enter Elect: voting for the migrator duty"]);
     await Assert.That(stages.Tokens[0]).IsEqualTo(cts.Token);
   }
 
@@ -45,6 +45,16 @@ public class SchemaInitializationStagesTests {
       "Enter Preflight: the bootstrap closure met a transient database failure; retrying",
       "Enter Preflight: the bootstrap closure failed with an error that is not transient",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>Registering is Preflight's last step, so it is progress within Preflight, not part of Elect (#1636).</summary>
+  [Test]
+  public async Task Registering_IsTheLastStepOfPreflightAsync() {
+    var (stages, services) = _build();
+
+    await SchemaInitializationStages.RegisteringAsync(services, CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo(["Enter Preflight: the bootstrap closure is in place; registering this instance"]);
   }
 
   [Test]
@@ -181,6 +191,7 @@ public class SchemaInitializationStagesTests {
         await SchemaInitializationStages.WaitingForTheBootstrapLockAsync(services, CancellationToken.None);
         await SchemaInitializationStages.BootstrapRetryingAsync(services, CancellationToken.None);
         await SchemaInitializationStages.BootstrapFailedAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.RegisteringAsync(services, CancellationToken.None);
       }).ThrowsNothing();
     }
   }
