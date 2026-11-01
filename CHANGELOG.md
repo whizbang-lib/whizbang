@@ -1500,6 +1500,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time per host, whoever calls, the host being the context's application service provider (else the one passed in). A
   call made while another runs logs that it is waiting, waits, then runs its own pass, which finds the schema current
   and returns on the fast path. Two hosts in one process are two instances and still meet only at the schema lock.
+- **A fresh database's instance row records its startup stage at registration (part of #1636).** Registration ends
+  Preflight and writes the stage held until the row existed, but on a fresh database that write failed (logged at
+  Debug and held): the stage columns, the phase the recorder writes beside them and `wh_record_startup_stage` arrived
+  only with the main pass, so the row recorded nothing until Converge. Migration 277 makes them Preflight's
+  pre-migration scripts: its bootstrap region adds every column a migration adds to the instance tables (109's
+  `lifecycle_phase` and `library_version`, 203's `connection_mode`, 231's three stage columns, 110's `evicted_by`),
+  each only when the catalog says it is missing and described as it is added, and creates the recorder as 231 defines
+  it, word for word. A fresh database's row now records `Preflight - the bootstrap closure is in place; registering
+  this instance` and every stage after it, as a restart's always did. An existing database, where every column is
+  already there, takes no table lock from it.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and

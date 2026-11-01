@@ -179,6 +179,57 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
+  /// An empty database records an instance's startup stage at registration once the bootstrap has run (#1636): the
+  /// stage columns and the function that writes them are Preflight's pre-migration scripts, so the row holds Preflight
+  /// from the moment it exists rather than from the main pass that used to add them.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabaseRecordsItsStageAtRegistrationAfterTheBootstrapAsync(CancellationToken cancellationToken) {
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    await Assert.That(ready).IsTrue();
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      _connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(await _scalarAsync<bool>(
+        "SELECT to_regprocedure('wh_record_startup_stage(uuid,smallint,text,text)') IS NOT NULL"))
+      .IsTrue().Because("registration writes the stage held until the row existed through this function");
+    var recorded = await _scalarAsync<bool>(
+      $"SELECT wh_record_startup_stage('{instance.InstanceId}'::uuid, 10::smallint, 'registering', 'Connecting')");
+    await Assert.That(recorded).IsTrue().Because("the row exists and can hold its stage");
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || startup_stage_message || ' ' || lifecycle_phase || ' '
+               || (startup_stage_entered_at IS NOT NULL)
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("10 registering Connecting true");
+  }
+
+  /// <summary>
+  /// The columns the bootstrap adds to the instance tables carry their descriptions. Migration 231 describes its
+  /// stage columns only when it is the one adding them, and on a database the bootstrap brought up it no longer is.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task TheColumnsTheBootstrapAdds_AreDescribedAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    var described = await _scalarAsync<long>("""
+      SELECT count(*) FROM pg_attribute a
+      WHERE NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL
+        AND ((a.attrelid = to_regclass('wh_service_instances')
+              AND a.attname IN ('lifecycle_phase', 'library_version', 'connection_mode', 'startup_stage',
+                                'startup_stage_message', 'startup_stage_entered_at'))
+          OR (a.attrelid = to_regclass('wh_instance_evictions') AND a.attname = 'evicted_by'))
+      """);
+    await Assert.That(described).IsEqualTo(7L);
+  }
+
+  /// <summary>
   /// A context with no schema configured targets <c>public</c>, so the bootstrap finds the objects it
   /// created there rather than probing a schema whose name is empty.
   /// </summary>

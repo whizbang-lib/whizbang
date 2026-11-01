@@ -329,6 +329,29 @@ runs only the bootstrap, then registers an instance and calls `record_capability
 the script list from the generated initializer rather than rebuilding it, so the markers, the order
 and the schema transform under test are the ones that ship. Removing any single marker turns it red.
 
+### The instance tables' columns are Preflight's (#1636)
+
+Registration ends Preflight and writes the stage the instance held until its row existed. On a fresh database that
+write used to fail, quietly (Debug, held): the stage columns and `wh_record_startup_stage` came from 231 and the
+`lifecycle_phase` the recorder writes from 109, all in the main pass. Migration 277's bootstrap region now adds every
+column a migration adds to an instance table and creates the recorder. Three rules come with it, each a test:
+
+1. **Every column a migration adds to an instance or role table is added by the closure.** Derived from the shipped
+   SQL, not listed (`PreflightInstanceColumnsTests.EveryColumnAMigrationAddsToAnInstanceOrRoleTable_IsAddedByTheBootstrapClosureAsync`).
+   A new column on those tables goes in a bootstrap region too, catalog-checked.
+2. **The closure defines each function as its last word does.** The closure is applied again whenever its hash
+   changes, before the main pass; an older definition in it would be put back on every database it reached
+   (`EveryFunctionTheBootstrapDefines_IsDefinedAsItsLastWordAsync`). A migration that redefines a closure function puts
+   the new definition in a region of its own, as 198 did for 184.
+3. **A column added by the closure is described by the closure.** 231 describes its columns only inside the block that
+   adds them, and on a database the closure brought up it no longer adds them
+   (`SchemaBootstrapPhaseTests.TheColumnsTheBootstrapAdds_AreDescribedAsync`).
+
+The descriptor ensure (`PostgresSchemaBuilder`) does not declare these columns, so it neither re-adds nor fights them.
+`SchemaBootstrapPhaseTests.AnEmptyDatabaseRecordsItsStageAtRegistrationAfterTheBootstrapAsync` and
+`StartupStageHostTests.AFreshDatabase_EntersEveryStageInOrder_LogsEach_AndRecordsEachTheRowCanHoldAsync` are the
+behavior.
+
 ### What a non-holder watches
 
 The **duty** lock key, not the schema lock key. Watching the schema key would report the migrator as
@@ -562,11 +585,11 @@ instance. Three things had to be true at once, and each is now false:
 
 1. **Idempotent DDL takes its lock before it looks.** `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes ACCESS
    EXCLUSIVE and `CREATE INDEX IF NOT EXISTS` takes SHARE whether or not there is anything to do. Migrations 109, 110,
-   184 and 203 add columns to the instance and role tables; 184's ALTER is also in the bootstrap closure, so the
-   ordinary pass re-applied it to columns the bootstrap had just added, against the electors using them. Shipped
-   migrations cannot be edited, so `CatalogCheckedDdl.Guard` rewrites each such top-level statement as it is
-   executed (never what is hashed) into a `DO` block that asks the catalog first: plain migration segments and the
-   core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
+   184 and 203 add columns to the instance and role tables; 184's ALTER (since 277, every one of them) is also in the
+   bootstrap closure, so the ordinary pass re-applied it to columns the bootstrap had just added, against the electors
+   using them. Shipped migrations cannot be edited, so `CatalogCheckedDdl.Guard` rewrites each such top-level
+   statement as it is executed (never what is hashed) into a `DO` block that asks the catalog first: plain migration
+   segments and the core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
 2. **Workers ran before their stage.** The duty holder, the partition assigner, the notification connection and the
    work-available probes started with the host. They are registered with `AddHostedServiceAtStage` now (Coordinate,
    Coordinate, end of Preflight) or read the schema-ready gate, and the stage gate falls back to that gate for every
