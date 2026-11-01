@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/277_PreflightInstanceAndRoleColumns.sql</code-under-test>
-/// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <docs>operations/infrastructure/migrations#what-the-closure-carries</docs>
 [Category("Migrations")]
 [Category("Shard3")]
 public sealed partial class PreflightInstanceColumnsTests {

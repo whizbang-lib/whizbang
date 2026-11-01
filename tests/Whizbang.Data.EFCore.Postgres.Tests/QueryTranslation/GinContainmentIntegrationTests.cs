@@ -212,7 +212,11 @@ public class GinContainmentIntegrationTests {
         CROSS JOIN {SHAPE_SOURCE} shape;
         """, cancellationToken);
 
-      await _execAsync(db, $"ANALYZE {TABLE}", cancellationToken);
+      // VACUUM, not ANALYZE alone (#1972). The rows went in after the GIN indexes were built, so they sit in each
+      // index's pending list until a vacuum merges it, and the planner prices a long pending list into every GIN scan.
+      // Whether autovacuum merged it before the copy was timing, so a test could plan a sequential scan on the same
+      // data. A vacuum here leaves every copy with the pending lists empty.
+      await _execAsync(db, $"VACUUM (ANALYZE) {TABLE}", cancellationToken);
     }
   }
 
