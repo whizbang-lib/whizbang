@@ -87,6 +87,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // marking it Published. Optional so existing callers (and the legacy fakes used by
   // many tests) continue to compile + run unchanged.
   private readonly IDeadLetterStore _deadLetterStore;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // v0.660 slice 8 — per-message-type dispatch duration histogram.
@@ -125,7 +126,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
     WorkCompletionMeter? completionMeter = null,
-    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null) {
+    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null,
+    DeadLetterLoggingOptions? deadLetterLogging = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     _integrityOptions = ArgumentGuard.NotNull(integrityOptions).Value;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -379,6 +382,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
+  /// <summary>
+  /// Logs the dead-letter record (#1901) for a row this worker dead-lettered or finished for good, at the dead-letter
+  /// level, with its type and its last failure.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs:Dispatch_PayloadRefused_DeadLetterRecordCarriesTheRefusalAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverOwnCap_MovedToTheDeadLetterStore_LogsTheDeadLetterRecordAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverConsumerBudget_NoDeadLetterStore_LogsTheRecordForTheTerminalCompletionAsync</tests>
+  private void _logDeadLettered(InboxWork work, MessageFailureReason reason, string? lastError, Exception? exception) =>
+    DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception, work.MessageId, work.MessageType, reason.ToString(), lastError);
+
   /// <summary>What a held row's lapse means, by where it was when its renewals ran out (#1788).</summary>
   internal static string DescribeLapse(InboxHoldState state) => state switch {
     InboxHoldState.Queued => "it was never dispatched and is handed back without charging an attempt",
@@ -540,8 +554,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // greater-than so MaxInboxAttempts = 5 means "5 total attempts allowed", matching the
     // pre-refactor count (the check used to be >= when attempts was zero-based).
     if (maxAttempts.HasValue && work.Attempts > maxAttempts.Value) {
-      LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
-
       // v0.502 slice C.4 — when an IDeadLetterStore is wired, persist the failing row
       // into wh_dead_letters with a forensic snapshot AND have the SQL function DELETE
       // it from wh_inbox in the same transaction. The handler-commit path (legacy
@@ -566,9 +578,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         return;
       }
 
+      var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
       if (_deadLetterStore.IsConfigured) {
         try {
-          var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
           var movedId = await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.INBOX,
@@ -584,6 +596,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
               new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, "MaxAttemptsExceeded"));
             _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
               (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
+            _logDeadLettered(work, Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText, exception: null);
           } else {
             // #571: null is the documented already-gone no-op — the row was dead-lettered
             // or deleted by someone else. Counting it would mint phantom DLQ arrivals; NOT
@@ -603,6 +616,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
         }
       }
+      // Finished for good without reaching the store: the message is just as dead, so it gets the record too.
+      _logDeadLettered(work, Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText, exception: null);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _enqueueCommitAsync(terminalRequest, stoppingToken);
       return;
@@ -809,6 +824,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
             new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
           _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
+          _logDeadLettered(work, reason, detail, refusal);
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
@@ -999,6 +1015,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
             new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
           _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
+          _logDeadLettered(work, reason, result.Detail, exception: null);
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
@@ -1010,6 +1027,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
       }
     }
+    _logDeadLettered(work, reason, result.Detail, exception: null);
     var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
     await _enqueueCommitAsync(terminalRequest, ct);
   }
@@ -1094,6 +1112,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
             new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
           _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
+          _logDeadLettered(work, reason, detail, exception: null);
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
@@ -1103,6 +1122,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
       }
     }
+    _logDeadLettered(work, reason, detail, exception: null);
     var terminal = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
     await _enqueueCommitAsync(terminal, ct);
   }
@@ -1449,8 +1469,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "InboxDispatchWorker skipped a copy of inbox message {MessageId}: the row is already dispatching, committing, or no longer held here")]
   static partial void LogCopyNotHeldSkipped(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
-  static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+  // EventId 5 (a dead letter, at Warning) is retired: every dead letter is the DeadLetterLog record (#1901).
 
   [LoggerMessage(EventId = 29, Level = LogLevel.Information,
     Message = "InboxDispatchWorker discarded {MessageId} ({MessageType}): its subsystem is disabled on this host — "
@@ -1474,7 +1493,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
-  [LoggerMessage(EventId = 76, Level = LogLevel.Error,
+  [LoggerMessage(EventId = 76, Level = LogLevel.Warning,
     Message = "InboxDispatchWorker could not deserialize the payload of message {MessageId} ({MessageType}), which a retry will not change; "
             + "dead-lettering the row with its body instead of completing it")]
   static partial void LogUndeserializablePayload(ILogger logger, Guid messageId, string messageType, Exception ex);

@@ -89,6 +89,7 @@ Whizbang:Database:Stamper:NotifyHealthyPollingInterval
 Whizbang:Database:Stamper:PollingInterval
 Whizbang:Database:TcpKeepAliveInterval
 Whizbang:Database:TcpKeepAliveTime
+Whizbang:DeadLetterLogging:Level
 Whizbang:DeadLetterRecovery:AdaptiveScanBatchEnabled
 Whizbang:DeadLetterRecovery:AutoCanaryOnNewGeneration
 Whizbang:DeadLetterRecovery:CanaryProbeSize

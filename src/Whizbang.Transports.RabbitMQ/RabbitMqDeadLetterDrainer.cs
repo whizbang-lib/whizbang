@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
 namespace Whizbang.Transports.RabbitMQ;
@@ -36,17 +37,21 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <param name="importAsync">Custody seam — wraps <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>.
 ///   Returns <c>true</c> when a custody row was created, <c>false</c> for a duplicate (still safe
 ///   to ack), and THROWS on failure so the message is requeued for the next pass.</param>
-/// <param name="logger">Logger.</param>
+/// <param name="logger">Logger; a message taken into custody is logged as its dead-letter record.</param>
+/// <param name="deadLetterLogLevel">The level of the dead-letter record (#1901): the dead-letter logging options'
+///   level, <see cref="LogLevel.Error"/> by default.</param>
 public sealed class RabbitMqDeadLetterDrainer(
   IConnection connection,
   string dlqName,
   Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-  ILogger<RabbitMqDeadLetterDrainer> logger) : ITransportDeadLetterDrainer {
+  ILogger<RabbitMqDeadLetterDrainer> logger,
+  LogLevel deadLetterLogLevel = LogLevel.Error) : ITransportDeadLetterDrainer {
   private readonly IConnection _connection = connection ?? throw new ArgumentNullException(nameof(connection));
   private readonly string _dlqName = !string.IsNullOrWhiteSpace(dlqName) ? dlqName
       : throw new ArgumentException("DLQ name required", nameof(dlqName));
   private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
   private readonly ILogger<RabbitMqDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RabbitMqDeadLetterDrainer>.Instance;
+  private readonly LogLevel _deadLetterLevel = deadLetterLogLevel;
 
   /// <inheritdoc />
   public string TransportName => $"rmq:{_dlqName}";
@@ -87,11 +92,15 @@ public sealed class RabbitMqDeadLetterDrainer(
         var imported = await _importAsync(import, ct).ConfigureAwait(false);
         await channel.BasicAckAsync(result.DeliveryTag, multiple: false, ct).ConfigureAwait(false);
         drained++;
+        if (imported) {
+          DeadLetterLog.BrokerMessageDeadLettered(_logger, _deadLetterLevel, import);
+        } else {
 #pragma warning disable CA1848, CA1873
-        _logger.LogInformation(
-          "RMQ DLQ imported message {MessageId} from {Dlq} into wh_dead_letters (duplicate={Duplicate})",
-          import.MessageId, _dlqName, !imported);
+          _logger.LogInformation(
+            "RMQ DLQ message {MessageId} from {Dlq} was already in wh_dead_letters; acked the broker copy",
+            import.MessageId, _dlqName);
 #pragma warning restore CA1848, CA1873
+        }
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {

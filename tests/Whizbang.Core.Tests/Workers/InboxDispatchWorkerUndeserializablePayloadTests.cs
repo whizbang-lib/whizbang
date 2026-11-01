@@ -60,6 +60,39 @@ public class InboxDispatchWorkerUndeserializablePayloadTests {
       .Because("the old log line promised the dispatch would continue, which is exactly what must not happen");
   }
 
+  /// <summary>
+  /// #1901: the dead-letter record carries the serializer's refusal as its exception, at Error by default, and the
+  /// line logged before the move is a Warning: the move may fail and route the row to a retry instead, and an attempt
+  /// that may be retried is not the terminal record.
+  /// </summary>
+  [Test]
+  public async Task Dispatch_PayloadRefused_DeadLetterRecordCarriesTheRefusalAtErrorAsync() {
+    var h = new Harness();
+    var work = _work("""{"Inner":5,"StreamId":"not-a-guid"}""", _compositeTypeName());
+
+    await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var record = h.Logs.Single(l => l.EventId == 1901);
+    await Assert.That(record.Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(record.Exception).IsNotNull()
+      .Because("the refusal is the last failure's exception, so the record carries it with its stack trace");
+    await Assert.That(record.Message).Contains(work.MessageType)
+      .And.Contains(nameof(MessageFailureReason.SerializationError));
+    await Assert.That(h.Logs.Single(l => l.EventId == 76).Level).IsEqualTo(LogLevel.Warning)
+      .Because("only the dead-letter record is logged at the dead-letter level; the refusal line before the move is not terminal");
+  }
+
+  [Test]
+  public async Task Dispatch_PayloadRefused_NoDeadLetterStore_LogsNoRecordAsync() {
+    var h = new Harness(deadLetters: NullDeadLetterStore.Instance);
+    var work = _work("""{"Inner":5}""", _compositeTypeName());
+
+    await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(h.Logs.Any(l => l.EventId == 1901)).IsFalse()
+      .Because("without a store the row is failed for a retry under the attempts bound, so it is not dead-lettered yet");
+  }
+
   [Test]
   public async Task Dispatch_PayloadMissingMetadata_NotSupported_DeadLettersAndNeverCompletesAsync() {
     // System.Text.Json reports metadata it cannot find as NotSupportedException, which the lifecycle
@@ -169,7 +202,7 @@ public class InboxDispatchWorkerUndeserializablePayloadTests {
     public CapturingFailureChannel Failures { get; } = new();
     public CapturingDeadLetterStore DeadLetters { get; } = new();
     public ReleasingInboxChannelWriter Inbox { get; } = new();
-    public ConcurrentQueue<(LogLevel Level, string Message)> Logs { get; } = new();
+    public ConcurrentQueue<(LogLevel Level, string Message, int EventId, Exception? Exception)> Logs { get; } = new();
     public InboxDispatchWorker Worker { get; }
 
     public Harness(ILifecycleMessageDeserializer? deserializer = null, IDeadLetterStore? deadLetters = null, IReceptorInvoker? invoker = null) {
@@ -277,10 +310,11 @@ public class InboxDispatchWorkerUndeserializablePayloadTests {
       => Task.FromResult<Guid?>(null);
   }
 
-  private sealed class RecordingLogger(ConcurrentQueue<(LogLevel Level, string Message)> entries) : ILogger<InboxDispatchWorker> {
+  private sealed class RecordingLogger(ConcurrentQueue<(LogLevel Level, string Message, int EventId, Exception? Exception)> entries) : ILogger<InboxDispatchWorker> {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-      => entries.Enqueue((logLevel, formatter(state, exception)));
+      => entries.Enqueue((logLevel, formatter(state, exception), eventId.Id, exception));
   }
+
 }

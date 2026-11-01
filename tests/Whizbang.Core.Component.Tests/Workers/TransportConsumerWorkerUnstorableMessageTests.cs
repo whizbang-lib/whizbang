@@ -154,6 +154,57 @@ public class TransportConsumerWorkerUnstorableMessageTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// #1901: a message given dead-letter custody because it could not be stored gets the dead-letter record, at Error by
+  /// default, naming the payload type, why it could not be stored and where it came from.
+  /// </summary>
+  [Test]
+  public async Task SerializationFails_LogsTheDeadLetterRecordAtErrorWithTypeAndCauseAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var coordinator = new NoOpWorkCoordinator();
+    var serializer = new SelectivelyFailingSerializer(new EnvelopeSerializer(options), failOnMarker: "cannot-serialize");
+    var logger = new DeadLetterRecordLogger<TransportConsumerWorker>();
+    await using var sp = _provider(coordinator, options, s => s.AddSingleton<IEnvelopeSerializer>(serializer));
+    var (worker, transport) = await _startAsync(sp, logger);
+
+    var bad = _probeEnvelope("cannot-serialize");
+    var probeType = EnvelopeTypeNameHelper.Format(TypeNameFormatter.Format(typeof(UnstorableProbeEvent)));
+
+    await transport.DeliverBatchAsync([new TransportMessage(bad, probeType)]);
+
+    var record = logger.Records.Single();
+    await Assert.That(record.Level).IsEqualTo(LogLevel.Error)
+      .Because("#1901: a message that could not be stored is dead-lettered, logged at Error by default");
+    await Assert.That(record.Message).Contains(bad.MessageId.Value.ToString())
+      .And.Contains(TypeNameFormatter.Format(typeof(UnstorableProbeEvent)))
+      .And.Contains(nameof(MessageFailureReason.SerializationError))
+      .And.Contains(SelectivelyFailingSerializer.FAILURE_TEXT)
+      .And.Contains($"{TOPIC}/{SUBSCRIPTION}");
+    await Assert.That(record.Exception).IsTypeOf<NotSupportedException>()
+      .Because("the serializer's exception is the last failure, so the record carries it with its stack trace");
+    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(1)
+      .Because("the record replaces the consumer's own Error line for the same message, so it is reported once");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SerializationFails_ConfiguredWarning_LogsTheRecordAtWarningAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var coordinator = new NoOpWorkCoordinator();
+    var serializer = new SelectivelyFailingSerializer(new EnvelopeSerializer(options), failOnMarker: "cannot-serialize");
+    var logger = new DeadLetterRecordLogger<TransportConsumerWorker>();
+    await using var sp = _provider(coordinator, options, s => s.AddSingleton<IEnvelopeSerializer>(serializer));
+    var (worker, transport) = await _startAsync(sp, logger, new DeadLetterLoggingOptions { Level = LogLevel.Warning });
+    var probeType = EnvelopeTypeNameHelper.Format(TypeNameFormatter.Format(typeof(UnstorableProbeEvent)));
+
+    await transport.DeliverBatchAsync([new TransportMessage(_probeEnvelope("cannot-serialize"), probeType)]);
+
+    await Assert.That(logger.Records.Single().Level).IsEqualTo(LogLevel.Warning);
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   [Test]
   public async Task SerializationFails_PayloadNoContextKnows_DeadLetteredWithDescriptorAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -357,7 +408,7 @@ public class TransportConsumerWorkerUnstorableMessageTests {
   }
 
   private static async Task<(TransportConsumerWorker Worker, BatchTransport Transport)> _startAsync(
-      IServiceProvider sp, ILogger<TransportConsumerWorker>? logger = null) {
+      IServiceProvider sp, ILogger<TransportConsumerWorker>? logger = null, DeadLetterLoggingOptions? deadLetterLogging = null) {
     var transport = new BatchTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination(TOPIC, SUBSCRIPTION));
@@ -379,7 +430,8 @@ public class TransportConsumerWorkerUnstorableMessageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      controlClass: Options.Create(new ControlClassOptions()));
+      controlClass: Options.Create(new ControlClassOptions()),
+      deadLetterLogging: deadLetterLogging);
     await worker.StartAsync(CancellationToken.None);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
     return (worker, transport);

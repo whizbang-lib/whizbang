@@ -23,6 +23,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public sealed partial class InboxFlushFailureRecorder {
+  private const string ABANDONED_AT_SHUTDOWN = "abandoned at shutdown: the stop's deadline passed before the messages were stored";
   private const string GATE_CALLER = "InboxFlushDeadLetter";
 
   private readonly IServiceScopeFactory _scopeFactory;
@@ -32,6 +33,7 @@ public sealed partial class InboxFlushFailureRecorder {
   private readonly DeadLetterMetrics? _deadLetterMetrics;
   private readonly IInboxFlushFailureObserver[] _observers;
   private readonly ILogger _logger;
+  private readonly LogLevel _deadLetterLevel;
 
   /// <summary>Creates the recorder.</summary>
   /// <param name="scopeFactory">Opens the scope the coordinator is resolved from.</param>
@@ -40,7 +42,8 @@ public sealed partial class InboxFlushFailureRecorder {
   /// <param name="generationProvider">The generation the dead letters carry, read by the recovery worker's generation replay.</param>
   /// <param name="deadLetterMetrics">Counts the dead letters written; null counts nothing.</param>
   /// <param name="observers">Told about every batch that was not stored.</param>
-  /// <param name="logger">Logs a dead-letter write or an observer that failed.</param>
+  /// <param name="logger">Logs a dead-letter write or an observer that failed, and each message's dead-letter record.</param>
+  /// <param name="deadLetterLogging">Chooses the level of each message's dead-letter record; null logs it at Error.</param>
   /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators; DI builds it.")]
@@ -51,7 +54,8 @@ public sealed partial class InboxFlushFailureRecorder {
       IGenerationProvider generationProvider,
       DeadLetterMetrics? deadLetterMetrics,
       IEnumerable<IInboxFlushFailureObserver> observers,
-      ILogger<InboxFlushFailureRecorder> logger) {
+      ILogger<InboxFlushFailureRecorder> logger,
+      DeadLetterLoggingOptions? deadLetterLogging = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(generationProvider);
@@ -64,6 +68,7 @@ public sealed partial class InboxFlushFailureRecorder {
     _deadLetterMetrics = deadLetterMetrics;
     _observers = [.. observers];
     _logger = logger;
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
   }
 
   /// <summary>
@@ -78,7 +83,7 @@ public sealed partial class InboxFlushFailureRecorder {
   public async Task<bool> RecordAsync(InboxFlushFailure failure, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(failure);
     var errorText = failure.Error?.ToString()
-      ?? "abandoned at shutdown: the stop's deadline passed before the messages were stored";
+      ?? ABANDONED_AT_SHUTDOWN;
     var deadLettered = false;
     try {
       deadLettered = await _deadLetterAsync(failure, errorText, cancellationToken).ConfigureAwait(false);
@@ -91,6 +96,9 @@ public sealed partial class InboxFlushFailureRecorder {
         new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.InboxStoreFailed)));
       _deadLetterMetrics.RecordArrival(DeadLetterSourceTable.INBOX, (int)MessageFailureReason.InboxStoreFailed, errorText);
     }
+    if (deadLettered) {
+      _logDeadLettered(failure);
+    }
 
     var reported = failure with { DeadLettered = deadLettered };
     foreach (var observer in _observers) {
@@ -101,6 +109,21 @@ public sealed partial class InboxFlushFailureRecorder {
       }
     }
     return deadLettered;
+  }
+
+  /// <summary>
+  /// Logs the dead-letter record (#1901) for each message the batch held: the store failure is the last failure's
+  /// exception, and a batch abandoned at shutdown, which has none, records why it was not stored.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs:RecordAsync_CoordinatorDeadLetters_LogsOneDeadLetterRecordPerMessageAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs:RecordAsync_AbandonedWithoutAnError_RecordSaysWhyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs:RecordAsync_DeadLetterWriteFails_LogsNoDeadLetterRecordAsync</tests>
+  private void _logDeadLettered(InboxFlushFailure failure) {
+    var lastError = failure.Error?.Message ?? ABANDONED_AT_SHUTDOWN;
+    foreach (var message in failure.Messages) {
+      DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, failure.Error, message.MessageId, message.MessageType,
+        nameof(MessageFailureReason.InboxStoreFailed), lastError);
+    }
   }
 
   private async Task<bool> _deadLetterAsync(InboxFlushFailure failure, string errorText, CancellationToken cancellationToken) {

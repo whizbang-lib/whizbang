@@ -145,4 +145,19 @@ public class ServiceCollectionExtensionsTests {
 
     await Assert.That(((TransportPublishStrategy)strategy).ThrottleRetry.MaxAttempts).IsEqualTo(9);
   }
+
+  [Test]
+  public async Task AddRabbitMQTransport_DeadLetterDrainer_ReadsTheBoundDeadLetterLevelAsync() {
+    // #1901: the drain's dead-letter record is logged at the level the dead-letter logging options choose.
+    var services = new ServiceCollection();
+    services.AddSingleton<IConnection>(_ => new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel())));
+    services.AddLogging();
+    services.Configure<DeadLetterLoggingOptions>(o => o.Level = Microsoft.Extensions.Logging.LogLevel.Warning);
+    services.AddRabbitMQTransport("amqp://guest:guest@localhost:5672/");
+    var provider = services.BuildServiceProvider();
+
+    var drainer = provider.GetServices<ITransportDeadLetterDrainer>().OfType<RabbitMqFleetDeadLetterDrainer>().Single();
+
+    await Assert.That(drainer.DeadLetterLogLevel).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+  }
 }

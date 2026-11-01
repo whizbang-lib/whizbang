@@ -138,11 +138,40 @@ internal static class ProcessWideOptionsBinding {
 #pragma warning restore IL2026
       }));
 
+    AddDeadLetterLogging(services);
+
     // The IOptions<WhizbangCoreOptions> view (read by the EF Core lens queries and work coordinator)
     // is a separate object from the singleton AddWhizbang registers; both read the same section.
     services.AddOptions<WhizbangCoreOptions>();
     services.AddSingleton<IConfigureOptions<WhizbangCoreOptions>>(sp =>
       new ConfigureOptions<WhizbangCoreOptions>(options => BindCore(sp, options)));
+  }
+
+  /// <summary>
+  /// Registers <see cref="DeadLetterLoggingOptions"/>, bound from <c>Whizbang:DeadLetterLogging</c> and validated when
+  /// the host starts (#1901). Idempotent: the worker pipeline and the transport consumer both call it, since a host can
+  /// register the consumer without the pipeline, and each dead-letter path reads the same bound value.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
+  internal static void AddDeadLetterLogging(IServiceCollection services) {
+    services.AddOptions<DeadLetterLoggingOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DeadLetterLoggingOptions>, DeadLetterLoggingOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<DeadLetterLoggingOptions>, DeadLetterLoggingBinding>());
+    // The dead-letter paths take the bound, validated instance itself, not IOptions<T>: an optional interface
+    // parameter is what WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
+    services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DeadLetterLoggingOptions>>().Value);
+  }
+
+  /// <summary>Applies <c>Whizbang:DeadLetterLogging</c> to <see cref="DeadLetterLoggingOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class DeadLetterLoggingBinding(IServiceProvider services) : IConfigureOptions<DeadLetterLoggingOptions> {
+    public void Configure(DeadLetterLoggingOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, DeadLetterLoggingOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+    }
   }
 
   /// <summary>Applies <c>Whizbang:SystemEvents</c> to <paramref name="options"/>.</summary>

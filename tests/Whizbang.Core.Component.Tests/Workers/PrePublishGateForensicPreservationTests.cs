@@ -386,4 +386,72 @@ public class PrePublishGateForensicPreservationTests {
     await Assert.That(move.ErrorText).Contains("attempts=11")
       .Because("Meta-message includes the attempt count for operator visibility into how many retries the row burned.");
   }
+
+  /// <summary>
+  /// #1901: the gate's move gets the dead-letter record, at Error by default, with the row's message type and its
+  /// recorded error, in place of the drain worker's own Warning.
+  /// </summary>
+  [Test]
+  public async Task PrePublishGate_Promotes_LogsTheDeadLetterRecordAtErrorAsync() => await _assertGateRecordLevelAsync(null, Microsoft.Extensions.Logging.LogLevel.Error);
+
+  [Test]
+  public async Task PrePublishGate_ConfiguredWarning_LogsTheDeadLetterRecordAtWarningAsync() =>
+    await _assertGateRecordLevelAsync(new DeadLetterLoggingOptions { Level = Microsoft.Extensions.Logging.LogLevel.Warning },
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+  private static async Task _assertGateRecordLevelAsync(DeadLetterLoggingOptions? deadLetterLogging, Microsoft.Extensions.Logging.LogLevel expected) {
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: "System.TimeoutException: broker send timed out",
+      messageType: "Contracts.Billing.InvoiceIssued, Contracts")];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var logger = new DeadLetterRecordLogger<OutboxDrainWorker>();
+
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var drainOptions = new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, MaxOutboxAttempts = 10 };
+    var worker = new OutboxDrainWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(drainOptions),
+      jsonOptions: _jsonOpts,
+      logger: logger,
+      publishStrategy: new FakePublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor(drainOptions),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterLogging: deadLetterLogging);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId, cts.Token);
+
+    var (level, message, _) = await logger.DeadLettered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(level).IsEqualTo(expected)
+      .Because("#1901: an outbox row dead-lettered by the drain will never be published on its own; Error by default, Warning when configured");
+    await Assert.That(message).Contains(msgId.ToString())
+      .And.Contains("Contracts.Billing.InvoiceIssued, Contracts")
+      .And.Contains("broker send timed out");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 10)).IsFalse()
+      .Because("the record replaces the drain worker's own Warning for a dead letter");
+  }
 }

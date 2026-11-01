@@ -652,6 +652,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A dead-lettered message is logged at Error, once, with its type and its last failure (#1901).** Every path that
+  dead-letters logs the same record, EventId 1901 `MessageDeadLettered` (`DeadLetterLog`): the inbox (attempts
+  exhausted, an undeserializable payload, a refused composite), the outbox publish and drain workers, the perspective
+  worker, the transport consumer (a message it cannot store, a redelivery loop it quarantines), the inbox and outbox
+  batchers' flush failure recorders, and the Azure Service Bus and RabbitMQ dead-letter drains. The record names the
+  message id and type, the reason, and the last failure: its exception when the path has one, the recorded error text
+  when it does not. A row another path already moved, a dropped control-plane message and a failed attempt that will
+  be retried get no record; per-attempt failures on the inbox and outbox dispatch paths stay at Warning. The record
+  replaces the inbox's EventId 5, the outbox publish worker's EventId 6, the outbox drain worker's EventId 10 and the
+  perspective worker's dead-letter Warning; the inbox's undeserializable-payload line (EventId 76) is now Warning, and
+  the batchers' "written to wh_dead_letters" batch summary is now Information. The new `DeadLetterLoggingOptions.Level`
+  (`Whizbang:DeadLetterLogging:Level`) chooses the record's level: `Error` (the default) or `Warning`; any other level
+  is refused when the host starts. **Upgrade:** the default changes from Warning to Error, so an alert keyed on Error
+  may start firing for dead letters. To keep the old severity, set `Whizbang:DeadLetterLogging:Level` to `Warning`. A
+  query keyed on the retired EventIds 5, 6 or 10 reads EventId 1901 instead.
+- **A failing receptor's span records the exception as an OpenTelemetry `exception` event (#1902).** When a receptor
+  throws, its span keeps status Error and now carries one `exception` event (`Activity.AddException`) with
+  `exception.type`, `exception.message` and `exception.stacktrace`, so a backend that turns exception events into
+  exception records (Azure Monitor, for example) shows the stack trace beside the trace, and a handler no longer has to
+  log the exception again to keep it. The span's `exception.type` and `exception.message` tags, which only duplicated
+  the event, are gone. **Upgrade:** a trace query that read those two tags on a receptor span reads the event's
+  attributes of the same names instead.
 - **An `Apply` that returns a shape its interface does not declare, or a second `Apply` beside an explicit interface
   `Apply` for the same event, now fails the build (#1936).** A perspective could return a bare `ModelAction`, the
   `(TModel?, ModelAction)` tuple or `ApplyResult<TModel>` for an event `IPerspectiveFor` lists, which compiled only beside

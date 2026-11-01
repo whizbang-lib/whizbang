@@ -85,7 +85,7 @@ public class ReceptorInvokerBranchCoverageTests {
 
   [Test]
   [NotInParallel("ActivityListener")]
-  public async Task InvokeAsync_SampledActivity_ThrowingReceptor_MarksTheSpanErrorWithExceptionTagsAsync() {
+  public async Task InvokeAsync_SampledActivity_ThrowingReceptor_MarksTheSpanErrorAndRecordsOneExceptionEventAsync() {
     var stopped = new List<Activity>();
     using var listener = _listen(stopped);
     var receptorId = $"ThrowingReceptor-{TrackedGuid.New().Value:N}";
@@ -101,11 +101,41 @@ public class ReceptorInvokerBranchCoverageTests {
     var activity = _single(stopped, receptorId);
     await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
     await Assert.That(activity.StatusDescription).IsEqualTo("receptor failed");
-    await Assert.That(activity.GetTagItem("exception.type"))
-      .IsEqualTo(TypeNameFormatter.DisplayName(typeof(InvalidOperationException)));
-    await Assert.That(activity.GetTagItem("exception.message")).IsEqualTo("receptor failed");
+    var exceptionEvents = activity.Events.Where(e => e.Name == "exception").ToList();
+    await Assert.That(exceptionEvents).Count().IsEqualTo(1)
+      .Because("#1902: OpenTelemetry records a failed operation as one exception span event, which backends turn into an exception record tied to the trace");
+    var tags = exceptionEvents[0].Tags.ToDictionary(t => t.Key, t => t.Value);
+    await Assert.That(tags["exception.type"]).IsEqualTo(typeof(InvalidOperationException).FullName);
+    await Assert.That(tags["exception.message"]).IsEqualTo("receptor failed");
+    var stackTrace = tags.TryGetValue("exception.stacktrace", out var trace) ? trace as string ?? "" : "";
+    await Assert.That(stackTrace).Contains(nameof(InvalidOperationException))
+      .And.Contains(" at ")
+      .Because("the stack trace is what the span lacked before #1902; without it a consumer re-logs the exception in the handler");
+    await Assert.That(activity.GetTagItem("exception.type")).IsNull()
+      .Because("the event carries the type, so a span tag of the same name would only duplicate it");
+    await Assert.That(activity.GetTagItem("exception.message")).IsNull()
+      .Because("the event carries the message, so a span tag of the same name would only duplicate it");
     await Assert.That(activity.GetTagItem("whizbang.receptor.has_result")).IsNull()
       .Because("the receptor never returned, so the success-only result tag is absent");
+  }
+
+  [Test]
+  [NotInParallel("ActivityListener")]
+  public async Task InvokeAsync_SampledActivity_SuccessfulReceptor_RecordsNoExceptionEventAsync() {
+    var stopped = new List<Activity>();
+    using var listener = _listen(stopped);
+    var receptorId = $"QuietReceptor-{TrackedGuid.New().Value:N}";
+    var registry = new RecordingReceptorRegistry();
+    registry.Register<ProbeMessage>(receptorId, LifecycleStage.LocalImmediateInline,
+      static (_, _, _, _, _) => ValueTask.FromResult<object?>(null));
+    await using var provider = new ServiceCollection().BuildServiceProvider();
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    await invoker.InvokeAsync(_envelope(new ProbeMessage("x")), LifecycleStage.LocalImmediateInline);
+
+    var activity = _single(stopped, receptorId);
+    await Assert.That(activity.Events.Count(e => e.Name == "exception")).IsEqualTo(0)
+      .Because("only a failing receptor records an exception event; a success that recorded one would read as a failure in every backend");
   }
 
   // ---- source hop with a null service name ----------------------------------------------------

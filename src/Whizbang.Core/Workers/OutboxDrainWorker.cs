@@ -83,6 +83,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
   private readonly IDeadLetterStore _deadLetterStore;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // #1558: the lease a held row's renewal extends it by, while the transport reports not ready.
@@ -204,7 +205,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
     IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
+    DeadLetterLoggingOptions? deadLetterLogging = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -684,7 +687,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               instanceId: _instanceProvider.InstanceId,
               generation: _generationProvider.GetGeneration(),
               ct: ct).ConfigureAwait(false);
-            LogOutboxDeadLettered(_logger, row.MessageId, row.Attempts, maxAttempts);
+            DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, row.MessageId, row.MessageType,
+              nameof(Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded), promotionErrorText);
             _dlqMetrics?.Added.Add(1,
               new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
               new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
@@ -1548,9 +1552,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: lifecycle stage {Stage} failed for {MessageId}; publish path continues")]
   static partial void LogLifecycleStageError(ILogger logger, Guid messageId, string stage, Exception ex);
 
-  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
-    Message = "OutboxDrainWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
-  static partial void LogOutboxDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+  // EventId 10 (a dead letter, at Warning) is retired: every dead letter is the DeadLetterLog record (#1901).
 
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]

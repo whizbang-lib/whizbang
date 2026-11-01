@@ -49,9 +49,14 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   private sealed class RecordingLogger : ILogger<SlidingWindowInboxBatchStrategy> {
     private readonly Lock _lock = new();
     private readonly List<string> _errors = [];
+    private readonly List<string> _informations = [];
 
     public List<string> Errors {
       get { lock (_lock) { return [.. _errors]; } }
+    }
+
+    public List<string> Informations {
+      get { lock (_lock) { return [.. _informations]; } }
     }
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -59,6 +64,9 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
 
     public void Log<TState>(
         LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Information) {
+        lock (_lock) { _informations.Add(formatter(state, exception)); }
+      }
       if (logLevel >= LogLevel.Error) {
         lock (_lock) { _errors.Add(formatter(state, exception)); }
       }
@@ -131,8 +139,11 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     await Assert.That(reported.Cause).IsEqualTo(InboxFlushFailureCause.AbandonedAtShutdown)
       .Because("a shutdown-forced cancellation of an in-flight flush is not a failed store and must never be reported as one");
     await Assert.That(reported.Messages.Select(m => m.MessageId)).IsEquivalentTo([message.MessageId]);
-    await Assert.That(logger.Errors).Count().IsEqualTo(1)
-      .Because("the abandoned batch is logged once, with its message ids, and nothing else is");
+    await Assert.That(logger.Informations.Count(e => e.Contains(message.MessageId.ToString(), StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the abandoned batch is logged once, with its message ids");
+    await Assert.That(logger.Errors).IsEmpty()
+      .Because("#1901: the batch was dead-lettered, so each message's alert is its dead-letter record, logged by the "
+             + "recorder at the configured level; the batch summary is information");
   }
 
   // Target: SlidingWindowInboxBatchStrategy.cs:170 — the `_disposed` guard at the top of

@@ -73,6 +73,55 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
     }
   }
 
+  /// <summary>
+  /// #1901: a message quarantined into the dead-letter store as a redelivery loop gets the dead-letter record, at Error
+  /// by default, naming the message's type from the batch it arrived in.
+  /// </summary>
+  [Test]
+  public async Task Batch_RedeliveryLoopQuarantined_LogsTheDeadLetterRecordAtErrorWithTypeAsync() {
+    var envelope = _envelope();
+    var coordinator = new ObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(envelope.MessageId.Value, 10) { ProcessingAttempts = 10 }]);
+    var logger = new DeadLetterRecordLogger<TransportConsumerWorker>();
+    var (worker, transport, sp) = _buildWorker(coordinator, new RecordingDeadLetterStore(), maxDurableObservations: 10, logger: logger);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, CONSUMED_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      var record = logger.Records.Single();
+      await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+        .Because("#1901: a message quarantined as a redelivery loop is dead-lettered, logged at Error by default");
+      await Assert.That(record.Message).Contains(envelope.MessageId.Value.ToString())
+        .And.Contains("TestApp.Consumed, TestApp")
+        .And.Contains(nameof(MessageFailureReason.PoisonRedeliveryLoop));
+    }
+  }
+
+  [Test]
+  public async Task Batch_RedeliveryLoopForAMessageNotInTheBatch_RecordHasNoTypeAsync() {
+    var coordinator = new ObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(_hostage, 10) { ProcessingAttempts = 10 }]);
+    var logger = new DeadLetterRecordLogger<TransportConsumerWorker>();
+    var (worker, transport, sp) = _buildWorker(coordinator, new RecordingDeadLetterStore(), maxDurableObservations: 10, logger: logger);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONSUMED_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(logger.Records.Single().Message).Contains(_hostage.ToString())
+        .Because("the store can report a message from an earlier batch; it is still dead-lettered and still recorded, with its type unknown here");
+    }
+  }
+
   [Test]
   public async Task Batch_RedeliveryObservationsBelowBound_DoesNotQuarantineAsync() {
     var coordinator = new ObservingWorkCoordinator([new InboxRedeliveryObservation(_hostage, 9)]);
@@ -175,7 +224,8 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
       RecordingDeadLetterStore deadLetters,
       int maxDurableObservations = 10,
       bool enabled = true,
-      bool detector = true) {
+      bool detector = true,
+      Microsoft.Extensions.Logging.ILogger<TransportConsumerWorker>? logger = null) {
     var transport = new SignallingBatchTransport();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -206,7 +256,7 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),

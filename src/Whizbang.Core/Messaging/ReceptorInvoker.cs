@@ -613,8 +613,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// in Aspire or file sinks. The post-invocation log runs from a <c>finally</c> block so
   /// exceptions are still reported with <c>IsError=true</c> plus the exception type.
   /// </remarks>
-  /// <docs>operations/observability/receptor-logging</docs>
+  /// <docs>operations/observability/tracing#exception-recording</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_ThrowingReceptor_MarksTheSpanErrorAndRecordsOneExceptionEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_SuccessfulReceptor_RecordsNoExceptionEventAsync</tests>
   private async ValueTask _invokeReceptorAsync(
       ReceptorInfo receptor,
       ReceptorInvocationContext ctx,
@@ -675,8 +677,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     } catch (Exception ex) {
       var exceptionTypeName = TypeNameFormatter.DisplayName(ex.GetType());
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      receptorActivity?.SetTag("exception.type", exceptionTypeName);
-      receptorActivity?.SetTag("exception.message", ex.Message);
+      // One OpenTelemetry exception event carries the type, message and stack trace (#1902); backends turn it into
+      // an exception record tied to the trace, so a handler need not log the exception again to keep it.
+      receptorActivity?.AddException(ex);
       await RecordFiredAsync(isError: true, exceptionTypeName, ex).ConfigureAwait(false);
       throw;
     }

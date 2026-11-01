@@ -1058,7 +1058,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IGenerationProvider>(),
       sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
       sp.GetServices<IOutboxFlushFailureObserver>(),
-      sp.GetRequiredService<ILogger<OutboxFlushFailureRecorder>>()));
+      sp.GetRequiredService<ILogger<OutboxFlushFailureRecorder>>(),
+      sp.GetRequiredService<DeadLetterLoggingOptions>()));
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>(),
@@ -1086,7 +1087,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IGenerationProvider>(),
       sp.GetService<Whizbang.Core.Observability.DeadLetterMetrics>(),
       sp.GetServices<IInboxFlushFailureObserver>(),
-      sp.GetRequiredService<ILogger<InboxFlushFailureRecorder>>()));
+      sp.GetRequiredService<ILogger<InboxFlushFailureRecorder>>(),
+      sp.GetRequiredService<DeadLetterLoggingOptions>()));
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
       logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>(),
