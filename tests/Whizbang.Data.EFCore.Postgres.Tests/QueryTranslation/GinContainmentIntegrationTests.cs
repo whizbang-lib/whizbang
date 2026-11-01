@@ -629,6 +629,13 @@ public class GinContainmentIntegrationTests {
       $$ LANGUAGE sql IMMUTABLE;
       """, cancellationToken);
 
+    // The question is whether each shape CAN reach the index, not whether the planner prefers it. Through an
+    // InitPlan the values are unknown at plan time, so the row estimate is generic and the cost choice between
+    // the index and a sequential scan can go either way on the same data. With sequential scans priced out, a
+    // shape that reaches the index plans on it every time, and one that cannot still plans a Seq Scan, which is
+    // what this asserts against.
+    await _execAsync(db, "SET enable_seqscan = off", cancellationToken);
+
     var throughFunction = await _explainArrayAsync(db,
       $"SELECT id FROM {TABLE} WHERE data @> ANY(wh_jsonb_objects('Title', @p))");
 
