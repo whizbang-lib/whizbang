@@ -45,6 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaInitializationStages.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_StartupStageRecord.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/277_PreflightInstanceAndRoleColumns.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
@@ -68,8 +69,9 @@ public sealed partial class StartupStageHostTests {
 
   /// <summary>
   /// A fresh database: every startup stage is entered in order and logged once as it is entered; the row records each
-  /// stage from the first one after the migration that adds the columns, with its message, entered-at time and the
-  /// phase it maps to; the instance is eligible for work exactly from Accept commands; readiness reports the stage.
+  /// stage from Preflight's last step, when the instance registers (the stage columns are Preflight's, #1636), with its
+  /// message, entered-at time and the phase it maps to; the instance is eligible for work exactly from Accept commands;
+  /// readiness reports the stage.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -101,23 +103,28 @@ public sealed partial class StartupStageHostTests {
     await Assert.That(log.Lines[^1]).IsEqualTo("Information Stage 7 of 7: Running - reads and writes are served");
 
     var recorded = watch.Recorded;
-    await Assert.That(recorded.Select(r => (int)r.Stage)).IsEquivalentTo([40, 50, 60, 70],
-      TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the columns arrive with migration 231, so the stages before the pass that adds them are in the log only");
-    await Assert.That(recorded.Select(r => r.Message)).IsEquivalentTo([
-      "analyzing new indexes and reconciling managed objects",
-      "recomputing partitions before the schema-ready gate opens",
-      "the schema is ready; commands are accepted while the read models catch up",
-      "reads and writes are served",
-    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    var migrateLine = log.Lines.Single(l => _migrateLine().IsMatch(l));
+    await Assert.That(recorded.Select(r => $"{r.Stage} {r.Message}")).IsEquivalentTo([
+      "10 the bootstrap closure is in place; registering this instance",
+      "20 voting for the migrator duty",
+      "20 this instance migrates the schema",
+      "30 " + migrateLine["Information Stage 3 of 7: Migrate - ".Length..],
+      "40 analyzing new indexes and reconciling managed objects",
+      "50 recomputing partitions before the schema-ready gate opens",
+      "60 the schema is ready; commands are accepted while the read models catch up",
+      "70 reads and writes are served",
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the stage columns are Preflight's (#1636), so the row records Preflight's last step as it is registered "
+        + "and every stage after it, on a fresh database as on a restart");
     await Assert.That(recorded.Select(r => r.Phase)).IsEquivalentTo([
-      "Migrating", "Migrating", "AcceptingCommands", "Running",
+      "Connecting", "Migrating", "Migrating", "Migrating", "Migrating", "Migrating", "AcceptingCommands", "Running",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(recorded.Zip(recorded.Skip(1)).All(p => p.First.EnteredAt <= p.Second.EnteredAt)).IsTrue()
       .Because("each stage is entered after the one before it");
-    await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo([false, false, true, true],
-      TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("an instance becomes eligible for work exactly when it records Accept commands");
+    bool?[] eligible = [null, null, null, null, false, false, true, true];
+    await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo(eligible, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the eligibility rule arrives with the main pass, and from then an instance becomes eligible for work "
+        + "exactly when it records Accept commands");
 
     await Assert.That(watch.ReadinessStage).IsEqualTo(StartupStage.Migrate);
     await Assert.That(watch.ReadinessStartupDetail).StartsWith("Stage 3 of 7: Migrate - ")
@@ -225,8 +232,11 @@ public sealed partial class StartupStageHostTests {
     return host;
   }
 
-  /// <summary>One recorded stage, as the instance's row held it when the stage was written.</summary>
-  private sealed record RecordedStage(short Stage, string Message, DateTime EnteredAt, string Phase, bool Eligible);
+  /// <summary>
+  /// One recorded stage, as the instance's row held it when the stage was written. <paramref name="Eligible"/> is null
+  /// while the database has no eligibility rule yet: on a fresh database, before the main pass.
+  /// </summary>
+  private sealed record RecordedStage(short Stage, string Message, DateTime EnteredAt, string Phase, bool? Eligible);
 
   /// <summary>
   /// Watches the stage: completes a signal per stage reached, reads the row each time a stage is written, and at one
@@ -286,9 +296,13 @@ public sealed partial class StartupStageHostTests {
       var instanceId = _services!.GetRequiredService<IServiceInstanceProvider>().InstanceId;
       await using var connection = new NpgsqlConnection(connectionString);
       await connection.OpenAsync(cancellationToken);
-      await using var command = new NpgsqlCommand("""
-        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase,
-               wh_instance_is_eligible_for_work(si)
+      await using var probe = new NpgsqlCommand(
+        "SELECT to_regprocedure('wh_instance_is_eligible_for_work(wh_service_instances)') IS NOT NULL", connection);
+      var eligibility = await probe.ExecuteScalarAsync(cancellationToken) is true
+        ? "wh_instance_is_eligible_for_work(si)"
+        : "NULL::boolean";
+      await using var command = new NpgsqlCommand($"""
+        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase, {eligibility}
         FROM wh_service_instances si WHERE instance_id = @id
         """, connection);
       command.Parameters.AddWithValue("id", instanceId);
@@ -296,8 +310,8 @@ public sealed partial class StartupStageHostTests {
       if (!await reader.ReadAsync(cancellationToken)) {
         throw new InvalidOperationException($"a stage was reported written, but instance {instanceId} has no row");
       }
-      return new RecordedStage(
-        reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3), reader.GetBoolean(4));
+      return new RecordedStage(reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetBoolean(4));
     }
   }
 
