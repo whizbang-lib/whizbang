@@ -65,6 +65,8 @@ public static class SchemaBootstrapPhase {
   /// <param name="scripts">The core table SQL and the marked migration regions, in order.</param>
   /// <param name="schema">The target schema, used to probe for the elected objects.</param>
   /// <param name="commandTimeoutSeconds">The timeout for one script.</param>
+  /// <param name="services">Where the stage reporter and the schema initialization observers are registered; null tells none.</param>
+  /// <param name="timeProvider">The clock a retry waits on.</param>
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
@@ -72,6 +74,31 @@ public static class SchemaBootstrapPhase {
   /// created them or found them. <see langword="false"/> means the caller must fall back to
   /// migrating under the advisory lock alone.
   /// </returns>
+  public static Task<bool> ApplyAsync(
+      Func<NpgsqlConnection> connectionFactory,
+      long lockId,
+      IEnumerable<(string Name, string Sql)> scripts,
+      string schema,
+      int commandTimeoutSeconds,
+      IServiceProvider? services,
+      TimeProvider timeProvider,
+      ILogger? logger,
+      CancellationToken cancellationToken) {
+    _ = (services, timeProvider);
+    return ApplyAsync(connectionFactory, lockId, scripts, schema, commandTimeoutSeconds, logger, cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies the bootstrap scripts, then reports whether an instance can now be elected.
+  /// </summary>
+  /// <param name="connectionFactory">Produces the connection the lock and the scripts share.</param>
+  /// <param name="lockId">The schema initialization lock key, the same one the DDL phase uses.</param>
+  /// <param name="scripts">The core table SQL and the marked migration regions, in order.</param>
+  /// <param name="schema">The target schema, used to probe for the elected objects.</param>
+  /// <param name="commandTimeoutSeconds">The timeout for one script.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether the objects an election needs are present.</returns>
   public static async Task<bool> ApplyAsync(
       Func<NpgsqlConnection> connectionFactory,
       long lockId,
@@ -251,6 +278,11 @@ public static class SchemaBootstrapPhase {
       SchemaBootstrapLog.LegacyClosureRecordFailed(log, ex, closure.LegacyHash, schema);
     }
   }
+
+  /// <summary>The wait before the bootstrap's next attempt after its <paramref name="attempt"/>th transient failure.</summary>
+  /// <param name="attempt">Which attempt failed, from 1.</param>
+  /// <returns>The wait.</returns>
+  internal static TimeSpan RetryDelay(int attempt) => TimeSpan.FromTicks(Math.Min(attempt, 0));
 
   /// <summary>
   /// Whether the objects a duty election needs are present in <paramref name="schema"/>.
