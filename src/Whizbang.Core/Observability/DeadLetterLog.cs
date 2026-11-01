@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Observability;
 
@@ -23,6 +25,7 @@ namespace Whizbang.Core.Observability;
 /// </remarks>
 /// <docs>operations/observability/logging-categories#dead-lettered-messages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs</tests>
 public static partial class DeadLetterLog {
   /// <summary>The EventId of the dead-letter record.</summary>
   public const int EVENT_ID = 1901;
@@ -47,6 +50,8 @@ public static partial class DeadLetterLog {
   /// <docs>operations/observability/logging-categories#dead-lettered-messages</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs:MaxAttempts_MovedToTheDeadLetterStore_LogsOneErrorRecordWithTypeAndLastErrorAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs:Drain_ImportedWithoutTypeOrReason_RecordSaysSoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs:MessageDeadLettered_NoTypeOrError_SaysSoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs:MessageDeadLettered_LogsTheDocumentedEventIdAndNameAsync</tests>
   public static void MessageDeadLettered(
       ILogger logger, LogLevel level, Exception? exception, Guid messageId, string? messageType, string reason, string? lastError) =>
     LogDeadLettered(logger, level, exception, messageId, messageType ?? UNKNOWN_TYPE, reason, lastError ?? NONE_RECORDED);
@@ -70,6 +75,17 @@ public static partial class DeadLetterLog {
     MessageDeadLettered(logger, level, exception, import.MessageId, MessageTypeOf(import.MessageType),
       import.BrokerReason ?? NO_BROKER_REASON, $"{import.BrokerDescription ?? NONE_RECORDED} (from {import.Destination})");
   }
+
+  /// <summary>
+  /// The level the dead-letter record is logged at: the options' <see cref="DeadLetterLoggingOptions.Level"/>, or
+  /// <see cref="LogLevel.Error"/> when a path was built without the options.
+  /// </summary>
+  /// <param name="options">The bound options, or null.</param>
+  /// <returns>The level to log the record at.</returns>
+  /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_Options_IsTheirLevelAsync</tests>
+  public static LogLevel LevelFrom(IOptions<DeadLetterLoggingOptions>? options) => options?.Value.Level ?? LogLevel.Error;
 
   /// <summary>
   /// The payload type an envelope type name carries, the envelope type name itself when it does not name a payload,

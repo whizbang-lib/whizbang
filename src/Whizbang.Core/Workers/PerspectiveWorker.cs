@@ -100,7 +100,9 @@ public partial class PerspectiveWorker(
   // error fires once and the health endpoint can count it; the rows themselves are parked in the
   // database through the failure channel. Null gets a private registry: the announcement still
   // happens once, only the health endpoint does not see it.
-  Whizbang.Core.Perspectives.StoredFormFailureRegistry? storedFormFailures = null
+  Whizbang.Core.Perspectives.StoredFormFailureRegistry? storedFormFailures = null,
+  // The level a dead-lettered event's record is logged at (#1901); null logs it at Error.
+  IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -348,7 +350,7 @@ public partial class PerspectiveWorker(
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
   private readonly IGenerationProvider _generationProvider = generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _deadLetterMetrics = deadLetterMetrics;
 

@@ -39,11 +39,13 @@ public sealed class RabbitMqFleetDeadLetterDrainer : ITransportDeadLetterDrainer
   ///   fresh on every drain pass.</param>
   /// <param name="importAsync">Custody seam handed to every per-queue drainer.</param>
   /// <param name="loggerFactory">Logger factory for per-queue drainers.</param>
+  /// <param name="deadLetterLogLevel">The level every per-queue drainer logs its dead-letter record at (#1901).</param>
   public RabbitMqFleetDeadLetterDrainer(
       Func<IConnection> connectionFactory,
       Func<IReadOnlyCollection<string>> activeDeadLetterQueues,
       Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-      ILoggerFactory loggerFactory)
+      ILoggerFactory loggerFactory,
+      LogLevel deadLetterLogLevel = LogLevel.Error)
     : this(
         activeDeadLetterQueues,
         dlqName => new RabbitMqDeadLetterDrainer(
@@ -51,8 +53,15 @@ public sealed class RabbitMqFleetDeadLetterDrainer : ITransportDeadLetterDrainer
           dlqName,
           importAsync ?? throw new ArgumentNullException(nameof(importAsync)),
           (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-            .CreateLogger<RabbitMqDeadLetterDrainer>())) {
+            .CreateLogger<RabbitMqDeadLetterDrainer>(),
+          deadLetterLogLevel)) {
+    DeadLetterLogLevel = deadLetterLogLevel;
   }
+
+  /// <summary>The level the fleet's per-queue drainers log a dead-letter record at (#1901).</summary>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs:Fleet_ConfiguredWarning_ItsQueueDrainersLogTheRecordAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/ServiceCollectionExtensionsTests.cs:AddRabbitMQTransport_DeadLetterDrainer_ReadsTheBoundDeadLetterLevelAsync</tests>
+  internal LogLevel DeadLetterLogLevel { get; } = LogLevel.Error;
 
   /// <summary>Test seam: inject the per-queue drainer factory directly.</summary>
   internal RabbitMqFleetDeadLetterDrainer(

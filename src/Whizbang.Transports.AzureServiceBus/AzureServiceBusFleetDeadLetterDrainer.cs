@@ -39,11 +39,13 @@ public sealed class AzureServiceBusFleetDeadLetterDrainer : ITransportDeadLetter
   /// <param name="importAsync">Custody seam handed to every per-subscription drainer — wraps
   ///   <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c> resolved per call.</param>
   /// <param name="loggerFactory">Logger factory for per-subscription drainers.</param>
+  /// <param name="deadLetterLogLevel">The level every per-subscription drainer logs its dead-letter record at (#1901).</param>
   public AzureServiceBusFleetDeadLetterDrainer(
       Func<ServiceBusClient> clientFactory,
       Func<IReadOnlyCollection<(string TopicName, string SubscriptionName)>> activeSubscriptions,
       Func<Whizbang.Core.Transports.BrokerDeadLetterImport, System.Threading.CancellationToken, Task<bool>> importAsync,
-      ILoggerFactory loggerFactory)
+      ILoggerFactory loggerFactory,
+      LogLevel deadLetterLogLevel = LogLevel.Error)
     : this(
         activeSubscriptions,
         key => new AzureServiceBusDeadLetterDrainer(
@@ -52,7 +54,8 @@ public sealed class AzureServiceBusFleetDeadLetterDrainer : ITransportDeadLetter
           key.SubscriptionName,
           importAsync ?? throw new ArgumentNullException(nameof(importAsync)),
           (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-            .CreateLogger<AzureServiceBusDeadLetterDrainer>())) {
+            .CreateLogger<AzureServiceBusDeadLetterDrainer>(),
+          deadLetterLogLevel)) {
   }
 
   /// <summary>Test seam: inject the per-subscription drainer factory directly.</summary>

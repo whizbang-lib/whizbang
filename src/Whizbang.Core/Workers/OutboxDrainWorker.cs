@@ -83,7 +83,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
   private readonly IDeadLetterStore _deadLetterStore;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // #1558: the lease a held row's renewal extends it by, while the transport reports not ready.
@@ -205,7 +205,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
     IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
+    IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(instanceProvider);

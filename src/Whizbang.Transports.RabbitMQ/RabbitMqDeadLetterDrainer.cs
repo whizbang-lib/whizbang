@@ -37,18 +37,21 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <param name="importAsync">Custody seam — wraps <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>.
 ///   Returns <c>true</c> when a custody row was created, <c>false</c> for a duplicate (still safe
 ///   to ack), and THROWS on failure so the message is requeued for the next pass.</param>
-/// <param name="logger">Logger.</param>
+/// <param name="logger">Logger; a message taken into custody is logged as its dead-letter record.</param>
+/// <param name="deadLetterLogLevel">The level of the dead-letter record (#1901): the dead-letter logging options'
+///   level, <see cref="LogLevel.Error"/> by default.</param>
 public sealed class RabbitMqDeadLetterDrainer(
   IConnection connection,
   string dlqName,
   Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-  ILogger<RabbitMqDeadLetterDrainer> logger) : ITransportDeadLetterDrainer {
+  ILogger<RabbitMqDeadLetterDrainer> logger,
+  LogLevel deadLetterLogLevel = LogLevel.Error) : ITransportDeadLetterDrainer {
   private readonly IConnection _connection = connection ?? throw new ArgumentNullException(nameof(connection));
   private readonly string _dlqName = !string.IsNullOrWhiteSpace(dlqName) ? dlqName
       : throw new ArgumentException("DLQ name required", nameof(dlqName));
   private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
   private readonly ILogger<RabbitMqDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RabbitMqDeadLetterDrainer>.Instance;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel = deadLetterLogLevel;
 
   /// <inheritdoc />
   public string TransportName => $"rmq:{_dlqName}";

@@ -63,7 +63,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel;
 
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
@@ -179,7 +179,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
     TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null,
-    TimeProvider? timeProvider = null
+    TimeProvider? timeProvider = null,
+    Microsoft.Extensions.Options.IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -191,6 +192,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     ArgumentNullException.ThrowIfNull(logger);
 
     _transport = transport;
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     _options = options;
     _resilienceOptions = resilienceOptions;
     _timeProvider = timeProvider ?? TimeProvider.System;
@@ -229,6 +231,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       recoveryTransport.SetRecoveryHandler(_onConnectionRecoveredAsync);
     }
   }
+
+  /// <summary>The level this worker logs a dead-lettered message's record at (#1901).</summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingWiringTests.cs:AddTransportConsumer_ConfiguredWarning_TheConsumerLogsDeadLettersAtWarningAsync</tests>
+  internal LogLevel DeadLetterLevel => _deadLetterLevel;
 
   /// <summary>
   /// Gets the current subscription states for health monitoring.

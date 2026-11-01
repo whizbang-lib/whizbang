@@ -87,7 +87,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // marking it Published. Optional so existing callers (and the legacy fakes used by
   // many tests) continue to compile + run unchanged.
   private readonly IDeadLetterStore _deadLetterStore;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // v0.660 slice 8 — per-message-type dispatch duration histogram.
@@ -126,7 +126,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
     WorkCompletionMeter? completionMeter = null,
-    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null) {
+    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null,
+    IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     _integrityOptions = ArgumentGuard.NotNull(integrityOptions).Value;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;

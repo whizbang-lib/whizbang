@@ -233,14 +233,14 @@ public class AzureServiceBusDeadLetterDrainerTests {
 
     await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
 
-    var record = logger.Entries.Single(e => e.EventId == 1901);
-    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+    var (level, _, message) = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
       .Because("#1901: a message the broker dead-lettered will never be processed on its own, so taking it into custody logs it at Error by default");
-    await Assert.That(record.Message).Contains(ID1)
+    await Assert.That(message).Contains(ID1)
       .And.Contains("Whizbang.Test.Envelope")
       .And.Contains("TestReason")
       .And.Contains("orders/billing");
-    await Assert.That(record.Message).DoesNotContain(ID2)
+    await Assert.That(message).DoesNotContain(ID2)
       .Because("a duplicate import was recorded when custody was first taken; recording it again would report one message twice");
   }
 

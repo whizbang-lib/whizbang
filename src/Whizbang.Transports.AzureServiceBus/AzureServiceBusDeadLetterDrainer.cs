@@ -41,13 +41,16 @@ namespace Whizbang.Transports.AzureServiceBus;
 ///   <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>. Returns <c>true</c> when a custody row
 ///   was created, <c>false</c> for a duplicate (already imported — still safe to settle), and
 ///   THROWS on failure so the message is abandoned and re-offered next pass.</param>
-/// <param name="logger">Logger.</param>
+/// <param name="logger">Logger; a message taken into custody is logged as its dead-letter record.</param>
+/// <param name="deadLetterLogLevel">The level of the dead-letter record (#1901): the dead-letter logging options'
+///   level, <see cref="LogLevel.Error"/> by default.</param>
 public sealed class AzureServiceBusDeadLetterDrainer(
   ServiceBusClient client,
   string topicName,
   string subscriptionName,
   Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-  ILogger<AzureServiceBusDeadLetterDrainer> logger) : ITransportDeadLetterDrainer, IAsyncDisposable {
+  ILogger<AzureServiceBusDeadLetterDrainer> logger,
+  LogLevel deadLetterLogLevel = LogLevel.Error) : ITransportDeadLetterDrainer, IAsyncDisposable {
   private readonly ServiceBusClient _client = client ?? throw new ArgumentNullException(nameof(client));
   private readonly string _topicName = !string.IsNullOrWhiteSpace(topicName) ? topicName
       : throw new ArgumentException("Topic name required", nameof(topicName));
@@ -55,7 +58,7 @@ public sealed class AzureServiceBusDeadLetterDrainer(
       : throw new ArgumentException("Subscription name required", nameof(subscriptionName));
   private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
   private readonly ILogger<AzureServiceBusDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusDeadLetterDrainer>.Instance;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel = deadLetterLogLevel;
   private ServiceBusReceiver? _receiver;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;

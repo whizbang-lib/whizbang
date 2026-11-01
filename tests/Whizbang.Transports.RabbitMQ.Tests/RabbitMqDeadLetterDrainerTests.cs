@@ -203,10 +203,10 @@ public class RabbitMqDeadLetterDrainerTests {
 
     await drainer.DrainDeadLetterQueueAsync(10);
 
-    var record = logger.Entries.Single(e => e.EventId == 1901);
-    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+    var (level, _, message) = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
       .Because("#1901: a message the broker dead-lettered will never be processed on its own, so taking it into custody logs it at Error by default");
-    await Assert.That(record.Message).Contains(ID1)
+    await Assert.That(message).Contains(ID1)
       .And.Contains("Whizbang.Test.Envelope")
       .And.Contains("rejected")
       .And.Contains("orders.dlq");
@@ -221,8 +221,8 @@ public class RabbitMqDeadLetterDrainerTests {
 
     await drainer.DrainDeadLetterQueueAsync(10);
 
-    var record = logger.Entries.Single(e => e.EventId == 1901);
-    await Assert.That(record.Message).Contains("of type unknown")
+    var (_, _, message) = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(message).Contains("of type unknown")
       .And.Contains("none given by the broker")
       .And.Contains("none recorded")
       .Because("a record with a missing field says it is missing rather than printing a null");

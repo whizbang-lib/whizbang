@@ -49,12 +49,15 @@ public class AsbDeadLetterDrainerWiringTests {
     services.AddSingleton(new ServiceBusClient(
       "Endpoint=sb://unit-test.example/;SharedAccessKeyName=unit;SharedAccessKey=dW5pdC10ZXN0LWtleQ=="));
     services.AddAzureServiceBusTransport(
-      "Endpoint=sb://unit-test.example/;SharedAccessKeyName=unit;SharedAccessKey=dW5pdC10ZXN0LWtleQ==");
+      "Endpoint=sb://unit-test.example/;SharedAccessKeyName=unit;SharedAccessKey=dW5pdC10ZXN0LWtleQ==",
+      o => o.AutoProvisionInfrastructure = false);
     await using var provider = services.BuildServiceProvider();
 
     var drainer = provider.GetServices<ITransportDeadLetterDrainer>().OfType<AzureServiceBusNamespacesDeadLetterDrainer>().Single();
 
     await Assert.That(drainer.DeadLetterLogLevel).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    // A pass builds the namespace's fleet with that level; with no active subscription it drains nothing.
+    await Assert.That(await drainer.DrainDeadLetterQueueAsync(10)).IsEqualTo(0);
   }
 
   [Test]

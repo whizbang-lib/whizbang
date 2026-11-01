@@ -33,7 +33,7 @@ public sealed partial class OutboxFlushFailureRecorder {
   private readonly DeadLetterMetrics? _deadLetterMetrics;
   private readonly IOutboxFlushFailureObserver[] _observers;
   private readonly ILogger _logger;
-  private readonly LogLevel _deadLetterLevel = LogLevel.Error;
+  private readonly LogLevel _deadLetterLevel;
 
   /// <summary>Creates the recorder.</summary>
   /// <param name="scopeFactory">Opens the scope the coordinator is resolved from.</param>
@@ -42,7 +42,8 @@ public sealed partial class OutboxFlushFailureRecorder {
   /// <param name="generationProvider">The generation the dead letters carry, read by the recovery worker's generation replay.</param>
   /// <param name="deadLetterMetrics">Counts the dead letters written; null counts nothing.</param>
   /// <param name="observers">Told about every batch that was not stored.</param>
-  /// <param name="logger">Logs a dead-letter write or an observer that failed.</param>
+  /// <param name="logger">Logs a dead-letter write or an observer that failed, and each message's dead-letter record.</param>
+  /// <param name="deadLetterLogging">Chooses the level of each message's dead-letter record; null logs it at Error.</param>
   /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The recorder's collaborators; DI builds it.")]
@@ -53,7 +54,8 @@ public sealed partial class OutboxFlushFailureRecorder {
       IGenerationProvider generationProvider,
       DeadLetterMetrics? deadLetterMetrics,
       IEnumerable<IOutboxFlushFailureObserver> observers,
-      ILogger<OutboxFlushFailureRecorder> logger) {
+      ILogger<OutboxFlushFailureRecorder> logger,
+      Microsoft.Extensions.Options.IOptions<DeadLetterLoggingOptions>? deadLetterLogging = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(generationProvider);
@@ -66,6 +68,7 @@ public sealed partial class OutboxFlushFailureRecorder {
     _deadLetterMetrics = deadLetterMetrics;
     _observers = [.. observers];
     _logger = logger;
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
   }
 
   /// <summary>
