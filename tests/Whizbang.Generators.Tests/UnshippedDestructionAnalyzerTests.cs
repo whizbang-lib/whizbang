@@ -71,6 +71,11 @@ public class UnshippedDestructionAnalyzerTests {
         public static readonly Mine A = Mine.OnCompaction;
         public static readonly Mine B = Mine.Archived;
       }
+      /// <summary>Not <see cref="Destruction.Archived"/>: a documentation cref names the value without using it.</summary>
+      public class Row {
+        public bool Archived { get; set; }
+        public bool IsGone() => Archived;
+      }
       """;
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<UnshippedDestructionAnalyzer>(source);

@@ -84,11 +84,14 @@ public class MaintenanceWorkerDispositionTests {
     new(new Guid("0192f1a0-0000-7000-8000-000000000002"), new Guid("0192f1a0-0000-7000-8000-0000000000a2"), "B"),
   ];
 
-  private static MaintenanceWorker _worker(Coordinator coordinator, IDestructionHook hook, ListLogger logger, ICompactionHandler? compactor = null) {
+  private static MaintenanceWorker _worker(Coordinator coordinator, IDestructionHook hook, ListLogger logger, ICompactionHandler? compactor = null,
+      bool withClock = true) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton(hook);
-    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_now));
+    if (withClock) {
+      services.AddSingleton<TimeProvider>(new FakeTimeProvider(_now));
+    }
     if (compactor is not null) {
       services.AddSingleton(compactor);
     }
@@ -169,6 +172,19 @@ public class MaintenanceWorkerDispositionTests {
     await Assert.That(log).DoesNotContain("after");
     await Assert.That(logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains("Archive", StringComparison.Ordinal)))
       .IsTrue();
+  }
+
+  [Test]
+  public async Task AHeldBatch_OnAHostWithNoClockRegistered_IsHeldOnTheSystemClockAsync() {
+    var log = new List<string>();
+    var coordinator = new Coordinator(log, _batch);
+
+    await _worker(coordinator, new DecidingHook(log, DestructionResult.Proceed(Disposition.CryptoShred)), new ListLogger(), withClock: false)
+      .RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Holds).Count().IsEqualTo(1);
+    await Assert.That(coordinator.Holds[0].Until).IsGreaterThan(_now)
+      .Because("with no TimeProvider registered the hold is measured from the system clock, which is past the fixed instant");
   }
 
   [Test]
