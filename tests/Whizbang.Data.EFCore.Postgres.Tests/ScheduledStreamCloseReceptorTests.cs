@@ -31,9 +31,9 @@ public class ScheduledStreamCloseReceptorTests {
   private sealed class RecordingTruncator : IStreamPrefixTruncator {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
     public int Calls { get; private set; }
-    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition = Whizbang.Core.Lifecycle.Disposition.Delete, CancellationToken cancellationToken = default) {
       Calls++;
-      LastCall = (streamId, throughVersion, archive);
+      LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
       return Task.FromResult(new StreamTruncateResult("truncated", 5));
     }
   }

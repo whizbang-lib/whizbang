@@ -32,7 +32,7 @@ public interface IStreamPrefixTruncator {
   /// <c>PostDestructionInline</c> receptors run with the same envelopes after a truncate that happened.
   /// </remarks>
   Task<StreamTruncateResult> TruncateAsync(
-    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default);
+    Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -58,7 +58,8 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
   public async Task<StreamTruncateResult> TruncateAsync(
-      Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+      Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) {
+    var archive = disposition == Disposition.Archive;
     // A1-6b full-history guard: a DISCARD truncate (archive:false) that would strand a [FullHistory] projection,
     // one that consumes an event in the truncated range and cannot resume from the closing event, is refused
     // (it could never rebuild). An archiving truncate is always safe (detail retrievable), so it skips the check.

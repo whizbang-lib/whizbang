@@ -60,10 +60,10 @@ public class StreamCompactorTests {
   private sealed class FakeTruncator(List<string> log, StreamTruncateResult result) : IStreamPrefixTruncator {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
     public int Calls { get; private set; }
-    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition = Whizbang.Core.Lifecycle.Disposition.Delete, CancellationToken cancellationToken = default) {
       log.Add("close");
       Calls++;
-      LastCall = (streamId, throughVersion, archive);
+      LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
       return Task.FromResult(result);
     }
   }

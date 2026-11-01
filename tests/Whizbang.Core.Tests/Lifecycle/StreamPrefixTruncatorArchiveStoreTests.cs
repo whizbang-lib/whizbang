@@ -80,7 +80,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
     var hook = new CountingHook();
     var truncator = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, hook, _noServices, store);
 
-    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, archive: true);
+    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
 
     await Assert.That(store.Written).Count().IsEqualTo(1);
     await Assert.That(store.Written[0]).IsEqualTo(ArchiveBatch.Prefix(_stream, 9))
@@ -101,7 +101,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
     var hook = new CountingHook();
     var truncator = new StreamPrefixTruncator(new CountingCoordinator(), NullLogger<StreamPrefixTruncator>.Instance, hook, _noServices, store);
 
-    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, archive: true);
+    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
 
     await Assert.That(result).IsEqualTo(new StreamTruncateResult(status, 0));
     await Assert.That(hook.After).IsEqualTo(0).Because("nothing was destroyed, so nothing is announced as destroyed");
@@ -113,7 +113,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
     var coordinator = new CountingCoordinator();
     var truncator = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices, store);
 
-    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, archive: false);
+    var result = await truncator.TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
 
     await Assert.That(store.Written).IsEmpty().Because("a discarding truncate keeps nothing, so it never reaches the archive");
     await Assert.That(coordinator.Truncates).IsEquivalentTo([(_stream, 9L, false)]);
@@ -125,7 +125,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
     var coordinator = new CountingCoordinator();
     var truncator = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices, archiveStore: null);
 
-    _ = await truncator.TruncateAsync(_stream, throughVersion: 9, archive: true);
+    _ = await truncator.TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
 
     await Assert.That(coordinator.Truncates).IsEquivalentTo([(_stream, 9L, true)])
       .Because("an engine with no archive store keeps archiving the way it did before the store existed");

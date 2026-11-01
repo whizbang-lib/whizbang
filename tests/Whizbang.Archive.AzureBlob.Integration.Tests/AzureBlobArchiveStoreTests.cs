@@ -697,7 +697,7 @@ public class AzureBlobArchiveStoreTests {
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
-    var result = await provider.GetRequiredService<IStreamPrefixTruncator>().TruncateAsync(stream, 2, archive: true);
+    var result = await provider.GetRequiredService<IStreamPrefixTruncator>().TruncateAsync(stream, 2, Disposition.Archive);
 
     await Assert.That(provider.GetRequiredService<IArchiveStore>()).IsTypeOf<AzureBlobArchiveStore>();
     await Assert.That(result.Status).IsEqualTo("truncated");

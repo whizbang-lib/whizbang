@@ -3003,6 +3003,20 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 
 /// <summary>
+/// The <see cref="StreamTruncateResult.Status"/> values the prefix truncator adds to the coordinator's when it runs a
+/// disposition it cannot carry out (#1735). Nothing was removed in either case.
+/// </summary>
+/// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+public static class StreamTruncateStatus {
+  /// <summary><see cref="Lifecycle.Disposition.Compact"/> with no <see cref="Lifecycle.ICompactionHandler"/> registered.</summary>
+  public const string COMPACTION_UNAVAILABLE = "compaction_unavailable";
+
+  /// <summary><see cref="Lifecycle.Disposition.CryptoShred"/>, whose phase has not shipped.</summary>
+  public const string CRYPTO_SHRED_UNAVAILABLE = "crypto_shred_unavailable";
+}
+
+/// <summary>
 /// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
 /// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/>: the preserved detail of a truncated stream prefix. Carries
 /// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
