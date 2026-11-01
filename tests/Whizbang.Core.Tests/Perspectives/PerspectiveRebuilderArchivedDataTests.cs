@@ -118,6 +118,55 @@ public class PerspectiveRebuilderArchivedDataTests {
     await Assert.That(result.StreamsProcessed).IsEqualTo(2);
   }
 
+  // #1958: a stream whose archive was deleted has lost the history the archive held, for good.
+  [Test]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  [Arguments(RebuildArchivedData.IncludeAll)]
+  public async Task Rebuild_ThatReadsArchivedData_SkipsAStreamWhosePrefixArchiveWasDeleted_AndReportsItSkippedAsync(RebuildArchivedData choice) {
+    var deleted = Guid.NewGuid();
+    var runner = new RecordingRunner();
+
+    var result = await _rebuilder(runner, new() { [deleted] = ArchivedStreamExtent.PrefixDeleted })
+      .RebuildStreamsAsync(PERSPECTIVE, [deleted], new RebuildOrigin { ArchivedData = choice });
+
+    await Assert.That(runner.Replayed).IsEmpty()
+      .Because("a replay from the start would read the hot events alone and fold a partial history as the whole");
+    await Assert.That(runner.FromSnapshot).IsEmpty().Because("the rebuild asked to read the archive, which is gone");
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1);
+    await Assert.That(result.Success).IsTrue().Because("a skipped stream is reported, not failed");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_StartsAStreamWhosePrefixArchiveWasDeleted_FromItsNewestLiveSnapshotAsync() {
+    var deleted = Guid.NewGuid();
+    var runner = new RecordingRunner();
+
+    var result = await _rebuilder(runner, new() { [deleted] = ArchivedStreamExtent.PrefixDeleted })
+      .RebuildStreamsAsync(PERSPECTIVE, [deleted]);
+
+    await Assert.That(runner.FromSnapshot).IsEquivalentTo([deleted])
+      .Because("the default never reads the archive, so whether it was deleted changes nothing");
+    await Assert.That(runner.Replayed).IsEmpty();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(0);
+  }
+
+  [Test]
+  [Arguments(RebuildArchivedData.Skip)]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  [Arguments(RebuildArchivedData.IncludeAll)]
+  public async Task Rebuild_SkipsAStreamWhoseWholeArchiveWasDeleted_WhateverItsChoiceAsync(RebuildArchivedData choice) {
+    var deleted = Guid.NewGuid();
+    var runner = new RecordingRunner();
+
+    var result = await _rebuilder(runner, new() { [deleted] = ArchivedStreamExtent.WholeDeleted })
+      .RebuildStreamsAsync(PERSPECTIVE, [deleted], new RebuildOrigin { ArchivedData = choice });
+
+    await Assert.That(runner.Replayed).IsEmpty().Because("nothing of the stream remains to replay");
+    await Assert.That(runner.FromSnapshot).IsEmpty();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1);
+    await Assert.That(result.Success).IsTrue();
+  }
+
   [Test]
   public async Task Rebuild_WithNoArchiveExtentsRegistered_ReplaysEveryStreamFromItsStartAsync() {
     var stream = Guid.NewGuid();

@@ -52,6 +52,37 @@ public class ArchivedStreamRebuildSqlTests : EFCoreTestBase {
     }).Because("a hot stream, a restored one and a stream the ledger does not know have no archived data");
   }
 
+  // #1958: a deleted archive cleared the ledger's locator, so a stream whose prefix archive was deleted read as one that
+  // never had an archive, and a rebuild replayed only its hot events.
+  [Test]
+  public async Task Extents_TellAStreamWhoseArchiveWasDeleted_FromOneThatNeverHadAnArchiveAsync() {
+    var hot = await _streamAsync(3);
+    var prefixDeleted = await _streamAsync(3);
+    var wholeDeleted = await _streamAsync(3);
+    var rearchived = await _streamAsync(4);
+    var restored = await _streamAsync(3);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(prefixDeleted, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(await _archive().DeleteAsync(prefixDeleted)).IsGreaterThan(0L);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(wholeDeleted))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(await _archive().DeleteAsync(wholeDeleted)).IsEqualTo(3L).Because("the control: the archive held the whole stream");
+    // Archived again after its first archive was deleted: the new archive starts where the deleted one ended.
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(rearchived, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That(await _archive().DeleteAsync(rearchived)).IsGreaterThan(0L);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(rearchived, 2))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    // Restored, then deleted: the restore brought every event back, so the delete deletes nothing.
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(restored, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await Assert.That((await _archive().RestoreAsync(restored)).Status).IsEqualTo(ArchiveStatus.RESTORED);
+    await Assert.That(await _archive().DeleteAsync(restored)).IsEqualTo(0L);
+
+    var extents = await _extents().GetExtentsAsync([hot, prefixDeleted, wholeDeleted, rearchived, restored]);
+
+    await Assert.That(extents).IsEquivalentTo(new Dictionary<Guid, ArchivedStreamExtent> {
+      [prefixDeleted] = ArchivedStreamExtent.PrefixDeleted,
+      [wholeDeleted] = ArchivedStreamExtent.WholeDeleted,
+      [rearchived] = ArchivedStreamExtent.PrefixDeleted,
+    }).Because("a deleted archive's history is gone for good, whatever is archived after it; a hot stream and a restored one lost nothing");
+  }
+
   [Test]
   public async Task Extents_OfNoStreams_AskNothingAsync() {
     await Assert.That(await _extents().GetExtentsAsync([])).IsEmpty();
