@@ -102,6 +102,8 @@ public sealed partial class MaintenanceWorker(
     // archived stream is refused inside the store, which reads the stored policy, so a policy must be in force soon after
     // a start even on a service too busy for the sweep. One small statement, and nothing to contend with.
     await _syncStreamTypePoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
+    // #1725: the stored-metadata settings, for the same reason: every write path decides each event's metadata from them.
+    await _syncEventStoreMetadataSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
 
     if (_housekeeping is null) {
       await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
@@ -1003,6 +1005,35 @@ public sealed partial class MaintenanceWorker(
       LogStreamTypePolicySyncFailed(_logger, string.Join(", ", policies.Select(p => $"{p.StreamType}={p.AppendToArchived}")), ex);
     }
   }
+
+  /// <summary>
+  /// Publishes the stored-metadata write form, the full-for list (configuration joined with the
+  /// <c>[StoredMetadata(StoredMetadataForm.Full)]</c> types) and the staging window. Best-effort: the write paths keep
+  /// the values already stored, so a failed write is logged with the keys it left unpublished and the tick goes on.
+  /// Cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>data/event-store#stored-metadata</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerEventStoreMetadataSyncTests.cs</tests>
+  private async Task _syncEventStoreMetadataSettingsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    string? published = null;
+    try {
+      // Resolved inside the guard: options that fail validation are reported here rather than failing the tick.
+      var metadataOptions = sp.GetService<IOptions<Whizbang.Core.Messaging.EventStoreMetadataOptions>>()?.Value
+        ?? new Whizbang.Core.Messaging.EventStoreMetadataOptions();
+      var settings = Whizbang.Core.Messaging.EventStoreMetadataSettings.SettingsFor(
+        metadataOptions, Whizbang.Core.Messaging.StoredMetadataRegistry.FullTypeNames());
+      published = string.Join(", ", settings.Select(s => $"{s.Key}={s.Value}"));
+      await coordinator.SyncRetentionSettingsAsync(settings, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogEventStoreMetadataSyncFailed(_logger, published ?? "none; settings not resolved", ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+    Message = "Failed to publish the stored-metadata settings to wh_settings ({Settings}); the write paths keep the settings already stored until a later tick succeeds.")]
+  static partial void LogEventStoreMetadataSyncFailed(ILogger logger, string settings, Exception ex);
 
   [LoggerMessage(EventId = 62, Level = LogLevel.Warning,
     Message = "Failed to store the append-to-archived policies in wh_stream_type_policies (configured: {Policies}); the write paths keep the policies already stored until a later tick succeeds.")]

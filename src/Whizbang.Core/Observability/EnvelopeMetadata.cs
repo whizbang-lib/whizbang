@@ -52,11 +52,12 @@ public sealed class EnvelopeMetadata {
 
   /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
-  /// ephemeral TTL, and one Current hop carrying the message timestamp, correlation id, causation id and stream id
-  /// as the first hop holds them (where readers take them from), and the scope folded over every Current hop.
+  /// ephemeral TTL, and one Current hop carrying the message timestamp, correlation id, causation id, stream id and
+  /// trace parent as the first hop holds them (where readers take them from), and the scope folded over every Current
+  /// hop. The write paths build the same form in SQL (<c>_wh_slim_event_metadata</c>, migration 285).
   /// </summary>
   /// <remarks>
-  /// Dispatch context, receptor invocations, the service instance, trace parent, caller information, topic,
+  /// Dispatch context, receptor invocations, the service instance, caller information, topic,
   /// partition, sequence, execution strategy, duration, policy trail, the hop metadata dictionary and causation hops
   /// are dropped: they matter while a message is delivered and are kept on the outbox and inbox rows for that.
   /// The hop's service instance is <see cref="ServiceInstanceInfo.Unknown"/>, which the hop writer leaves out.
@@ -88,6 +89,9 @@ public sealed class EnvelopeMetadata {
           CorrelationId = first.CorrelationId,
           CausationId = first.CausationId,
           StreamId = first.StreamId,
+          // #1725: the first hop's trace parent, so perspective and perspective-stage receptor spans keep joining the
+          // trace the event started in.
+          TraceParent = first.TraceParent,
           Scope = scope is null ? null : ScopeDelta.CreateDelta(null, scope),
         },
       ],
