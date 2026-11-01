@@ -81,6 +81,22 @@ public class ScheduledStreamCloseReceptorTests {
   }
 
   [Test]
+  public async Task Receptor_AnOccurrenceThatDoesNotArchive_AsksForADiscardAsync() {
+    // #1735: the stored occurrence keeps its archive flag; false is the Delete disposition.
+    var closer = new RecordingTruncator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamPrefixTruncator>(closer);
+    await using var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledStreamCloseReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+
+    await receptor.HandleAsync(new ScheduledStreamClose(Guid.NewGuid(), ThroughVersion: 7, Archive: false));
+
+    await Assert.That(closer.Calls).IsEqualTo(1);
+    await Assert.That(closer.LastCall!.Value.Archive).IsFalse();
+  }
+
+  [Test]
   public async Task Receptor_NoStreamPrefixTruncatorRegistered_IsInertAsync() {
     var services = new ServiceCollection();   // no IStreamPrefixTruncator
     await using var sp = services.BuildServiceProvider();

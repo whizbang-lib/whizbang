@@ -31,6 +31,18 @@ public interface IStreamPrefixTruncator {
   /// Inline receptor aborts the truncate, as a throwing pre-hook does), and the <c>PostDestructionDetached</c> and
   /// <c>PostDestructionInline</c> receptors run with the same envelopes after a truncate that happened.
   /// </remarks>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="throughVersion">The last version removed.</param>
+  /// <param name="disposition">What happens to the detail (#1735), unless the PreDestruction hook returns another:
+  /// <see cref="Disposition.Delete"/> (the default) discards it; <see cref="Disposition.Archive"/> writes it through the
+  /// registered <see cref="IArchiveStore"/>; <see cref="Disposition.Compact"/> runs the registered
+  /// <see cref="ICompactionHandler"/> and then discards it, and with none registered keeps it
+  /// (<see cref="StreamTruncateStatus.COMPACTION_UNAVAILABLE"/>); <see cref="Disposition.CryptoShred"/> keeps it
+  /// (<see cref="StreamTruncateStatus.CRYPTO_SHRED_UNAVAILABLE"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The truncate's outcome.</returns>
+  /// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default);
 }
@@ -59,23 +71,12 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
   public async Task<StreamTruncateResult> TruncateAsync(
       Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) {
-    var archive = disposition == Disposition.Archive;
-    // A1-6b full-history guard: a DISCARD truncate (archive:false) that would strand a [FullHistory] projection,
-    // one that consumes an event in the truncated range and cannot resume from the closing event, is refused
-    // (it could never rebuild). An archiving truncate is always safe (detail retrievable), so it skips the check.
-    if (!archive) {
-      var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
-        .ConfigureAwait(false);
-      if (Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.AnyFullHistory(consumers)) {
-        LogFullHistoryBlocked(_logger, streamId);
-        return new StreamTruncateResult("full_history_blocked", 0);
-      }
-    }
-
     var context = new DestructionContext {
       Reason = DestructionReason.PeriodClose,
       Granularity = DestructionGranularity.Stream,
       StreamId = streamId,
+      ThroughVersion = throughVersion,
+      DeclaredDefault = disposition,
     };
 
     // The destruction-stage receptors (#1504) run around the truncate the way they run around the ephemeral
@@ -89,9 +90,30 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // PreDestruction (awaited, critical path): the hook commits the carry-forward / archive BEFORE the
     // truncate. Cancel or Defer vetoes the truncate (nothing is truncated). A THROWING pre-hook aborts the
     // truncate: durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
-    // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
-    if (await _vetoedByPreDestructionAsync(context, streamId, cancellationToken).ConfigureAwait(false) is { } veto) {
+    // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data). Otherwise the hook's
+    // disposition runs, or the declared one when it names none (#1735).
+    var decision = await _decideAsync(context, streamId, cancellationToken).ConfigureAwait(false);
+    if (decision.Veto is { } veto) {
       return veto;
+    }
+    var effective = decision.Disposition;
+    var compactor = effective == Disposition.Compact ? services.GetService<ICompactionHandler>() : null;
+    if (_unavailable(effective, compactor, streamId, throughVersion) is { } unavailable) {
+      return unavailable;
+    }
+
+    // A1-6b full-history guard: a truncate that discards the detail and would strand a [FullHistory] projection,
+    // one that consumes an event in the truncated range and cannot resume from the closing event, is refused
+    // (it could never rebuild). An archiving truncate is always safe (detail retrievable), so it skips the check.
+    // Checked on the disposition that runs, so a hook cannot get around it by switching an archive to a discard.
+    var archive = effective == Disposition.Archive;
+    if (!archive) {
+      var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
+        .ConfigureAwait(false);
+      if (Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.AnyFullHistory(consumers)) {
+        LogFullHistoryBlocked(_logger, streamId);
+        return new StreamTruncateResult("full_history_blocked", 0);
+      }
     }
 
     // The Pre stages, after the hook proceeded: a throwing Pre Inline receptor aborts the truncate exactly as a
@@ -101,6 +123,12 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogPreStageFailed(_logger, ex, streamId);
       throw;
+    }
+
+    // Compact: the developer's handler folds the detail into its summary, durably, before the detail is discarded.
+    // A throwing handler aborts the truncate, as a throwing pre-hook does.
+    if (compactor is not null) {
+      await compactor.CompactAsync(context, cancellationToken).ConfigureAwait(false);
     }
 
     // Fold-before-discard (apply-stack lineage): the truncate is about to remove this stream's
@@ -176,7 +204,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   static partial void LogPreHookFailed(ILogger logger, Exception ex, Guid streamId);
 
   [LoggerMessage(EventId = 43, Level = LogLevel.Warning,
-    Message = "Discarding truncate of stream {StreamId} refused: a [FullHistory] projection consumes it; archive instead (archive: true)")]
+    Message = "Discarding truncate of stream {StreamId} refused: a [FullHistory] projection consumes it; archive instead (Disposition.Archive)")]
   static partial void LogFullHistoryBlocked(ILogger logger, Guid streamId);
 
   [LoggerMessage(EventId = 41, Level = LogLevel.Information,
@@ -188,10 +216,11 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   static partial void LogPostHookFailed(ILogger logger, Exception ex, Guid streamId);
 
   /// <summary>
-  /// Runs the PreDestruction hook and returns the veto result when the hook cancels or defers the
-  /// truncate; null means the truncate proceeds. A throwing hook aborts the truncate (rethrown after logging).
+  /// Runs the PreDestruction hook: a veto when it cancels or defers the truncate, otherwise the disposition to run (the
+  /// hook's, or the declared one when it names none). A throwing hook aborts the truncate (rethrown after logging).
   /// </summary>
-  private async Task<StreamTruncateResult?> _vetoedByPreDestructionAsync(DestructionContext context, Guid streamId, CancellationToken cancellationToken) {
+  private async Task<(StreamTruncateResult? Veto, Disposition Disposition)> _decideAsync(
+      DestructionContext context, Guid streamId, CancellationToken cancellationToken) {
     DestructionResult decision;
     try {
       decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
@@ -203,12 +232,36 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     }
     if (decision.Cancel) {
       LogTruncateVetoed(_logger, streamId, "canceled");
-      return new StreamTruncateResult("canceled", 0);
+      return (new StreamTruncateResult("canceled", 0), context.DeclaredDefault);
     }
     if (decision.DeferUntil.HasValue) {
       LogTruncateVetoed(_logger, streamId, "deferred");
-      return new StreamTruncateResult("deferred", 0);
+      return (new StreamTruncateResult("deferred", 0), context.DeclaredDefault);
+    }
+    return (null, decision.Disposition ?? context.DeclaredDefault);
+  }
+
+  /// <summary>
+  /// A disposition this truncate cannot carry out keeps the data and says why: <see cref="Disposition.CryptoShred"/>
+  /// has not shipped, and <see cref="Disposition.Compact"/> needs a registered <see cref="ICompactionHandler"/>.
+  /// </summary>
+  private StreamTruncateResult? _unavailable(Disposition disposition, ICompactionHandler? compactor, Guid streamId, long throughVersion) {
+    if (disposition == Disposition.CryptoShred) {
+      LogCryptoShredUnavailable(_logger, streamId, throughVersion);
+      return new StreamTruncateResult(StreamTruncateStatus.CRYPTO_SHRED_UNAVAILABLE, 0);
+    }
+    if (disposition == Disposition.Compact && compactor is null) {
+      LogCompactionUnavailable(_logger, streamId, throughVersion);
+      return new StreamTruncateResult(StreamTruncateStatus.COMPACTION_UNAVAILABLE, 0);
     }
     return null;
   }
+
+  [LoggerMessage(EventId = 46, Level = LogLevel.Warning,
+    Message = "Truncate of stream {StreamId} through version {ThroughVersion} kept the data: its disposition is Compact, which needs an ICompactionHandler registered, and none is")]
+  static partial void LogCompactionUnavailable(ILogger logger, Guid streamId, long throughVersion);
+
+  [LoggerMessage(EventId = 47, Level = LogLevel.Warning,
+    Message = "Truncate of stream {StreamId} through version {ThroughVersion} kept the data: its disposition is CryptoShred, which has not shipped")]
+  static partial void LogCryptoShredUnavailable(ILogger logger, Guid streamId, long throughVersion);
 }
