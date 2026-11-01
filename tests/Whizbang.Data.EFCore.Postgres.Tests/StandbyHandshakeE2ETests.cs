@@ -101,8 +101,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
 
     var versionProvider = new LibraryVersionProvider(version);
     // The one writer of the row's stage, phase and version (#1636): the pod is Running, as the stage record says.
-    var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance,
-      timeProvider: null, versionProvider);
+    var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance, versionProvider);
     await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
     await stages.InstanceRegisteredAsync(ct);
     var lifecycleOptions = new WhizbangLifecycleOptions();

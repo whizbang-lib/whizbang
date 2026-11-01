@@ -184,7 +184,7 @@ public class ColdBootJourneyE2ETests {
     // The one writer of the row's stage, phase and version (#1636), as the worker pipeline registers it.
     services.AddSingleton<IStartupStageReporter>(sp => new StartupStageReporter(
       sp.GetRequiredService<IServiceScopeFactory>(), pod, [], NullLogger<StartupStageReporter>.Instance,
-      timeProvider: null, new LibraryVersionProvider("999.9.9")));
+      new LibraryVersionProvider("999.9.9")));
     services.AddSingleton<IWhizbangLifecycleState>(sp => new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
         [recorder, new StartupStageRunControl(sp.GetRequiredService<IStartupStageReporter>())],

@@ -220,7 +220,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
       // tells it the row exists after every accepted beat.
       services.AddSingleton<IStartupStageReporter>(sp => new StartupStageReporter(
         sp.GetRequiredService<IServiceScopeFactory>(), Instance, [], NullLogger<StartupStageReporter>.Instance,
-        timeProvider: null, new LibraryVersionProvider("999.9.9")));
+        new LibraryVersionProvider("999.9.9")));
       _services = services.BuildServiceProvider();
       var scopeFactory = _services.GetRequiredService<IServiceScopeFactory>();
       Stages = _services.GetRequiredService<IStartupStageReporter>();

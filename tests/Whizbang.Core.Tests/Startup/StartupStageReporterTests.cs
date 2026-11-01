@@ -300,17 +300,6 @@ public class StartupStageReporterTests {
   }
 
   [Test]
-  public async Task WithoutAVersionProvider_NoVersionIsWrittenAsync() {
-    var (reporter, coordinator, _, _, _) = _build(libraryVersion: null);
-    await reporter.InstanceRegisteredAsync();
-
-    await reporter.EnterAsync(StartupStage.Running, "serving");
-
-    await Assert.That(coordinator.Transitions.Single().LibraryVersion).IsNull()
-      .Because("a null version keeps whatever the row records");
-  }
-
-  [Test]
   [Arguments(LifecyclePhase.Pausing)]
   [Arguments(LifecyclePhase.Paused)]
   [Arguments(LifecyclePhase.StandingBy)]
@@ -497,7 +486,8 @@ public class StartupStageReporterTests {
   [Test]
   public async Task WithoutAClock_TheSystemClockStampsTheStageAsync() {
     var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-    var reporter = new StartupStageReporter(scopes, new StubInstanceProvider(), [], new FakeLogger<StartupStageReporter>());
+    var reporter = new StartupStageReporter(
+      scopes, new StubInstanceProvider(), [], new FakeLogger<StartupStageReporter>(), new LibraryVersionProvider(VERSION));
 
     await reporter.EnterAsync(StartupStage.Preflight, "host starting");
 
@@ -510,18 +500,20 @@ public class StartupStageReporterTests {
     var logger = new FakeLogger<StartupStageReporter>();
 
     var instance = new StubInstanceProvider();
+    var version = new LibraryVersionProvider(VERSION);
 
-    await Assert.That(() => new StartupStageReporter(null!, instance, [], logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new StartupStageReporter(scopes, null!, [], logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new StartupStageReporter(scopes, instance, null!, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new StartupStageReporter(scopes, instance, [], null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(null!, instance, [], logger, version)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, null!, [], logger, version)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, instance, null!, logger, version)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, instance, [], null!, version)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, instance, [], logger, null!)).Throws<ArgumentNullException>();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
 
   private static (StartupStageReporter Reporter, RecordingCoordinator Coordinator, RecordingObserver Observer,
       FakeLogger<StartupStageReporter> Logger, FakeTimeProvider Clock) _build(
-      bool withCoordinator = true, string? libraryVersion = VERSION) {
+      bool withCoordinator = true) {
     var instance = new StubInstanceProvider();
     var coordinator = new RecordingCoordinator(instance.InstanceId);
     var services = new ServiceCollection();
@@ -533,8 +525,7 @@ public class StartupStageReporterTests {
     var logger = new FakeLogger<StartupStageReporter>();
     var clock = new FakeTimeProvider(_start);
     var reporter = new StartupStageReporter(
-      scopes, instance, [observer], logger, clock,
-      libraryVersion is null ? null : new LibraryVersionProvider(libraryVersion));
+      scopes, instance, [observer], logger, new LibraryVersionProvider(VERSION), clock);
     return (reporter, coordinator, observer, logger, clock);
   }
 

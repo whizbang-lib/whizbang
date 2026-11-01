@@ -37,7 +37,7 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   private readonly IStartupStageObserver[] _observers;
   private readonly ILogger<StartupStageReporter> _logger;
   private readonly TimeProvider _time;
-  private readonly string? _libraryVersion;
+  private readonly string _libraryVersion;
   private readonly SemaphoreSlim _serialize = new(1, 1);
   private volatile StartupStageSnapshot? _current;
   // Whether the instance's row has been registered, so a write can land.
@@ -53,26 +53,26 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   /// <param name="instanceProvider">This instance's identity: the row each stage is written to.</param>
   /// <param name="observers">Told of every change.</param>
   /// <param name="logger">Where each stage is logged.</param>
+  /// <param name="libraryVersion">The library version every write records with the stage and phase.</param>
   /// <param name="timeProvider">The clock a stage's entry time and a write's timeout are read from.</param>
-  /// <param name="libraryVersion">The library version every write records with the stage and phase; none recorded when
-  /// absent.</param>
   public StartupStageReporter(
       IServiceScopeFactory scopeFactory,
       IServiceInstanceProvider instanceProvider,
       IEnumerable<IStartupStageObserver> observers,
       ILogger<StartupStageReporter> logger,
-      TimeProvider? timeProvider = null,
-      ILibraryVersionProvider? libraryVersion = null) {
+      ILibraryVersionProvider libraryVersion,
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(observers);
     ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(libraryVersion);
     _scopeFactory = scopeFactory;
     _instanceProvider = instanceProvider;
     _observers = [.. observers];
     _logger = logger;
     _time = timeProvider ?? TimeProvider.System;
-    _libraryVersion = libraryVersion?.LibraryVersion;
+    _libraryVersion = libraryVersion.LibraryVersion;
   }
 
   /// <inheritdoc />
