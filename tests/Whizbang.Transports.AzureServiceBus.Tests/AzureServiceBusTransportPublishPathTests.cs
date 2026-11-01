@@ -143,7 +143,8 @@ public class AzureServiceBusTransportPublishPathTests {
       EnableSessions = false,
       SendTimeout = TimeSpan.FromMilliseconds(50)
     };
-    var (transport, _) = _createTransport(options: options, client: client);
+    var logger = new RecordingTransportLogger();
+    var (transport, _) = _createTransport(options: options, logger: logger, client: client);
     using var cts = new CancellationTokenSource();
 
     var ex = await Assert.ThrowsAsync<TimeoutException>(async () =>
@@ -153,7 +154,31 @@ public class AzureServiceBusTransportPublishPathTests {
         cancellationToken: cts.Token));
 
     await Assert.That(ex!.Message).Contains("timed out");
+    // #1976: the outbox retries the publish and dead-letters it at the bound, so the timed-out attempt is a Warning;
+    // Error is kept for the dead-letter record.
+    await Assert.That(logger.Contains(LogLevel.Warning, "SendMessageAsync timed out")).IsTrue();
+    await Assert.That(logger.ContainsWithException(LogLevel.Warning, "Failed to publish message")).IsTrue();
+    await Assert.That(logger.AnyAtOrAbove(LogLevel.Error)).IsFalse();
     await cts.CancelAsync();
+  }
+
+  /// <summary>
+  /// A send that fails is rethrown to the outbox, which retries it and dead-letters it at the bound (#1976). The
+  /// transport's line for the attempt is therefore a Warning carrying the exception, and Error is kept for the
+  /// dead-letter record.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_SendFails_LogsTheAttemptAtWarningWithItsExceptionAndRethrowsAsync() {
+    var client = new RaisableServiceBusClient { SendException = new InvalidOperationException("send refused") };
+    var logger = new RecordingTransportLogger();
+    var (transport, _) = _createTransport(logger: logger, client: client);
+
+    await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+      await transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), _destination()));
+
+    await Assert.That(logger.ContainsWithException(LogLevel.Warning, "Failed to publish message")).IsTrue()
+      .Because("the publish is retried by the outbox, so the failed attempt is a Warning carrying its exception");
+    await Assert.That(logger.AnyAtOrAbove(LogLevel.Error)).IsFalse();
   }
 
   // ========================================
