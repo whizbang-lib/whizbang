@@ -281,7 +281,9 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
   private async Task _snapshotAsync(Guid stream, Guid atEvent, RebuildBalanceModel model) {
     var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<RebuildBalanceModel>)
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RebuildBalanceModel));
-    using var data = System.Text.Json.JsonSerializer.SerializeToDocument(model, typeInfo);
+    // Stamped with the serialization version as the runner writes a snapshot, so the runner reads it back.
+    using var modelData = System.Text.Json.JsonSerializer.SerializeToDocument(model, typeInfo);
+    using var data = SnapshotEnvelope.Wrap(modelData.RootElement, Whizbang.Core.Serialization.SerializationVersion.CURRENT);
     await new EFCorePerspectiveSnapshotStore(NpgsqlDataSource.Create(ConnectionString))
       .CreateSnapshotAsync(stream, PERSPECTIVE, atEvent, data);
   }
