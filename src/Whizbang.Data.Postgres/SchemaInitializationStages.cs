@@ -50,18 +50,17 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) {
-    _ = (services, cancellationToken);
-    return Task.CompletedTask;
-  }
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:Registering_IsTheLastStepOfPreflightAsync</tests>
+  public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "the bootstrap closure is in place; registering this instance", cancellationToken);
 
-  /// <summary>This instance is about to join the registry and vote for the migrator duty.</summary>
+  /// <summary>This instance has joined the registry, at the end of Preflight, and votes for the migrator duty.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
   public static async Task ElectingAsync(IServiceProvider? services, CancellationToken cancellationToken) {
     if (_reporter(services) is { } stages) {
-      await stages.EnterAsync(StartupStage.Elect, "joining the registry and voting for the migrator duty", cancellationToken)
+      await stages.EnterAsync(StartupStage.Elect, "voting for the migrator duty", cancellationToken)
         .ConfigureAwait(false);
     }
   }

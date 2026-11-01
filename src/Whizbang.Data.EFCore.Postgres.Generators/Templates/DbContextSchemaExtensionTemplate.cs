@@ -133,24 +133,23 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
 
     if (segmentConnectionFactory is not null) {
-      // Phase 0 — the bootstrap. Reports whether an election is actually possible now rather
+      // Phase 0: the bootstrap. Reports whether an election is actually possible now rather
       // than whether the scripts appeared to work.
       var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
         segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
         _schemaCommandTimeoutSeconds, serviceProvider, TimeProvider.System, logger, cancellationToken);
 
       try {
-        // Phase 1 — join the registry, then contend for the duty. Registration has to come first:
-        // the capability function refuses an instance it cannot find, and that refusal would say
-        // nothing about contention.
+        // Phase 1: join the registry, then contend for the duty. Registering is Preflight's last step
+        // (#1636): it comes after the bootstrap closure and the instance and role table DDL, so the row
+        // is written once its tables are ready, and the stages held until then (log-only before the row
+        // existed) are written with it. It has to precede the vote: the capability function refuses an
+        // instance it cannot find, and that refusal would say nothing about contention.
         if (canElect
             && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
                is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
-          // #1636: Elect is entered before the registration, so the row records it from the moment it exists.
-          await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
-          staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
-            serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
-              as Whizbang.Core.Startup.IDutyElector,
+          await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteringAsync(serviceProvider, cancellationToken);
+          var registered = await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
             async ct => {
               await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
                 segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct);
@@ -158,6 +157,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
             },
             "__SCHEMA__", logger, cancellationToken);
+          if (registered) {
+            await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
+            staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
+              serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
+                as Whizbang.Core.Startup.IDutyElector,
+              "__SCHEMA__", logger, cancellationToken);
+          } else {
+            staging = new Whizbang.Data.Postgres.SchemaStaging(
+              Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "this instance could not join the registry");
+          }
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // Belt and braces. The election already answers rather than throws; this catches anything

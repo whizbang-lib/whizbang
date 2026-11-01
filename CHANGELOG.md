@@ -1454,6 +1454,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ISchemaInitializationObserver.OnBootstrapRetryScheduledAsync`), and fails any other failure at Error with a
   `SchemaBootstrapException` naming the script or step that failed, which fails the initialization attempt in
   Preflight. The Dapper driver keeps its lock-only start.
+- **The instance row is registered at the end of Preflight, before Elect (part of #1636).** The EF Core driver entered
+  Elect and then registered the instance as part of the election, so the row's first recorded stage was Elect and the
+  registration belonged to no stage. Registration is now Preflight's last step, after the bootstrap closure and the
+  instance and role table DDL: the stage line `Stage 1 of 7: Preflight - the bootstrap closure is in place; registering
+  this instance` is the first one the row records (the stage lines before it are log-only), and Elect only votes
+  (`Stage 2 of 7: Elect - voting for the migrator duty`). `MigratorDutyStaging.RegisterAsync` and an `ElectAsync`
+  overload for an instance that has already registered are the two steps; the combined `ElectAsync` is kept and runs
+  both.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and
