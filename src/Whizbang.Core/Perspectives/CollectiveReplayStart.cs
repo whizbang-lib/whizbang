@@ -7,9 +7,10 @@ namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// Where a replay of one row starts, for the collectives it folds (#1956): a rewind, or a rebuild that starts from a
-/// stream's newest snapshot. A replay from a snapshot starts after the event the snapshot was taken at, and the snapshot
-/// already holds every collective committed before that event, so the replay folds only the collectives committed after
-/// it. A replay from the stream's start names no event and folds every collective, as a full rebuild does.
+/// stream's newest snapshot. A replay from a snapshot that records its collectives' mark (#1963) folds the collectives
+/// stamped past that mark, plus every unstamped one; a replay from a snapshot written before the mark existed folds the
+/// collectives committed after the snapshot's event. A replay from the stream's start names no event and folds every
+/// collective, as a full rebuild does.
 /// </summary>
 /// <param name="TenantId">The tenant whose collectives fold into the row; null for a row whose events carry no tenant.</param>
 /// <param name="AfterEventId">The event the replay starts after (the snapshot's), or null for a replay from the stream's start.</param>
