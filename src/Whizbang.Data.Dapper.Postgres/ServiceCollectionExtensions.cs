@@ -477,6 +477,9 @@ public static class ServiceCollectionExtensions {
     // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
     // registered first wins.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
+    // What a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
+      new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
       var database = sp.GetRequiredService<PostgresArchiveConnection>();
       return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());

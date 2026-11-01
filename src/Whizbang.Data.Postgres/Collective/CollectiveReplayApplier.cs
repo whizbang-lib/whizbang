@@ -29,7 +29,8 @@ namespace Whizbang.Data.Postgres.Collective;
 /// <para>
 /// <strong>Archived collectives.</strong> A collective stream archived whole has no row in the hot store. When the
 /// driver hands the applier its database, the tenant's archived streams of every registered collective type are listed
-/// from the stream lifecycle ledger as well, and read through the event store's archive seam like the hot ones (#1932).
+/// from the stream lifecycle ledger as well, and read through the event store's archive seam like the hot ones (#1932):
+/// always on a rewind, and on a rebuild only under <see cref="RebuildArchivedData.IncludeAll"/> (#1931).
 /// </para>
 /// <para>
 /// <strong>Apply.</strong> For each matching <c>[CollectiveApplyFor]</c> entry it invokes the handler to get the
@@ -159,7 +160,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       CollectivePositions(_eventStoreQuery.Query, typeNames, tenantId),
       cancellationToken).ConfigureAwait(false);
     var streamIds = positions.Select(p => p.StreamId).Distinct().ToList();
-    if (_archivedStreams is not null) {
+    if (_archivedStreams is not null && _foldsStreamsArchivedWhole()) {
       // A collective stream archived whole has no hot row; the ledger lists it, and the read below goes through the
       // archive. A stream the hot store already named is read once.
       var named = new HashSet<Guid>(streamIds);
@@ -188,6 +189,15 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
     return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
   }
+
+  /// <summary>
+  /// Whether this replay folds the collective streams archived whole (#1931): a rewind (a replay) always does, as rewinds
+  /// read through the archive; a rebuild only under <see cref="RebuildArchivedData.IncludeAll"/>, the choice that
+  /// includes streams archived whole.
+  /// </summary>
+  private static bool _foldsStreamsArchivedWhole() =>
+    ProcessingModeAccessor.Current is not ProcessingMode.Rebuild
+    || RebuildArchivedDataAccessor.Current == RebuildArchivedData.IncludeAll;
 
   /// <summary>
   /// Merges the collectives into the stream's own events without reordering the stream's events: the runner hands

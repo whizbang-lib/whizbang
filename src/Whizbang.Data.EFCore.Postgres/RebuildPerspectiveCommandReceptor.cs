@@ -92,8 +92,12 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
 
     // The caller's id when it supplied one, so it can find its own rebuild across every service that answered.
     // Otherwise one per service, which still answers "did anything run here" but cannot be correlated across them.
+    // What the rebuild may read of the archive travels with the request, to a run on the streams' owners and to the
+    // background queue alike (#1931).
     var origin = new RebuildOrigin(
-        message.RequestId ?? (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), RebuildTrigger.Requested, message.RequestedBy);
+        message.RequestId ?? (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), RebuildTrigger.Requested, message.RequestedBy) {
+      ArchivedData = message.ArchivedData,
+    };
 
     // #1357/#1353: where the work runs. With a multi-stream store, a rebuild of named streams, or an in-place rebuild, is
     // recorded as a run and each stream is rebuilt by the instance that owns it, under that stream's apply lock there; this

@@ -86,6 +86,25 @@ public interface IPerspectiveRunner {
   ) => [await RunAsync(physicalStreamId, perspectiveName, null, cancellationToken)];
 
   /// <summary>
+  /// Rebuilds a stream archived through a prefix without reading the archive (#1931): restores the stream's newest live
+  /// snapshot and replays the hot events after it. Returns <see langword="null"/> when the stream has no snapshot this
+  /// runner can read, so the rebuild skips the stream. The newest snapshot is always live: an archive refuses a prefix that
+  /// reaches the newest snapshot any perspective holds for the stream.
+  /// </summary>
+  /// <remarks>The default implementation has no snapshot store, so it returns <see langword="null"/>.</remarks>
+  /// <param name="streamId">The stream to rebuild.</param>
+  /// <param name="perspectiveName">Name of the perspective to run.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The stream's cursor completion, or <see langword="null"/> when there is no live snapshot to start from.</returns>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs:Rebuild_ByDefault_StartsAStreamArchivedThroughAPrefix_FromItsNewestLiveSnapshot_AndReadsNoArchivedEventAsync</tests>
+  Task<IReadOnlyList<PerspectiveCursorCompletion>?> RunRebuildFromLatestSnapshotAsync(
+    Guid streamId,
+    string perspectiveName,
+    CancellationToken cancellationToken = default
+  ) => Task.FromResult<IReadOnlyList<PerspectiveCursorCompletion>?>(null);
+
+  /// <summary>
   /// Folds a row that receives events an upcaster re-keyed onto it during a REBUILD: the row's own stream's events
   /// (less any re-keyed away) together with every re-keyed source, merged in commit order
   /// (<see cref="RebuildRowRouting.Merge"/>) and folded from an empty model (#1820).

@@ -77,6 +77,18 @@ public class PerspectiveRebuilderArchivedDataTests {
   }
 
   [Test]
+  public async Task Rebuild_ByDefault_WithARunnerThatCannotStartFromASnapshot_SkipsAPrefixArchivedStreamAsync() {
+    var prefix = Guid.NewGuid();
+    // A hand-written runner with no snapshot store keeps the interface's answer: no snapshot to start from.
+    var runner = new RunnerWithoutSnapshots();
+
+    var result = await _rebuilder(runner, new() { [prefix] = ArchivedStreamExtent.Prefix }).RebuildStreamsAsync(PERSPECTIVE, [prefix]);
+
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1);
+    await Assert.That(result.Success).IsTrue();
+  }
+
+  [Test]
   public async Task Rebuild_IncludeWhileLive_ReplaysAPrefixArchivedStreamFromItsStart_AndStillSkipsOneArchivedWholeAsync() {
     var prefix = Guid.NewGuid();
     var whole = Guid.NewGuid();
@@ -156,7 +168,7 @@ public class PerspectiveRebuilderArchivedDataTests {
   // The value a field of the type holds before anything sets it.
   private static T _unset<T>() where T : struct => default;
 
-  private static PerspectiveRebuilder _rebuilder(RecordingRunner runner, Dictionary<Guid, ArchivedStreamExtent>? extents) {
+  private static PerspectiveRebuilder _rebuilder(IPerspectiveRunner runner, Dictionary<Guid, ArchivedStreamExtent>? extents) {
     var services = new ServiceCollection();
     services.AddSingleton<IPerspectiveRunnerRegistry>(new Registry(runner));
     // The streams a whole-perspective rebuild finds: those the extents name, or one hot stream.
@@ -219,6 +231,22 @@ public class PerspectiveRebuilderArchivedDataTests {
       RowChanged = true,
       EventsProcessed = 1,
     };
+  }
+
+  private sealed class RunnerWithoutSnapshots : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("a stream archived through a prefix is never replayed from its start by default");
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+        Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+
+    public Task BootstrapSnapshotAsync(
+        Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
   }
 
   private sealed class Registry(IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {

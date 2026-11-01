@@ -310,6 +310,10 @@ public static class PostgresDriverExtensions {
         // How an archive store reaches this database, shared by the table store and any store that keeps state here.
         selector.Services.TryAddSingleton(sp =>
           new PostgresArchiveConnection(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
+        // TURNKEY: what a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
+        // <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
+          new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
         selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
           var database = sp.GetRequiredService<PostgresArchiveConnection>();
           return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());

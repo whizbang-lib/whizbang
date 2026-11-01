@@ -267,6 +267,38 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
+  /// Rebuilds a stream archived through a prefix without reading the archive (#1931): restores the stream's newest
+  /// snapshot and replays the hot events after it, through the rewind's replay. Null when there is no snapshot store, no
+  /// snapshot, or one this build cannot read, so the rebuild skips the stream. The newest snapshot is always live: an
+  /// archive refuses a prefix that reaches the newest snapshot any perspective holds for the stream.
+  /// </summary>
+  public async Task<IReadOnlyList<PerspectiveCursorCompletion>?> RunRebuildFromLatestSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+    if (_snapshotStore is null) {
+      return null;
+    }
+    var latest = await _snapshotStore.GetLatestSnapshotAsync(streamId, perspectiveName, cancellationToken);
+    if (latest is null) {
+      return null;
+    }
+    var snapshotModel = FromSnapshotJson(latest.Value.SnapshotData);
+    if (snapshotModel is null) {
+      return null;
+    }
+
+    // The replay assumes the apply lock is held, as the rewind's caller holds it.
+    await using IAsyncDisposable? __applyLock = _applyCoordinator is null
+        ? null
+        : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
+    var completion = await _replayCheckedAsync(
+        streamId, perspectiveName, snapshotModel, latest.Value.SnapshotData, latest.Value.SnapshotEventId,
+        readThroughArchiveAfterVersion: null, cancellationToken);
+    return new[] { completion };
+  }
+
+  /// <summary>
   /// Folds a row that receives re-keyed events (#1820): reads the row's own stream (upcasted), keeps the events no
   /// upcaster moved away, merges them with every re-keyed source in commit order and folds the result from an empty
   /// model, through the same <see cref="RunWithEventsAsync"/> every other path uses.
@@ -767,6 +799,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Collective events have no per-stream Apply() — during replay/rebuild they are folded into this one
         // row by the in-memory applier (self-referential per WHIZ106). They were interleaved above only in
         // rebuild/rewind mode, so this branch never runs during live drain.
+        // A collective is another stream's event: it folds into the row but does not move the row's checkpoint, as on the
+        // live path, where the set-based sink never touches a row's cursor (#1931). Its stream may be archived whole, and a
+        // cursor naming it would name an event the hot store does not hold.
         if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
           if (_collectiveReplayApplier is not null && updatedModel is not null) {
             updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
@@ -774,8 +809,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             hasWrittenUpdate = true;
           }
           processedEvents.Add(envelope);
-          lastSuccessfulEventId = envelope.MessageId.Value;
-          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
           continue;
         }
