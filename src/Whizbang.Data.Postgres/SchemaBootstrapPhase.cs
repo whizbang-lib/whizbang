@@ -670,7 +670,7 @@ internal static partial class SchemaBootstrapLog {
 /// <param name="Scripts">The core table SQL and the marked migration regions, in order.</param>
 /// <param name="Schema">The target schema, used to probe for the elected objects; empty means <c>public</c>.</param>
 /// <param name="CommandTimeoutSeconds">The timeout for one script, and for one wait on the schema lock.</param>
-/// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <docs>operations/infrastructure/migrations#bootstrap-waits-for-the-lock</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ABootstrapThatFindsTheLockHeld_WaitsForIt_ThenAppliesTheClosureAsync</tests>
 public sealed record SchemaBootstrapRequest(
     Func<NpgsqlConnection> ConnectionFactory,
