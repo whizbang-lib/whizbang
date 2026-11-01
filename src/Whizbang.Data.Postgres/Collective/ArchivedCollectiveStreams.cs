@@ -17,7 +17,7 @@ namespace Whizbang.Data.Postgres.Collective;
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperArchivedCollectiveReplayTests.cs:AddCollectiveEventsDapper_TheReplayReadsTheTenantsArchivedCollectiveStreams_ListedFromTheLedgerAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsACollectiveWhoseStreamIsArchivedWhole_ReadingItThroughTheArchiveAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_IncludeAll_FoldsACollectiveArchivedWhole_ThatIsTheRowsLastEvent_AndCheckpointsOnTheRowsOwnEventAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema identifier is formatted in, quoted by PgIdentifier; the stream types and the tenant are bound parameters.")]
 internal static class ArchivedCollectiveStreams {
   /// <summary>

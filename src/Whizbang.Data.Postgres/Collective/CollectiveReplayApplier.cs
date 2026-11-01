@@ -79,7 +79,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// <param name="archive">The service's database, whose ledger lists the archived streams; null finds the hot
   /// streams only.</param>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsACollectiveWhoseStreamIsArchivedWhole_ReadingItThroughTheArchiveAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_IncludeAll_FoldsACollectiveArchivedWhole_ThatIsTheRowsLastEvent_AndCheckpointsOnTheRowsOwnEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperArchivedCollectiveReplayTests.cs:AddCollectiveEventsDapper_TheReplayReadsTheTenantsArchivedCollectiveStreams_ListedFromTheLedgerAsync</tests>
   public CollectiveReplayApplier(
       IReadOnlyList<CollectiveApplyEntry> entries,
