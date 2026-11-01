@@ -304,14 +304,15 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     var second = TrackedGuid.New().Value;
     await _appendEventAsync(streamId, first, version: 1, commitSequence: 1);
     await _appendEventAsync(streamId, second, version: 2, commitSequence: 2);
-    IPerspectiveSnapshotStore store = _store;
+    var store = _store;
     using var data = JsonDocument.Parse("""{"at":1}""");
 
     await store.CreateSnapshotAsync(streamId, perspectiveName, first, 1, data, collectivesThroughSequence: 40);
     var marked = await store.GetSnapshotFloorAsync(streamId, perspectiveName, second);
     await store.CreateSnapshotAsync(streamId, perspectiveName, first, 1, data, collectivesThroughSequence: 41);
     var rewritten = await store.GetLatestSnapshotFloorAsync(streamId, perspectiveName);
-    await store.CreateSnapshotAsync(streamId, perspectiveName, second, 2, data, CancellationToken.None);
+    // The commit-sequence write, which this store takes from the interface: it records no mark.
+    await ((IPerspectiveSnapshotStore)store).CreateSnapshotAsync(streamId, perspectiveName, second, 2, data, CancellationToken.None);
     var unmarked = await store.GetLatestSnapshotFloorAsync(streamId, perspectiveName);
 
     await Assert.That(marked!.SnapshotEventId).IsEqualTo(first);

@@ -186,7 +186,7 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
     await _placeAsync(connection, second, version: 2, commitSequence: 2);
     await _placeAsync(connection, third, version: 3, commitSequence: 3);
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
-    IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+    var store = new EFCorePerspectiveSnapshotStore(dataSource);
     using var data = System.Text.Json.JsonDocument.Parse("""{"at":1}""");
 
     await store.CreateSnapshotAsync(streamId, _perspectiveName, first, 1, data, collectivesThroughSequence: 40);
