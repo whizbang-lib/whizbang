@@ -166,6 +166,10 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
         TargetId = streamA,
         ResetTo = 0m,
       });
+      // Each row's last event is its own, so its rebuilt cursor names a hot event: a cursor naming the archived
+      // collective is the open question of #1931 (the EF Core schema's cursor foreign key refuses it).
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 5m });
+      await _appendAsync(eventStore, streamB, new RebuildCreditedEvent { StreamId = streamB, Amount = 1m });
     }
     var archived = await _archive().WriteAsync(ArchiveBatch.WholeStream(collectiveStream));
     await Assert.That(archived.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
@@ -187,10 +191,11 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       var b = await store.GetByStreamIdAsync(streamB, CancellationToken.None);
 
       await Assert.That(a).IsNotNull();
-      await Assert.That(a!.Balance).IsEqualTo(0m)
-        .Because("the archived collective is listed from the lifecycle ledger and read back through the archive");
+      await Assert.That(a!.Balance).IsEqualTo(5m)
+        .Because("the archived collective is listed from the lifecycle ledger and read back through the archive, so the "
+          + "reset folds between the two credits (without it the row would read 105)");
       await Assert.That(b).IsNotNull();
-      await Assert.That(b!.Balance).IsEqualTo(500m)
+      await Assert.That(b!.Balance).IsEqualTo(501m)
         .Because("the collective targets stream A only");
     }
   }
