@@ -68,11 +68,7 @@ public static class SchemaBootstrapPhase {
   /// Applies the bootstrap scripts, then reports whether an instance can now be elected; the bootstrap of Preflight
   /// (#1636).
   /// </summary>
-  /// <param name="connectionFactory">Produces the connection the lock and the scripts share.</param>
-  /// <param name="lockId">The schema initialization lock key, the same one the DDL phase uses.</param>
-  /// <param name="scripts">The core table SQL and the marked migration regions, in order.</param>
-  /// <param name="schema">The target schema, used to probe for the elected objects.</param>
-  /// <param name="commandTimeoutSeconds">The timeout for one script, and for one wait on the schema lock.</param>
+  /// <param name="request">What to apply, where, and under which lock.</param>
   /// <param name="services">Where the stage reporter and the schema initialization observers are registered; null tells none.</param>
   /// <param name="timeProvider">The clock a retry waits on.</param>
   /// <param name="logger">Optional logger.</param>
@@ -103,25 +99,24 @@ public static class SchemaBootstrapPhase {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ANonTransientFailure_FailsStartupLoudly_NamingWhatFailedAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:AConnectionRefusedForGood_FailsTheBootstrap_NamingTheConnectionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupPreflightHostTests.cs:ABootstrapThatCannotBeApplied_FailsTheInitialization_NamingWhatFailedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ATransientFailureWithNoSqlState_IsRetried_AndLoggedAsNoneAsync</tests>
   public static async Task<bool> ApplyAsync(
-      Func<NpgsqlConnection> connectionFactory,
-      long lockId,
-      IEnumerable<(string Name, string Sql)> scripts,
-      string schema,
-      int commandTimeoutSeconds,
+      SchemaBootstrapRequest request,
       IServiceProvider? services,
       TimeProvider timeProvider,
       ILogger? logger,
       CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(connectionFactory);
-    ArgumentNullException.ThrowIfNull(scripts);
+    ArgumentNullException.ThrowIfNull(request);
+    ArgumentNullException.ThrowIfNull(request.ConnectionFactory);
+    ArgumentNullException.ThrowIfNull(request.Scripts);
     ArgumentNullException.ThrowIfNull(timeProvider);
 
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
-    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
-    var closure = BootstrapClosure.Of(scripts);
-    var attempt = new BootstrapAttempt(connectionFactory, lockId, closure, target, commandTimeoutSeconds, services, log);
+    var target = string.IsNullOrEmpty(request.Schema) ? "public" : request.Schema.Replace("\"", string.Empty);
+    var closure = BootstrapClosure.Of(request.Scripts);
+    var attempt = new BootstrapAttempt(
+      request.ConnectionFactory, request.LockId, closure, target, request.CommandTimeoutSeconds, services, log);
 
     var failures = 0;
     while (true) {
@@ -169,7 +164,8 @@ public static class SchemaBootstrapPhase {
       ILogger? logger = null,
       CancellationToken cancellationToken = default) =>
     ApplyAsync(
-      connectionFactory, lockId, scripts, schema, commandTimeoutSeconds, null, TimeProvider.System, logger, cancellationToken);
+      new SchemaBootstrapRequest(connectionFactory, lockId, scripts, schema, commandTimeoutSeconds),
+      null, TimeProvider.System, logger, cancellationToken);
 
   /// <summary>
   /// One attempt at the bootstrap, and what it was doing, so a failure can say what failed.
@@ -667,3 +663,18 @@ internal static partial class SchemaBootstrapLog {
               + "for; nothing applied here")]
   public static partial void AppliedWhileWaiting(ILogger logger, string closureHash, string schema);
 }
+
+/// <summary>What a schema bootstrap applies, where, and under which lock (#1636).</summary>
+/// <param name="ConnectionFactory">Produces the connection the lock and the scripts share.</param>
+/// <param name="LockId">The schema initialization lock key, the same one the DDL phase uses.</param>
+/// <param name="Scripts">The core table SQL and the marked migration regions, in order.</param>
+/// <param name="Schema">The target schema, used to probe for the elected objects; empty means <c>public</c>.</param>
+/// <param name="CommandTimeoutSeconds">The timeout for one script, and for one wait on the schema lock.</param>
+/// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ABootstrapThatFindsTheLockHeld_WaitsForIt_ThenAppliesTheClosureAsync</tests>
+public sealed record SchemaBootstrapRequest(
+    Func<NpgsqlConnection> ConnectionFactory,
+    long LockId,
+    IEnumerable<(string Name, string Sql)> Scripts,
+    string Schema,
+    int CommandTimeoutSeconds);

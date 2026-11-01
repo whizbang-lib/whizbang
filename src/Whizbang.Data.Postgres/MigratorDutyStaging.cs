@@ -72,6 +72,7 @@ public static class MigratorDutyStaging {
   /// <returns>Whether this instance joined the registry. A failure is logged and answered, never thrown.</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_RunsTheRegistration_AndAnswersThatTheInstanceJoinedAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_IsSaidAndAnsweredAsNotJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_WithNoLogger_IsAnsweredAsNotJoinedAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupPreflightHostTests.cs:TheInstanceRow_IsRegisteredAtTheEndOfPreflight_BeforeElectAsync</tests>
   public static async Task<bool> RegisterAsync(
       Func<CancellationToken, Task> registerAsync,

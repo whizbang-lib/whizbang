@@ -148,6 +148,33 @@ public class SchemaInitializationBarrierTests {
     await (await unhosted).DisposeAsync();
   }
 
+  /// <summary>
+  /// A host provider with no <see cref="IServiceScopeFactory"/> is its own key: a second entry through the same provider
+  /// waits, and one through another such provider does not.
+  /// </summary>
+  [Test]
+  public async Task AHostWithNoScopeFactory_IsItsOwnKeyAsync() {
+    var host = new BareProvider();
+    var other = new BareProvider();
+    await using var connection = _connection("orders");
+
+    var first = await SchemaInitializationBarrier.EnterAsync(host, connection, "public", null, CancellationToken.None);
+    var same = SchemaInitializationBarrier.EnterAsync(host, connection, "public", null, CancellationToken.None);
+    var another = SchemaInitializationBarrier.EnterAsync(other, connection, "public", null, CancellationToken.None);
+
+    await Assert.That(same.IsCompleted).IsFalse().Because("the same provider is the same host");
+    await Assert.That(another.IsCompleted).IsTrue().Because("another provider is another host");
+    await (await another).DisposeAsync();
+    await first.DisposeAsync();
+    await (await same).DisposeAsync();
+    await Assert.That(SchemaInitializationBarrier.Tracks(host, connection, "public")).IsFalse();
+  }
+
+  /// <summary>A service provider that resolves nothing, not even a scope factory.</summary>
+  private sealed class BareProvider : IServiceProvider {
+    public object? GetService(Type serviceType) => null;
+  }
+
   /// <summary>Missing arguments are caller errors.</summary>
   [Test]
   public async Task MissingArguments_AreRefusedAsync() {

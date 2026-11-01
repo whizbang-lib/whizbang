@@ -448,7 +448,7 @@ public class SchemaBootstrapPhaseTests {
     var signals = new BootstrapSignals();
 
     var applying = SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, signals.Services, new FakeTimeProvider(), null,
+      new SchemaBootstrapRequest(_connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null,
       cancellationToken);
 
     await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
@@ -493,7 +493,7 @@ public class SchemaBootstrapPhaseTests {
     var signals = new BootstrapSignals();
 
     var applying = SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, signals.Services, new FakeTimeProvider(), null, cancellationToken);
+      new SchemaBootstrapRequest(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null, cancellationToken);
 
     await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
       .Because("the holder has not committed, so the waiter has to wait for it");
@@ -517,7 +517,7 @@ public class SchemaBootstrapPhaseTests {
     using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     var applying = SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, signals.Services, new FakeTimeProvider(), null,
+      new SchemaBootstrapRequest(_connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null,
       stop.Token);
     await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue();
     await stop.CancelAsync();
@@ -550,7 +550,7 @@ public class SchemaBootstrapPhaseTests {
     var logger = new RecordingLogger();
 
     var applying = SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, signals.Services, time, logger, cancellationToken);
+      new SchemaBootstrapRequest(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, time, logger, cancellationToken);
 
     await Assert.That(await Task.WhenAny(signals.RetryScheduled, applying) == signals.RetryScheduled).IsTrue()
       .Because("a transient failure is retried; it is not reported as a lost election");
@@ -598,6 +598,43 @@ public class SchemaBootstrapPhaseTests {
     await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder);
     await release.ExecuteScalarAsync(cancellationToken);
   }
+
+  /// <summary>
+  /// A transient failure the server never answered (a refused connection carries no SQLSTATE) is retried like any
+  /// other, and its log line says <c>SQLSTATE none</c> rather than leaving the field blank.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ATransientFailureWithNoSqlState_IsRetried_AndLoggedAsNoneAsync(CancellationToken cancellationToken) {
+    // Nothing listens on port 1, so the connection is refused at once: a dropped-connection failure with no SQLSTATE.
+    var refused = new NpgsqlConnectionStringBuilder(_connectionString) { Host = "127.0.0.1", Port = 1, Timeout = 5 }.ConnectionString;
+    var signals = new BootstrapSignals();
+    var logger = new RecordingLogger();
+    using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(() => new NpgsqlConnection(refused), LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS),
+      signals.Services, new FakeTimeProvider(), logger, stop.Token);
+
+    await Assert.That(await Task.WhenAny(signals.RetryScheduled, applying) == signals.RetryScheduled).IsTrue()
+      .Because("a refused connection is transient, so it is retried");
+    var (attempt, exception, _) = await signals.RetryScheduled;
+    await Assert.That(attempt).IsEqualTo(1);
+    await Assert.That(exception is NpgsqlException { SqlState: null }).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("<connect>", StringComparison.Ordinal) && e.Message.Contains("SQLSTATE none", StringComparison.Ordinal)))
+      .IsTrue().Because("a failure with no SQLSTATE is logged as none, with the step that failed");
+
+    await stop.CancelAsync();
+    await Assert.That(async () => await applying).Throws<OperationCanceledException>()
+      .Because("the retry's wait ends with the start's cancellation");
+  }
+
+  /// <summary>A missing request is a caller error.</summary>
+  [Test]
+  public async Task AMissingRequest_IsRefusedAsync() =>
+    await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
+      null!, null, TimeProvider.System, null, CancellationToken.None)).Throws<ArgumentNullException>();
 
   /// <summary>
   /// A failure that is not transient fails startup loudly (#1636): it is thrown as a

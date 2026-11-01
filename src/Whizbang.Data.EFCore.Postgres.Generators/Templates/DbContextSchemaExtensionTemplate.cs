@@ -155,8 +155,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       // Phase 0: the bootstrap. Reports whether an election is actually possible now rather
       // than whether the scripts appeared to work.
       var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
-        segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
-        _schemaCommandTimeoutSeconds, serviceProvider, TimeProvider.System, logger, cancellationToken);
+        new Whizbang.Data.Postgres.SchemaBootstrapRequest(
+          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__", _schemaCommandTimeoutSeconds),
+        serviceProvider, TimeProvider.System, logger, cancellationToken);
 
       try {
         // Phase 1: join the registry, then contend for the duty. Registering is Preflight's last step

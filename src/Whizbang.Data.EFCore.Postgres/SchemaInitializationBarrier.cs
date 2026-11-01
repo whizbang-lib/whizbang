@@ -67,7 +67,9 @@ public static partial class SchemaInitializationBarrier {
   public static Task<IAsyncDisposable> EnterAsync(
       DbContext dbContext, IServiceProvider? serviceProvider, string schema, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(dbContext);
-    var host = dbContext.GetService<IDbContextOptions>().FindExtension<CoreOptionsExtension>()?.ApplicationServiceProvider
+    // Every EF Core context carries CoreOptionsExtension (EF adds it to every options builder), so it is read as
+    // present rather than null-checked.
+    var host = dbContext.GetService<IDbContextOptions>().FindExtension<CoreOptionsExtension>()!.ApplicationServiceProvider
       ?? serviceProvider;
     return EnterAsync(host, dbContext.Database.GetDbConnection(), schema, logger, cancellationToken);
   }
@@ -85,6 +87,7 @@ public static partial class SchemaInitializationBarrier {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationBarrierTests.cs:ASecondEntry_ForTheSameHostDatabaseAndSchema_WaitsForTheFirstToLeaveAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationBarrierTests.cs:EntriesForAnotherHostSchemaOrDatabase_DoNotWaitAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationBarrierTests.cs:ACanceledWait_LeavesTheBarrierAsItFoundItAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationBarrierTests.cs:AHostWithNoScopeFactory_IsItsOwnKeyAsync</tests>
   public static async Task<IAsyncDisposable> EnterAsync(
       IServiceProvider? host, DbConnection connection, string schema, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connection);

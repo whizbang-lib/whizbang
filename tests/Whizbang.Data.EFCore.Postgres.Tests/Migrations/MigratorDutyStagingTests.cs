@@ -303,6 +303,15 @@ public class MigratorDutyStagingTests {
     await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue();
   }
 
+  /// <summary>A registration that fails with no logger given is still answered as not joined, not thrown.</summary>
+  [Test]
+  public async Task Register_ThatFails_WithNoLogger_IsAnsweredAsNotJoinedAsync() {
+    var joined = await MigratorDutyStaging.RegisterAsync(
+      _ => throw new InvalidOperationException("relation \"wh_service_instances\" does not exist"), SCHEMA);
+
+    await Assert.That(joined).IsFalse();
+  }
+
   /// <summary>Cancellation, before or during the registration, propagates.</summary>
   [Test]
   public async Task Register_Cancellation_PropagatesAsync() {
