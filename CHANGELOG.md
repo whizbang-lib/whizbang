@@ -1462,6 +1462,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Stage 2 of 7: Elect - voting for the migrator duty`). `MigratorDutyStaging.RegisterAsync` and an `ElectAsync`
   overload for an instance that has already registered are the two steps; the combined `ElectAsync` is kept and runs
   both.
+- **A direct `EnsureWhizbangDatabaseInitializedAsync` call waits for the initialization in progress (part of #1636).**
+  The host's own initialization waits for one already running through the registry's per-host barrier, but a direct
+  `dbContext.EnsureWhizbangDatabaseInitializedAsync()` call (an application initializing again from
+  `ApplicationStarted`, say) bypassed it and ran a pass beside the host's, applying steps the host had not reached.
+  The generated method now enters `SchemaInitializationBarrier` first: one initialization of a database and schema at a
+  time per host, whoever calls, the host being the context's application service provider (else the one passed in). A
+  call made while another runs logs that it is waiting, waits, then runs its own pass, which finds the schema current
+  and returns on the fast path. Two hosts in one process are two instances and still meet only at the schema lock.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and

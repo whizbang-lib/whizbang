@@ -252,6 +252,18 @@ calls it outside the election's catch, so that exception fails the attempt. Excl
 `OperationCanceledException` before classifying: Npgsql wraps a canceled statement's `57014`, which
 the classifier reads as transient, and a canceled start would otherwise retry.
 
+### Two barriers, and why the generated method has its own
+
+`DbContextInitializationRegistry.InitializeAllAsync` keeps one attempt per host (keyed on the host's
+`IServiceScopeFactory`) and a second call joins it. A direct `dbContext.EnsureWhizbangDatabaseInitializedAsync()`
+never reaches the registry, so the generated method enters `SchemaInitializationBarrier` itself (#1636): one
+initialization per host, data source, database and schema. The host is the context's application service provider
+(what `AddDbContext` gives it), else the provider passed in, keyed on its `IServiceScopeFactory`; a context built by
+hand with no provider is not barriered. Keyed per host, not per process, on purpose: two hosts in one process are two
+instances (tests rely on that to hold one instance mid-pass while another continues), and a process-wide key
+deadlocked exactly those tests. It serializes and does not join: the key comes from the connection string, which
+cannot prove two calls target one database, so a waiter runs its own pass and the fast path returns it.
+
 ### The bootstrap lock must be transaction scoped, not session scoped
 
 This one is worth stating on its own, because the session-scoped version looks fine and is a

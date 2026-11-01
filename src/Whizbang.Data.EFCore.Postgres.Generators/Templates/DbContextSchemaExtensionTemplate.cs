@@ -66,6 +66,25 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     IServiceProvider? serviceProvider = null,
     CancellationToken cancellationToken = default,
     int? commandTimeoutSeconds = null) {
+    // #1636: one initialization of this database and schema at a time in a host, whoever calls. The host's own
+    // initialization goes through the registry's per-host barrier; a direct call does not, and used to run a pass
+    // beside the host's. A call made while another runs waits for it, then runs its own, which finds the schema
+    // current and returns on the fast path. The host is the context's application service provider, else the one
+    // passed here.
+    await using var turn = await Whizbang.Data.EFCore.Postgres.SchemaInitializationBarrier.EnterAsync(
+      dbContext, serviceProvider, "__SCHEMA__", logger, cancellationToken);
+    await _ensureWhizbangDatabaseInitializedCoreAsync(
+      dbContext, logger, initConnectionString, serviceProvider, commandTimeoutSeconds, cancellationToken);
+  }
+
+  /// <summary>The initialization itself, run inside the in-process barrier.</summary>
+  private static async Task _ensureWhizbangDatabaseInitializedCoreAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    string? initConnectionString,
+    IServiceProvider? serviceProvider,
+    int? commandTimeoutSeconds,
+    CancellationToken cancellationToken) {
 
     // The managed-object reconcile's settings, read before anything touches the database: a setting that is not one
     // fails the start here, before this instance registers itself or migrates, as on the Dapper driver.
