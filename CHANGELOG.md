@@ -652,6 +652,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A failing receptor's span records the exception as an OpenTelemetry `exception` event (#1902).** When a receptor
+  throws, its span keeps status Error and now carries one `exception` event (`Activity.AddException`) with
+  `exception.type`, `exception.message` and `exception.stacktrace`, so a backend that turns exception events into
+  exception records (Azure Monitor, for example) shows the stack trace beside the trace, and a handler no longer has to
+  log the exception again to keep it. The span's `exception.type` and `exception.message` tags, which only duplicated
+  the event, are gone. **Upgrade:** a trace query that read those two tags on a receptor span reads the event's
+  attributes of the same names instead.
 - **An `Apply` that returns a shape its interface does not declare, or a second `Apply` beside an explicit interface
   `Apply` for the same event, now fails the build (#1936).** A perspective could return a bare `ModelAction`, the
   `(TModel?, ModelAction)` tuple or `ApplyResult<TModel>` for an event `IPerspectiveFor` lists, which compiled only beside
