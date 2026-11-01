@@ -144,6 +144,19 @@ public sealed class PerspectiveMetrics {
   /// <docs>fundamentals/events/ephemeral-events</docs>
   public PassiveCounter<long> StragglersDropped { get; }
 
+  /// <summary>
+  /// Snapshots of a row with collectives that were due and not taken, because a collective of the row was in flight when
+  /// the row was read, or moved before the row was written (#1963). Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// A deferred snapshot stays due, so the next apply of the stream takes it once its collectives are complete. A count
+  /// that keeps rising for a perspective says its tenant's collectives are almost never at rest, and its rewinds start
+  /// from older snapshots.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:ALiveSnapshot_IsDeferred_WhenACollectiveOfTheRowIsInFlightBeforeTheReadAsync</tests>
+  public PassiveCounter<long> SnapshotsDeferred { get; }
+
   /// <summary>Rewinds running right now (observable gauge).</summary>
   private long _rewindsInFlightValue;
 
@@ -199,6 +212,8 @@ public sealed class PerspectiveMetrics {
     RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
     StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
       description: "Late events an ephemeral perspective dropped instead of rewinding for them");
+    SnapshotsDeferred = meter.CreatePassiveCounter<long>("whizbang.perspective.snapshots_deferred",
+      description: "Due snapshots of a row with collectives not taken because a collective of the row was in flight");
 
     // Pinned at the concurrency limit means rewinds are queueing behind it, which no counter shows.
     meter.CreateObservableGauge("whizbang.perspective.rewinds_in_flight",

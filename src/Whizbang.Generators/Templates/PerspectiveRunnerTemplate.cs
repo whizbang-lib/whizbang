@@ -279,11 +279,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (_snapshotStore is null) {
       return null;
     }
-    var latest = await _snapshotStore.GetLatestSnapshotAsync(streamId, perspectiveName, cancellationToken);
+    // #1963: the newest snapshot with its collectives mark, so the replay folds exactly the collectives past it.
+    var latest = await _snapshotStore.GetLatestSnapshotFloorAsync(streamId, perspectiveName, cancellationToken);
     if (latest is null) {
       return null;
     }
-    var snapshotModel = FromSnapshotJson(latest.Value.SnapshotData);
+    var snapshotModel = FromSnapshotJson(latest.SnapshotData);
     if (snapshotModel is null) {
       return null;
     }
@@ -293,8 +294,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
     var completion = await _replayCheckedAsync(
-        streamId, perspectiveName, snapshotModel, latest.Value.SnapshotData, latest.Value.SnapshotEventId,
-        readThroughArchiveAfterVersion: null, cancellationToken);
+        streamId, perspectiveName, snapshotModel, latest.SnapshotData,
+        new ReplayFrom(latest.SnapshotEventId, ReadThroughArchiveAfterVersion: null, latest.CollectivesThroughSequence), cancellationToken);
     return new[] { completion };
   }
 
@@ -412,6 +413,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       bool firePreLifecycle,
       List<Task> backgroundTasks,
       CancellationToken cancellationToken) {
+
+    // #1963: when this apply may end in a snapshot of a row with collectives, the collective fence is read BEFORE the row,
+    // and read again after the write; the snapshot records the first read's mark only when no collective of the row moved
+    // across both reads, and is deferred otherwise.
+    var collectiveFence = await _readCollectiveFenceBeforeLiveReadAsync(events, cancellationToken);
 
     // Read the row's version and metadata FIRST, then the model. The model can then never be older than
     // the version the write is checked against: a writer that commits between the two reads moves the
@@ -1023,20 +1029,27 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           var snapshotRetention = _snapshotCadence().Retention;
           _eventsSinceLastSnapshot += eventsProcessed;
           if (snapshotDue) {
-            // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
-            // rewinds can locate the snapshot by commit_sequence (deterministic) rather
-            // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
-            // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
-            var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                lastSuccessfulEventId.Value, cancellationToken);
-            await _snapshotStore.CreateSnapshotAsync(
-                streamId, perspectiveName, lastSuccessfulEventId.Value,
-                snapshotCommitSequence,
-                snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), cancellationToken);
-            snapshotBeforeWrite = null; // handed to the store
-            await _snapshotStore.PruneOldSnapshotsAsync(
-                streamId, perspectiveName, snapshotRetention, cancellationToken);
-            _eventsSinceLastSnapshot = 0;
+            // #1963: the collectives mark this snapshot records, or a deferral when a collective of the row moved across
+            // the fence's two reads. A deferred snapshot stays due: the count is not reset, so the next apply takes it.
+            var collectiveMark = collectiveFence is { } fenceBefore
+                ? await _collectiveMarkAfterWriteAsync(fenceBefore, perspectiveName, streamId, cancellationToken)
+                : new CollectiveMark(Deferred: false, ThroughSequence: null);
+            if (!collectiveMark.Deferred) {
+              // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
+              // rewinds can locate the snapshot by commit_sequence (deterministic) rather
+              // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
+              // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
+              var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                  lastSuccessfulEventId.Value, cancellationToken);
+              await _snapshotStore.CreateSnapshotAsync(
+                  streamId, perspectiveName, lastSuccessfulEventId.Value,
+                  snapshotCommitSequence,
+                  snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), collectiveMark.ThroughSequence, cancellationToken);
+              snapshotBeforeWrite = null; // handed to the store
+              await _snapshotStore.PruneOldSnapshotsAsync(
+                  streamId, perspectiveName, snapshotRetention, cancellationToken);
+              _eventsSinceLastSnapshot = 0;
+            }
           }
         }
         snapshotBeforeWrite?.Dispose(); // not due this run
@@ -1485,6 +1498,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var hasSnapshot = false;
     // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
     long? readThroughArchiveAfterVersion = null;
+    // #1963: the commit sequence through which the snapshot's row held its collectives, when the snapshot records it.
+    long? collectivesThroughSequence = null;
     var startedAt = DateTimeOffset.UtcNow;
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
     // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
@@ -1525,6 +1540,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           snapshotData = snapshot.SnapshotData;
           hasSnapshot = true;
           readThroughArchiveAfterVersion = snapshot.ArchivedThroughVersion is null ? null : snapshot.SnapshotVersion;
+          collectivesThroughSequence = snapshot.CollectivesThroughSequence;
           var restoredFrom = snapshot;
           announceReplay = () => _logger.LogWarning(
               "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
@@ -1603,7 +1619,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     } else {
       announceReplay?.Invoke();
       result = await _replayCheckedAsync(
-          streamId, perspectiveName, snapshotModel, snapshotData, replayFromEventId, readThroughArchiveAfterVersion, cancellationToken);
+          streamId, perspectiveName, snapshotModel, snapshotData,
+          new ReplayFrom(replayFromEventId, readThroughArchiveAfterVersion, collectivesThroughSequence), cancellationToken);
     }
 
     // Fire PerspectiveRewindCompleted system event
@@ -1673,15 +1690,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       string perspectiveName,
       __MODEL_TYPE_NAME__? snapshotModel,
       JsonDocument? snapshotData,
-      Guid? replayFromEventId,
-      long? readThroughArchiveAfterVersion,
+      ReplayFrom from,
       CancellationToken cancellationToken) {
     for (var attempt = 1; ; attempt++) {
       // A replay that is refused restarts from the same snapshot, read again from its stored form so nothing the
       // refused replay folded carries into the next one.
       var initialModel = attempt == 1 || snapshotData is null ? snapshotModel : FromSnapshotJson(snapshotData);
       try {
-        return await RunFromModelAsync(streamId, perspectiveName, initialModel, replayFromEventId, readThroughArchiveAfterVersion, cancellationToken);
+        return await RunFromModelAsync(streamId, perspectiveName, initialModel, from, cancellationToken);
       } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) when (attempt < MAX_ROW_CONFLICT_ATTEMPTS) {
         _logger.LogDebug(
             conflict,
@@ -1715,9 +1731,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       string perspectiveName,
       __MODEL_TYPE_NAME__? initialModel,
-      Guid? replayFromEventId,
-      long? readThroughArchiveAfterVersion,
+      ReplayFrom from,
       CancellationToken cancellationToken) {
+    var replayFromEventId = from.EventId;
+    var readThroughArchiveAfterVersion = from.ReadThroughArchiveAfterVersion;
 
     // Use provided model or create empty one (full replay from event zero)
     // The row version this replay writes against, read before any event is (#1863): a writer that commits after this
@@ -1814,6 +1831,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ? await _eventStore.GetCommitSequenceAsync(snapshotEventId, cancellationToken)
         : null;
     var foldedCollectives = new HashSet<Guid>();
+    // #1963: how far the row holds its collectives at its last stream event, for the snapshots this replay takes. It holds
+    // what the start held (the snapshot's mark, or the snapshot-event rule for a snapshot that records none) and every
+    // collective folded before that event, whose own commit sequence it reaches too. A collective folded with no commit
+    // sequence cannot be described by one, so the replay's snapshots then record no mark.
+    var heldStart = from.CollectivesThroughSequence ?? collectiveStartSequence;
+    var heldThrough = new CollectiveHold(foldsCollectives, heldStart, startDescribed: replayFromEventId is null || heldStart is not null);
     // The row at its last event, taken when collectives committed after that event fold into it: the snapshot this replay
     // ends with is taken at that event, so it must not hold them, or a rewind from it would fold them again.
     JsonDocument? modelAtLastEvent = null;
@@ -1856,7 +1879,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             is { Known: true } tenant) {
         var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
             typeof(__MODEL_TYPE_NAME__), events,
-            new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, replayFromEventId, collectiveStartSequence),
+            new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, replayFromEventId, collectiveStartSequence) {
+              CollectivesThroughSequence = from.CollectivesThroughSequence,
+            },
             cancellationToken);
         events = [.. merged.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent || foldedCollectives.Add(e.MessageId.Value))];
       }
@@ -1894,6 +1919,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier!.ApplyInMemory(
               typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
           producedByApply = true;
+          heldThrough.Fold(envelope.LocalCommitSequence);
         }
         eventsProcessed++;
         continue;
@@ -1901,6 +1927,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // A stream event after collectives: the row at the last event is the one this event leaves.
       modelAtLastEvent?.Dispose();
       modelAtLastEvent = null;
+      heldThrough.ReachEvent(envelope.LocalCommitSequence);
 
       // Track scope from envelope for perspective upsert
       var envelopeScope = envelope.GetCurrentScope();
@@ -1988,7 +2015,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             await _snapshotStore.CreateSnapshotAsync(
                 streamId, perspectiveName, lastSuccessfulEventId.Value,
                 intermediateCommitSequence,
-                ToSnapshotJson(updatedModel), cancellationToken);
+                ToSnapshotJson(updatedModel), heldThrough.Mark, cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
                 streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
             eventsSinceIntermediateSnapshot = 0;
@@ -2040,6 +2067,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       FrontierEventId = frontierEventId,
       FrontierCommitSequence = frontierCommitSequence,
       ModelAtLastEvent = modelAtLastEvent,
+      CollectivesHeldThrough = heldThrough.Mark,
     }, cancellationToken);
   }
 
@@ -2135,7 +2163,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await _snapshotStore.CreateSnapshotAsync(
             streamId, perspectiveName, lastSuccessfulEventId.Value,
             afterReplayCommitSequence,
-            snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), cancellationToken);
+            snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), outcome.CollectivesHeldThrough, cancellationToken);
         snapshotBeforeWrite = null; // handed to the store
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
@@ -2274,6 +2302,50 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public long? FrontierCommitSequence { get; set; }
     // The row at its last event, when collectives committed after that event folded into it (#1956).
     public JsonDocument? ModelAtLastEvent { get; set; }
+    // How far the row held its collectives at its last event (#1963): the mark the replay's snapshot records.
+    public long? CollectivesHeldThrough { get; set; }
+  }
+
+  /// <summary>Where a replay starts: the snapshot's event, its archive mark and its collectives mark (#1963).</summary>
+  private readonly record struct ReplayFrom(Guid? EventId, long? ReadThroughArchiveAfterVersion, long? CollectivesThroughSequence);
+
+  /// <summary>
+  /// How far a replayed row holds its collectives at its last stream event (#1963). The collectives folded since that
+  /// event count once the next stream event is reached, because a snapshot is taken at a stream event; the ones folded
+  /// after the last stream event are not in the snapshot (#1956).
+  /// </summary>
+  private sealed class CollectiveHold(bool foldsCollectives, long? start, bool startDescribed) {
+    private long? _held = start;
+    private long? _pending;
+    private bool _pendingUnstamped;
+    // A snapshot the replay started from, whose collectives no commit sequence describes (it records no mark and its event
+    // carries none), leaves the replay's snapshots with no mark either.
+    private bool _unstamped = !startDescribed;
+
+    /// <summary>A collective folded; its commit sequence, or null when it has none.</summary>
+    public void Fold(long? commitSequence) {
+      if (commitSequence is long sequence) {
+        _pending = _pending is long pending ? Math.Max(pending, sequence) : sequence;
+      } else {
+        _pendingUnstamped = true;
+      }
+    }
+
+    /// <summary>A stream event folded: the collectives before it are held, and so is its own position.</summary>
+    public void ReachEvent(long? commitSequence) {
+      _held = _max(_max(_held, _pending), commitSequence);
+      _unstamped |= _pendingUnstamped;
+      _pending = null;
+      _pendingUnstamped = false;
+    }
+
+    /// <summary>
+    /// The mark a snapshot at the last stream event records: none for a model with no collectives, and none once an
+    /// unstamped collective was folded.
+    /// </summary>
+    public long? Mark => foldsCollectives && !_unstamped ? _held : null;
+
+    private static long? _max(long? a, long? b) => a is long x && b is long y ? Math.Max(x, y) : a ?? b;
   }
 
   /// <summary>Hands the replay's row at its last event to the snapshot write, once.</summary>
@@ -2287,10 +2359,86 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Whether a replay of this model folds collectives (#1956): a collective replay applier is registered and names a
   /// collective event for the model.
   /// </summary>
-  private bool _modelHasCollectives() =>
-      _collectiveReplayApplier is not null
-      && _collectiveReplayApplier.CollectiveEventTypeNamesFor(
-          global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')).Count > 0;
+  private bool _modelHasCollectives() => _collectiveEventTypeNames().Count > 0;
+
+  /// <summary>The stored event-type names of the model's collectives; none without a collective replay applier.</summary>
+  private System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
+      _collectiveReplayApplier?.CollectiveEventTypeNamesFor(
+          global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')) ?? [];
+
+  /// <summary>The collective snapshot fence, when a driver registered one (#1963).</summary>
+  private global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence? _CollectiveSnapshotFence =>
+      _serviceProvider.GetService<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>();
+
+  /// <summary>
+  /// Whether a live snapshot of this row reads the collective fence (#1963): the model has collectives and a fence is
+  /// registered. A model no collective changes, or a host with no fence, takes snapshots that record no mark.
+  /// </summary>
+  private bool _collectiveFenceApplies() => _CollectiveSnapshotFence is not null && _modelHasCollectives();
+
+  /// <summary>One read of the collective fence, with what the read after the write needs to ask it again.</summary>
+  private sealed record CollectiveFenceRead(
+      string? TenantId,
+      System.Collections.Generic.IReadOnlyList<string> CollectiveEventTypes,
+      global::Whizbang.Core.Perspectives.CollectiveSnapshotFenceReading Reading);
+
+  /// <summary>The mark a snapshot records, or that it is deferred (#1963).</summary>
+  private readonly record struct CollectiveMark(bool Deferred, long? ThroughSequence);
+
+  /// <summary>Reads the fence for the row's tenant, before the row is read.</summary>
+  private async Task<CollectiveFenceRead> _readCollectiveFenceAsync(string? tenantId, CancellationToken cancellationToken) {
+    var types = _collectiveEventTypeNames();
+    var reading = await _CollectiveSnapshotFence!.ReadAsync(tenantId, types, afterSequence: null, cancellationToken);
+    return new CollectiveFenceRead(tenantId, types, reading);
+  }
+
+  /// <summary>
+  /// The fence read before a live apply's row read, when the apply may end in a snapshot of a row with collectives
+  /// (#1963); null otherwise. A rebuild reads none: it folds every collective in commit order, so its snapshot holds
+  /// exactly the ones before its event. The row's tenant is its events', as a replay of the row takes it.
+  /// </summary>
+  private async Task<CollectiveFenceRead?> _readCollectiveFenceBeforeLiveReadAsync(
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      CancellationToken cancellationToken) {
+    var snapshotMayBeDue = events.Count > 0
+        && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+        && _eventsSinceLastSnapshot + events.Count >= _snapshotCadence().Threshold;
+    if (!snapshotMayBeDue
+        || global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
+        || !_collectiveFenceApplies()) {
+      return null;
+    }
+    return await _readCollectiveFenceAsync(events[0].GetCurrentScope()?.Scope.TenantId, cancellationToken);
+  }
+
+  /// <summary>
+  /// Reads the fence again after the row was read and written (#1963), and decides the snapshot's mark. The snapshot
+  /// holds exactly the row's collectives stamped at or below the first read's mark when no collective of the row was in
+  /// flight at the first read, and none is in flight, or was stamped past that mark, at the second. Otherwise it is
+  /// deferred and counted. A store with no stamped event marks zero: no collective was complete.
+  /// </summary>
+  private async Task<CollectiveMark> _collectiveMarkAfterWriteAsync(
+      CollectiveFenceRead before, string perspectiveName, Guid streamId, CancellationToken cancellationToken) {
+    var mark = before.Reading.CompleteThroughSequence ?? 0;
+    if (!before.Reading.CollectiveInFlight) {
+      var after = await _CollectiveSnapshotFence!.ReadAsync(before.TenantId, before.CollectiveEventTypes, mark, cancellationToken);
+      if (!after.CollectiveInFlight) {
+        return new CollectiveMark(Deferred: false, ThroughSequence: mark);
+      }
+    }
+    _deferSnapshot(perspectiveName, streamId);
+    return new CollectiveMark(Deferred: true, ThroughSequence: null);
+  }
+
+  /// <summary>Counts and logs a snapshot deferred because a collective of the row was in flight (#1963).</summary>
+  private void _deferSnapshot(string perspectiveName, Guid streamId) {
+    _serviceProvider.GetService<PerspectiveMetrics>()?.SnapshotsDeferred.Add(
+        1, new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+    _logger.LogDebug(
+        "Snapshot of {PerspectiveName} stream {StreamId} deferred: a collective of the row was in flight, so the snapshot could not say which collectives it holds; it stays due",
+        perspectiveName,
+        streamId);
+  }
 
   /// <summary>
   /// The tenant whose collectives a replay pass folds (#1956): the tenant of the stream's events when the pass read any;
@@ -2319,8 +2467,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return;
     }
 
+    // #1963: a bootstrap snapshot is a live row too, so a row with collectives reads the fence before the model and again
+    // after it, for the tenant the row is stored under. A store that cannot say the row's tenant cannot be fenced, so the
+    // snapshot is deferred to a later bootstrap.
+    CollectiveFenceRead? collectiveFence = null;
+    if (_collectiveFenceApplies()) {
+      var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
+      if (applyRead.Version.State != global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present) {
+        _deferSnapshot(perspectiveName, streamId);
+        return;
+      }
+      collectiveFence = await _readCollectiveFenceAsync(applyRead.Scope?.TenantId, cancellationToken);
+    }
+
     var model = await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken);
     if (model is null) {
+      return;
+    }
+
+    var collectiveMark = collectiveFence is { } fenceBefore
+        ? await _collectiveMarkAfterWriteAsync(fenceBefore, perspectiveName, streamId, cancellationToken)
+        : new CollectiveMark(Deferred: false, ThroughSequence: null);
+    if (collectiveMark.Deferred) {
       return;
     }
 
@@ -2332,7 +2500,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var bootstrapCommitSequence = await _eventStore.GetCommitSequenceAsync(
         lastProcessedEventId, cancellationToken);
     await _snapshotStore.CreateSnapshotAsync(
-        streamId, perspectiveName, lastProcessedEventId, bootstrapCommitSequence, snapshotData, cancellationToken);
+        streamId, perspectiveName, lastProcessedEventId, bootstrapCommitSequence, snapshotData, collectiveMark.ThroughSequence,
+        cancellationToken);
 
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
