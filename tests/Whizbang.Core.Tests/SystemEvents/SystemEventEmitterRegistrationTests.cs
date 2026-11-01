@@ -218,6 +218,30 @@ public class SystemEventEmitterRegistrationTests {
   }
 
   [Test]
+  public async Task AddWhizbang_TheDefaultEmitter_IsGivenTheEphemeralResolverAsync() {
+    var log = new AppendLog();
+    var services = new ServiceCollection();
+    services.AddWhizbang();
+    services.AddSystemEvents(options => options.EnableEventAudit());
+    services.AddSingleton<IEventStore>(new RecordingStore(log));
+    services.AddSingleton<IEphemeralModeResolver>(new EphemeralModeResolver(new SingleEntryCatalog(new MessageTypeCatalogEntry(
+      typeof(PlainEvent), "Whizbang.Core.Tests.SystemEvents.SystemEventEmitterRegistrationTests+PlainEvent", "event", null) {
+      Ephemeral = new Whizbang.Core.Attributes.EphemeralInfo(
+        Whizbang.Core.Attributes.Destruction.WhenConsumed, Whizbang.Core.Attributes.TransientStorage.PersistedRow)
+    })));
+
+    var emitter = services.BuildServiceProvider().GetRequiredService<ISystemEventEmitter>();
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _envelope(new PlainEvent { Name = "typing" }));
+
+    await Assert.That(log.Payloads).IsEmpty()
+      .Because("the resolver declares the type ephemeral, and the default emitter must be given it to know (#1730)");
+  }
+
+  private sealed class SingleEntryCatalog(MessageTypeCatalogEntry entry) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [entry];
+  }
+
+  [Test]
   public async Task AddWhizbang_AScopedHostHook_IsHonoredWithoutBeingCapturedAsync() {
     var log = new AppendLog();
     var hooksCreated = 0;

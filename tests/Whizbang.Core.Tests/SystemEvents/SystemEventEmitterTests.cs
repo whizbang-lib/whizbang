@@ -1235,6 +1235,91 @@ public class SystemEventEmitterTests {
 
   #endregion
 
+  #region Name-based record ids (#1724)
+
+  [Test]
+  public async Task EmitEventAuditedAsync_TheRecordId_IsDerivedFromTheAuditedEventAsync() {
+    var eventStore = new MockEventStore();
+    var envelope = _createTestEnvelope("named");
+
+    await _emitterFor(eventStore, resolver: null).EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    var emitted = (MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single();
+    await Assert.That(emitted.Payload.Id).IsEqualTo(AuditLedger.RecordIdFor(envelope.MessageId.Value));
+  }
+
+  #endregion
+
+  #region Ephemeral events (#1730)
+
+  internal sealed record EmitterEphemeralPresence(string Name) : IEphemeralEvent;
+
+  [AuditEvent(IncludeBody = true)]
+  internal sealed record EmitterEphemeralBodyKept(string Name) : IEphemeralEvent;
+
+  // Ephemeral only in the generated catalog, as a type declared [Ephemeral] through a base record is.
+  internal sealed record EmitterCatalogEphemeral(string Name) : IEvent;
+
+  private sealed class SingleEntryCatalog(MessageTypeCatalogEntry entry) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [entry];
+  }
+
+  private static SystemEventEmitter _emitterFor(MockEventStore eventStore, IEphemeralModeResolver? resolver) =>
+    SystemEventEmitter.ForSink(
+      Options.Create(new SystemEventOptions().EnableEventAudit()),
+      new EventStoreSystemEventSink(eventStore, auditDecisionHook: null),
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      NullLogger<SystemEventEmitter>.Instance,
+      resolver);
+
+  [Test]
+  public async Task EmitEventAuditedAsync_AnEphemeralEvent_RecordsNothingAsync() {
+    var eventStore = new MockEventStore();
+    var emitter = new SystemEventEmitter(Options.Create(new SystemEventOptions().EnableEventAudit()), eventStore,
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterEphemeralPresence("typing")));
+
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty()
+      .Because("a record pointing at an ephemeral event dangles once the origin reaps it");
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_AnEphemeralEventThatKeepsItsBody_IsRecordedWithItAsync() {
+    var eventStore = new MockEventStore();
+
+    await _emitterFor(eventStore, resolver: null).EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterEphemeralBodyKept("typing")));
+
+    var emitted = (MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single();
+    await Assert.That(emitted.Payload.OriginalBody).IsNotNull();
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_ATypeTheCatalogDeclaresEphemeral_RecordsNothingAsync() {
+    var eventStore = new MockEventStore();
+    var resolver = new EphemeralModeResolver(new SingleEntryCatalog(new MessageTypeCatalogEntry(
+      typeof(EmitterCatalogEphemeral), "Whizbang.Core.Tests.SystemEvents.SystemEventEmitterTests+EmitterCatalogEphemeral", "event", null) {
+      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.PersistedRow)
+    }));
+
+    await _emitterFor(eventStore, resolver).EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterCatalogEphemeral("typing")));
+
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_TheSameTypeWithoutAResolver_IsRecordedAsync() {
+    // The control for the test above: the catalog is what makes it ephemeral.
+    var eventStore = new MockEventStore();
+
+    await _emitterFor(eventStore, resolver: null).EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterCatalogEphemeral("typing")));
+
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+  }
+
+  #endregion
+
   #region Helper Methods
 
   private static MessageEnvelope<T> _createTestEnvelope<T>(T payload) {

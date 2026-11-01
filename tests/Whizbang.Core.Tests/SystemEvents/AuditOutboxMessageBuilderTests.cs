@@ -693,6 +693,86 @@ public class AuditOutboxMessageBuilderTests {
 
   #endregion
 
+  #region Name-based record ids (#1724)
+
+  [Test]
+  public async Task TryBuildAuditMessage_TheRecordId_IsDerivedFromTheAuditedEventAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("Id").GetGuid()).IsEqualTo(AuditLedger.RecordIdFor(message.MessageId));
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_BuiltTwiceForOneEvent_IsOneRecordAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
+    var options = _createOptions(auditEnabled: true);
+
+    var first = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var second = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    await Assert.That(second!.Envelope.Payload.GetProperty("Id").GetGuid()).IsEqualTo(first!.Envelope.Payload.GetProperty("Id").GetGuid())
+      .Because("the audit perspective keys a record by its id, so a record built again replaces the first instead of adding one");
+  }
+
+  #endregion
+
+  #region Ephemeral events (#1730)
+
+  [Test]
+  public async Task TryBuildAuditMessage_AnEphemeralEvent_IsNotAuditedAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName, flags: EventFlags.Ephemeral);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result).IsNull()
+      .Because("the dispatcher stamped the event ephemeral, and a pointer to it dangles once it is reaped");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_AnEphemeralEventThatKeepsItsBody_IsAuditedWithItAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestBodyKeptEvent).AssemblyQualifiedName, flags: EventFlags.Ephemeral);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_TheDefaultSetToInclude_DoesNotOptInAnEphemeralEventAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName, flags: EventFlags.Ephemeral);
+    var options = _createOptions(auditEnabled: true);
+    options.AuditBodyDefault = AuditBodyDefault.Include;
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    await Assert.That(result).IsNull()
+      .Because("the opt-in is the type's own IncludeBody; a process-wide default does not turn high-churn ephemeral traffic into audit");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_AnEphemeralEventOfAnUnresolvableType_IsNotAuditedAsync() {
+    // An unresolvable type cannot have asked for its body, so the ephemeral flag alone decides.
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly", flags: EventFlags.Ephemeral);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_ADurableEventOfAnUnresolvableType_IsStillAuditedAsync() {
+    // The control for the test above: without the flag an unresolvable type is audited, as it always was.
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  #endregion
+
   private static OutboxMessage _createOutboxMessage(
       bool isEvent,
       Guid? messageId = null,
@@ -705,7 +785,8 @@ public class AuditOutboxMessageBuilderTests {
       bool includeHops = true,
       bool hopMetadataWithoutCorrelation = false,
       MessageId? causationIdInHop = null,
-      CorrelationId? correlationIdOnHop = null) {
+      CorrelationId? correlationIdOnHop = null,
+      EventFlags flags = EventFlags.None) {
     var msgId = messageId ?? Guid.NewGuid();
     var body = payload ?? JsonSerializer.SerializeToElement(new { test = "data" });
 
@@ -767,6 +848,7 @@ public class AuditOutboxMessageBuilderTests {
       EnvelopeType = "TestEnvelopeType",
       StreamId = streamId,
       IsEvent = isEvent,
+      Flags = flags,
       Scope = scope,
       MessageType = messageType ?? "TestNamespace.TestEvent, TestAssembly"
     };
