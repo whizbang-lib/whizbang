@@ -46,6 +46,18 @@ public class DapperArchivedStreamRebuildTests : PostgresTestBase {
     });
   }
 
+  // #1963: the driver registers the fence a snapshot of a row with collectives reads, as the EF Core driver does.
+  [Test]
+  public async Task AddWhizbangPostgres_RegistersTheCollectiveSnapshotFenceAsync() {
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    await using var provider = services.BuildServiceProvider();
+
+    var reading = await provider.GetRequiredService<Whizbang.Core.Perspectives.ICollectiveSnapshotFence>()
+      .ReadAsync("tenant-a", ["Tests.Collective, Tests"], afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsFalse().Because("the control: it reads this database, which holds no collective");
+  }
+
   [Test]
   public async Task Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync() {
     var whole = await _streamAsync(2);

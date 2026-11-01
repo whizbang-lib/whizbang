@@ -1039,6 +1039,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A snapshot records which collectives its row holds, and a replay from it folds exactly the rest (#1963).** A live
+  snapshot is the row as the live apply read it, while the collective sink applies collectives to rows on its own, a
+  key at a time and a batch at a time. A rewind from the snapshot decided by the snapshot's event alone, so a collective
+  committed before that event but still in flight was never folded, and one committed after it but already applied was
+  folded twice. A snapshot now records `collectives_through_sequence` (migration 275): the commit sequence through which
+  every collective of its row was complete. The runner reads the new collective snapshot fence
+  (`ICollectiveSnapshotFence`, `wh_collective_snapshot_fence`, migration 276) before it reads the row and again after it
+  writes the row, and records the mark only when no collective of the row was in flight at either read and none
+  completed between them. Otherwise the snapshot is deferred, counted in `whizbang.perspective.snapshots_deferred`, and
+  stays due, so the next apply takes it once the collective completes. A rewind, and a default rebuild from the newest
+  snapshot, fold the collectives stamped past the mark, and every unstamped one; a replay's own snapshots record the mark
+  they hold. Nothing is added to the collective sink's update path: the fence only reads. Snapshots taken before the
+  mark existed keep the snapshot-event rule. Both Postgres drivers register the fence; `IPerspectiveSnapshotStore` gains a
+  write that carries the mark and `GetLatestSnapshotFloorAsync`, both with defaults that keep older stores compiling.
 - **A rewind refuses a stream whose archive was deleted when its replay needs that history (#1964).** A rewind with no
   usable snapshot replays from the stream's start, and one from a snapshot an archive covers replays the archived events
   after it; both read through the archive. Once the stream's archive was deleted, such a replay folded the hot events

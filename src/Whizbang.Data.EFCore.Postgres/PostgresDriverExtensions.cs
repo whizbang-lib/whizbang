@@ -314,6 +314,10 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/perspectives/rebuild#archived-data</docs>
         selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
           new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
+        // TURNKEY: what a snapshot of a row with collectives reads to record how far they are complete (#1963).
+        // <docs>fundamentals/perspectives/snapshots#collectives</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
+          new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
         selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
           var database = sp.GetRequiredService<PostgresArchiveConnection>();
           return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());

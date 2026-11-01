@@ -480,6 +480,9 @@ public static class ServiceCollectionExtensions {
     // What a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
       new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
+    // What a snapshot of a row with collectives reads to record how far they are complete (#1963).
+    services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
+      new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
       var database = sp.GetRequiredService<PostgresArchiveConnection>();
       return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());

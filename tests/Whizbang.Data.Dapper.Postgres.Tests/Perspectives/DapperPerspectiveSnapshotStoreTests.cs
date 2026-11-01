@@ -295,6 +295,37 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await Assert.That(marked!.ArchivedThroughVersion).IsEqualTo(1L);
   }
 
+  // #1963: the Dapper store records the collectives complete-through mark as the EF Core store does.
+  [Test]
+  public async Task SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync() {
+    var streamId = TrackedGuid.New().Value;
+    const string perspectiveName = "StreamOrderPerspective";
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    await _appendEventAsync(streamId, first, version: 1, commitSequence: 1);
+    await _appendEventAsync(streamId, second, version: 2, commitSequence: 2);
+    var store = _store;
+    using var data = JsonDocument.Parse("""{"at":1}""");
+
+    await store.CreateSnapshotAsync(streamId, perspectiveName, first, 1, data, collectivesThroughSequence: 40);
+    var marked = await store.GetSnapshotFloorAsync(streamId, perspectiveName, second);
+    await store.CreateSnapshotAsync(streamId, perspectiveName, first, 1, data, collectivesThroughSequence: 41);
+    var rewritten = await store.GetLatestSnapshotFloorAsync(streamId, perspectiveName);
+    // The commit-sequence write, which this store takes from the interface: it records no mark.
+    await ((IPerspectiveSnapshotStore)store).CreateSnapshotAsync(streamId, perspectiveName, second, 2, data, CancellationToken.None);
+    var unmarked = await store.GetLatestSnapshotFloorAsync(streamId, perspectiveName);
+
+    await Assert.That(marked!.SnapshotEventId).IsEqualTo(first);
+    await Assert.That(marked.CollectivesThroughSequence).IsEqualTo(40L);
+    await Assert.That(rewritten!.SnapshotEventId).IsEqualTo(first);
+    await Assert.That(rewritten.SnapshotVersion).IsEqualTo(1);
+    await Assert.That(rewritten.CollectivesThroughSequence).IsEqualTo(41L)
+      .Because("the mark describes the data it was written with, so a new write of the snapshot carries its own");
+    await Assert.That(unmarked!.SnapshotEventId).IsEqualTo(second);
+    await Assert.That(unmarked.CollectivesThroughSequence).IsNull().Because("a write that records no mark stores none");
+    await Assert.That(await store.GetLatestSnapshotFloorAsync(TrackedGuid.New().Value, perspectiveName)).IsNull();
+  }
+
   /// <summary>Puts an event in the stream at an explicit version, with a commit sequence of its own.</summary>
   private async Task _appendEventAsync(Guid streamId, Guid eventId, int version, long commitSequence) {
     await using var connection = new Npgsql.NpgsqlConnection(_testBase.TestConnectionString);
