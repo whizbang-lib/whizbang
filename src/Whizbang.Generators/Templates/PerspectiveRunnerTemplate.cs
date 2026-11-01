@@ -1037,7 +1037,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             if (!collectiveMark.Deferred) {
               // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
               // rewinds can locate the snapshot by commit_sequence (deterministic) rather
-              // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
+              // than event_id (subject to UUIDv7 generation-time race). Null is OK: the
               // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
               var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
                   lastSuccessfulEventId.Value, cancellationToken);
