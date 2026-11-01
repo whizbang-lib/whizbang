@@ -41,7 +41,7 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
 
   // withArchive: the event store reads through the table archive, as the driver's registration chains it, and the
   // database is reachable the way the driver registers it for archive work.
-  private ServiceProvider _buildServices(bool withArchive = false) {
+  private ServiceProvider _buildServices(bool withArchive = false, bool withSnapshots = false) {
     var services = new ServiceCollection();
     services.AddLogging();
 
@@ -59,6 +59,9 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
     }
     services.AddScoped<IEventStoreQuery>(sp =>
         new EFCoreFilterableEventStoreQuery(sp.GetRequiredService<WorkCoordinationDbContext>()));
+    if (withSnapshots) {
+      services.AddSingleton<IPerspectiveSnapshotStore>(new EFCorePerspectiveSnapshotStore(NpgsqlDataSource.Create(ConnectionString)));
+    }
 
     services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
@@ -228,6 +231,163 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue(stream);
     cmd.Parameters.AddWithValue(RebuildBalancePerspectiveName);
     return await cmd.ExecuteScalarAsync() as Guid?;
+  }
+
+  // ===== #1956: a replay that starts after a stream's first event folds the collectives committed after its start =====
+
+  [Test]
+  public async Task Rewind_WithoutASnapshot_FoldsTheCollectives_AndCheckpointsOnTheRowsOwnEventAsync() {
+    await using var sp = _buildServices();
+    var streamA = Guid.NewGuid();
+    Guid lastCredit;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 100m });
+      await _appendCollectiveAsync(eventStore, _reset(streamA, 0m));
+      lastCredit = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 5m });
+    }
+
+    var completion = await _rewindAsync(sp, streamA, lastCredit);
+
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(5m)
+      .Because("the reset committed between the credits folds where it was committed, as a full rebuild folds it");
+    await Assert.That(completion.LastEventId).IsEqualTo(lastCredit)
+      .Because("a collective folds into the row without moving its checkpoint");
+  }
+
+  [Test]
+  public async Task Rewind_FromASnapshot_FoldsTheCollectivesCommittedAfterItAsync() {
+    await using var sp = _buildServices(withSnapshots: true);
+    var streamA = Guid.NewGuid();
+    Guid atSnapshot;
+    Guid trigger;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      atSnapshot = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 100m });
+      trigger = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 7m });
+      await _appendCollectiveAsync(eventStore, _reset(streamA, 1m));
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 2m });
+    }
+    // The snapshot says 1000 where the events say 100, so the row shows the rewind started from it.
+    await _snapshotAsync(streamA, atSnapshot, new RebuildBalanceModel { Id = streamA, Balance = 1000m });
+
+    _ = await _rewindAsync(sp, streamA, trigger);
+
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(3m)
+      .Because("the rewind restores 1000, folds the credit of 7, then the reset to 1 committed after the snapshot, then the credit of 2");
+  }
+
+  // The snapshot holds every collective committed before the event it was taken at: folding one of those again would
+  // apply it twice.
+  [Test]
+  public async Task Rewind_FromASnapshot_DoesNotFoldAgainACollectiveCommittedBeforeItAsync() {
+    await using var sp = _buildServices(withSnapshots: true);
+    var streamA = Guid.NewGuid();
+    Guid atSnapshot;
+    Guid trigger;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 100m });
+      await _appendCollectiveAsync(eventStore, _reset(streamA, 0m));
+      atSnapshot = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 5m });
+      trigger = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 7m });
+    }
+    await _snapshotAsync(streamA, atSnapshot, new RebuildBalanceModel { Id = streamA, Balance = 1000m });
+
+    _ = await _rewindAsync(sp, streamA, trigger);
+
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(1007m)
+      .Because("the reset was committed before the snapshot's event, so the snapshot already holds it");
+  }
+
+  // The issue's case: a default rebuild of a stream archived through a prefix starts from its newest live snapshot.
+  [Test]
+  public async Task Rebuild_ByDefault_FromTheNewestLiveSnapshot_FoldsACollectiveCommittedAfterItAsync() {
+    await using var sp = _buildServices(withArchive: true, withSnapshots: true);
+    var streamA = Guid.NewGuid();
+    Guid atSnapshot;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 10m });
+      atSnapshot = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 30m });
+      await _appendCollectiveAsync(eventStore, _reset(streamA, 0m));
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 2m });
+    }
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(streamA, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await _snapshotAsync(streamA, atSnapshot, new RebuildBalanceModel { Id = streamA, Balance = 1000m });
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildStreamsAsync(
+      RebuildBalancePerspectiveName, [streamA], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+    await Assert.That(result.StreamsSkipped).IsEqualTo(0).Because("the control: the stream started from its snapshot");
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(2m)
+      .Because("the reset committed after the snapshot folds before the credit of 2 committed after it");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_FromASnapshotAtTheStreamsLastEvent_StillFoldsTheCollectivesCommittedAfterItAsync() {
+    await using var sp = _buildServices(withArchive: true, withSnapshots: true);
+    var streamA = Guid.NewGuid();
+    Guid atSnapshot;
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 10m });
+      atSnapshot = await _appendMintedAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 30m });
+    }
+    // The row the live path keeps, before anything is archived.
+    var first = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildStreamsAsync(
+      RebuildBalancePerspectiveName, [streamA], CancellationToken.None);
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(40m).Because(first.Error ?? "the control: the row exists");
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.Prefix(streamA, 1))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await _snapshotAsync(streamA, atSnapshot, new RebuildBalanceModel { Id = streamA, Balance = 1000m });
+    await using (var scope = sp.CreateAsyncScope()) {
+      await _appendCollectiveAsync(scope.ServiceProvider.GetRequiredService<IEventStore>(), _reset(streamA, 0m));
+    }
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildStreamsAsync(
+      RebuildBalancePerspectiveName, [streamA], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+    await Assert.That(await _balanceAsync(sp, streamA)).IsEqualTo(0m)
+      .Because("no event of the stream follows the snapshot, but the reset committed after it still folds into the row");
+    await Assert.That(await _cursorAsync(streamA)).IsEqualTo(atSnapshot)
+      .Because("the collective moves no checkpoint, so the row stays on the snapshot's event");
+  }
+
+  // Appends with an id minted at append time, so the stream's ids run in the order its events were appended.
+  private static async Task<Guid> _appendMintedAsync(IEventStore eventStore, Guid streamId, RebuildCreditedEvent payload) {
+    var id = Guid.CreateVersion7();
+    await _appendAsync(eventStore, streamId, payload, id);
+    return id;
+  }
+
+  // A collective is its own single-event stream.
+  private static Task _appendCollectiveAsync(IEventStore eventStore, RebuildResetBalanceCollectiveEvent collective) =>
+    _appendAsync(eventStore, collective.StreamId, collective);
+
+  private static RebuildResetBalanceCollectiveEvent _reset(Guid target, decimal to) => new() {
+    StreamId = Guid.NewGuid(),
+    Scope = new TenantCollectiveScope(string.Empty),
+    TargetId = target,
+    ResetTo = to,
+  };
+
+  private static async Task<PerspectiveCursorCompletion> _rewindAsync(ServiceProvider sp, Guid stream, Guid trigger) {
+    await using var scope = sp.CreateAsyncScope();
+    var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>()
+      .GetRunner(RebuildBalancePerspectiveName, scope.ServiceProvider)!;
+    return await runner.RewindAndRunAsync(stream, RebuildBalancePerspectiveName, trigger, CancellationToken.None);
+  }
+
+  private async Task _snapshotAsync(Guid stream, Guid atEvent, RebuildBalanceModel model) {
+    var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<RebuildBalanceModel>)
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RebuildBalanceModel));
+    // Stamped with the serialization version as the runner writes a snapshot, so the runner reads it back.
+    using var modelData = System.Text.Json.JsonSerializer.SerializeToDocument(model, typeInfo);
+    using var data = SnapshotEnvelope.Wrap(modelData.RootElement, Whizbang.Core.Serialization.SerializationVersion.CURRENT);
+    await new EFCorePerspectiveSnapshotStore(NpgsqlDataSource.Create(ConnectionString))
+      .CreateSnapshotAsync(stream, RebuildBalancePerspectiveName, atEvent, data);
   }
 
   [Test]
