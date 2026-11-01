@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 /// A collective replay on the Dapper driver finds the collective streams archived whole (#1932). Such a stream has no
 /// hot row, so the replay lists it from the stream lifecycle ledger (state Archived, a collective type, the replayed
 /// stream's tenant) over the database connection the driver registers for archive work, and reads it through the event
-/// store, whose archive seam serves its events.
+/// store, whose archive seam serves its events. A rebuild does so only when it includes streams archived whole (#1931).
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
@@ -55,11 +55,14 @@ public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
     await using var scope = provider.CreateAsyncScope();
     var applier = scope.ServiceProvider.GetRequiredService<ICollectiveReplayApplier>();
 
+    // A rebuild that includes streams archived whole (#1931); the default leaves them out.
     ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+    RebuildArchivedDataAccessor.Current = RebuildArchivedData.IncludeAll;
     try {
       _ = await applier.InterleaveForReplayAsync(typeof(ProbeModel), _tenantEvent(), CancellationToken.None);
     } finally {
       ProcessingModeAccessor.Current = null;
+      RebuildArchivedDataAccessor.Current = RebuildArchivedData.Skip;
     }
 
     await Assert.That(reads.Streams).IsEquivalentTo([ownType, otherModelsType])

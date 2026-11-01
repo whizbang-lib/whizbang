@@ -10,6 +10,7 @@ using Whizbang.Core.Archival;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Archival;
@@ -219,6 +220,69 @@ public class ArchiveAwareEventStoreDecoratorTests {
 
     await Assert.That(read.Select(_n)).IsEquivalentTo([1, 2]).Because("the bound is an event id, as the hot read applies it");
     await Assert.That(typed.Select(_n)).IsEquivalentTo([1, 2]);
+  }
+
+  // #1931: a rebuild reads no archived data unless it opts in. The seam is where every reader of a rebuild reads (the
+  // runner, the collective replay), so it is where the choice holds.
+  [Test]
+  public async Task ARebuildThatSkipsArchivedData_ReadsOnlyTheHotEvents_OnEveryReadPathAsync() {
+    var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 5);
+
+    var reads = await _underAsync(ProcessingMode.Rebuild, RebuildArchivedData.Skip, () => _everyReadFromTheStartAsync(store));
+
+    foreach (var read in reads) {
+      await Assert.That(read).IsEquivalentTo([4, 5]);
+    }
+    await Assert.That(archive.Reads).IsEqualTo(0).Because("the default rebuild never reads the archive");
+  }
+
+  [Test]
+  [Arguments(RebuildArchivedData.IncludeWhileLive)]
+  [Arguments(RebuildArchivedData.IncludeAll)]
+  public async Task ARebuildThatIncludesArchivedData_ReadsThroughTheGapAsync(RebuildArchivedData choice) {
+    var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 5);
+
+    var reads = await _underAsync(ProcessingMode.Rebuild, choice, () => _everyReadFromTheStartAsync(store));
+
+    foreach (var read in reads) {
+      await Assert.That(read).IsEquivalentTo([1, 2, 3, 4, 5]);
+    }
+    await Assert.That(archive.Reads).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task ARewind_AndALiveRead_ReadThroughTheGap_WhateverARebuildWouldChooseAsync() {
+    var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 5);
+
+    // Rewinds are unchanged by #1931: a replay reads through the archive, and the choice belongs to rebuilds only.
+    var rewind = await _underAsync(ProcessingMode.Replay, RebuildArchivedData.Skip, () => _everyReadFromTheStartAsync(store));
+    var live = await _underAsync(null, RebuildArchivedData.Skip, () => _everyReadFromTheStartAsync(store));
+
+    foreach (var read in rewind.Concat(live)) {
+      await Assert.That(read).IsEquivalentTo([1, 2, 3, 4, 5]);
+    }
+    await Assert.That(archive.Reads).IsEqualTo(10);
+  }
+
+  private static async Task<List<List<int>>> _everyReadFromTheStartAsync(ArchiveAwareEventStoreDecorator store) => [
+    [.. (await _listAsync(store.ReadPolymorphicAsync(_stream, null, _types))).Select(_n)],
+    [.. (await _listAsync(store.ReadAsync<ArchiveProbeEvent>(_stream, (Guid?)null))).Select(_n)],
+    [.. (await _listAsync(store.ReadAsync<ArchiveProbeEvent>(_stream, fromSequence: 1))).Select(_n)],
+    [.. (await store.GetEventsBetweenAsync<ArchiveProbeEvent>(_stream, null, Guid.Empty)).Select(_n)],
+    [.. (await store.GetEventsBetweenPolymorphicAsync(_stream, null, Guid.Empty, _types)).Select(_n)],
+  ];
+
+  private static async Task<T> _underAsync<T>(ProcessingMode? mode, RebuildArchivedData choice, Func<Task<T>> read) {
+    var previousMode = ProcessingModeAccessor.Current;
+    var previousChoice = RebuildArchivedDataAccessor.Current;
+    ProcessingModeAccessor.Current = mode;
+    RebuildArchivedDataAccessor.Current = choice;
+    try {
+      return await read();
+    } finally {
+      ProcessingModeAccessor.Current = previousMode;
+      RebuildArchivedDataAccessor.Current = previousChoice;
+    }
   }
 
   [Test]

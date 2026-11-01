@@ -179,7 +179,7 @@ public class CollectiveReplayOrderingTests {
         return Task.FromResult<IReadOnlyList<Guid>>([_keyStream]);
       });
 
-    var merged = await _interleaveAsync(applier, _perStream());
+    var merged = await _interleaveAsync(applier, _perStream(), choice: RebuildArchivedData.IncludeAll);
 
     await Assert.That(asked).Count().IsEqualTo(1);
     await Assert.That(asked[0].Tenant).IsEqualTo(_scope.TenantId).Because("the replayed stream's tenant scopes the lookup");
@@ -188,6 +188,46 @@ public class CollectiveReplayOrderingTests {
     await Assert.That(merged.Select(e => e.MessageId.Value)).IsEquivalentTo(
       [_perStreamId, _earlierCommitId, _laterCommitId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the archived events' own commit sequences put the key's collectives in commit order");
+  }
+
+  // #1931: a collective stream archived whole is archived data. A rebuild folds it only under IncludeAll; a rebuild that
+  // skips archived data, or includes it only while a stream is alive, leaves it out. A rewind (a replay) always lists it.
+  [Test]
+  [Arguments(RebuildArchivedData.Skip, false)]
+  [Arguments(RebuildArchivedData.IncludeWhileLive, false)]
+  [Arguments(RebuildArchivedData.IncludeAll, true)]
+  public async Task Interleave_InARebuild_ListsTheCollectiveStreamsArchivedWhole_OnlyUnderIncludeAllAsync(
+      RebuildArchivedData choice, bool listed) {
+    var (applier, asked) = _applierListing(_keyStream);
+
+    var merged = await _interleaveAsync(applier, _perStream(), ProcessingMode.Rebuild, choice);
+
+    await Assert.That(asked.Count > 0).IsEqualTo(listed);
+    await Assert.That(merged.Any(e => e.Payload is ICollectiveEvent)).IsEqualTo(listed)
+      .Because("the archived collective folds only when the rebuild includes streams archived whole");
+  }
+
+  [Test]
+  public async Task Interleave_InAReplay_ListsTheCollectiveStreamsArchivedWhole_WhateverARebuildWouldChooseAsync() {
+    var (applier, asked) = _applierListing(_keyStream);
+
+    var merged = await _interleaveAsync(applier, _perStream(), ProcessingMode.Replay, RebuildArchivedData.Skip);
+
+    await Assert.That(asked).Count().IsEqualTo(1).Because("rewinds are unchanged: a replay reads through the archive");
+    await Assert.That(merged.Any(e => e.Payload is ICollectiveEvent)).IsTrue();
+  }
+
+  private static (CollectiveReplayApplier Applier, List<string?> Asked) _applierListing(Guid archivedStream) {
+    var asked = new List<string?>();
+    var store = new StreamStore(new() { [archivedStream] = [_envelope(_laterCommitId, "b", localCommitSequence: 11)] });
+    var applier = new CollectiveReplayApplier(
+      [_entry()], new ServiceCollection().AddSingleton<FlipHandler>().BuildServiceProvider(), store, new RecordQuery([]),
+      [new FlipExecutor()],
+      archivedStreams: (_, tenant, _) => {
+        asked.Add(tenant);
+        return Task.FromResult<IReadOnlyList<Guid>>([archivedStream]);
+      });
+    return (applier, asked);
   }
 
   // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
@@ -201,12 +241,15 @@ public class CollectiveReplayOrderingTests {
   }
 
   private static async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _interleaveAsync(
-      CollectiveReplayApplier applier, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) {
-    ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+      CollectiveReplayApplier applier, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents,
+      ProcessingMode mode = ProcessingMode.Rebuild, RebuildArchivedData choice = RebuildArchivedData.Skip) {
+    ProcessingModeAccessor.Current = mode;
+    RebuildArchivedDataAccessor.Current = choice;
     try {
       return await applier.InterleaveForReplayAsync(typeof(FlipModel), streamEvents, CancellationToken.None);
     } finally {
       ProcessingModeAccessor.Current = null;
+      RebuildArchivedDataAccessor.Current = RebuildArchivedData.Skip;
     }
   }
 
