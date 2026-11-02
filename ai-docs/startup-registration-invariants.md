@@ -228,5 +228,10 @@ starts it there; the worker holds no wait on `ISchemaReadyGate`.
 - Two tests keep it that way: `StartupHostedServiceAuditTests` (every hosted service of a turnkey host has a
   start point or a stated reason it needs none) and `WorkerStartGateSourceGuardTests` (no hosted service in
   `src` names `ISchemaReadyGate`, except the listed startup machinery).
-- The transition a worker waits for opens even when the row write failed and is held; the claim SQL refuses
-  an instance whose row is not eligible, so a held write delays work rather than letting it run early.
+- Open gap (owner decision pending, RED `StartupStageGateTests.AnEligibleStage_WhoseRowWriteFailed_IsNotReached...`):
+  the gate opens on the Accept-commands transition even when the row write failed and is held. The claim SQL does not
+  stop the worker then: `claim_work` (229) counts its caller whatever its row says and, when the assigner left the
+  instance out, ranks itself, so it claims a share its peers are also given (stream leases keep the work single). The
+  held write lands on the next accepted heartbeat, which bounds the window. Multi-stream claims behave the same; the
+  coalesce shipper is not instance-scoped at all; schedules and orphan claims follow ownership, which a new instance
+  does not have; the transport consumer only stores rows, and claims process them.
