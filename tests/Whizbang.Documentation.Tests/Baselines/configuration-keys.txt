@@ -89,6 +89,8 @@ Whizbang:Database:Stamper:NotifyHealthyPollingInterval
 Whizbang:Database:Stamper:PollingInterval
 Whizbang:Database:TcpKeepAliveInterval
 Whizbang:Database:TcpKeepAliveTime
+Whizbang:DatabaseFailureEscalation:ConsecutiveFailures
+Whizbang:DatabaseFailureEscalation:FailingFor
 Whizbang:DeadLetterLogging:Level
 Whizbang:DeadLetterRecovery:AdaptiveScanBatchEnabled
 Whizbang:DeadLetterRecovery:AutoCanaryOnNewGeneration

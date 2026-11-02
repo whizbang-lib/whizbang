@@ -672,6 +672,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A transient database failure in a worker loop logs at Warning, and only a failure that persists logs an Error
+  (#1986).** A worker loop that meets a transient database failure (a dropped connection, a timeout, a deadlock, a
+  failover) puts its batch back and retries, so nothing is lost; each one now logs at Warning with its reason and
+  SQLSTATE: the inbox drain worker's EventId 7, the outbox drain worker's EventId 53 and the perspective worker's
+  EventId 67 drop from Error to Warning, matching the claim worker's EventId 19. When the same worker keeps failing,
+  its run escalates: once the run has lasted at least `Whizbang:DatabaseFailureEscalation:FailingFor` (default one
+  minute) and counted at least `Whizbang:DatabaseFailureEscalation:ConsecutiveFailures` failures in a row (default 3),
+  the worker logs one Error, EventId 1986 `DatabaseFailurePersisting` (`DatabaseFailureEscalation`), naming the
+  worker, how long the database has been failing, the count, and the latest reason and SQLSTATE; when the database
+  answers again it logs one Information line, EventId 1987 `DatabaseFailureRecovered`. A run that never escalated
+  ends without a line. A threshold that cannot be met (fewer than one failure, a negative time) is refused when the
+  host starts. Failures that are not the database's keep their Error lines (the inbox drain worker's EventId 6, the
+  outbox drain worker's EventId 54 and the perspective worker's EventId 68). **Upgrade:** an alert keyed on EventIds
+  7, 53 or 67 at Error stops firing, so a one-second failover no longer pages anyone; alert on EventId 1986
+  `DatabaseFailurePersisting` instead, the one Error a database that keeps failing logs per worker.
 - **A dead-lettered message is logged at Error, once, with its type and its last failure (#1901).** Every path that
   dead-letters logs the same record, EventId 1901 `MessageDeadLettered` (`DeadLetterLog`): the inbox (attempts
   exhausted, an undeserializable payload, a refused composite), the outbox publish and drain workers, the perspective

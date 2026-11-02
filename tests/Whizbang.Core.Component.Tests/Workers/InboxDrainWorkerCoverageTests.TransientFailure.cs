@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -19,10 +20,14 @@ namespace Whizbang.Core.Tests.Workers;
 /// at a defect worth a page.
 /// </summary>
 public partial class InboxDrainWorkerCoverageTests {
-  [Test]
-  public async Task DrainBatch_TransientDatabaseFailure_IsNamedAsSuchAndTheNextBatchDrainsAsync() {
+  /// <summary>
+  /// Drains a batch whose fetch deadlocks, then a batch that drains, and returns what the worker logged. The waits are
+  /// the worker's own report, the inbox write of the second batch, and, when the run escalated, the recovery line the
+  /// second batch ends it with.
+  /// </summary>
+  private static async Task<EventIdSignalingLogger<InboxDrainWorker>> _runBatchAfterADeadlockAsync(
+      DatabaseFailureEscalationOptions? escalation, Guid nextStream) {
     var deadlockedStream = (Guid)TrackedGuid.New();
-    var nextStream = (Guid)TrackedGuid.New();
     var nextMessage = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
@@ -43,7 +48,11 @@ public partial class InboxDrainWorkerCoverageTests {
       new FakeServiceInstanceProvider(), drain, inbox, gate,
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, MaxPerStreamCeiling = 1000 }),
       _jsonOpts,
-      logger);
+      logger,
+      // A clock that never moves: the recovery line's duration then reads exactly zero, which only the injected
+      // clock can give.
+      timeProvider: new FakeTimeProvider(),
+      databaseFailureEscalation: escalation);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -53,12 +62,10 @@ public partial class InboxDrainWorkerCoverageTests {
       InboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, TimeSpan.FromSeconds(10));
     _ = drain.TryWrite(nextStream);
     await inbox.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    if (escalation is not null) {
+      await logger.WhenLoggedAsync(DatabaseFailureEscalation.RECOVERED_EVENT_ID, TimeSpan.FromSeconds(10));
+    }
 
-    var reported = logger.LinesWith(InboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID);
-    await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Error);
-    await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
-    await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
       .Because("the batch the database lost must not take the worker, and the host, with it");
     await Assert.That(inbox.Written).Count().IsEqualTo(1);
@@ -67,5 +74,38 @@ public partial class InboxDrainWorkerCoverageTests {
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+    return logger;
+  }
+
+  [Test]
+  public async Task DrainBatch_TransientDatabaseFailure_IsNamedAsSuchAndTheNextBatchDrainsAsync() {
+    var logger = await _runBatchAfterADeadlockAsync(escalation: null, (Guid)TrackedGuid.New());
+
+    var reported = logger.LinesWith(InboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID);
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("#1986: a transient database failure is retried and loses nothing, so each one is a Warning");
+    await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
+    await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
+    await Assert.That(logger.Lines.Where(l => l.Level >= LogLevel.Error)).IsEmpty()
+      .Because("#1986: one deadlock is far below the escalation threshold, so it pages nobody");
+  }
+
+  [Test]
+  public async Task DrainBatch_TransientFailurePastTheThreshold_EscalatesOnceAndSaysWhenItRecoversAsync() {
+    var logger = await _runBatchAfterADeadlockAsync(
+      new DatabaseFailureEscalationOptions { ConsecutiveFailures = 1, FailingFor = TimeSpan.Zero }, (Guid)TrackedGuid.New());
+
+    var escalated = logger.LinesWith(DatabaseFailureEscalation.ESCALATED_EVENT_ID);
+    await Assert.That(escalated).Count().IsEqualTo(1)
+      .Because("#1986: the worker reports its transient failures to the escalation, which logs one Error past the threshold");
+    await Assert.That(escalated[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(escalated[0].Message).Contains(nameof(InboxDrainWorker), StringComparison.Ordinal);
+    var recovered = logger.LinesWith(DatabaseFailureEscalation.RECOVERED_EVENT_ID);
+    await Assert.That(recovered).Count().IsEqualTo(1)
+      .Because("#1986: the batch that drains after the failure tells the escalation the database is answering");
+    await Assert.That(recovered[0].Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(recovered[0].Message).Contains("after 00:00:00 of", StringComparison.Ordinal)
+      .Because("the run is measured on the worker's injected clock, never the real one");
   }
 }

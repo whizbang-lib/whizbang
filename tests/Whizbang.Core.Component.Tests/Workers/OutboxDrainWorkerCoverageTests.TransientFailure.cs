@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -62,7 +63,7 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// the worker logged. The waits are the worker's own report and its next fetch.
   /// </summary>
   private static async Task<EventIdSignalingLogger<OutboxDrainWorker>> _runBatchAfterAFailedFlushAsync(
-      Exception flushFailure, int expectedEventId) {
+      Exception flushFailure, int expectedEventId, DatabaseFailureEscalationOptions? escalation = null) {
     var streamId = (Guid)TrackedGuid.New();
     var row = _row((Guid)TrackedGuid.New(), streamId);
     var coord = new OneRowThenEmptyCoordinator(row);
@@ -93,7 +94,11 @@ public partial class OutboxDrainWorkerCoverageTests {
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      // A clock that never moves: the recovery line's duration then reads exactly zero, which only the injected
+      // clock can give.
+      timeProvider: new FakeTimeProvider(),
+      databaseFailureEscalation: escalation);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -108,6 +113,9 @@ public partial class OutboxDrainWorkerCoverageTests {
     await coord.SecondFetch.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(coord.FetchCalls).IsEqualTo(2)
       .Because("the batch after the failure drains as if nothing had happened");
+    if (escalation is not null) {
+      await logger.WhenLoggedAsync(DatabaseFailureEscalation.RECOVERED_EVENT_ID, TimeSpan.FromSeconds(10));
+    }
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -122,11 +130,34 @@ public partial class OutboxDrainWorkerCoverageTests {
 
     var reported = logger.LinesWith(OutboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID);
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("#1986: a transient database failure is retried and loses nothing, so each one is a Warning");
     await Assert.That(reported[0].Message)
       .Contains(TransientDatabaseFailure.SERIALIZATION_FAILURE, StringComparison.Ordinal);
     await Assert.That(reported[0].Message).Contains("40001", StringComparison.Ordinal);
     await Assert.That(logger.LinesWith(OutboxDrainWorker.BATCH_DRAIN_FAILURE_EVENT_ID)).IsEmpty();
+    await Assert.That(logger.Lines.Where(l => l.Level >= LogLevel.Error)).IsEmpty()
+      .Because("#1986: one serialization failure is far below the escalation threshold, so it pages nobody");
+  }
+
+  [Test]
+  public async Task DrainBatch_TransientFailurePastTheThreshold_EscalatesOnceAndSaysWhenItRecoversAsync() {
+    var logger = await _runBatchAfterAFailedFlushAsync(
+      FakeDbException.WithSqlState("08006", message: "the connection dropped"),
+      OutboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID,
+      new DatabaseFailureEscalationOptions { ConsecutiveFailures = 1, FailingFor = TimeSpan.Zero });
+
+    var escalated = logger.LinesWith(DatabaseFailureEscalation.ESCALATED_EVENT_ID);
+    await Assert.That(escalated).Count().IsEqualTo(1)
+      .Because("#1986: the worker reports its transient failures to the escalation, which logs one Error past the threshold");
+    await Assert.That(escalated[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(escalated[0].Message).Contains(nameof(OutboxDrainWorker), StringComparison.Ordinal);
+    var recovered = logger.LinesWith(DatabaseFailureEscalation.RECOVERED_EVENT_ID);
+    await Assert.That(recovered).Count().IsEqualTo(1)
+      .Because("#1986: the batch that drains after the failure tells the escalation the database is answering");
+    await Assert.That(recovered[0].Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(recovered[0].Message).Contains("after 00:00:00 of", StringComparison.Ordinal)
+      .Because("the run is measured on the worker's injected clock, never the real one");
   }
 
   [Test]
@@ -137,6 +168,8 @@ public partial class OutboxDrainWorkerCoverageTests {
 
     var reported = logger.LinesWith(OutboxDrainWorker.BATCH_DRAIN_FAILURE_EVENT_ID);
     await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Error)
+      .Because("#1986: a failure that is not the database's is a defect and wants fixing, so it stays an Error");
     await Assert.That(reported[0].Exception).IsTypeOf<InvalidOperationException>();
     await Assert.That(logger.LinesWith(OutboxDrainWorker.TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID)).IsEmpty()
       .Because("a defect must not be filed as the database's doing, or nobody fixes it");

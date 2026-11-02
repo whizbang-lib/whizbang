@@ -160,7 +160,8 @@ public class ClaimWorkerCoverageTests {
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
       ClaimChurnFeedback? churnFeedback = null,
-      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null,
+      DatabaseFailureEscalationOptions? escalation = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -181,7 +182,8 @@ public class ClaimWorkerCoverageTests {
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance,
-      churnFeedback: churnFeedback);
+      churnFeedback: churnFeedback,
+      databaseFailureEscalation: escalation);
     return (worker, coord);
   }
 
@@ -199,8 +201,9 @@ public class ClaimWorkerCoverageTests {
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
       ClaimChurnFeedback? churnFeedback = null,
-      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
-    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger);
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null,
+      DatabaseFailureEscalationOptions? escalation = null) {
+    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger, escalation: escalation);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
@@ -225,10 +228,38 @@ public class ClaimWorkerCoverageTests {
     var reported = logger.Collector.GetSnapshot()
       .Where(e => e.Id.Id == ClaimWorker.TRANSIENT_FAILURE_EVENT_ID).ToList();
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .Because("#1986: the claim is retried on the next tick and loses nothing, so each transient failure is a Warning");
     await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
     await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
     await Assert.That(reported[0].Exception).IsTypeOf<FakeDbException>();
+    await Assert.That(logger.Collector.GetSnapshot().Where(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error)).IsEmpty()
+      .Because("#1986: one deadlock is far below the escalation threshold, so it pages nobody");
+  }
+
+  /// <summary>
+  /// The claim loop reports its transient failures to the escalation and tells it when a claim comes back: with a
+  /// threshold of one failure, the deadlocked tick logs the one Error and the next claim the recovery line.
+  /// </summary>
+  [Test]
+  public async Task ClaimTick_TransientFailurePastTheThreshold_EscalatesOnceAndSaysWhenItRecoversAsync() {
+    var coord = new RecordingCoordinator { NextClaimException = FakeDbException.WithSqlState("08006", message: "the connection dropped") };
+    var logger = new EventIdSignalingLogger<ClaimWorker>();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 10,
+      PollingMaxIntervalMilliseconds = 50,
+    }, logger: logger, escalation: new DatabaseFailureEscalationOptions { ConsecutiveFailures = 1, FailingFor = TimeSpan.Zero });
+
+    await logger.WhenLoggedAsync(DatabaseFailureEscalation.RECOVERED_EVENT_ID, TimeSpan.FromSeconds(10));
+
+    var escalated = logger.LinesWith(DatabaseFailureEscalation.ESCALATED_EVENT_ID);
+    await Assert.That(escalated).Count().IsEqualTo(1);
+    await Assert.That(escalated[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error);
+    await Assert.That(escalated[0].Message).Contains(nameof(ClaimWorker), StringComparison.Ordinal);
+    var recovered = logger.LinesWith(DatabaseFailureEscalation.RECOVERED_EVENT_ID);
+    await Assert.That(recovered).Count().IsEqualTo(1)
+      .Because("#1986: every later claim succeeds, and the recovery is said once, not once per claim");
+    await Assert.That(recovered[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Information);
   }
 
   // ============================================================

@@ -102,7 +102,10 @@ public partial class PerspectiveWorker(
   // happens once, only the health endpoint does not see it.
   Whizbang.Core.Perspectives.StoredFormFailureRegistry? storedFormFailures = null,
   // The level a dead-lettered event's record is logged at (#1901); null logs it at Error.
-  DeadLetterLoggingOptions? deadLetterLogging = null
+  DeadLetterLoggingOptions? deadLetterLogging = null,
+  // When a run of transient database failures escalates to one Error, and its recovery line (#1986); null takes the
+  // defaults.
+  DatabaseFailureEscalationOptions? databaseFailureEscalation = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -308,6 +311,14 @@ public partial class PerspectiveWorker(
   // Shared by every consumer loop on purpose: the backoff after a failed batch is a statement about
   // the database, so all of this worker's loops slow together and recover together.
   private readonly WorkerLoopRecovery _loopRecovery = new(timeProvider ?? TimeProvider.System);
+  // Shared by every consumer loop for the same reason: a run of transient database failures is the worker's, and it
+  // escalates once past the threshold however many loops met it (#1986).
+  private readonly DatabaseFailureEscalation _databaseFailures = new(
+    nameof(PerspectiveWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
+    timeProvider ?? TimeProvider.System, logger);
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   // How many batch failures this worker has contained, so a consumer loop can tell a batch that ran
   // clean from one that recovered from a failure inside itself.
   private int _containedBatchFailures;
@@ -750,6 +761,7 @@ public partial class PerspectiveWorker(
           // is answering again. A batch whose drain pass was recovered mid-flight is not, so the
           // backoff keeps growing rather than resetting on the half of the batch that worked.
           _loopRecovery.Recovered();
+          _databaseFailures.Succeeded();
         }
       } catch (ObjectDisposedException) {
         break;
@@ -799,8 +811,10 @@ public partial class PerspectiveWorker(
     var streams = string.Join(", ", streamIds);
     await _loopRecovery.RecoverAsync(
       exception,
-      (transient, cause) => LogTransientBatchFailure(
-        _logger, transient.Reason, transient.SqlStateOrNone, streamIds.Count, streams, cause),
+      (transient, cause) => {
+        LogTransientBatchFailure(_logger, transient.Reason, transient.SqlStateOrNone, streamIds.Count, streams, cause);
+        _databaseFailures.Failed(transient);
+      },
       cause => LogUnexpectedBatchFailure(_logger, streamIds.Count, streams, cause),
       cancellationToken).ConfigureAwait(false);
   }
@@ -5542,7 +5556,7 @@ public partial class PerspectiveWorker(
 
   // Event id 8 ("Error processing perspective cursors") retired with the rethrow it accompanied: it
   // named no stream, said nothing about what had failed, and the line after it was the host stopping.
-  [LoggerMessage(EventId = TRANSIENT_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Perspective batch lost to a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "{StreamCount} stream(s) go back for a sibling to take and the loop backs off and continues: {StreamIds}")]
   static partial void LogTransientBatchFailure(
