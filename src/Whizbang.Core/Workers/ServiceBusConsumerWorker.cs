@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -259,8 +260,16 @@ public partial class ServiceBusConsumerWorker(
       }
       LogMessageAcceptedForProcessing(_logger, envelope.MessageId, myWork.Count);
 
-      // 2. PreInbox lifecycle, process work, PostInbox lifecycle
+      // The receptor interceptors are asked before any stage runs and before the message is completed (#1996), so a
+      // denied message is dead-lettered, failed or retried instead of completed. Without interceptors this is skipped.
       var receptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
+      myWork = await _withoutDeniedWorkAsync(myWork, receptorInvoker, strategy, scopedProvider, ct);
+      if (myWork.Count == 0) {
+        await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, ct);
+        return;
+      }
+
+      // 2. PreInbox lifecycle, process work, PostInbox lifecycle
       await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, ct);
       await _processInboxWorkItemsAsync(myWork, strategy, ct);
       await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scopedProvider, ct);
@@ -346,6 +355,72 @@ public partial class ServiceBusConsumerWorker(
     var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
     LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
     return myWork;
+  }
+
+  /// <summary>
+  /// Asks the receptor interceptors about each work item's inbox receptors before any stage runs (#1996) and returns the
+  /// items they allow (a quiet drop is allowed: it skips only that receptor when it runs). A dead-letter or quarantine
+  /// denial moves the stored row to the dead-letter store; a throw denial throws, so the broker redelivers. A host with no
+  /// interceptor registered returns the list untouched without reading a payload.
+  /// </summary>
+  /// <docs>fundamentals/security/security#denied-action</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerReceptorDenialTests.cs</tests>
+  private async Task<List<InboxWork>> _withoutDeniedWorkAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, IWorkCoordinatorStrategy strategy,
+    IServiceProvider scopedProvider, CancellationToken ct) {
+    _receptorInterceptorsActive ??= ReceptorInterceptorGate.Active(scopedProvider) is not null;
+    if (receptorInvoker is null || _receptorInterceptorsActive == false) {
+      return myWork;
+    }
+    var admitted = new List<InboxWork>(myWork.Count);
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var denial = await receptorInvoker.EvaluateAdmissionAsync(
+        work.Envelope.ReconstructWithPayload(message), ReceptorDenial.InboxHandlingStages, ct);
+      if (denial.Allow) {
+        admitted.Add(work);
+      } else {
+        await _handleReceptorDenialAsync(work, denial, strategy, scopedProvider, ct);
+      }
+    }
+    return admitted;
+  }
+
+  // Whether any receptor interceptor is registered: the pipeline is a singleton, so this is read once
+  private bool? _receptorInterceptorsActive;
+
+  /// <summary>
+  /// A dead-letter or quarantine denial moves the stored row to the dead-letter store under its own reason, and the
+  /// broker message is completed, so it is not redelivered; without a store the row is failed instead of completed. Any
+  /// other denial throws, so the broker's redelivery policy retries the message.
+  /// </summary>
+  private async Task _handleReceptorDenialAsync(
+    InboxWork work, InterceptorResult denial, IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
+    var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, denial.Reason ?? "no reason given");
+    if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is not { } reason) {
+      throw new ReceptorInvocationDeniedException(detail, denial.OnDenied, denial.Reason);
+    }
+    if (scopedProvider.GetService<IDeadLetterStore>() is { IsConfigured: true } deadLetters) {
+      try {
+        var movedId = await deadLetters.MoveAsync(
+          deadLetterId: (Guid)TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: detail,
+          instanceId: scopedProvider.GetService<IServiceInstanceProvider>()?.InstanceId ?? Guid.Empty,
+          generation: scopedProvider.GetService<IGenerationProvider>()?.GetGeneration() ?? string.Empty,
+          ct: ct).ConfigureAwait(false);
+        if (movedId is null) {
+          LogDeniedRowAlreadyGone(_logger, work.MessageId);
+        }
+        return;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogDeniedDeadLetterFailed(_logger, work.MessageId, ex);
+      }
+    }
+    strategy.QueueInboxFailure(work.MessageId, work.Status, detail);
   }
 
   /// <summary>
@@ -875,6 +950,28 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBus message {MessageId} of unsubscribed type {EnvelopeType} stored settled without processing: no consumer registered on this service"
   )]
   static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
+
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Warning,
+    Message = "ServiceBus message {MessageId} ({MessageType}) was not handled: a receptor interceptor denied it with DeniedAction.{Action}. Reason: {Reason}"
+  )]
+  static partial void LogReceptorDenied(ILogger logger, Guid messageId, string messageType,
+    Security.Attributes.DeniedAction action, string reason);
+
+  [LoggerMessage(
+    EventId = 28,
+    Level = LogLevel.Information,
+    Message = "ServiceBus message {MessageId} was denied, but its inbox row was already gone when it was dead-lettered"
+  )]
+  static partial void LogDeniedRowAlreadyGone(ILogger logger, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 29,
+    Level = LogLevel.Warning,
+    Message = "ServiceBus message {MessageId} was denied and could not be moved to the dead-letter store; its row is failed instead"
+  )]
+  static partial void LogDeniedDeadLetterFailed(ILogger logger, Guid messageId, Exception ex);
 }
 
 /// <summary>

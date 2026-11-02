@@ -21,7 +21,8 @@ namespace Whizbang.Core.Security;
 /// <para>
 /// Every registered interceptor runs immediately before every receptor invocation: local dispatch
 /// (<c>SendAsync</c>, <c>LocalInvokeAsync</c>, <c>PublishAsync</c>), the receptors of a message a receptor
-/// returned (a cascade), and every lifecycle stage, including inbox delivery from a transport. The interceptor
+/// returned (a cascade), receptors registered at runtime, raw receptors (<c>IRawReceptor</c>), and every
+/// lifecycle stage, including inbox delivery and the perspective worker's lifecycle receptors. The interceptor
 /// is shown the scope context the receptor would read through <see cref="IScopeContextAccessor"/>. Register an
 /// implementation as a singleton (<c>services.AddSingleton&lt;IReceptorInterceptor, MyInterceptor&gt;()</c>);
 /// with none registered, no invocation path does any interceptor work.
@@ -32,7 +33,9 @@ namespace Whizbang.Core.Security;
 /// warning; on a local dispatch every other action throws
 /// <see cref="Exceptions.ReceptorInvocationDeniedException"/> to the caller; on inbox delivery
 /// <see cref="DeniedAction.DeadLetter"/> and <see cref="DeniedAction.Quarantine"/> move the message to the
-/// dead-letter store without a retry and <see cref="DeniedAction.Throw"/> fails the attempt for the retry policy.
+/// dead-letter store without a retry and <see cref="DeniedAction.Throw"/> fails the attempt for the retry policy
+/// (the inbox dispatch worker and the Service Bus consumer ask before they settle the message; a raw receptor's
+/// denial is settled at the broker; a denied control-class comparison is dropped, as a failed one is).
 /// An interceptor that applies to a synchronous receptor (<c>ISyncReceptor</c>) must complete synchronously.
 /// </para>
 /// </remarks>

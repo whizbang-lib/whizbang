@@ -59,6 +59,19 @@ public sealed class ReceptorInvocationDeniedException : UnauthorizedAccessExcept
     Reason = reason;
   }
 
+  /// <summary>
+  /// Creates the exception for a message an interceptor denied before any of its receptors ran, when the denial is
+  /// known for the message rather than for one receptor (a consumer's admission check before it settles a message).
+  /// </summary>
+  /// <param name="message">The error message.</param>
+  /// <param name="action">The action the interceptor chose.</param>
+  /// <param name="reason">The interceptor's reason, if it gave one.</param>
+  public ReceptorInvocationDeniedException(string message, DeniedAction action, string? reason)
+    : base(message) {
+    Action = action;
+    Reason = reason;
+  }
+
   private static string _describe(Type receptorType, DeniedAction action, string? reason) =>
     $"Receptor {TypeNameFormatter.DisplayName(receptorType)} was not invoked: "
     + (reason ?? "a receptor interceptor denied the invocation")

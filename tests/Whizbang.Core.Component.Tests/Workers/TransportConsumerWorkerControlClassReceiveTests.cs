@@ -16,6 +16,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Attributes;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -110,6 +111,39 @@ public class TransportConsumerWorkerControlClassReceiveTests {
       await Assert.That(deadLetters.Moved).IsEmpty()
         .Because("control-plane failures DROP rather than dead-letter — the receive-boundary "
                + "extension of the rule the dead-letter boundary already applies");
+      await Assert.That(coordinator.StoreCallCount).IsEqualTo(0);
+    }
+  }
+
+  /// <summary>
+  /// #1996: a control message whose receptor an interceptor denies is not compared, and, whatever the action, is
+  /// dropped the way a failed comparison is: a control-plane message is never stored, retried or dead-lettered, because
+  /// the next cadence re-derives it. The denial is the receptor interceptors', asked before the comparison runs.
+  /// </summary>
+  [Test]
+  [Arguments(DeniedAction.DeadLetter)]
+  [Arguments(DeniedAction.Quarantine)]
+  [Arguments(DeniedAction.Throw)]
+  [Arguments(DeniedAction.DropQuiet)]
+  public async Task ControlMessage_ReceptorDenied_IsNotComparedAndDropsWithoutDeadLetteringAsync(DeniedAction action) {
+    var coordinator = new CountingWorkCoordinator();
+    var deadLetters = new RecordingDeadLetterStore();
+    var invoker = new RecordingReceptorInvoker { Admission = InterceptorResult.Deny(action, "denied") };
+    var (worker, transport, sp) = _buildWorker(
+      coordinator, nonDurableReceive: true, invoker: invoker, deadLetters: deadLetters);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONTROL_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(invoker.AdmissionStages).Contains(LifecycleStage.PostInboxInline)
+        .Because("the interceptors are asked about the stage the comparison runs at");
+      await Assert.That(invoker.Stages).IsEmpty().Because("a denied comparison does not run");
+      await Assert.That(deadLetters.Moved).IsEmpty();
       await Assert.That(coordinator.StoreCallCount).IsEqualTo(0);
     }
   }
@@ -236,6 +270,10 @@ public class TransportConsumerWorkerControlClassReceiveTests {
     }
     if (invoker is not null) {
       services.AddScoped<IReceptorInvoker>(_ => invoker);
+      if (!invoker.Admission.Allow) {
+        // Without an interceptor the worker does not ask for admission at all
+        services.AddSingleton<IReceptorInterceptor, DefaultRequirePermissionInterceptor>();
+      }
     }
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
@@ -287,7 +325,15 @@ public class TransportConsumerWorkerControlClassReceiveTests {
 
   private sealed class RecordingReceptorInvoker : IReceptorInvoker {
     public List<LifecycleStage> Stages { get; } = [];
+    public List<LifecycleStage> AdmissionStages { get; } = [];
     public bool Throw { get; init; }
+    public InterceptorResult Admission { get; init; } = InterceptorResult.Allowed;
+
+    public ValueTask<InterceptorResult> EvaluateAdmissionAsync(IMessageEnvelope envelope, IReadOnlyList<LifecycleStage> stages,
+        CancellationToken cancellationToken = default) {
+      AdmissionStages.AddRange(stages);
+      return new ValueTask<InterceptorResult>(Admission);
+    }
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
         ILifecycleContext? context = null, CancellationToken cancellationToken = default) {

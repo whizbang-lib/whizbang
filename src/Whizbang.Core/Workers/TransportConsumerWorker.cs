@@ -838,6 +838,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     try {
       var invoker = scopedProvider.GetService<IReceptorInvoker>();
+      if (invoker is not null && await _controlComparisonDeniedAsync(invoker, msg, scopedProvider, cancellationToken)) {
+        return;
+      }
       if (invoker is not null) {
         // The SAME stage the durable path fires for an inbox delivery, so a control receptor sees
         // no difference; only the durability around it disappears.
@@ -858,6 +861,35 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         msg.EnvelopeType);
     }
   }
+
+  /// <summary>
+  /// Asks the receptor interceptors about the control receptors before the comparison runs (#1996). A denied control
+  /// message is dropped whatever the action, as a failed comparison is: a control-plane message is never stored,
+  /// retried or dead-lettered, since the next cadence re-derives it and a stored copy would only become a backlog.
+  /// Without interceptors this returns false at once.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlMessage_ReceptorDenied_IsNotComparedAndDropsWithoutDeadLetteringAsync</tests>
+  private async Task<bool> _controlComparisonDeniedAsync(
+      IReceptorInvoker invoker, TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
+    _receptorInterceptorsActive ??= ReceptorInterceptorGate.Active(scopedProvider) is not null;
+    if (_receptorInterceptorsActive == false) {
+      return false;
+    }
+    var denial = await invoker.EvaluateAdmissionAsync(msg.Envelope, _controlComparisonStages, cancellationToken);
+    if (denial.Allow) {
+      return false;
+    }
+    _logger.LogWarning(
+      "Control-class message {MessageId} ({EnvelopeType}) was not compared: a receptor interceptor denied it with "
+      + "DeniedAction.{Action}; dropping (control-plane messages are never stored, retried or dead-lettered). Reason: {Reason}",
+      msg.Envelope.MessageId, msg.EnvelopeType, denial.OnDenied, denial.Reason ?? "no reason given");
+    return true;
+  }
+
+  private static readonly LifecycleStage[] _controlComparisonStages = [LifecycleStage.PostInboxInline];
+
+  // Whether any receptor interceptor is registered: the pipeline is a singleton, so this is read once
+  private bool? _receptorInterceptorsActive;
 
   /// <summary>
   /// Fire-and-forget cleanup for active-mode body offload. Resolves the matching

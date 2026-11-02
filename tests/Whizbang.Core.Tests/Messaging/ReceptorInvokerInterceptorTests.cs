@@ -63,6 +63,32 @@ public class ReceptorInvokerInterceptorTests {
     await Assert.That(allowed.Count).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// The perspective worker runs its lifecycle receptors (Pre/PostPerspective, PostAllPerspectives, PostLifecycle)
+  /// through this invoker, so they are gated the same way. A perspective's Apply is not a receptor and is not gated:
+  /// it projects an event that is already stored.
+  /// </summary>
+  [Test]
+  [Arguments(LifecycleStage.PrePerspectiveInline)]
+  [Arguments(LifecycleStage.PostPerspectiveInline)]
+  [Arguments(LifecycleStage.PostAllPerspectivesInline)]
+  [Arguments(LifecycleStage.PostLifecycleInline)]
+  public async Task InvokeAsync_PerspectiveStageReceptor_IsGatedAsync(LifecycleStage stage) {
+    var registry = new Registry();
+    var ran = registry.Add<DeniedReceptor>(stage);
+    var invoker = new ReceptorInvoker(registry, _provider(new Deny(typeof(DeniedReceptor), DeniedAction.DropQuiet)));
+
+    var context = new LifecycleExecutionContext {
+      CurrentStage = stage,
+      MessageSource = MessageSource.Local,
+      AttemptNumber = 1,
+    };
+
+    await invoker.InvokeAsync(_envelope(), stage, context);
+
+    await Assert.That(ran.Count).IsEqualTo(0);
+  }
+
   [Test]
   public async Task InvokeAsync_RuntimeRegisteredReceptor_IsGatedByItsInstanceTypeAsync() {
     var registry = new Registry();
