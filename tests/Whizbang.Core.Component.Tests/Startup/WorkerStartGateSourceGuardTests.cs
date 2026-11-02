@@ -109,15 +109,7 @@ public partial class WorkerStartGateSourceGuardTests {
   [Test]
   public async Task NoStagedFrameworkWorker_IsAlsoHostedWithPlainAddHostedServiceAsync() {
     var library = await _sourceFilesAsync("src");
-    var staged = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var (_, code) in library) {
-      foreach (Match m in _stagedByType().Matches(code)) {
-        staged.Add(_simpleName(m.Groups[1].Value));
-      }
-      foreach (Match m in _stagedByFactory().Matches(code)) {
-        staged.Add(_simpleName(m.Groups[1].Value));
-      }
-    }
+    var staged = _stagedWorkers(library);
     var plain = new List<(string Path, string Type)>();
     foreach (var (path, code) in library.Concat(await _sourceFilesAsync("samples"))) {
       foreach (Match m in _plainHostedRegistration().Matches(code)) {
@@ -134,6 +126,62 @@ public partial class WorkerStartGateSourceGuardTests {
     await Assert.That(doubled).IsEmpty()
       .Because("the framework already hosts these with their start point; drop the plain registration: "
         + string.Join(", ", doubled));
+  }
+
+  [GeneratedRegex(@"\bGetServices<(?:Microsoft\.Extensions\.Hosting\.)?IHostedService>\(\)")]
+  private static partial Regex _hostedServicesEnumeration();
+
+  [GeneratedRegex(@"\bGetServices<(?:Microsoft\.Extensions\.Hosting\.)?IHostedService>\(\)\s*\.\s*OfType<([\w.]+)>")]
+  private static partial Regex _hostedServicesByType();
+
+  [GeneratedRegex(@"OfType<(?:[\w.]+\.)?GatedHostedService>\(\)\s*\.\s*Select\(\s*(\w+)\s*=>\s*\1\s*\.\s*Service\s*\)")]
+  private static partial Regex _adHocUnwrap();
+
+  /// <summary>
+  /// A worker hosted with its start point is inside its stage wrapper, so a lookup by type over the hosted services
+  /// finds nothing and a fixture that waits on the worker's signals waits forever. The one way to find a hosted worker
+  /// is <c>Whizbang.Testing.Workers.HostedWorkers</c> (<c>GetHostedWorker&lt;T&gt;()</c>, <c>GetHostedWorkers()</c>):
+  /// a sample never enumerates the hosted services itself, and no test or sample unwraps the wrapper by hand or looks a
+  /// staged worker up by type among the wrappers.
+  /// </summary>
+  [Test]
+  public async Task AHostedWorker_IsFoundThroughHostedWorkers_NotByTypeAmongTheWrappersAsync() {
+    var staged = _stagedWorkers(await _sourceFilesAsync("src"));
+    var samples = await _sourceFilesAsync("samples");
+    var tests = await _sourceFilesAsync("tests");
+
+    await Assert.That(tests.Where(f => f.Code.Contains("GetHostedWorker", StringComparison.Ordinal)).Select(f => f.Path))
+      .Contains("tests/Whizbang.Testing.Tests/Workers/HostedWorkersTests.cs")
+      .Because("the scan must find the lookup's own tests, or it is not reading the tests");
+
+    var found = new List<string>();
+    found.AddRange(samples.Where(f => _hostedServicesEnumeration().IsMatch(f.Code))
+      .Select(f => $"{f.Path}: enumerates the hosted services (use GetHostedWorker<T>() or GetHostedWorkers())"));
+    foreach (var (path, code) in samples.Concat(tests)) {
+      if (_adHocUnwrap().IsMatch(code)) {
+        found.Add($"{path}: unwraps GatedHostedService by hand (use GetHostedWorker<T>() or GetHostedWorkers())");
+      }
+      foreach (Match m in _hostedServicesByType().Matches(code)) {
+        if (staged.Contains(_simpleName(m.Groups[1].Value))) {
+          found.Add($"{path}: looks {m.Groups[1].Value} up among the wrappers, which finds nothing (use GetHostedWorker<T>())");
+        }
+      }
+    }
+    await Assert.That(found).IsEmpty().Because(string.Join("; ", found));
+  }
+
+  /// <summary>The workers the library hosts with a start point, by simple type name.</summary>
+  private static HashSet<string> _stagedWorkers(List<(string Path, string Code)> library) {
+    var staged = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var (_, code) in library) {
+      foreach (Match m in _stagedByType().Matches(code)) {
+        staged.Add(_simpleName(m.Groups[1].Value));
+      }
+      foreach (Match m in _stagedByFactory().Matches(code)) {
+        staged.Add(_simpleName(m.Groups[1].Value));
+      }
+    }
+    return staged;
   }
 
   private static string _simpleName(string type) => type[(type.LastIndexOf('.') + 1)..];
