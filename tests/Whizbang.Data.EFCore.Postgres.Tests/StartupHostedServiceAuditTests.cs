@@ -62,6 +62,9 @@ public sealed class StartupHostedServiceAuditTests {
     ["TableStatisticsCollector"] = SCHEMA_READY,
     ["EventTypeBytesSampler"] = SCHEMA_READY,
     ["NotifyDebounceStatsCollector"] = SCHEMA_READY,
+    // Deregistration is the stop of a service that started when the schema was ready (#1991): an instance stopped
+    // before then has nothing to deregister, against tables that may not exist yet.
+    ["WhizbangShutdownService"] = SCHEMA_READY,
     // The transport consumer receives while the read models catch up (owner decision, 2026-11-02).
     ["TransportConsumerWorker"] = ACCEPT_COMMANDS,
     // The data plane: nothing claims, drains, flushes or schedules before the row records Accept commands.
@@ -122,7 +125,7 @@ public sealed class StartupHostedServiceAuditTests {
     // none, and a check the application asks for is the application's to time.
     "HealthCheckPublisherHostedService",
     // Work done only when the host stops.
-    "WhizbangShutdownService", "BatchStrategyShutdownFlush", "DutyShutdownReleaseService",
+    "BatchStrategyShutdownFlush", "DutyShutdownReleaseService",
   };
 
   [Test]

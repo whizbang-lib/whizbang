@@ -97,6 +97,9 @@ namespace TestNamespace {
       + "global::Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => ");
     await Assert.That(registrySource).DoesNotContain("services.AddHostedService(sp => ")
       .Because("the perspective worker is hosted through the stage wrapper only");
+    await Assert.That(registrySource).Contains(
+      "global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<global::Whizbang.Core.Workers.WhizbangShutdownService>(services);")
+      .Because("deregistration runs only for an instance that got as far as a ready schema (#1991)");
   }
 
   [Test]
