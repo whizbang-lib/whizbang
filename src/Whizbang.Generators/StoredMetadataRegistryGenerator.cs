@@ -25,10 +25,19 @@ public class StoredMetadataRegistryGenerator : IIncrementalGenerator {
   private const string STORED_METADATA_ATTRIBUTE = "Whizbang.Core.Attributes.StoredMetadataAttribute";
   private const int FULL = 1;
 
+  /// <summary>
+  /// Syntax predicate: admits a type declaration with an attribute or a base list, since the attribute may sit on the
+  /// type, a base class or an interface.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/StoredMetadataRegistryGeneratorTests.cs</tests>
+  public static bool IsAttributedOrDerivedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax t && (t.AttributeLists.Any() || t.BaseList is not null);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var full = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => AuditEventRegistryGenerator.IsAttributedOrDerivedTypeCandidate(node),
+        predicate: static (node, _) => IsAttributedOrDerivedTypeCandidate(node),
         transform: static (ctx, ct) => _extract(ctx, ct)
     ).Where(static name => name is not null);
 
