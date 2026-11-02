@@ -130,7 +130,11 @@ public static class TestConstants {
   /// <para>DispatcherSupersedingKeyTests.cs adds 1 (EmbedProfileReceptor: returns a superseding event the dispatcher
   /// cascades, so the cascade path's key stamp is exercised, #1729).</para>
   ///
-  /// <para>Total: 131 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>ReceptorInterceptorDispatchTests.cs adds 7 (GateCommandReceptor, GateVoidCommandReceptor,
+  /// GateSyncCommandReceptor, GatePublishedEventReceptor, GateCascadeCommandReceptor, GateCascadedEventReceptor,
+  /// GatePermissionCommandReceptor: one per local invocation path the receptor interceptors gate, #1996).</para>
+  ///
+  /// <para>Total: 138 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 131;
+  public const int EXPECTED_RECEPTOR_COUNT = 138;
 }

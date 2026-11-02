@@ -9,8 +9,8 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Runs every registered <see cref="IReceptorInterceptor"/> in sequence, short-circuiting
 /// on the first denial and surfacing the strictest <see cref="DeniedAction"/> encountered.
-/// Use this from receptor wrappers, custom dispatchers, or anywhere a consumer wants to
-/// apply Whizbang's receptor permission gate without modifying the core invoker.
+/// The framework registers one as a singleton and runs it before every receptor invocation;
+/// custom dispatch code can use it the same way.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -29,6 +29,13 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors) {
   private readonly IReadOnlyList<IReceptorInterceptor> _interceptors = [.. interceptors];
+
+  /// <summary>
+  /// True when no interceptor is registered. The dispatcher and the receptor invoker read this once, when they are
+  /// built, and skip the gate entirely for an empty pipeline, so a host without interceptors pays nothing per message.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorGateTests.cs:Active_NoInterceptorsRegistered_IsNullAsync</tests>
+  public bool IsEmpty => _interceptors.Count == 0;
 
   /// <summary>
   /// Runs interceptors in order, short-circuiting on the first denial. Fastest path —
