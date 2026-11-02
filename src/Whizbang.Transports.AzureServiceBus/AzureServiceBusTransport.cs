@@ -693,7 +693,8 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       var completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
 
       if (completedTask == timeoutTask) {
-        _logger.LogError("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
+        // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+        _logger.LogWarning("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
         throw new TimeoutException($"SendMessageAsync timed out after {_options.SendTimeout} for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
       }
 
@@ -723,7 +724,8 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       throw new UnroutableDestinationException(destination.Address, sbEx);
 #pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
-      _logger.LogError(
+      // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+      _logger.LogWarning(
         ex,
         "Failed to publish message {MessageId} to {Destination}",
         envelope.MessageId,
@@ -1877,7 +1879,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
-    _logger.LogError(
+    // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
+    // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger.LogWarning(
       ex,
       "Error processing session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
       args.Message.MessageId,
@@ -1899,7 +1903,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
-    _logger.LogError(
+    // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
+    // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger.LogWarning(
       ex,
       "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
       args.Message.MessageId,

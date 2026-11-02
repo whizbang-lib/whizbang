@@ -1165,7 +1165,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             );
           }
         } catch (Exception saveEx) {
-          _logger.LogError(
+          // #1976: rethrown to the worker, which retries the batch and dead-letters it at the bound, so a Warning.
+          _logger.LogWarning(
               saveEx,
               "Failed to save partial progress for {PerspectiveName} stream {StreamId}",
               perspectiveName,
@@ -1175,7 +1176,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           throw;
         }
       } else {
-        _logger.LogError(
+        // #1976: rethrown to the worker, which retries the batch and dead-letters it at the bound, so a Warning.
+        _logger.LogWarning(
             ex,
             "Error processing first event for {PerspectiveName} stream {StreamId}, no progress to save",
             perspectiveName,
