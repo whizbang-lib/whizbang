@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (new reason `ReceptorQuarantined`, 29), neither retried and both held for review by the default recovery policy;
   `Throw` fails the attempt so the attempts bound retries it; `DropQuiet` completes the row. With no interceptor
   registered no path does any interceptor work. `ReceptorInfo` gains `ReceptorType`, which generated entries set.
+  The Service Bus consumer worker asks before it runs a message's inbox stages and honors the same actions (a denied
+  `Throw` fails the delivery for the broker's redelivery). Raw receptors (`IRawReceptor`) are gated with the message's
+  envelope and scope: `DeadLetter` and `Quarantine` dead-letter the message at the broker under the reasons
+  `ReceptorDenied` and `ReceptorQuarantined`. A control-class message whose comparison is denied is dropped, as a failed
+  comparison is. `ReceptorInterceptorPipeline.AdmitAsync` applies the same decision for custom invocation code.
   **Upgrade note:** registering `DefaultRequirePermissionInterceptor` now enforces every `[RequirePermission]` on every
   path, where the attribute was inert before; grant the permissions those receptors declare before registering it.
   An interceptor that applies to an `ISyncReceptor` must complete synchronously.
