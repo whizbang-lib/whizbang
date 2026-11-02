@@ -183,6 +183,38 @@ public class WhizbangWorkerRegistrationTests {
   }
 
   [Test]
+  [Timeout(30000)]
+  public async Task StoppedBeforeItsStartPoint_AWorkerThatAsksIsToldItsStartWasAbandonedAsync(CancellationToken cancellationToken) {
+    // A worker whose startup others wait on (the transport consumer's subscriptions, the perspective worker's startup
+    // scan) settles that signal when the host stops before its start point, so no waiter hangs on a start that will
+    // never come.
+    var inner = new Abandonable();
+    using var wrapper = new StartupStageGatedService<Abandonable>(
+      inner, StartupStage.AcceptingCommands, new StartupStageGate(new SchemaReadyGate()));
+    await wrapper.StartAsync(cancellationToken);
+
+    await wrapper.StopAsync(cancellationToken);
+
+    await Assert.That(inner.Abandoned.Task.IsCanceled).IsTrue()
+      .Because("the worker was told, and settled its signal as canceled");
+    await Assert.That(inner.Starts).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task Started_AWorkerIsNeverToldItsStartWasAbandonedAsync(CancellationToken cancellationToken) {
+    var inner = new Abandonable();
+    using var wrapper = new SchemaReadyGatedService<Abandonable>(inner, SchemaReadyGate.AlreadyReady());
+    await wrapper.StartAsync(cancellationToken);
+    await wrapper.Started.WaitAsync(cancellationToken);
+
+    await wrapper.StopAsync(cancellationToken);
+
+    await Assert.That(inner.Abandoned.Task.IsCompleted).IsFalse();
+    await Assert.That(inner.Starts).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task NullArguments_AreRefusedAsync() {
     await Assert.That(() => new SchemaReadyGatedService<Probe>(null!, null)).Throws<ArgumentNullException>();
     await Assert.That(() => WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker<Probe>(null!))
@@ -216,6 +248,21 @@ public class WhizbangWorkerRegistrationTests {
       Stops++;
       return Task.CompletedTask;
     }
+  }
+
+  /// <summary>Settles a startup signal as canceled when told its start was abandoned.</summary>
+  private sealed class Abandonable : IHostedService, IStartAbandonedObserver {
+    public TaskCompletionSource Abandoned { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int Starts { get; private set; }
+
+    public Task StartAsync(CancellationToken cancellationToken) {
+      Starts++;
+      return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public void OnStartAbandoned(CancellationToken stoppingToken) => Abandoned.TrySetCanceled(stoppingToken);
   }
 
   private sealed class Other : IHostedService {
