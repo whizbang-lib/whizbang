@@ -4,19 +4,21 @@
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// Signal-based gate that workers await before issuing SQL against the database. The schema
-/// initializer (<c>WhizbangDatabaseInitializerService</c>, which both Postgres drivers share)
-/// calls <see cref="MarkReady"/> after migrations succeed. Workers call
-/// <see cref="WaitForReadyAsync"/> at the top of their <c>ExecuteAsync</c> so they hold off
-/// on any SQL until the schema is provisioned.
+/// Signal that the schema is provisioned. The schema initializer
+/// (<c>WhizbangDatabaseInitializerService</c>, which both Postgres drivers share) calls
+/// <see cref="MarkReady"/> after migrations succeed. Workers do not wait on this gate themselves:
+/// a worker is registered with the point it starts at (<c>AddWhizbangWorker</c> or
+/// <c>AddWhizbangWorkerAtSchemaReady</c>), and the host starts it only once startup reaches that
+/// point, which is never before this gate opens.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This decouples worker startup from hosted-service registration order. Even when a
 /// consumer's DI graph registers workers before the driver (the default for
 /// <c>AddWhizbang().WithDriver.Postgres</c>, since <c>AddWhizbang()</c> calls
-/// <c>AddWhizbangWorkers()</c>), workers won't fire SQL against an unmigrated database —
-/// they block on the gate.
+/// <c>AddWhizbangWorkers()</c>), no worker fires SQL against an unmigrated database: the hosting
+/// wrapper holds it. Only the startup machinery that drives the later transitions reads the gate
+/// directly; a source-scan guard test fails if a worker starts waiting on it itself.
 /// </para>
 /// <para>
 /// On migration failure, the initializer must NOT mark ready. Workers will then never enter
