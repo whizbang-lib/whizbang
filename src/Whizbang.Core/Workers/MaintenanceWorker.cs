@@ -886,21 +886,9 @@ public sealed partial class MaintenanceWorker(
         await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
         return DestructionBatch.None;
       }
-      // #1735: the disposition the hook returned, or the declared one (Delete: every Destruction value that names
-      // another disposition is refused at compile time by WHIZ137). One the reaper cannot carry out holds the batch.
-      var disposition = result.Disposition ?? context.DeclaredDefault;
-      var compactor = disposition == Whizbang.Core.Lifecycle.Disposition.Compact
-        ? sp.GetService<Whizbang.Core.Lifecycle.ICompactionHandler>()
-        : null;
-      if (disposition != Whizbang.Core.Lifecycle.Disposition.Delete && compactor is null) {
-        await _holdUnavailableDispositionAsync(coordinator, sp, targets, disposition, ct).ConfigureAwait(false);
+      // #1735: the disposition runs, or the batch is held when the reaper cannot carry it out
+      if (!await _runDispositionAsync(coordinator, sp, context, result, envelopes, ct).ConfigureAwait(false)) {
         return DestructionBatch.None;
-      }
-      // Proceed: the Pre stages run, then the reap deletes the batch and PostDestruction fires for it. A
-      // throwing Pre Inline receptor, or a throwing compaction handler, takes the failure path below, as a throwing hook does
-      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
-      if (compactor is not null) {
-        await compactor.CompactAsync(context, ct).ConfigureAwait(false);
       }
       return new DestructionBatch(targets, envelopes);
     } catch (OperationCanceledException) {
@@ -929,6 +917,28 @@ public sealed partial class MaintenanceWorker(
       LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
       return DestructionBatch.None;
     }
+  }
+
+  // #1735: the disposition the hook returned, or the declared one (Delete: every Destruction value that names another
+  // disposition is refused at compile time by WHIZ137). One the reaper cannot carry out holds the batch and returns false;
+  // otherwise the Pre stages run, then the compaction handler for Compact, and the reap may proceed. A throwing Pre Inline
+  // receptor or compaction handler propagates to the caller's failure path, as a throwing hook does.
+  private async Task<bool> _runDispositionAsync(IWorkCoordinator coordinator, IServiceProvider sp,
+      Whizbang.Core.Lifecycle.DestructionContext context, Whizbang.Core.Lifecycle.DestructionResult result,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> envelopes, CancellationToken ct) {
+    var disposition = result.Disposition ?? context.DeclaredDefault;
+    var compactor = disposition == Whizbang.Core.Lifecycle.Disposition.Compact
+      ? sp.GetService<Whizbang.Core.Lifecycle.ICompactionHandler>()
+      : null;
+    if (disposition != Whizbang.Core.Lifecycle.Disposition.Delete && compactor is null) {
+      await _holdUnavailableDispositionAsync(coordinator, sp, context.Targets, disposition, ct).ConfigureAwait(false);
+      return false;
+    }
+    await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+    if (compactor is not null) {
+      await compactor.CompactAsync(context, ct).ConfigureAwait(false);
+    }
+    return true;
   }
 
   // #1735: a disposition the reaper cannot carry out keeps the batch: Compact with no ICompactionHandler registered,

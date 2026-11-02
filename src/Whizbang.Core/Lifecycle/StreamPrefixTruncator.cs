@@ -107,13 +107,8 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // (it could never rebuild). An archiving truncate is always safe (detail retrievable), so it skips the check.
     // Checked on the disposition that runs, so a hook cannot get around it by switching an archive to a discard.
     var archive = effective == Disposition.Archive;
-    if (!archive) {
-      var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
-        .ConfigureAwait(false);
-      if (Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.AnyFullHistory(consumers)) {
-        LogFullHistoryBlocked(_logger, streamId);
-        return new StreamTruncateResult("full_history_blocked", 0);
-      }
+    if (!archive && await _strandsAFullHistoryProjectionAsync(streamId, throughVersion, cancellationToken).ConfigureAwait(false)) {
+      return new StreamTruncateResult("full_history_blocked", 0);
     }
 
     // The Pre stages, after the hook proceeded: a throwing Pre Inline receptor aborts the truncate exactly as a
@@ -214,6 +209,18 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   [LoggerMessage(EventId = 42, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for stream {StreamId}; truncate already committed")]
   static partial void LogPostHookFailed(ILogger logger, Exception ex, Guid streamId);
+
+  // A [FullHistory] projection consumes an event in the range and cannot resume from the closing event, so discarding
+  // the range would strand it (it could never rebuild); logged when it does.
+  private async Task<bool> _strandsAFullHistoryProjectionAsync(Guid streamId, long throughVersion, CancellationToken cancellationToken) {
+    var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
+      .ConfigureAwait(false);
+    if (!Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.AnyFullHistory(consumers)) {
+      return false;
+    }
+    LogFullHistoryBlocked(_logger, streamId);
+    return true;
+  }
 
   /// <summary>
   /// Runs the PreDestruction hook: a veto when it cancels or defers the truncate, otherwise the disposition to run (the
