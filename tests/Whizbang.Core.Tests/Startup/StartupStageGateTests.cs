@@ -27,15 +27,10 @@ public class StartupStageGateTests {
   /// it has tried to write the row, and says whether the write landed. When it did not (the database did not answer
   /// within the write's budget, so the stage is held and written again on the next accepted heartbeat), the row still
   /// records the stage before, so the instance is not eligible for work, yet the gate opens and the data plane starts.
-  /// A started claim worker then claims: claim_work counts its caller whatever its row says and, with the assigner
-  /// leaving an ineligible instance out, falls back to ranking itself (229; locked by
-  /// WorkEligibilitySqlTests.Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync). An eligible stage is reached only
-  /// once the row records it; the reporter tells the observers again with recorded = true when the held write lands.
+  /// Before 300 a started claim worker then claimed: claim_work counted its caller whatever its row said (229). An
+  /// eligible stage is reached only once the row records it; the reporter tells the observers again with
+  /// recorded = true when the held write lands, and a host with no row to record on reports every stage as recorded.
   /// </summary>
-  /// <remarks>
-  /// RED, for the owner's decision on the fix: a host with no storage never records (its reporter has no coordinator),
-  /// so the fix has to tell "nothing to record" from "the write failed" before keying the gate on the record.
-  /// </remarks>
   [Test]
   public async Task AnEligibleStage_WhoseRowWriteFailed_IsNotReachedUntilTheRowRecordsItAsync() {
     var gate = new StartupStageGate(SchemaReadyGate.AlreadyReady());
