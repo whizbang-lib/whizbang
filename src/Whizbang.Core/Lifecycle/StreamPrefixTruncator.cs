@@ -140,20 +140,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual truncate (not a gate-blocked / no-carry-forward / debug-skipped outcome).
     if (string.Equals(result.Status, "truncated", StringComparison.Ordinal)) {
-      try {
-        await _hook.OnAfterDestructionAsync(context, cancellationToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPostHookFailed(_logger, ex, streamId);
-      }
-      // The Post stages, with the envelopes loaded before the truncate. The truncate committed, so a failing
-      // receptor is reported, never thrown
-      try {
-        await DestructionStageReceptors.FirePostAsync(services, envelopes, cancellationToken).ConfigureAwait(false);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogPostStageFailed(_logger, ex, streamId);
-      }
+      await _announceTruncatedAsync(context, services, envelopes, streamId, cancellationToken).ConfigureAwait(false);
     }
     return result;
   }
@@ -209,6 +196,25 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   [LoggerMessage(EventId = 42, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for stream {StreamId}; truncate already committed")]
   static partial void LogPostHookFailed(ILogger logger, Exception ex, Guid streamId);
+
+  // The PostDestruction hook and the Post stages, after a truncate that committed: a failure is reported, never thrown.
+  private async Task _announceTruncatedAsync(DestructionContext context, IServiceProvider services,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> envelopes, Guid streamId, CancellationToken cancellationToken) {
+    try {
+      await _hook.OnAfterDestructionAsync(context, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPostHookFailed(_logger, ex, streamId);
+    }
+    // The Post stages, with the envelopes loaded before the truncate. The truncate committed, so a failing
+    // receptor is reported, never thrown
+    try {
+      await DestructionStageReceptors.FirePostAsync(services, envelopes, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogPostStageFailed(_logger, ex, streamId);
+    }
+  }
 
   // A [FullHistory] projection consumes an event in the range and cannot resume from the closing event, so discarding
   // the range would strand it (it could never rebuild); logged when it does.
