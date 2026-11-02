@@ -51,10 +51,19 @@ public sealed class EnvelopeMetadata {
   public int? EphemeralTtlSeconds { get; init; }
 
   /// <summary>
+  /// The key of a superseding event (<c>[Superseding]</c>, <c>[SupersedingKey]</c>), stamped at dispatch and on receipt.
+  /// The emit chains copy it into <c>wh_event_store.supersede_key</c> for an event flagged
+  /// <c>EventFlags.Superseding</c>. Empty for a superseding type that declares no key; null otherwise.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#the-key</docs>
+  [System.Text.Json.Serialization.JsonPropertyName("sk")]
+  public string? SupersedingKey { get; init; }
+
+  /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
-  /// ephemeral TTL, and one Current hop carrying the message timestamp, correlation id, causation id, stream id and
-  /// trace parent as the first hop holds them (where readers take them from), and the scope folded over every Current
-  /// hop. The write paths build the same form in SQL (<c>_wh_slim_event_metadata</c>, migration 285).
+  /// ephemeral TTL, the superseding key, and one Current hop carrying the message timestamp, correlation id, causation
+  /// id, stream id and trace parent as the first hop holds them (where readers take them from), and the scope folded over
+  /// every Current hop. The write paths build the same form in SQL (<c>_wh_slim_event_metadata</c>, migration 285).
   /// </summary>
   /// <remarks>
   /// Dispatch context, receptor invocations, the service instance, caller information, topic,
@@ -67,7 +76,12 @@ public sealed class EnvelopeMetadata {
   /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataSlimFormTests.cs</tests>
   public EnvelopeMetadata ToSlim() {
     if (Hops.Count == 0) {
-      return new EnvelopeMetadata { MessageId = MessageId, Hops = [], EphemeralTtlSeconds = EphemeralTtlSeconds };
+      return new EnvelopeMetadata {
+        MessageId = MessageId,
+        Hops = [],
+        EphemeralTtlSeconds = EphemeralTtlSeconds,
+        SupersedingKey = SupersedingKey,
+      };
     }
 
     ScopeContext? scope = null;
@@ -81,6 +95,7 @@ public sealed class EnvelopeMetadata {
     return new EnvelopeMetadata {
       MessageId = MessageId,
       EphemeralTtlSeconds = EphemeralTtlSeconds,
+      SupersedingKey = SupersedingKey,
       Hops = [
         new MessageHop {
           Type = HopType.Current,

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Azure.Storage.Blobs.Models;
+
 namespace Whizbang.Archive.AzureBlob;
 
 /// <summary>
@@ -58,4 +60,60 @@ public sealed class AzureBlobArchiveOptions {
   /// read ever holds more than one object's events in memory.
   /// </summary>
   public int MaxEventsPerChunk { get; set; } = DEFAULT_MAX_EVENTS_PER_CHUNK;
+
+  /// <summary>
+  /// The access tier every archive object is written at: <see cref="Azure.Storage.Blobs.Models.AccessTier.Hot"/>,
+  /// <see cref="Azure.Storage.Blobs.Models.AccessTier.Cool"/> or <see cref="Azure.Storage.Blobs.Models.AccessTier.Cold"/>.
+  /// <see langword="null"/> (the default) leaves the storage account's default tier.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Archives are written once and rarely read, so a colder tier stores them for less: Cool and Cold cost less per
+  /// gigabyte than Hot and more per read, and charge for an object deleted before 30 (Cool) or 90 (Cold) days. A restore
+  /// and a purge delete objects, so a stream restored soon after it was archived pays that early-deletion charge.
+  /// </para>
+  /// <para>
+  /// Archive is refused, at startup, when the setting is bound and when the store is built: an object in the Archive
+  /// tier cannot be read until it is rehydrated, which takes hours, so a read-through restore or a rebuild that reads the
+  /// archive would fail. Move objects to Archive with a storage lifecycle rule only where those reads may wait.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/events/archive-store#access-tier</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Configuration_AccessTier_BindsHotCoolOrCold_InAnyCaseAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WithAnAccessTier_StoresEveryObjectAtIt_WithoutOne_TheAccountDefaultAsync</tests>
+  public AccessTier? AccessTier { get; set; }
+
+  /// <summary>
+  /// Why the store cannot write at <paramref name="tier"/>, or <see langword="null"/> when it can: no tier (the account
+  /// default), Hot, Cool or Cold.
+  /// </summary>
+  /// <param name="tier">The configured tier.</param>
+  /// <returns>The refusal, or <see langword="null"/>.</returns>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Store_RefusesATierItCannotReadBackFromAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Store_AcceptsHotCoolColdOrTheAccountDefaultAsync</tests>
+  internal static string? RefusalFor(AccessTier? tier) {
+    if (tier is not { } value || Online(value) is not null) {
+      return null;
+    }
+    return value == Azure.Storage.Blobs.Models.AccessTier.Archive
+      ? "An object in the Archive tier cannot be read until it is rehydrated, which takes hours, so a read-through " +
+        "restore or a rebuild that reads the archive would fail. Write at Hot, Cool or Cold, and move objects to Archive " +
+        "with a storage lifecycle rule only where those reads may wait."
+      : "Archive objects are written at Hot, Cool or Cold.";
+  }
+
+  /// <summary>The SDK's own Hot, Cool or Cold value equal to <paramref name="tier"/> (in any case), or <see langword="null"/>.</summary>
+  internal static AccessTier? Online(AccessTier tier) {
+    foreach (var online in _onlineTiers) {
+      if (tier == online) {
+        return online;
+      }
+    }
+    return null;
+  }
+
+  // The tiers an object can be read from as soon as it is written.
+  private static readonly AccessTier[] _onlineTiers = [
+    Azure.Storage.Blobs.Models.AccessTier.Hot, Azure.Storage.Blobs.Models.AccessTier.Cool, Azure.Storage.Blobs.Models.AccessTier.Cold,
+  ];
 }

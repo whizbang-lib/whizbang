@@ -56,6 +56,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly BlobContainerClient _container;
   private readonly int _quality;
   private readonly int _maxEventsPerChunk;
+  private readonly AccessTier? _accessTier;
   private readonly PostgresTableArchiveStore _table;
   private readonly string _prefix;
   private readonly ILogger _logger;
@@ -64,9 +65,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <summary>Creates the store.</summary>
   /// <param name="database">The service's database, where the manifest and the staged rows live.</param>
   /// <param name="container">The container the objects are written to.</param>
-  /// <param name="options">The compression quality and chunk size.</param>
+  /// <param name="options">The compression quality, the chunk size and the access tier.</param>
   /// <param name="logger">Logs each outcome, and each object a restore or delete could not remove.</param>
-  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, or the chunk size is below 1.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, or the access
+  /// tier is not Hot, Cool or Cold.</exception>
   public AzureBlobArchiveStore(
       PostgresArchiveConnection database,
       BlobContainerClient container,
@@ -82,10 +84,14 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (options.MaxEventsPerChunk < 1) {
       throw new ArgumentOutOfRangeException(nameof(options), options.MaxEventsPerChunk, "MaxEventsPerChunk is 1 or more.");
     }
+    if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
+      throw new ArgumentOutOfRangeException(nameof(options), options.AccessTier, refusal);
+    }
     _database = database;
     _container = container;
     _quality = options.CompressionLevel;
     _maxEventsPerChunk = options.MaxEventsPerChunk;
+    _accessTier = options.AccessTier;
     _table = new PostgresTableArchiveStore(database.Open, database.Schema);
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
@@ -258,6 +264,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var upload = new BlobUploadOptions {
       // The service checks the request's bytes against this hash, so an object is stored exactly as it was sent.
       TransferValidation = new UploadTransferValidationOptions { ChecksumAlgorithm = StorageChecksumAlgorithm.MD5 },
+      // #1897: the configured tier, or none (the account's default).
+      AccessTier = _accessTier,
     };
     _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
     var locator = new ArchiveLocator(STORE_NAME, $"{_container.Name}/{name}", ArchiveCompression.Brotli);

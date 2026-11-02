@@ -91,6 +91,13 @@ public sealed record MessageTypeCatalogEntry(
   public bool IsTerminal { get; init; }
 
   /// <summary>
+  /// Whether the type carries <c>[Superseding]</c> (latest wins). Stamped by the generator so the receive path, where the
+  /// payload is a <c>JsonElement</c>, derives the <c>EventFlags.Superseding</c> bit by type name.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events</docs>
+  public bool IsSuperseding { get; init; }
+
+  /// <summary>
   /// The type's own payload limit from <c>[MaxPayloadSize]</c>, in bytes, or null when it declares none and the
   /// framework default applies. Zero or less turns the limit off for the type.
   /// </summary>

@@ -73,6 +73,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       : [.. ledger.ToPinnedFormerNames()];
   }
 
+  /// <summary>The type's non-blank <c>[PinnedId]</c> value, or null when it has none.</summary>
+  private static string? _pinnedId(INamedTypeSymbol typeSymbol) {
+    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
+        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
+
+    return pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
+        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
+        !string.IsNullOrWhiteSpace(pinnedIdValue)
+      ? pinnedIdValue
+      : null;
+  }
+
   private static MessageTypeCatalogEntryInfo? _extractEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
@@ -115,15 +127,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var messageKind = isCommand ? COMMAND_KIND : EVENT_KIND;
     var kind = isPerspective ? "perspective" : messageKind;
 
-    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
-
-    string? pinnedId = null;
-    if (pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
-        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
-        !string.IsNullOrWhiteSpace(pinnedIdValue)) {
-      pinnedId = pinnedIdValue;
-    }
+    var pinnedId = _pinnedId(typeSymbol);
 
     // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
     // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
@@ -131,6 +135,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     (string Destruction, string Storage)? ephemeral = kind == EVENT_KIND ? EphemeralResolver.Resolve(typeSymbol) : null;
     var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
     var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
+    // #1729: only an event is stored on a stream, so only an event can supersede another.
+    var (isSuperseding, supersedingKey) = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, (string?)null);
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -149,7 +155,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
         DefaultRouting: _defaultRouting(typeSymbol),
         // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
-        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol)
+        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
+        IsSuperseding: isSuperseding,
+        SupersedingKey: supersedingKey
     );
   }
 
@@ -357,6 +365,14 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     foreach (var info in ordered.Where(i => i.IsTerminal)) {
       source.AppendLine($"    global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof({info.TypeName}));");
     }
+    // [Superseding] (#1729), with a generated accessor for its [SupersedingKey], so the flag and the key are stamped on
+    // every path without reflection.
+    foreach (var info in ordered.Where(i => i.IsSuperseding)) {
+      var keyOf = info.SupersedingKey is null
+        ? "null"
+        : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey})";
+      source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {keyOf});");
+    }
     source.AppendLine("  }");
     source.AppendLine("}");
 
@@ -414,6 +430,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.IsTerminal) {
       initParts.Add("IsTerminal = true");
     }
+    if (info.IsSuperseding) {
+      initParts.Add("IsSuperseding = true");
+    }
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
@@ -449,5 +468,7 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsCompacted = false,
     long? MaxPayloadBytes = null,
     string? DefaultRouting = null,
-    bool IsTerminal = false
+    bool IsTerminal = false,
+    bool IsSuperseding = false,
+    string? SupersedingKey = null
 );

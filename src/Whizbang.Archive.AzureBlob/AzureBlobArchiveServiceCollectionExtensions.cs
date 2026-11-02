@@ -4,6 +4,7 @@
 using System.Globalization;
 using Azure.Core;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -37,7 +38,9 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangAzureBlobArchive(this IServiceCollection services, Action<AzureBlobArchiveOptions> configure) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(configure);
-    services.AddOptions<AzureBlobArchiveOptions>().Configure(configure);
+    // Validated when the host starts (#1897): a tier the store cannot write at fails the start, not the first archive.
+    services.AddOptions<AzureBlobArchiveOptions>().Configure(configure).ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<AzureBlobArchiveOptions>, AccessTierValidator>());
     services.RemoveAll<IArchiveStore>();
     services.TryAddSingleton(_create);
     services.AddSingleton<IArchiveStore>(sp => sp.GetRequiredService<AzureBlobArchiveStore>());
@@ -49,7 +52,7 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// <summary>
   /// Registers the Azure Blob store as the <see cref="IArchiveStore"/>, with settings read from
   /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>,
-  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
+  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="configuration">The application's configuration.</param>
@@ -79,7 +82,28 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
     }
     options.CompressionLevel = _int(section, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);
+    var accessTier = section[nameof(AzureBlobArchiveOptions.AccessTier)];
+    if (!string.IsNullOrWhiteSpace(accessTier)) {
+      // Hot, Cool or Cold in any case, kept in the SDK's spelling; anything else is refused with the reason.
+      options.AccessTier = AzureBlobArchiveOptions.Online(new AccessTier(accessTier))
+        ?? throw _tierRefused(accessTier, AzureBlobArchiveOptions.RefusalFor(new AccessTier(accessTier))!);
+    }
   }
+
+  /// <summary>
+  /// Refuses, when the host starts, a tier set in code that the store cannot write at, the same tiers
+  /// <see cref="Bind"/> refuses from configuration.
+  /// </summary>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync</tests>
+  private sealed class AccessTierValidator : IValidateOptions<AzureBlobArchiveOptions> {
+    public ValidateOptionsResult Validate(string? name, AzureBlobArchiveOptions options) =>
+      AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal
+        ? ValidateOptionsResult.Fail(_tierRefused($"{options.AccessTier}", refusal).Message)
+        : ValidateOptionsResult.Success;
+  }
+
+  private static InvalidOperationException _tierRefused(string value, string refusal) =>
+    new($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.AccessTier)} is '{value}'. {refusal}");
 
   /// <summary>
   /// The container client the settings name: a connection string as given, or the service endpoint with the registered

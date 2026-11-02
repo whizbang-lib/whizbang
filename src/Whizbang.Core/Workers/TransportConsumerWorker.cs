@@ -1303,7 +1303,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
       ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "TransportConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver,
-      scopeServiceProvider.GetService<ReceivedOriginStampMonitor>());
+      scopeServiceProvider.GetService<ReceivedOriginStampMonitor>(),
+      scopeServiceProvider.GetService<System.Text.Json.JsonSerializerOptions>());
   }
 
   /// <summary>

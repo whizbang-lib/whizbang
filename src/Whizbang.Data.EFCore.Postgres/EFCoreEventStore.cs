@@ -159,7 +159,9 @@ public sealed class EFCoreEventStore<TDbContext>(
     // document is produced by the same serializer as before (the data source's JSON options).
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
-      Hops = envelope.Hops?.ToList() ?? []
+      Hops = envelope.Hops?.ToList() ?? [],
+      // #1729: wh_append_event stamps a superseding event's key from the metadata it stores.
+      SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(envelope.Payload)
     };
 
     // The append used to ride SaveChangesAsync, which also flushed whatever else the shared, scoped

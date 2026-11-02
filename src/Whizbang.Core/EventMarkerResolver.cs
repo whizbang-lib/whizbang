@@ -65,6 +65,8 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
                 | (entry.IsComposite ? EventFlags.Composite : EventFlags.None)
                 // WS-3 S4: a received terminal event seals the receiver's copy of its stream too.
                 | (entry.IsTerminal ? EventFlags.Terminal : EventFlags.None)
+                // #1729: a received superseding event is reaped on the receiver too.
+                | (entry.IsSuperseding ? EventFlags.Superseding : EventFlags.None)
                 // Compacted wins over Ephemeral (a compaction summary is permanent StateBased, never
                 // reaped) — the same precedence EphemeralFlagDeriver applies on the typed path.
                 | (entry switch {

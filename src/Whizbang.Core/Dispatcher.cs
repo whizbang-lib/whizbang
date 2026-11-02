@@ -4997,7 +4997,9 @@ public abstract partial class Dispatcher(
       Metadata = new EnvelopeMetadata {
         MessageId = jsonEnvelope.MessageId,
         Hops = jsonEnvelope.CopyHops(),
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver)
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver),
+        // #1729: the key the emit chain stamps on a superseding event.
+        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(eventData)
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = streamId,
@@ -6304,7 +6306,9 @@ public abstract partial class Dispatcher(
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops(),
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
+        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver),
+        // #1729: the key the emit chain stamps on a superseding event.
+        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(payload)
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,

@@ -246,7 +246,8 @@ reuse 262's SQL; archives the table store wrote stay readable and move into obje
 `ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Migration
 `269_ArchiveObjectDeletionQueue.sql` (owner decision on #1737): a trigger on the manifest queues every object a row stops
 naming (purge, restore, delete) in the removing transaction, and `ArchiveObjectDeletionStep` (maintenance, maintainer
-duty) deletes them with confirm-then-clear and backoff retries. Open: no access-tier setting yet. Docs:
+duty) deletes them with confirm-then-clear and backoff retries. Access tier (#1897, 2026-11-01): `AccessTier`
+(`Hot`, `Cool`, `Cold`; unset keeps the account default; `Archive` refused at bind, construction and host start). Docs:
 `archive-store.md#the-azure-blob-store` (docs branch `docs/1737`).
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned

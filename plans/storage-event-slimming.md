@@ -410,9 +410,15 @@ small-row win moves to K3 (WS-7) as this slice planned.
 
 ### S12. K1: superseding (latest-wins) event types
 
-**Status (2026-10-24):** open. `src/` has no `[Superseding]` attribute or flag. Decision 5 (#1674) sets the key:
-latest-wins per (stream, type, key), with the key stamped at emit. The flag value below is stale: S1 took bit 5
-for `EventFlags.AtMostOnce`, so the next free bit is `1 << 6`.
+**Status (2026-11-01):** done in the #1729 bundle (migration 295). `EventFlags.Superseding` is `1 << 7` (bit 6 went to
+`Terminal`). The key is stamped at emit from the stored metadata's `sk`; superseded events are queued at emit in
+`wh_superseded_events`, so the reaper never scans the event store. Gates as below plus: no snapshot rests on the event,
+no active destruction hold, commit sequence stamped. Deviation: a superseding event is NOT StateBased (the rebuild and
+rewind guards replay it), because counting it StateBased would skip every mixed stream on rebuild and trip WHIZ133;
+the newest event of each key is still in the log, so a replay is correct under the full-state contract. Diagnostics:
+WHIZ135 (ephemeral and superseding), WHIZ136 (two keys). Limit: an archived and restored event loses its key and is kept.
+Earlier status (2026-10-24): open. Decision 5 (#1674) sets the key: latest-wins per (stream, type, key), with the key
+stamped at emit.
 
 - **Changes.** An event type declares `[Superseding]` (new, `src/Whizbang.Core/Attributes/`); the
   generator discovers it as `EphemeralResolver` does (`src/Whizbang.Generators/Utilities/EphemeralResolver.cs:23`);

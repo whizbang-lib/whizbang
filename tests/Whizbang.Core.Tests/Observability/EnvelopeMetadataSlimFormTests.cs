@@ -41,6 +41,7 @@ public class EnvelopeMetadataSlimFormTests {
   private static EnvelopeMetadata _full() => new() {
     MessageId = _id,
     EphemeralTtlSeconds = 3600,
+    SupersedingKey = "model-a",
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     ReceptorInvocations = [],
     Hops = [
@@ -87,6 +88,8 @@ public class EnvelopeMetadataSlimFormTests {
 
     await Assert.That(slim.MessageId).IsEqualTo(_id);
     await Assert.That(slim.EphemeralTtlSeconds).IsEqualTo(3600);
+    await Assert.That(slim.SupersedingKey).IsEqualTo("model-a")
+      .Because("the emit chain stamps the superseding key from the stored metadata, so the slim form must keep it");
     await Assert.That(slimEnvelope.GetMessageTimestamp()).IsEqualTo(fullEnvelope.GetMessageTimestamp());
     await Assert.That(slimEnvelope.GetCorrelationId()).IsEqualTo(fullEnvelope.GetCorrelationId());
     await Assert.That(slimEnvelope.GetCausationId()).IsEqualTo(fullEnvelope.GetCausationId());
@@ -137,13 +140,14 @@ public class EnvelopeMetadataSlimFormTests {
 
   [Test]
   public async Task ToSlim_NoHopsOrNoScope_KeepsTheMessageIdAloneAsync() {
-    var empty = new EnvelopeMetadata { MessageId = _id, Hops = [] }.ToSlim();
+    var empty = new EnvelopeMetadata { MessageId = _id, Hops = [], SupersedingKey = "k" }.ToSlim();
     var unscoped = new EnvelopeMetadata {
       MessageId = _id,
       Hops = [new MessageHop { ServiceInstance = _instance, Timestamp = _sent }],
     }.ToSlim();
 
     await Assert.That(empty.Hops).IsEmpty();
+    await Assert.That(empty.SupersedingKey).IsEqualTo("k").Because("a hop-less document keeps the superseding key too");
     await Assert.That(unscoped.Hops.Single().Scope).IsNull();
     await Assert.That(unscoped.Hops.Single().Timestamp).IsEqualTo(_sent);
   }

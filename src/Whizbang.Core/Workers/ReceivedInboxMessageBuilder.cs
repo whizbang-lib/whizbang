@@ -87,7 +87,8 @@ internal static class ReceivedInboxMessageBuilder {
       Classify(scope, envelope, messageTypeName),
       "DeadLetterRecovery.Inbox",
       scope.GetService<IEventMarkerResolver>(),
-      scope.GetService<IEphemeralModeResolver>());
+      scope.GetService<IEphemeralModeResolver>(),
+      jsonOptions: jsonOptions);
     return row with { RecoveredFromDeadLetterId = redelivery.DeadLetterId };
   }
 
@@ -110,6 +111,8 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
   /// <param name="originMonitor">Counts received events with and without the producer's origin (#1029), when registered.</param>
+  /// <param name="jsonOptions">Reads a received superseding event's payload for its key (#1729); when null, the combined
+  /// registered contexts.</param>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage Build(
       ReceivedEnvelope received,
@@ -117,7 +120,8 @@ internal static class ReceivedInboxMessageBuilder {
       string guardSite,
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver,
-      ReceivedOriginStampMonitor? originMonitor = null) {
+      ReceivedOriginStampMonitor? originMonitor = null,
+      JsonSerializerOptions? jsonOptions = null) {
     var (envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent) = received;
     // The stream its producer stored it on, read the way every storing site reads it (#1798).
     var streamId = StreamIdentity.Of(envelope);
@@ -139,7 +143,9 @@ internal static class ReceivedInboxMessageBuilder {
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops(),
         DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = EphemeralTtlDeriver.Derive(payload, messageTypeName, ephemeralModeResolver)
+        EphemeralTtlSeconds = EphemeralTtlDeriver.Derive(payload, messageTypeName, ephemeralModeResolver),
+        // #1729: the receiver's copy of a superseding event is stored with the key its producer stored it with.
+        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payload, messageTypeName, jsonOptions)
       },
       MessageType = messageTypeName,
       SourceServiceId = envelope.SourceServiceId,

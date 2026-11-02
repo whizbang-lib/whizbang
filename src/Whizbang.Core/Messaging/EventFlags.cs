@@ -126,6 +126,18 @@ public enum EventFlags {
   /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
   Terminal = 1 << 6,
 
+  /// <summary>
+  /// Treatment flag: this event is <strong>superseding</strong> (latest wins). Its type carries
+  /// <see cref="Attributes.SupersedingAttribute"/>, which the message-type catalog generator registers, so the flag is
+  /// stamped without reflection on every path that stores the event, with the event's key
+  /// (<see cref="Attributes.SupersedingKeyAttribute"/>) in <c>wh_event_store.supersede_key</c>. Maintenance deletes an
+  /// event carrying it, with its body and its digest contribution, once a newer event of the same type and key is stored
+  /// on its stream and every consumer has processed it. It is not StateBased (<see cref="EventFlagsExtensions.IsStateBased"/>):
+  /// the newest event of each key stays in the log, so a rebuild or a rewind replays it.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events</docs>
+  Superseding = 1 << 7,
+
   // Future flags add new values here without requiring schema migrations.
 }
 

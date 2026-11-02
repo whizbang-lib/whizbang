@@ -239,6 +239,27 @@ public class AzureBlobArchiveStoreTests {
   }
 
   [Test]
+  public async Task Write_WithAnAccessTier_StoresEveryObjectAtIt_WithoutOne_TheAccountDefaultAsync() {
+    var (cool, _) = await _seedAsync(3);
+    var (inferred, _) = await _seedAsync(1);
+    var coolStore = new AzureBlobArchiveStore(_database(), _container(),
+      new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, AccessTier = Azure.Storage.Blobs.Models.AccessTier.Cool });
+
+    await Assert.That((await coolStore.WriteAsync(ArchiveBatch.WholeStream(cool))).Archived).IsTrue();
+    await Assert.That((await _store().WriteAsync(ArchiveBatch.WholeStream(inferred))).Archived).IsTrue();
+
+    var tiers = new List<string>();
+    foreach (var name in await _objectsAsync()) {
+      var properties = (await _container().GetBlobClient(name).GetPropertiesAsync()).Value;
+      tiers.Add($"{name.StartsWith(cool.ToString("D"), StringComparison.Ordinal)}|{properties.AccessTier}|{properties.AccessTierInferred}");
+    }
+    await Assert.That(tiers.Order()).IsEquivalentTo(["False|Hot|True", "True|Cool|False", "True|Cool|False"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("each object of the configured store is written at Cool explicitly; the control store sets no tier, so its object takes the account default");
+    await Assert.That(await _readAllAsync(coolStore, cool)).Count().IsEqualTo(3).Because("a Cool object is read back like any other");
+  }
+
+  [Test]
   public async Task Write_TwoPrefixes_EachAddsItsObjects_AndAReadSpansThemAsync() {
     var (stream, _) = await _seedAsync(5);
     var hot = await _hotAsReadAsync(stream);
