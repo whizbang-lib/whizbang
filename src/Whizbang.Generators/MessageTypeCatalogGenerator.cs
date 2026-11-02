@@ -132,7 +132,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
     var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
     // #1729: only an event is stored on a stream, so only an event can supersede another.
-    (bool IsSuperseding, string? Key) superseding = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, null);
+    var (isSuperseding, supersedingKey) = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, (string?)null);
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -152,8 +152,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         DefaultRouting: _defaultRouting(typeSymbol),
         // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
         IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
-        IsSuperseding: superseding.IsSuperseding,
-        SupersedingKey: superseding.Key
+        IsSuperseding: isSuperseding,
+        SupersedingKey: supersedingKey
     );
   }
 
