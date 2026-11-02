@@ -121,6 +121,9 @@ public sealed partial class StartupStageHostTests {
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(recorded.Zip(recorded.Skip(1)).All(p => p.First.EnteredAt <= p.Second.EnteredAt)).IsTrue()
       .Because("each stage is entered after the one before it");
+    var version = host.Services.GetRequiredService<ILibraryVersionProvider>().LibraryVersion;
+    await Assert.That(recorded.Select(r => r.Version ?? "(none)").Distinct()).IsEquivalentTo([version])
+      .Because("the version rides the registration's own write (#1636), so the row carries it from the first stage on");
     bool?[] eligible = [null, null, null, null, false, false, true, true];
     await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo(eligible, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the eligibility rule arrives with the main pass, and from then an instance becomes eligible for work "
@@ -236,7 +239,8 @@ public sealed partial class StartupStageHostTests {
   /// One recorded stage, as the instance's row held it when the stage was written. <paramref name="Eligible"/> is null
   /// while the database has no eligibility rule yet: on a fresh database, before the main pass.
   /// </summary>
-  private sealed record RecordedStage(short Stage, string Message, DateTime EnteredAt, string Phase, bool? Eligible);
+  private sealed record RecordedStage(
+    short Stage, string Message, DateTime EnteredAt, string Phase, bool? Eligible, string? Version);
 
   /// <summary>
   /// Watches the stage: completes a signal per stage reached, reads the row each time a stage is written, and at one
@@ -302,7 +306,8 @@ public sealed partial class StartupStageHostTests {
         ? "wh_instance_is_eligible_for_work(si)"
         : "NULL::boolean";
       await using var command = new NpgsqlCommand($"""
-        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase, {eligibility}
+        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase, {eligibility},
+               library_version
         FROM wh_service_instances si WHERE instance_id = @id
         """, connection);
       command.Parameters.AddWithValue("id", instanceId);
@@ -311,7 +316,7 @@ public sealed partial class StartupStageHostTests {
         throw new InvalidOperationException($"a stage was reported written, but instance {instanceId} has no row");
       }
       return new RecordedStage(reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3),
-        reader.IsDBNull(4) ? null : reader.GetBoolean(4));
+        reader.IsDBNull(4) ? null : reader.GetBoolean(4), reader.IsDBNull(5) ? null : reader.GetString(5));
     }
   }
 

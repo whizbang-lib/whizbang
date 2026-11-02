@@ -126,12 +126,13 @@ public class ClaimWorkerLifecyclePhaseTests {
   private static Lifecycle _enteringAcceptingCommands() => new(LifecyclePhase.Migrating, LifecyclePhase.AcceptingCommands);
 
   [Test]
-  public async Task AClaim_CarriesThePhaseTheInstanceAnnouncesAsync() {
+  public async Task AClaim_SaysNothingOfItsPhase_EvenWithALifecycleAsync() {
     var request = await _runUntilAsync(new Coordinator(firstClaimStale: false), _enteringAcceptingCommands(), c => c.FirstClaim);
 
-    await Assert.That(request.LifecyclePhase).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
-      .Because("the announced phase is the one the transition records; the settled phase lags it while acks are awaited, "
-        + "and a claim comparing the row against it would undo the transition");
+    await Assert.That(request.LifecyclePhase).IsNull()
+      .Because("the stage record is the only writer of the phase and retries its own lost writes (#1636); a claim that "
+        + "compared the row against the announced phase could only report it stale again and again, since a "
+        + "registration no longer overwrites a recorded phase");
   }
 
   [Test]
@@ -155,8 +156,8 @@ public class ClaimWorkerLifecyclePhaseTests {
     var request = await _runUntilAsync(new Coordinator(firstClaimStale: true), _enteringAcceptingCommands(), c => c.RefreshRegistration);
 
     await Assert.That(request.LifecyclePhase).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
-      .Because("this is the write that repairs a lost transition: without the phase it would refresh the heartbeat and "
-        + "leave the instance ineligible");
+      .Because("a registration that re-creates a missing row records the phase the instance is in, as any registration "
+        + "does; it never overwrites a phase the row records");
   }
 
   [Test]

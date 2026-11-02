@@ -1824,47 +1824,32 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<bool> RecordInstanceStateAsync(
-      Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
-      CancellationToken cancellationToken = default) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(lifecyclePhase);
+  public async Task<bool> RecordInstanceTransitionAsync(
+      Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(transition);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "record_instance_state");
+    var fn = BuildSchemaQualifiedName(schema, "wh_record_instance_transition");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@id, @phase, @version)";
+    cmd.CommandText = $"SELECT {fn}(@id, @stage, @message, @phase, @version)";
 #pragma warning restore S2077
-    cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("phase", lifecyclePhase);
-    cmd.Parameters.AddWithValue("version", (object?)libraryVersion ?? DBNull.Value);
-    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return ScalarResult.IsTrue(result);
-  }
-
-  /// <inheritdoc />
-  public async Task<bool> RecordStartupStageAsync(
-      Guid instanceId, Whizbang.Core.Startup.StartupStage stage, string message,
-      CancellationToken cancellationToken = default) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(message);
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_record_startup_stage");
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@id, @stage, @message, @phase)";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue(nameof(stage), (short)stage);
-    cmd.Parameters.AddWithValue(nameof(message), message);
-    // lifecycle_phase stays on the row, written from the stage, for the readers and dashboards that read it.
-    cmd.Parameters.AddWithValue("phase", Whizbang.Core.Startup.StartupStages.LifecyclePhaseOf(stage).ToString());
+    cmd.Parameters.AddWithValue("id", transition.InstanceId);
+    // A null stage is a phase-only write (a pause, a stand-by): the row keeps its stage and message.
+    cmd.Parameters.Add(new NpgsqlParameter("stage", NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = transition.Stage is { } stage ? (short)stage : DBNull.Value,
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("message", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)transition.Message ?? DBNull.Value,
+    });
+    cmd.Parameters.AddWithValue("phase", transition.Phase.ToString());
+    // A null version keeps the recorded one.
+    cmd.Parameters.Add(new NpgsqlParameter("version", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)transition.LibraryVersion ?? DBNull.Value,
+    });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IsTrue(result);
   }

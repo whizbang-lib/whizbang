@@ -937,10 +937,10 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxOutboxAcquireRows: maxOutboxRows,
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
       PartitionAssignment: assignment,
-      AliveLockHeld: aliveLockHeld,
-      // #1638: the phase this instance announces. A row that records another one is reported stale, and the
-      // registration below writes it, so a lost transition write cannot leave a ready instance ineligible for work.
-      LifecyclePhase: _announcedPhase(scope.ServiceProvider)), ct);
+      // #1636: no phase is announced. The stage record is the only writer of the recorded phase and writes a lost
+      // write again on the next accepted beat, and a registration never overwrites a recorded phase, so a claim that
+      // compared the two could only report the row stale on every claim until the next transition.
+      AliveLockHeld: aliveLockHeld), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
     _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
@@ -1171,8 +1171,8 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   /// <summary>
   /// The registration: this instance's identity through <c>record_heartbeat</c>, with the phase it announces (#1638).
-  /// A row it inserts records that phase rather than none, which would read as an older build; a row whose phase a lost
-  /// or overwritten transition left behind is corrected. Without a lifecycle the recorded phase is kept.
+  /// A row it inserts records that phase rather than none, which would read as an older build. A row that records a
+  /// phase keeps it (#1636): the stage record is its only writer. Without a lifecycle nothing is said of the phase.
   /// </summary>
   private Task<bool> _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) =>
     coordinator.RecordHeartbeatAsync(new HeartbeatRequest(

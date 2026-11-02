@@ -57,7 +57,9 @@ public class StartupFleetStatusSourceTests : EFCoreTestBase {
 
     // The instance records its state; the fleet section reports it — phase and version are
     // exactly what a mixed-version rollout asks about first.
-    await podA.RecordInstanceStateAsync(idA, "Running", "0.9.4-alpha.3", cancellationToken);
+    await podA.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      idA, Whizbang.Core.Startup.StartupStage.Running, "reads and writes are served",
+      Whizbang.Core.RunControl.LifecyclePhase.Running, "0.9.4-alpha.3"), cancellationToken);
     var refreshed = await source.GetFleetAsync(cancellationToken);
     var rowA2 = refreshed.First(r => r.InstanceId == idA);
     await Assert.That(rowA2.LifecyclePhase).IsEqualTo("Running");

@@ -46,6 +46,7 @@ public class MigrationBootstrapRegionsTests {
     "184_RoleAssignmentResilience.sql",   // the role vote, renewal, release and fence the migrator is elected by (#966)
     "198_LapsedBridgeLooksBeforeItLocks.sql", // redefines 184's wh_end_lapsed_bridge, so a re-applied bootstrap keeps it (#1217)
     "277_PreflightInstanceAndRoleColumns.sql", // the instance and role table columns and the stage recorder, so registration records its stage (#1636)
+    "278_OneWriterOfTheInstancePhase.sql", // the one recorder of stage, phase and version, which registration writes through (#1636)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

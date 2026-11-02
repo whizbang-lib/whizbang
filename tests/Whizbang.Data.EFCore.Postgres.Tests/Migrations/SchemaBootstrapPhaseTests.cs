@@ -209,6 +209,34 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
+  /// An empty database records an instance's whole transition at registration once the bootstrap has run (#1636): the
+  /// one recorder of stage, phase and version is a pre-migration script too, since the registration's held stage is
+  /// written through it.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabaseRecordsATransitionAtRegistrationAfterTheBootstrapAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      _connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(await _scalarAsync<bool>(
+        "SELECT to_regprocedure('wh_record_instance_transition(uuid,smallint,text,text,text)') IS NOT NULL"))
+      .IsTrue().Because("registration writes the transition held until the row existed through this function");
+    var recorded = await _scalarAsync<bool>(
+      $"SELECT wh_record_instance_transition('{instance.InstanceId}'::uuid, 10::smallint, 'registering', 'Connecting', '1.2.3')");
+    await Assert.That(recorded).IsTrue();
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || startup_stage_message || ' ' || lifecycle_phase || ' ' || library_version
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("10 registering Connecting 1.2.3");
+  }
+
+  /// <summary>
   /// The columns the bootstrap adds to the instance tables carry their descriptions. Migration 231 describes its
   /// stage columns only when it is the one adding them, and on a database the bootstrap brought up it no longer is.
   /// </summary>

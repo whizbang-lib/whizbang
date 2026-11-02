@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core.Observability;
-using Whizbang.Core.RunControl;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres;
@@ -489,22 +489,16 @@ public static class SchemaBootstrapPhase {
     command.Parameters.AddWithValue((double)leaseSeconds);
     await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-    // #1638: the row records the phase the instance is in, Migrating, as part of the registration. A row without a
-    // phase reads as an older build, which is eligible for work whenever it is live, so a new instance registered here
-    // would be handed partitions for its whole migration. The instance-state participant's own Migrating write ran
-    // before this row existed and found nothing to update. Only where the recording function exists: the bootstrap of
-    // an empty database registers before the migration that adds it, and with no older instance there is no peer to
-    // hand a share to anyway.
-    await using var probe = new NpgsqlCommand(
-      "SELECT to_regprocedure($1 || '.record_instance_state(uuid,text,text)') IS NOT NULL", connection);
-    probe.Parameters.AddWithValue(_quoteIdentifier(target));
-    if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
-      return;
-    }
+    // #1638, #1636: a row without a phase reads as an older build, eligible for work whenever it is live, so the
+    // registration records the phase it registers in, Preflight's, through the one recorder of the phase, and only where
+    // the row records none: a registration never overwrites a recorded phase. The generated initializer then writes the
+    // stage held until this row existed, with its phase and the library version, as that transition's one update.
     await using var record = new NpgsqlCommand(
-      $"SELECT {_quoteIdentifier(target)}.record_instance_state($1, $2)", connection);
+      $"SELECT {_quoteIdentifier(target)}.wh_record_instance_transition($1, NULL, NULL, $2, NULL) "
+      + $"FROM {_quoteIdentifier(target)}.wh_service_instances WHERE instance_id = $1 AND lifecycle_phase IS NULL",
+      connection);
     record.Parameters.AddWithValue(instance.InstanceId);
-    record.Parameters.AddWithValue(nameof(LifecyclePhase.Migrating));
+    record.Parameters.AddWithValue(StartupStages.LifecyclePhaseOf(StartupStage.Preflight).ToString());
     await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 

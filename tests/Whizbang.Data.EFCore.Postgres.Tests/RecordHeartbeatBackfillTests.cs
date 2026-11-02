@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// whole life. And the peer reap used a 30 s constant equal to the writer's fast cadence, so a beat
 /// delayed by any latency could tombstone a live peer.
 /// </summary>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/278_OneWriterOfTheInstancePhase.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/147_HeartbeatRegistryBackfill.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
@@ -121,15 +122,15 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task BeatWithANewPhase_OverwritesTheOldOneAsync(CancellationToken cancellationToken) {
+  public async Task BeatWithANewPhase_KeepsTheRecordedOneAsync(CancellationToken cancellationToken) {
     var id = Guid.CreateVersion7();
     _ = await _beatAsync(id, "Starting", "1.0.0", 150, cancellationToken);
 
     _ = await _beatAsync(id, "Running", "1.0.0", 150, cancellationToken);
 
     var row = await _rowAsync(id, cancellationToken);
-    await Assert.That(row!.Value.Phase).IsEqualTo("Running")
-      .Because("the process is the authority on its own phase; a non-null value on the beat wins");
+    await Assert.That(row!.Value.Phase).IsEqualTo("Starting")
+      .Because("278 (#1636): the stage record is the only writer of a recorded phase; a beat only fills one that is missing");
   }
 
   [Test]

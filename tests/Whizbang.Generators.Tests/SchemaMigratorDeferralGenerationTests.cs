@@ -108,9 +108,13 @@ public class SchemaMigratorDeferralGenerationTests {
     await Assert.That(emitted).IsGreaterThan(0)
       .Because("emitting nothing leaves the election cycle in place, and the only symptom would be "
         + "a fleet quietly duplicating work");
-    await Assert.That(emitted).IsLessThan(10)
-      .Because("the bootstrap is a handful of files; if it grows to the whole set it has stopped "
-        + "being a bootstrap and is doing the job it was meant to be electing someone for");
+    // Measured against the whole set rather than a fixed count: the bootstrap grows deliberately (each addition is
+    // pinned by MigrationBootstrapRegionsTests) as Preflight takes on the instance tables (#1636), and what must never
+    // happen is that it stops being a small subset of the migrations.
+    var all = output.Split(".sql\"").Length - 1 - emitted;
+    await Assert.That(emitted * 10).IsLessThan(all)
+      .Because("the bootstrap is a small subset, under a tenth of the migrations; if it grows toward the whole "
+        + "set it has stopped being a bootstrap and is doing the job it was meant to be electing someone for");
   }
 
   /// <summary>The full list carries every migration the generator embeds, each exactly once.</summary>

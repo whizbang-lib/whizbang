@@ -6,7 +6,6 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.RunControl;
-using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Data.Postgres;
 
@@ -24,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_StartupStageRecord.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Shard3")]
 public class StartupStageSqlTests : EFCoreTestBase {
   /// <summary>Every stage, with whether recording it makes the instance eligible for work.</summary>
@@ -86,10 +84,9 @@ public class StartupStageSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     await _registerAsync(conn, instance, phase: null);
     var before = await _rowAsync(conn, instance);
-    await using var dbContext = CreateDbContext();
-    var coordinator = _coordinator(dbContext);
 
-    var recorded = await coordinator.RecordStartupStageAsync(instance, StartupStage.Coordinate, "recomputing partitions");
+    // 231's function, still called by an older build in a rolling upgrade; this build writes through 278's.
+    var recorded = await _writeStageAsync(conn, instance, StartupStage.Coordinate, "recomputing partitions");
 
     await Assert.That(recorded).IsTrue();
     var row = await _rowAsync(conn, instance);
@@ -103,9 +100,9 @@ public class StartupStageSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task Record_AnInstanceWithNoRow_ReportsNothingWrittenAsync() {
-    await using var dbContext = CreateDbContext();
+    await using var conn = await _openAsync();
 
-    var recorded = await _coordinator(dbContext).RecordStartupStageAsync(Guid.CreateVersion7(), StartupStage.Elect, "voting");
+    var recorded = await _writeStageAsync(conn, Guid.CreateVersion7(), StartupStage.Elect, "voting");
 
     await Assert.That(recorded).IsFalse().Because("before it registers an instance has no row, which is expected");
   }
@@ -216,9 +213,6 @@ public class StartupStageSqlTests : EFCoreTestBase {
   // ─────────────────────────────────────────────────────────────────────────
 
   /// <summary>The coordinator as the stage reporter resolves it: through the interface.</summary>
-  private static Whizbang.Core.Messaging.IWorkCoordinator _coordinator(WorkCoordinationDbContext dbContext) =>
-    new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-
   private async Task<NpgsqlConnection> _openAsync() {
     var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
@@ -243,16 +237,21 @@ public class StartupStageSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  /// <summary>A stage as the reporter writes it: through the function, with the phase it maps to.</summary>
+  /// <summary>A stage as 231's function writes it, with the phase it maps to; throws when nothing was written.</summary>
   private static async Task _recordAsync(NpgsqlConnection conn, Guid instanceId, StartupStage stage, string message) {
+    if (!await _writeStageAsync(conn, instanceId, stage, message)) {
+      throw new InvalidOperationException($"the stage of {instanceId} was not recorded");
+    }
+  }
+
+  /// <summary>A stage through 231's function, with the phase it maps to; answers whether the row was written.</summary>
+  private static async Task<bool> _writeStageAsync(NpgsqlConnection conn, Guid instanceId, StartupStage stage, string message) {
     await using var cmd = new NpgsqlCommand("SELECT wh_record_startup_stage(@id, @stage, @message, @phase)", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
     cmd.Parameters.AddWithValue(nameof(stage), (short)stage);
     cmd.Parameters.AddWithValue(nameof(message), message);
     cmd.Parameters.AddWithValue("phase", StartupStages.LifecyclePhaseOf(stage).ToString());
-    if (await cmd.ExecuteScalarAsync() is not true) {
-      throw new InvalidOperationException($"the stage of {instanceId} was not recorded");
-    }
+    return await cmd.ExecuteScalarAsync() is true;
   }
 
   /// <summary>The stage columns of one instance row, with its heartbeat.</summary>
