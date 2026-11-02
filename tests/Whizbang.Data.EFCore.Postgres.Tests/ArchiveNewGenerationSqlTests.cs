@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#new-generation</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/280_FinalSnapshotAndScheduledDisposition.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/296_NewGenerationWritePaths.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
 public class ArchiveNewGenerationSqlTests : EFCoreTestBase {
