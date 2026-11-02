@@ -172,7 +172,7 @@ public class DapperCollectiveApplyProgressTests : PostgresTestBase {
 
     using var check = await ConnectionFactory.CreateConnectionAsync();
     var stamps = (await check.QueryAsync<DateTime>($"SELECT DISTINCT updated_at FROM {TABLE}")).ToList();
-    await Assert.That(stamps).IsEquivalentTo(new[] { started!.Value })
+    await Assert.That(stamps).IsEquivalentTo([started!.Value])
       .Because("every row of one apply carries the time the apply started, the resumed rows included");
   }
 
@@ -228,11 +228,11 @@ public class DapperCollectiveApplyProgressTests : PostgresTestBase {
       _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ConnectionFactory, eventId);
 
     using var conn = await ConnectionFactory.CreateConnectionAsync();
-    var record = await conn.QuerySingleAsync<(Guid? Through, bool Completed)>(
+    var (through, completed) = await conn.QuerySingleAsync<(Guid? Through, bool Completed)>(
       "SELECT through_id, completed FROM wh_collective_apply_progress WHERE event_id = @eventId", new { eventId });
     await Assert.That((first, again)).IsEqualTo((0, 0));
-    await Assert.That(record.Through).IsNull().Because("no row was reached");
-    await Assert.That(record.Completed).IsTrue();
+    await Assert.That(through).IsNull().Because("no row was reached");
+    await Assert.That(completed).IsTrue();
   }
 
   private static DapperCollectiveEventExecutor<JobModel> _executor(CollectiveApplyOptions options) =>

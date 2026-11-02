@@ -79,7 +79,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
     }
 
     await Assert.That(retried).IsEqualTo(3).Because("the retry applies the three rows the first batch did not reach");
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2 })
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([2, 2, 2, 2, 2])
       .Because("every row received the collective once: the retry resumed after the batch that had committed");
   }
 
@@ -103,7 +103,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
     }
 
     await Assert.That(retried).IsEqualTo(3);
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2 });
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([2, 2, 2, 2, 2]);
   }
 
   [Test]
@@ -119,7 +119,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
       _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ctx, eventId);
 
     await Assert.That(again).IsEqualTo(0).Because("a finished apply of this collective by this handler is not run again");
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2 });
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([2, 2, 2, 2, 2]);
   }
 
   [Test]
@@ -145,7 +145,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
 
     await Assert.That(retried.AffectedRowCount).IsEqualTo(3)
       .Because("the first handler had finished, and the second resumed after its committed batch");
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 3, 3, 3, 3, 3 })
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([3, 3, 3, 3, 3])
       .Because("each of the two handlers reached every row once");
   }
 
@@ -176,7 +176,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
       });
 
     await Assert.That(applied).IsEqualTo(4).Because("this applier reached the first two rows and the last two");
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2, 2 })
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([2, 2, 2, 2, 2, 2])
       .Because("the rows the other applier reached were not applied a second time");
   }
 
@@ -235,7 +235,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
     check.Parameters.AddWithValue("eventId", eventId);
     check.Parameters.AddWithValue("key", ARCHIVE_KEY);
     await Assert.That(applied).IsEqualTo(3);
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 2, 2, 2, 2, 2 });
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([2, 2, 2, 2, 2]);
     await Assert.That((bool)(await check.ExecuteScalarAsync())!).IsTrue()
       .Because("the recovered apply finished, and is no longer abandoned");
   }
@@ -252,7 +252,7 @@ public class CollectiveApplyProgressEFCoreTests : EFCoreTestBase {
       _archiveEntry(), new ArchivePerspective(), _event(), new TenantCollectiveScopeResolver(), ctx, Guid.Empty);
 
     await Assert.That((first, second)).IsEqualTo((3, 3));
-    await Assert.That(await _versionsAsync()).IsEquivalentTo(new[] { 3, 3, 3 });
+    await Assert.That(await _versionsAsync()).IsEquivalentTo([3, 3, 3]);
   }
 
   [After(Test)]

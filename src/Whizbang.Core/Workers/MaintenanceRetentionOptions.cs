@@ -97,4 +97,18 @@ public sealed class MaintenanceRetentionOptions {
   /// Publishes <c>integrity_ledger_max_entries</c>; the database default is 100000.
   /// </summary>
   public int? IntegrityLedgerMaxEntries { get; set; }
+
+  /// <summary>
+  /// Days a finished collective apply's progress record (<c>wh_collective_apply_progress</c>) is kept. Publishes
+  /// <c>collective_apply_progress_retention_days</c>; the database default is 7.
+  /// </summary>
+  /// <remarks>
+  /// A record is never swept while its collective's work row is pending, so a re-delivered collective still finds its
+  /// finished apply and skips it. An abandoned record, left by a dead letter, is not swept by age: it goes with the last
+  /// dead letter of its collective, and after that a rewind folds that collective in full again.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
+  public int? CollectiveApplyProgressDays { get; set; }
 }

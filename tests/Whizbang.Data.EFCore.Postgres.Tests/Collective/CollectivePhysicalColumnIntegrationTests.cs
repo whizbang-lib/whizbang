@@ -557,8 +557,9 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
       new TenantCollectiveScopeResolver(), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default);
   }
 
+  // The batch statements (#1969): each one updates its batch inside the statement that moves the apply's progress record.
   private List<string> _updateStatements() =>
-    [.. _capturedSql.Where(sql => sql.TrimStart().StartsWith("UPDATE", StringComparison.Ordinal))];
+    [.. _capturedSql.Where(sql => sql.Contains("wb_applied AS (UPDATE", StringComparison.Ordinal))];
 
   // ── Writing a row the way the generated runner does ───────────────────────────────────────────
 
@@ -644,6 +645,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     await using var conn = await _openAsync();
+    await CollectiveApplyProgressTable.CreateAsync(conn);
     await conn.ExecuteAsync("CREATE EXTENSION IF NOT EXISTS vector");
     await conn.ReloadTypesAsync();
     await conn.ExecuteAsync($"""

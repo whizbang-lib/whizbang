@@ -248,8 +248,71 @@ public class CollectiveReplayApplierCoverageTests {
     await Assert.That(async () => await applier.InterleaveAfterAsync(typeof(ProbeModel), [], null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
   }
 
+  // #1970: a replay that folds no collective has nothing to ask the live sink's progress about.
+  [Test]
+  public async Task InterleaveAfterAsync_WhenTheStartFollowsNoCollective_ReadsNoReachAsync() {
+    var reads = 0;
+    var (applier, _, _) = _twoCollectives(reach: (_, _) => {
+      reads++;
+      return Task.FromResult<IReadOnlyDictionary<Guid, CollectiveApplyReach>>(new Dictionary<Guid, CollectiveApplyReach>());
+    });
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), _oneStreamEvent(), new CollectiveReplayStart("tenant-a") { CollectivesThroughSequence = 20 },
+      CancellationToken.None);
+
+    await Assert.That(merged).Count().IsEqualTo(1);
+    await Assert.That(reads).IsEqualTo(0).Because("no collective follows the start, so no progress is read");
+  }
+
+  // #1970, #1981: the reach read with the collectives a replay merges in decides, per handler, which rows each folds into.
+  [Test]
+  public async Task ApplyInMemory_FoldsACollective_OnlyIntoTheRowsItsApplyReached_AndSaysItIsInFlightAsync() {
+    var through = Guid.Parse("20000000-0000-0000-0000-000000000000");
+    IReadOnlyList<Guid>? asked = null;
+    MessageEnvelope<IEvent>? queued = null;
+    var executor = new RecordingExecutor();
+    var (applier, before, after) = _twoCollectives(
+      reach: (ids, _) => {
+        asked = ids;
+        return Task.FromResult<IReadOnlyDictionary<Guid, CollectiveApplyReach>>(CollectiveApplyReach.From([
+          (queued!.MessageId.Value, _entry.EntryKey, (Guid?)through, false, false, false),
+          (queued.MessageId.Value, null, null, false, false, true),
+        ]));
+      },
+      executor: executor);
+    queued = after;
+
+    var merged = await applier.InterleaveAfterAsync(typeof(ProbeModel), [], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+    var reached = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("10000000-0000-0000-0000-000000000000"), after.Payload);
+    var beyond = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("30000000-0000-0000-0000-000000000000"), after.Payload);
+    var untracked = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("30000000-0000-0000-0000-000000000000"), before.Payload);
+
+    await Assert.That(merged).Count().IsEqualTo(2);
+    await Assert.That(asked).IsEquivalentTo([before.MessageId.Value, after.MessageId.Value]);
+    await Assert.That((reached.Applied, beyond.Applied, untracked.Applied)).IsEqualTo((1, 0, 1))
+      .Because("the queued apply reached the rows up to through_id only; a collective with no record folds in full");
+    await Assert.That(applier.IsInFlight(after.Payload)).IsTrue();
+    await Assert.That(applier.IsInFlight(before.Payload)).IsFalse();
+    await Assert.That(() => applier.IsInFlight(null!)).Throws<ArgumentNullException>();
+  }
+
+  private static readonly CollectiveApplyEntry _entry = new(
+    ModelType: typeof(ProbeModel),
+    EventType: typeof(ProbeCollectiveEvent),
+    HandlerType: typeof(ProbeHandler),
+    MethodName: "Apply",
+    ScopeHandling: default,
+    SpecKind: default,
+    Invoker: (_, _, _) => new object());
+
   // One registered collective for ProbeModel in tenant-a, twice: committed at 5 and at 15, each its own stream.
-  private static (CollectiveReplayApplier Applier, MessageEnvelope<IEvent> Before, MessageEnvelope<IEvent> After) _twoCollectives() {
+  private static (CollectiveReplayApplier Applier, MessageEnvelope<IEvent> Before, MessageEnvelope<IEvent> After) _twoCollectives(
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null,
+      RecordingExecutor? executor = null) {
     var before = new MessageEnvelope<IEvent>(MessageId.New(), new ProbeCollectiveEvent(), []) { LocalCommitSequence = 5 };
     var after = new MessageEnvelope<IEvent>(MessageId.New(), new ProbeCollectiveEvent(), []) { LocalCommitSequence = 15 };
     var streams = new Dictionary<Guid, List<MessageEnvelope<IEvent>>> {
@@ -268,16 +331,10 @@ public class CollectiveReplayApplierCoverageTests {
       Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-a" },
       CommitSequence = s.Value[0].LocalCommitSequence,
     }).ToList();
-    var entry = new CollectiveApplyEntry(
-      ModelType: typeof(ProbeModel),
-      EventType: typeof(ProbeCollectiveEvent),
-      HandlerType: typeof(ProbeHandler),
-      MethodName: "Apply",
-      ScopeHandling: default,
-      SpecKind: default,
-      Invoker: (_, _, _) => new object());
+    var services = new ServiceCollection().AddSingleton(new ProbeHandler()).BuildServiceProvider();
     var applier = new CollectiveReplayApplier(
-      [entry], new ServiceCollection().BuildServiceProvider(), new NoOpEventStore(streams), new FakeEventStoreQuery(records), []);
+      [_entry], services, new NoOpEventStore(streams), new FakeEventStoreQuery(records),
+      executor is null ? [] : new ICollectiveInMemoryExecutor[] { executor }, archivedStreams: null, reach);
     return (applier, before, after);
   }
 

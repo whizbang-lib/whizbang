@@ -81,6 +81,6 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
     return DapperCollectiveEventApplier<TModel>.ApplyAsync(
       entry, handlerInstance, evt, resolver, connectionFactory, _tableName, _siblingTables, _options,
       logger: _logger, hookRegistry: _hookRegistry, onBatchApplied: onBatchApplied,
-      cancellationToken: cancellationToken);
+      collectiveEventId: collectiveEventId, cancellationToken: cancellationToken);
   }
 }

@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
 
@@ -82,8 +83,17 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// polymorphic, null setters) — the predicate is compiled straight to SQL (no id materialization), and the
   /// cohort is chunked by <see cref="CollectiveApplyOptions.BatchSize"/> so each batch is a short transaction:
   /// brief lock hold, and a per-batch <c>statement_timeout</c> (when configured) that Postgres enforces
-  /// server-side (surviving PgBouncer pooling). Returns the total number of rows affected.
+  /// server-side (surviving PgBouncer pooling). Returns the number of rows this call updated.
   /// </summary>
+  /// <remarks>
+  /// The apply resumes after its last committed batch (#1969): each batch moves the apply's progress record
+  /// (<see cref="CollectiveApplyProgress"/>, keyed by <paramref name="collectiveEventId"/> and <paramref name="entryKey"/>)
+  /// in the statement that updates its rows, so a retry starts where the last attempt stopped and a finished apply is
+  /// skipped. An apply with no event id (<see cref="Guid.Empty"/>) records its progress under an id of its own, so it
+  /// can never be resumed or skipped.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressEFCoreTests.cs</tests>
 #pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   public static async Task<int> ExecuteAsync(
       DbContext dbContext,
@@ -93,6 +103,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       CollectiveApplyOptions options,
       string scopeKey,
       Guid collectiveEventId,
+      string entryKey,
       Func<CancellationToken, ValueTask>? onBatchApplied = null,
       CancellationToken cancellationToken = default) {
 #pragma warning restore S107
@@ -103,6 +114,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     ArgumentNullException.ThrowIfNull(hookPlan);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(scopeKey);
+    ArgumentNullException.ThrowIfNull(entryKey);
 
     var logger = dbContext.GetService<ILoggerFactory>().CreateLogger("Whizbang.Collective.Apply");
 
@@ -137,25 +149,34 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
 
     var batchSize = options.BatchSize > 0 ? options.BatchSize : CollectiveApplyOptions.Default.BatchSize;
 
-    // Keyset batch: select up to BatchSize ids past the cursor (bounded — never the whole cohort), then update
-    // exactly those. `id AS "Value"` is EF's required scalar-projection column name. The bare table qualifies
-    // the outer row inside any correlated EXISTS. The predicate re-evaluates against current state each batch —
-    // safe because collective setters are constant (idempotent), and `id > @cursor` guarantees forward progress
-    // even if a row falls out of the cohort after its update.
-    var selectSql = "SELECT id AS \"Value\" FROM " + table + " WHERE (" + where.SqlFragment +
-      ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
+    // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
+    // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
+    long? lockKey = options.SerializeApplies ? CollectiveApplyLockKey.Compute(table, scopeKey) : null;
+
+    // One statement per batch (#1969): it reads the apply's progress record, selects up to BatchSize ids after it (bounded,
+    // never the whole cohort), moves the record and updates exactly those ids. The bare table qualifies the outer row
+    // inside any correlated EXISTS. The predicate re-evaluates against current state each batch, and `id > through_id`
+    // guarantees forward progress even if a row falls out of the cohort after its update. The progress table lives in
+    // the perspective table's schema, the service's.
     // The store-managed column writes (updated_at, the version bump, any developer audit columns) come from the
     // resolved apply-hook plan. By default the whizbang.timestamps hook contributes updated_at = ApplyTimestamp
     // and a version bump — a collective UPDATE that writes only `data` would leave those stale and break
     // change-detection (delta sync, downstream mirrors, "recently changed" reads) — and a consumer can override
-    // or extend that stamping via hooks.
-    var storeColumns = hookPlan.StoreColumns;
-    var updateSql = "UPDATE " + qualifiedTable + " SET " + setList +
-      hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
-
-    // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
-    // (across pods) instead of convoying; disjoint scopes hash to different keys and run concurrently.
-    long? lockKey = options.SerializeApplies ? CollectiveApplyLockKey.Compute(table, scopeKey) : null;
+    // or extend that stamping via hooks. A resumed apply stamps the apply's first timestamp, the one its record holds.
+    var batch = new BatchPlan(
+      CollectiveApplyProgress.Render(new CollectiveApplyBatch {
+        Table = table,
+        UpdateTarget = qualifiedTable,
+        ProgressTable = PgIdentifier.Qualify(schema, CollectiveApplyProgress.TABLE),
+        Where = where.SqlFragment,
+        SetList = setList + hookPlan.RenderStoreColumnSetTail(CollectiveApplyProgress.APPLIED_AT_SQL),
+        BatchSize = batchSize,
+        SerializedByTheApplyLock = lockKey is not null,
+      }),
+      table,
+      _statementParameters(where, setParameters, hookPlan.StoreColumns));
+    var eventId = collectiveEventId == Guid.Empty ? (Guid)TrackedGuid.New() : collectiveEventId;
+    var appliedAt = hookPlan.AppliedAt;
 
     // Child span of the "Collective Dispatch" span (via Activity.Current): shows the per-model apply — which
     // table, how many rows, how many batches — so a slow apply is pinpointable to a table/batch, not just an
@@ -168,48 +189,52 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       applyActivity.SetTag("whizbang.collective.batch_size", batchSize);
     }
 
-    var total = 0;
-    var batches = 0;
-    var lastId = Guid.Empty;
-    while (true) {
-      var lastCursor = lastId;
-      // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
-      // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production) forbids
-      // a user-initiated BeginTransaction outside strategy.ExecuteAsync (the transaction must be one retriable
-      // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
-      // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
-      // backstop for 40P01/40001 when the configured strategy doesn't cover them.
-      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
-      // onBatchApplied first, so waiting behind another batch neither loses the work nor counts an attempt (#964).
-      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+    // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
+    // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production) forbids
+    // a user-initiated BeginTransaction outside strategy.ExecuteAsync (the transaction must be one retriable
+    // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
+    // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
+    // backstop for 40P01/40001 when the configured strategy doesn't cover them.
+    // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+    // onBatchApplied first, so waiting behind another batch neither loses the work nor counts an attempt (#964).
+    // Per-batch progress: onBatchApplied lets the caller renew its work lease DURING a long apply, after every
+    // committed batch, including the final one.
+    var (total, batches) = await CollectiveApplyProgress.RunAsync(
+      from => CollectiveApplyContention.WaitingForTheLockAsync(
         () => PostgresDeadlockRetry.ExecuteAsync(
           () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-            () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
+            () => _executeOneBatchAsync(
+              dbContext, batch, new CollectiveApplyCursor(eventId, entryKey, from, appliedAt), options, lockKey, cancellationToken)),
           maxAttempts: 5,
           logger: logger,
           cancellationToken: cancellationToken),
-        options, onBatchApplied, cancellationToken).ConfigureAwait(false);
-      total += count;
-      batches++;
-      // Per-batch progress: lets the caller renew its work lease DURING a long apply — without
-      // this, an apply spanning many batches outlives the lease and the (idempotent) work is
-      // redelivered. Invoked after every committed batch, including the final one.
-      if (onBatchApplied is not null) {
-        await onBatchApplied(cancellationToken).ConfigureAwait(false);
-      }
-      if (count < batchSize || maxId is null) {
-        break;
-      }
-      lastId = maxId.Value;
-    }
+        options, onBatchApplied, cancellationToken),
+      onBatchApplied, cancellationToken).ConfigureAwait(false);
     if (applyActivity is not null) {
       applyActivity.SetTag("whizbang.collective.affected_rows", total);
       applyActivity.SetTag("whizbang.collective.batches", batches);
     }
-    if (logger is not null) {
-      LogCollectiveApplyCompleted(logger, collectiveEventId, table, total, batches);
-    }
+    LogCollectiveApplyCompleted(logger, collectiveEventId, table, total, batches);
     return total;
+  }
+
+  // The batch statement, the table it updates (named when its apply lock is busy) and its fixed parameters: the
+  // predicate's, the setters' and the store columns'. Each attempt binds them afresh, as a parameter belongs to one command.
+  private sealed record BatchPlan(string Sql, string Table, IReadOnlyList<KeyValuePair<string, object>> Parameters);
+
+  private static List<KeyValuePair<string, object>> _statementParameters(
+      CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where, List<KeyValuePair<string, object>> setParameters,
+      IReadOnlyList<CollectiveStoreColumn> storeColumns) {
+    var parameters = new List<KeyValuePair<string, object>>(where.Parameters.Count + setParameters.Count + storeColumns.Count);
+    foreach (var (name, value) in where.Parameters) {
+      parameters.Add(new(name, value ?? DBNull.Value));
+    }
+    parameters.AddRange(setParameters);  // text[] paths, JSON text cast ::jsonb, typed column values
+    // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One value per @wb_hookcol{i}.
+    for (var i = 0; i < storeColumns.Count; i++) {
+      parameters.Add(new("wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), storeColumns[i].Value ?? DBNull.Value));
+    }
+    return parameters;
   }
 
   /// <summary>
@@ -336,20 +361,16 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   private static partial void LogCollectiveApplyCompleted(ILogger logger, Guid CollectiveEventId, string Table, int AffectedRows, int Batches);
 
   /// <summary>
-  /// Runs ONE keyset batch in its own short transaction: sets a transaction-local <c>statement_timeout</c> via
+  /// Runs ONE batch in its own short transaction: sets a transaction-local <c>statement_timeout</c> via
   /// <c>set_config(…, true)</c> when configured (the <c>SET LOCAL</c> equivalent — the only form that survives
-  /// PgBouncer pooling), selects up to <c>BatchSize</c> ids past the cursor (ordered, so the last is the
-  /// next cursor — Postgres uuid order, no client-side compare and no <c>max(uuid)</c> aggregate), and updates
-  /// exactly those ids. On failure the <c>await using</c> transaction rolls back before the retry re-attempts
-  /// the same batch (idempotent for the same cursor).
+  /// PgBouncer pooling), takes the apply lock, and runs the batch statement, which selects up to <c>BatchSize</c> ids
+  /// after the apply's progress record, moves the record and updates exactly those ids (#1969). On failure the
+  /// <c>await using</c> transaction rolls back before the retry re-attempts the same batch: the record did not move,
+  /// so the retry selects the same ids.
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch in its own transaction: the two statements, the compiled setters and predicate, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The Dapper applier's equivalent takes the same shape, and the two are read side by side.")]
-  private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
-      DbContext dbContext, string selectSql, string updateSql,
-      List<KeyValuePair<string, object>> setParameters,
-      CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
-      CollectiveApplyOptions options, long? lockKey, IReadOnlyList<CollectiveStoreColumn> storeColumns,
-      Guid lastId, CancellationToken cancellationToken) {
+  private static async Task<CollectiveApplyBatchResult> _executeOneBatchAsync(
+      DbContext dbContext, BatchPlan batch, CollectiveApplyCursor cursor,
+      CollectiveApplyOptions options, long? lockKey, CancellationToken cancellationToken) {
 
     await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -380,7 +401,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
           // Nothing is wrong with the event or the perspective: another batch holds the lock for this
           // table and scope. Named so a caller can tell it from a failed apply and neither count an
           // attempt nor drop the lease.
-          throw new CollectiveApplyLockBusyException(CollectiveApplyContention.TableOf(selectSql), waitSeconds, ex);
+          throw new CollectiveApplyLockBusyException(batch.Table, waitSeconds, ex);
         }
         // The lock is held; the remaining statements wait for ordinary row locks on the usual terms.
         await dbContext.Database.ExecuteSqlRawAsync(
@@ -392,34 +413,39 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       }
     }
 
-    var selectParams = new List<Npgsql.NpgsqlParameter>(where.Parameters.Count + 1);
-    foreach (var (name, value) in where.Parameters) {
-      selectParams.Add(_param(name, value ?? (object)DBNull.Value));
+    var parameters = new List<object>(batch.Parameters.Count + 4);
+    foreach (var (name, value) in batch.Parameters) {
+      parameters.Add(_param(name, value));
     }
-    selectParams.Add(_param("wb_lastid", lastId));
-    var ids = await dbContext.Database.SqlQueryRaw<Guid>(selectSql, [.. selectParams.Cast<object>()])
+    foreach (var (name, value) in CollectiveApplyProgress.Parameters(cursor)) {
+      parameters.Add(_progressParam(name, value));
+    }
+    // Run through EF so the context's interceptors and logging see the statement, as they saw the SELECT and UPDATE it
+    // replaced. Not composed, so EF sends it as written.
+    var rows = await dbContext.Database.SqlQueryRaw<CollectiveApplyBatchRow>(batch.Sql, [.. parameters])
       .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-    if (ids.Count == 0) {
-      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-      return (0, null);
-    }
-
-    var updateParams = new List<Npgsql.NpgsqlParameter>(setParameters.Count + 1 + storeColumns.Count);
-    foreach (var (name, value) in setParameters) {
-      updateParams.Add(_param(name, value));  // text[] paths, JSON text cast ::jsonb, typed column values
-    }
-    updateParams.Add(_param("wb_ids", ids.ToArray()));  // uuid[]
-    // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One value per @wb_hookcol{i}.
-    for (var i = 0; i < storeColumns.Count; i++) {
-      updateParams.Add(_param("wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), storeColumns[i].Value ?? DBNull.Value));
-    }
-    var count = await dbContext.Database.ExecuteSqlRawAsync(updateSql, updateParams, cancellationToken).ConfigureAwait(false);
-
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-    // ids came back ordered by id ASC, so the last one is the batch's greatest id — the next cursor.
-    return (count, ids[^1]);
+    var row = rows[0];
+    return new CollectiveApplyBatchResult(row.Applied, row.Recorded, row.ThroughId, row.Completed);
   }
 
+  // The progress parameters carry their type: the start is a uuid even when it is null, so the statement can read it.
+  private static Npgsql.NpgsqlParameter _progressParam(string name, object value) => new(name, value switch {
+    Guid => NpgsqlTypes.NpgsqlDbType.Uuid,
+    string => NpgsqlTypes.NpgsqlDbType.Text,
+    DateTimeOffset => NpgsqlTypes.NpgsqlDbType.TimestampTz,
+    _ => NpgsqlTypes.NpgsqlDbType.Uuid,
+  }) { Value = value };
+
   private static Npgsql.NpgsqlParameter _param(string name, object value) => new(name, value);
+}
+
+/// <summary>The one row a collective apply batch statement returns (#1969), as Entity Framework reads it.</summary>
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Entity Framework materializes it from the batch statement's row.")]
+internal sealed class CollectiveApplyBatchRow {
+  public int Applied { get; set; }
+  public bool Recorded { get; set; }
+  public Guid? ThroughId { get; set; }
+  public bool Completed { get; set; }
 }

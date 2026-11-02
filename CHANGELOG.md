@@ -1039,6 +1039,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A retried collective apply resumes after its last committed batch, and a replay folds a collective only as far as
+  the live sink applied it (#1969, #1970, #1981).** The collective sink applied a collective in batches, each in a
+  transaction of its own, with its cursor in memory only, so every retry (a busy apply lock, a failure, a crash, a
+  re-delivery before the completion was written, a dead-letter recovery, a fan-out whose later handler failed) applied
+  it again from its first row, and an increment-style setter reached the committed rows twice. Each handler's apply of a
+  collective now keeps a progress record (`wh_collective_apply_progress`, migration 279), keyed by the event and
+  `CollectiveApplyEntry.EntryKey`, which the batch statement itself moves: it reads the record, selects the next batch
+  after `through_id`, moves the record (compare-and-set on the `through_id` it started after) and updates the batch, in
+  one statement, under the existing apply lock, with no extra round trip, no write per row and no new lock. A finished
+  apply is skipped, and a resumed apply stamps its rows with the apply's first timestamp. A dead-lettered sink row marks
+  its unfinished applies abandoned, and records that a handler with no record applied nothing. A rewind or rebuild
+  (`wh_collective_apply_reach`) folds a collective in full when its apply completed or left no record, only into the
+  rows it reached when it is partway or abandoned, and not at all when it applied nothing or is still queued and not
+  started; a replay that meets a collective still in flight takes no snapshot. Dead-letter recovery resumes the apply
+  and completes the rest exactly once. Maintenance sweeps a finished record past
+  `Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays` (`collective_apply_progress_retention_days`,
+  default 7) once its collective's work row is no longer pending; an abandoned record goes with the last dead letter of
+  its collective. Renaming a handler type, method or model between an apply's attempts gives the retry a new key, and
+  it then applies in full again. **API:** `EFCoreCollectiveAdapter<TModel>.ExecuteAsync` takes the entry key after the
+  event id; `DapperCollectiveEventApplier<TModel>.ApplyAsync` takes an optional event id.
 - **A snapshot records which collectives its row holds, and a replay from it folds exactly the rest (#1963).** A live
   snapshot is the row as the live apply read it, while the collective sink applies collectives to rows on its own, a
   key at a time and a batch at a time. A rewind from the snapshot decided by the snapshot's event alone, so a collective

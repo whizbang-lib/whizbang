@@ -246,11 +246,11 @@ public class CollectiveApplyProgressSqlTests : EFCoreTestBase {
     if (rows.Count == 0) {
       return ("missing", false);
     }
-    var row = rows[0];
-    if (row.Completed) {
-      return ("completed", row.Abandoned);
+    var (through, completed, abandoned) = rows[0];
+    if (completed) {
+      return ("completed", abandoned);
     }
-    return (row.Through is null ? "none" : "partial", row.Abandoned);
+    return (through is null ? "none" : "partial", abandoned);
   }
 
   private static Task<Guid?> _throughOfAsync(NpgsqlConnection connection, Guid eventId, string entryKey) =>

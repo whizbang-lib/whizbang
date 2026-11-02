@@ -3744,9 +3744,9 @@ public partial class PerspectiveWorker(
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
         // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
         // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
-        // (the failure count drives dead-lettering) and its row is not completed: it applies later, in full, even
-        // if some of its batches committed. The collectives this run applied before it are complete (#1003), so the
-        // retry starts at this one.
+        // (the failure count drives dead-lettering) and its row is not completed: it applies later, resuming after the
+        // last batch that committed, which its progress record names (#1969). The collectives this run applied before
+        // it are complete (#1003), so the retry starts at this one.
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
         await _completeAppliedCollectivesAsync(
           scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),

@@ -13,6 +13,7 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
 
@@ -50,6 +51,10 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
   /// <param name="connectionFactory">Factory the applier opens its own connection from.</param>
   /// <param name="tableName">The perspective table for <typeparamref name="TModel"/> (e.g. <c>wh_per_job</c>).</param>
   /// <param name="logger">Optional logger for transient-retry warnings (parity with the EF Core adapter).</param>
+  /// <param name="collectiveEventId">The collective event's id: the apply's progress record is kept under it and the
+  /// entry's <see cref="CollectiveApplyEntry.EntryKey"/>, so a retry resumes after the last committed batch and a finished
+  /// apply is skipped (#1969). <see cref="Guid.Empty"/> (the default) records the progress under an id of its own, so
+  /// that apply can never be resumed or skipped.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
 #pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
   public static async Task<int> ApplyAsync(
@@ -64,6 +69,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
       ILogger? logger = null,
       CollectiveApplyHookRegistry? hookRegistry = null,
       Func<CancellationToken, ValueTask>? onBatchApplied = null,
+      Guid collectiveEventId = default,
       CancellationToken cancellationToken = default) {
 #pragma warning restore S107
 
@@ -128,63 +134,66 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     };
     var batchSize = effectiveOptions.BatchSize > 0 ? effectiveOptions.BatchSize : CollectiveApplyOptions.Default.BatchSize;
 
-    // §4 keyset batch + §5a exclusive advisory lock per (table, scope), mirroring EFCoreCollectiveAdapter.
-    // The bare table name qualifies the outer row inside any correlated EXISTS.
-    var selectSql = "SELECT id FROM " + tableName + " WHERE (" + whereClause.SqlFragment +
-      ") AND id > @wb_lastid ORDER BY id LIMIT " + batchSize.ToString(CultureInfo.InvariantCulture);
+    // §4 keyset batch + §5a exclusive advisory lock per (table, scope), mirroring EFCoreCollectiveAdapter: one statement
+    // per batch reads the apply's progress record, selects the next batch after it, moves the record and updates the
+    // batch (#1969). The bare table name qualifies the outer row inside any correlated EXISTS. The progress table is
+    // named bare, as the perspective table is: the driver's connections resolve both through the service's schema.
     // The store-managed column writes (updated_at, the version bump, any developer audit columns) come from the
     // resolved apply-hook plan (default whizbang.timestamps: updated_at = ApplyTimestamp + a version bump). The
-    // tail is rendered by the plan so both drivers produce it identically; each binds @wb_hookcol{i} its own way.
-    var storeColumns = hookPlan.StoreColumns;
-    var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
-      hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
+    // tail is rendered by the plan so both drivers produce it identically; each binds @wb_hookcol{i} its own way. A
+    // resumed apply stamps the apply's first timestamp, the one its record holds.
     // The scope's identity, not its kind. ToString() is the kind, so this line once read
     // "tenant:tenant" for every tenant and put them all on one lock per table.
     var scopeKey = evt.Scope.ScopeIdentity;
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
+    var batch = new BatchPlan(
+      CollectiveApplyProgress.Render(new CollectiveApplyBatch {
+        Table = tableName,
+        UpdateTarget = tableName,
+        ProgressTable = CollectiveApplyProgress.TABLE,
+        Where = whereClause.SqlFragment,
+        SetList = setClause.SqlFragment + hookPlan.RenderStoreColumnSetTail(CollectiveApplyProgress.APPLIED_AT_SQL),
+        BatchSize = batchSize,
+        SerializedByTheApplyLock = lockKey is not null,
+      }),
+      tableName, setClause.Parameters, whereClause.Parameters, hookPlan.StoreColumns);
+    var eventId = collectiveEventId == Guid.Empty ? (Guid)TrackedGuid.New() : collectiveEventId;
+    var appliedAt = hookPlan.AppliedAt;
 
-    var total = 0;
-    var lastId = Guid.Empty;
-    while (true) {
-      var cursor = lastId;
-      // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
-      // with jittered backoff so contention clears here, not at the __collective__ sink's attempt counter. Each
-      // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
-      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
-      // onBatchApplied first (#964) — see EFCoreCollectiveAdapter's twin note.
-      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+    // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
+    // with jittered backoff so contention clears here, not at the __collective__ sink's attempt counter. Each
+    // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
+    // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+    // onBatchApplied first (#964) — see EFCoreCollectiveAdapter's twin note. onBatchApplied is also the per-batch
+    // lease-renewal seam after every committed batch.
+    var (total, _) = await CollectiveApplyProgress.RunAsync(
+      from => CollectiveApplyContention.WaitingForTheLockAsync(
         () => PostgresDeadlockRetry.ExecuteAsync(
-          () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
-            whereClause.Parameters, effectiveOptions, lockKey, storeColumns, cursor, cancellationToken),
+          () => _executeOneBatchAsync(
+            connectionFactory, batch, new CollectiveApplyCursor(eventId, entry.EntryKey, from, appliedAt),
+            effectiveOptions, lockKey, cancellationToken),
           maxAttempts: 5,
           logger: logger,
           cancellationToken: cancellationToken),
-        effectiveOptions, onBatchApplied, cancellationToken).ConfigureAwait(false);
-      total += count;
-      // Per-batch progress: the lease-renewal seam — see EFCoreCollectiveAdapter's twin note.
-      if (onBatchApplied is not null) {
-        await onBatchApplied(cancellationToken).ConfigureAwait(false);
-      }
-      if (count < batchSize || maxId is null) {
-        break;
-      }
-      lastId = maxId.Value;
-    }
+        effectiveOptions, onBatchApplied, cancellationToken),
+      onBatchApplied, cancellationToken).ConfigureAwait(false);
     return total;
   }
 
+  // The batch statement, the table it updates (named when its apply lock is busy) and its fixed parameters.
+  private sealed record BatchPlan(
+    string Sql, string Table, IReadOnlyDictionary<string, object?> SetParameters,
+    IReadOnlyDictionary<string, object?> WhereParameters, IReadOnlyList<CollectiveStoreColumn> StoreColumns);
+
   /// <summary>
-  /// Runs ONE keyset batch in its own short transaction: <c>SET LOCAL statement_timeout</c> (when configured),
-  /// the exclusive <c>pg_advisory_xact_lock</c> (when serializing), a bounded <c>SELECT id … LIMIT</c>, and an
-  /// <c>UPDATE … WHERE id = ANY</c> of exactly those ids. Returns the batch count and the greatest id (next
-  /// cursor). A fresh connection per call keeps retries clean.
+  /// Runs ONE batch in its own short transaction: <c>SET LOCAL statement_timeout</c> (when configured), the exclusive
+  /// <c>pg_advisory_xact_lock</c> (when serializing), and the batch statement, which selects up to <c>BatchSize</c> ids
+  /// after the apply's progress record, moves the record and updates exactly those ids (#1969). A fresh connection per
+  /// call keeps retries clean; a rolled-back attempt left the record where it was, so the retry selects the same ids.
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch on a fresh connection: the two statements, their parameter sets, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The arguments already are the batch's description, and a wrapper type would exist only to be unpacked on the first line.")]
-  private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
-      IDbConnectionFactory connectionFactory, string selectSql, string updateSql,
-      IReadOnlyDictionary<string, object?> setParameters, IReadOnlyDictionary<string, object?> whereParameters,
-      CollectiveApplyOptions options, long? lockKey, IReadOnlyList<CollectiveStoreColumn> storeColumns,
-      Guid lastId, CancellationToken cancellationToken) {
+  private static async Task<CollectiveApplyBatchResult> _executeOneBatchAsync(
+      IDbConnectionFactory connectionFactory, BatchPlan batch, CollectiveApplyCursor cursor,
+      CollectiveApplyOptions options, long? lockKey, CancellationToken cancellationToken) {
     var rawConnection = await connectionFactory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = (DbConnection)rawConnection;
     if (connection.State != ConnectionState.Open) {
@@ -207,40 +216,26 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     }
 
     if (lockKey is long key) {
-      await _takeApplyLockAsync(connection, tx, key, selectSql, options, cancellationToken).ConfigureAwait(false);
+      await _takeApplyLockAsync(connection, tx, key, batch.Table, options, cancellationToken).ConfigureAwait(false);
     }
 
-    var ids = new List<Guid>();
-    await using (var selectCmd = connection.CreateCommand()) {
-      selectCmd.Transaction = tx;
-      selectCmd.CommandText = selectSql;
-      _addParameters(selectCmd, whereParameters);
-      _addParameter(selectCmd, "wb_lastid", lastId);
-      await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        ids.Add(reader.GetGuid(0));
+    CollectiveApplyBatchResult result;
+    await using (var batchCmd = connection.CreateCommand()) {
+      batchCmd.Transaction = tx;
+      batchCmd.CommandText = batch.Sql;
+      _addParameters(batchCmd, batch.WhereParameters);
+      _addParameters(batchCmd, batch.SetParameters);
+      // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One per @wb_hookcol{i}.
+      for (var i = 0; i < batch.StoreColumns.Count; i++) {
+        _addParameter(batchCmd, "wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), batch.StoreColumns[i].Value ?? DBNull.Value);
       }
+      CollectiveApplyProgress.Bind(batchCmd, cursor);
+      await using var reader = await batchCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      result = await CollectiveApplyProgress.ReadAsync(reader, cancellationToken).ConfigureAwait(false);
     }
-
-    if (ids.Count == 0) {
-      await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-      return (0, null);
-    }
-
-    await using var updateCmd = connection.CreateCommand();
-    updateCmd.Transaction = tx;
-    updateCmd.CommandText = updateSql;
-    _addParameters(updateCmd, setParameters);
-    _addParameter(updateCmd, "wb_ids", ids.ToArray());
-    // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One per @wb_hookcol{i}.
-    for (var i = 0; i < storeColumns.Count; i++) {
-      _addParameter(updateCmd, "wb_hookcol" + i.ToString(CultureInfo.InvariantCulture), storeColumns[i].Value ?? DBNull.Value);
-    }
-    var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-    // ids came back ordered by id ASC → the last is the batch's greatest id, the next cursor.
-    return (count, ids[^1]);
+    return result;
   }
 
   /// <summary>
@@ -262,7 +257,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
   /// Another batch holds the lock for this table and scope.
   /// </exception>
   private static async Task _takeApplyLockAsync(
-      DbConnection connection, DbTransaction tx, long key, string selectSql,
+      DbConnection connection, DbTransaction tx, long key, string table,
       CollectiveApplyOptions options, CancellationToken cancellationToken) {
     var waitSeconds = options.LockWaitSeconds is int configured && configured > 0 ? configured : 0;
     if (waitSeconds > 0) {
@@ -283,7 +278,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
         // Nothing is wrong with the event or the perspective: another batch holds the lock for this
         // table and scope. Named so a caller can tell it from a failed apply and neither count an
         // attempt nor drop the lease.
-        throw new CollectiveApplyLockBusyException(CollectiveApplyContention.TableOf(selectSql), waitSeconds, ex);
+        throw new CollectiveApplyLockBusyException(table, waitSeconds, ex);
       }
     }
 

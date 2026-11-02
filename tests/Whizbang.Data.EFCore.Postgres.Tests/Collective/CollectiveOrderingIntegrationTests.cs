@@ -151,6 +151,7 @@ public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     await using var conn = await _openAsync();
+    await CollectiveApplyProgressTable.CreateAsync(conn);
     await conn.ExecuteAsync($"""
       CREATE TABLE {TABLE} (
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
