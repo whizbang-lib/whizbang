@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Signals;
+using Whizbang.Core.Startup;
 
 namespace Whizbang.Core.Tests.Signals;
 
@@ -56,6 +57,9 @@ public class SignalBusHostingTests {
 
     await using var provider = services.BuildServiceProvider();
     await _startAllHostedServicesAsync(provider);
+    // The bus is hosted through its stage wrapper, a BackgroundService, which starts it on a flow of its own (with no
+    // stage gate registered, at once): wait for the start itself, not for the hosted starts to return.
+    await transport.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(transport.Started.Task.IsCompleted)
       .IsTrue()
@@ -72,6 +76,9 @@ public class SignalBusHostingTests {
 
     await using var provider = services.BuildServiceProvider();
     await _startAllHostedServicesAsync(provider);
+    // The bus is hosted through its stage wrapper, a BackgroundService, which starts it on a flow of its own (with no
+    // stage gate registered, at once): wait for the start itself, not for the hosted starts to return.
+    await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(source.Started.Task.IsCompleted)
       .IsTrue()
@@ -86,7 +93,7 @@ public class SignalBusHostingTests {
     services.AddWhizbangSignalBus();
 
     await using var provider = services.BuildServiceProvider();
-    var hostedCount = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Count();
+    var hostedCount = provider.GetServices<IHostedService>().OfType<StartupStageGatedService<SignalBusHostedService>>().Count();
 
     await Assert.That(hostedCount)
       .IsEqualTo(1)

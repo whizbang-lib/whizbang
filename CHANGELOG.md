@@ -1651,6 +1651,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, word for word. A fresh database's row now records `Preflight - the bootstrap closure is in place; registering
   this instance` and every stage after it, as a restart's always did. An existing database, where every column is
   already there, takes no table lock from it.
+- **The signal bus starts at Elect, not with the host (part of #1636).** It was the one hosted service left that
+  touched the database before its stage: started with the host, its wire-route self-test sent `pg_notify` from
+  Preflight, for a loopback that comes back over the notification connection, which only starts at Elect, so a long
+  Preflight (a bootstrap waiting for the schema lock) could log the self-test as failed. It is now registered through
+  `AddHostedServiceAtStage(StartupStage.Elect, ...)`, beside the notification connection; a host without the worker
+  pipeline still starts it with the host. A new audit test fails when any hosted service a turnkey host registers has
+  no stated stage, so the next one has to be given one.
 - **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
   The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
   example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and
