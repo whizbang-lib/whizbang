@@ -100,7 +100,7 @@ public class PerspectiveRunnerAttemptFailureLogLevelTests {
       new MessageHop {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-        Timestamp = DateTimeOffset.UtcNow,
+        Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
       }
     ],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
