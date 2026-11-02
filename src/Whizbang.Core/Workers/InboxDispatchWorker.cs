@@ -15,6 +15,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Attributes;
 
 namespace Whizbang.Core.Workers;
 
@@ -705,6 +706,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // domain triggers).
       var stateOnly = work.Envelope.StateOnly;
 
+      // The receptor interceptors are asked before the row is completed (#1996), so a denied message can still be
+      // dead-lettered or retried. A host with no interceptor returns at once.
+      if (!stateOnly && typedEnvelope is not null && receptorInvoker is not null) {
+        var admission = await receptorInvoker.EvaluateAdmissionAsync(typedEnvelope, _inboxHandlingStages, ct);
+        if (!admission.Allow) {
+          await _handleReceptorDenialAsync(work, admission, ct);
+          return;
+        }
+      }
+
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
@@ -806,29 +817,20 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var detail = $"The payload of inbox message {work.MessageId} ({work.MessageType}) could not be deserialized, "
       + $"which a retry will not change: {cause.GetType().Name}: {cause.Message}";
     LogUndeserializablePayload(_logger, work.MessageId, work.MessageType, refusal);
+    await _deadLetterOrFailAsync(work, reason, detail, refusal, ct);
+  }
 
+  /// <summary>
+  /// Dead-letters a row that a retry cannot help, without completing it: the dead-letter move snapshots its body and
+  /// deletes it in one step. Without a configured store, or when the move fails, the failure is routed through the
+  /// failure channel instead, so the row keeps its body and the attempts bound governs it, rather than the completion
+  /// that deletes it. Shared by the undeserializable payload (#938) and the receptor denial (#1996) paths.
+  /// </summary>
+  private async Task _deadLetterOrFailAsync(InboxWork work, MessageFailureReason reason, string detail, Exception? cause, CancellationToken ct) {
+    var errorText = cause is null ? detail : detail + Environment.NewLine + cause;
     if (_deadLetterStore.IsConfigured) {
       try {
-        var errorText = detail + Environment.NewLine + refusal;
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: errorText,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
-          _logDeadLettered(work, reason, detail, refusal);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
+        await _moveToDeadLettersAsync(work, reason, errorText, detail, cause, ct).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUndeserializableDeadLetterFailed(_logger, work.MessageId, ex);
@@ -838,9 +840,66 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
       MessageId = work.MessageId,
       CompletedStatus = work.Status,
-      Error = detail + Environment.NewLine + refusal,
+      Error = errorText,
       Reason = reason,
     }, ct);
+  }
+
+  /// <summary>
+  /// Moves the row to the dead-letter store and releases it: counts and logs the arrival when the move took it, or
+  /// notes that someone else already did. The row is terminal either way; a failed move throws.
+  /// </summary>
+  private async Task _moveToDeadLettersAsync(InboxWork work, MessageFailureReason reason, string? errorText,
+      string? detail, Exception? cause, CancellationToken ct) {
+    var movedId = await _deadLetterStore.MoveAsync(
+      deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      sourceTable: DeadLetterSourceTable.INBOX,
+      sourceId: work.MessageId,
+      failureReason: reason,
+      errorText: errorText,
+      instanceId: _instanceProvider.InstanceId,
+      generation: _generationProvider.GetGeneration(),
+      ct: ct).ConfigureAwait(false);
+    if (movedId is not null) {
+      _dlqMetrics?.Added.Add(1,
+        new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+        new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
+      _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
+      _logDeadLettered(work, reason, detail, cause);
+    } else {
+      LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+    }
+    _releaseTerminal(work.MessageId);
+  }
+
+  /// <summary>
+  /// Honors a receptor interceptor's denial of a message on inbox delivery before the row is completed (#1996). A
+  /// dead-letter denial moves the row to the dead-letter store, a quarantine denial holds it there under its own
+  /// reason, and neither is retried; any other denial fails the attempt, so the attempts bound retries it. No receptor
+  /// runs and nothing is completed.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
+  private async Task _handleReceptorDenialAsync(InboxWork work, InterceptorResult denial, CancellationToken ct) {
+    var detail = $"A receptor interceptor denied inbox message {work.MessageId} ({work.MessageType}) with "
+      + $"DeniedAction.{denial.OnDenied}: {denial.Reason ?? "no reason given"}";
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, denial.Reason ?? "no reason given");
+    switch (denial.OnDenied) {
+      case DeniedAction.DeadLetter:
+        await _deadLetterOrFailAsync(work, MessageFailureReason.ReceptorDenied, detail, cause: null, ct);
+        break;
+      case DeniedAction.Quarantine:
+        await _deadLetterOrFailAsync(work, MessageFailureReason.ReceptorQuarantined, detail, cause: null, ct);
+        break;
+      default:
+        await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+          MessageId = work.MessageId,
+          CompletedStatus = work.Status,
+          Error = detail,
+          Reason = MessageFailureReason.Unknown,
+        }, ct);
+        break;
+    }
   }
 
   /// <summary>
@@ -997,39 +1056,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
       : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
     LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail);
-    _compositeMetrics?.DeadLettered.Add(1);
-
-    if (_deadLetterStore.IsConfigured) {
-      try {
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: result.Detail,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
-          _logDeadLettered(work, reason, result.Detail, exception: null);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
-        return;
-      } catch (Exception ex) {
-        // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
-        // re-claims. Mirrors the max-attempts branch.
-        LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
-      }
-    }
-    _logDeadLettered(work, reason, result.Detail, exception: null);
-    var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-    await _enqueueCommitAsync(terminalRequest, ct);
+    await _deadLetterCompositeAsync(work, reason, result.Detail, ct).ConfigureAwait(false);
   }
 
 
@@ -1107,29 +1134,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// so this defers oversized work for an operator rather than discarding it.
   /// </remarks>
   private async Task _deadLetterCompositeAsync(
-      InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
+      InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string? detail, CancellationToken ct) {
     _compositeMetrics?.DeadLettered.Add(1);
     if (_deadLetterStore.IsConfigured) {
       try {
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: detail,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
-          _logDeadLettered(work, reason, detail, exception: null);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
+        await _moveToDeadLettersAsync(work, reason, detail, detail, cause: null, ct).ConfigureAwait(false);
         return;
       } catch (Exception ex) {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
@@ -1400,6 +1409,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
+  // The stages inbox delivery runs a message's receptors at, which the receptor interceptors are asked about before the
+  // row is completed (#1996)
+  private static readonly LifecycleStage[] _inboxHandlingStages = [
+    LifecycleStage.PreInboxInline, LifecycleStage.PreInboxDetached,
+    LifecycleStage.PostInboxInline, LifecycleStage.PostInboxDetached];
+
   /// <summary>
   /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
   /// actually emits entries for. Stages outside this set return false unconditionally from
@@ -1505,6 +1520,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 85, Level = LogLevel.Warning,
+    Message = "Inbox message {MessageId} ({MessageType}) was not handled: a receptor interceptor denied it with DeniedAction.{Action}. Reason: {Reason}")]
+  static partial void LogReceptorDenied(ILogger logger, Guid messageId, string messageType, DeniedAction action, string reason);
 
   [LoggerMessage(EventId = 76, Level = LogLevel.Warning,
     Message = "InboxDispatchWorker could not deserialize the payload of message {MessageId} ({MessageType}), which a retry will not change; "

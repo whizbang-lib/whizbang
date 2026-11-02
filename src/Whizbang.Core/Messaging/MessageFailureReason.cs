@@ -257,6 +257,23 @@ public enum MessageFailureReason {
   AwaitingRestore = 27,
 
   /// <summary>
+  /// A receptor interceptor denied a receptor this message would have run with <c>DeniedAction.DeadLetter</c>, so the
+  /// inbox worker moved the row to the dead-letter store before completing it, and no receptor ran. Not retried: the
+  /// same message under the same scope is denied the same way every time. The recorded error text names the receptor
+  /// and the interceptor's reason.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  ReceptorDenied = 28,
+
+  /// <summary>
+  /// A receptor interceptor denied a receptor this message would have run with <c>DeniedAction.Quarantine</c>. The row
+  /// is held in the dead-letter store under this reason, apart from failures, for review; no receptor ran and the rest
+  /// of the stream is not blocked. Recover it through the dead-letter recovery flow once the denial is resolved.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  ReceptorQuarantined = 29,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>
