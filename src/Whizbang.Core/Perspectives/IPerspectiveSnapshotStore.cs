@@ -282,4 +282,15 @@ public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? Snapsho
   /// </summary>
   /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
   public long? CollectivesThroughSequence { get; init; }
+
+  /// <summary>
+  /// True when no archived event lies after the snapshot (#1734): no archive covers it, or it was taken at the last version
+  /// the archive holds (the base a stream's new generation continues from, so everything after it is hot). A rebuild that
+  /// reads no archived data starts only from such a snapshot; one strictly inside the archive, or one that records no
+  /// version, would leave archived events unfolded.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotFloorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs:Rebuild_ByDefault_AfterANewGeneration_StartsFromTheSnapshotAtTheArchiveBoundary_AndReplaysOnlyTheLiveTailAsync</tests>
+  public bool IsLive => ArchivedThroughVersion is not { } through || (SnapshotVersion is { } version && version >= through);
 }
