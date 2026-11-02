@@ -169,6 +169,20 @@ public class WhizbangWorkerRegistrationTests {
   }
 
   [Test]
+  public async Task EachWrapper_SaysWhatItStartsAndWhereAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangWorker<Probe>();
+    services.AddWhizbangWorkerAtSchemaReady<Other>();
+    await using var provider = services.BuildServiceProvider();
+
+    var described = provider.GetServices<IHostedService>().Cast<GatedHostedService>()
+      .Select(g => $"{g.Service.GetType().Name} at {g.StartPoint}").ToList();
+
+    await Assert.That(described).IsEquivalentTo(["Probe at Accept commands", "Other at schema ready"])
+      .Because("every wrapper names the service it starts and its start point, without the caller knowing its type");
+  }
+
+  [Test]
   public async Task NullArguments_AreRefusedAsync() {
     await Assert.That(() => new SchemaReadyGatedService<Probe>(null!, null)).Throws<ArgumentNullException>();
     await Assert.That(() => WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker<Probe>(null!))

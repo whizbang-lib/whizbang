@@ -210,6 +210,36 @@ public sealed partial class StartupStageHostTests {
     await Assert.That(watch.Seen.Select(s => s.Stage)).Contains(StartupStage.Stopped);
   }
 
+  /// <summary>
+  /// The data plane and the transport consumer start only once the instance's row records Accept commands (#1636, owner
+  /// decision 2026-11-02): at the moment the row says the instance is eligible for work, none of them has started, so
+  /// none can claim or receive before it. Every one of them then starts.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task TheDataPlane_StartsOnlyOnceTheRowRecordsAcceptCommandsAsync(CancellationToken cancellationToken) {
+    var watch = new StageWatch(_database.ConnectionString);
+    var starts = new StartWatch();
+    using var host = _buildHost(new StageLog(), watch, starts);
+
+    await host.StartAsync(cancellationToken);
+    await watch.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+
+    await Assert.That(watch.Recorded.Single(r => r.Stage == 60).Eligible).IsTrue()
+      .Because("the transition the data plane waits for is the one that makes the row eligible");
+    await Assert.That(starts.AtAcceptCommands).Contains("ClaimWorker")
+      .Because("the watch must see the data plane, or it proves nothing");
+    await Assert.That(starts.AtAcceptCommands).Contains("TransportConsumerWorker");
+    await Assert.That(starts.StartedBeforeTheRowSaidEligible).IsEmpty()
+      .Because("a worker that starts before the row records Accept commands can claim while the instance is not eligible");
+    foreach (var worker in host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<GatedHostedService>()
+               .Where(g => g.StartPoint == "Accept commands")) {
+      await worker.Started.WaitAsync(_deadline, cancellationToken);
+    }
+
+    await host.StopAsync(cancellationToken);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   [GeneratedRegex(@"^(Information (?:Stage \d of 7|Shutdown stage): [A-Za-z]+(?: [A-Za-z]+)*) - ")]
@@ -218,7 +248,7 @@ public sealed partial class StartupStageHostTests {
   [GeneratedRegex(@"^Information Stage 3 of 7: Migrate - \d+ migration steps? to apply$")]
   private static partial Regex _migrateLine();
 
-  private IHost _buildHost(StageLog log, StageWatch watch) {
+  private IHost _buildHost(StageLog log, StageWatch watch, StartWatch? starts = null) {
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:db"] = _database.ConnectionString,
@@ -228,10 +258,14 @@ public sealed partial class StartupStageHostTests {
     builder.Logging.SetMinimumLevel(LogLevel.Information);
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     builder.Services.AddSingleton<IStartupStageObserver>(watch);
+    if (starts is not null) {
+      builder.Services.AddSingleton<IStartupStageObserver>(starts);
+    }
     _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
     var host = builder.Build();
     watch.Attach(host.Services);
+    starts?.Attach(host.Services);
     return host;
   }
 
@@ -317,6 +351,36 @@ public sealed partial class StartupStageHostTests {
       }
       return new RecordedStage(reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3),
         reader.IsDBNull(4) ? null : reader.GetBoolean(4), reader.IsDBNull(5) ? null : reader.GetString(5));
+    }
+  }
+
+  /// <summary>
+  /// At the moment the reporter tells its observers that Accept commands is recorded (before the stage gate, which is
+  /// told after this observer), notes which workers hosted to start at Accept commands had already started.
+  /// </summary>
+  private sealed class StartWatch : IStartupStageObserver {
+    private IServiceProvider? _services;
+
+    public List<string> AtAcceptCommands { get; } = [];
+    public List<string> StartedBeforeTheRowSaidEligible { get; } = [];
+
+    public void Attach(IServiceProvider services) => _services = services;
+
+    public ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
+      if (snapshot.Stage != StartupStage.AcceptingCommands || !recorded || AtAcceptCommands.Count > 0) {
+        return ValueTask.CompletedTask;
+      }
+      foreach (var gated in _services!.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<GatedHostedService>()) {
+        if (gated.StartPoint != "Accept commands") {
+          continue;
+        }
+        var name = gated.Service.GetType().Name;
+        AtAcceptCommands.Add(name);
+        if (gated.Started.IsCompleted) {
+          StartedBeforeTheRowSaidEligible.Add(name);
+        }
+      }
+      return ValueTask.CompletedTask;
     }
   }
 

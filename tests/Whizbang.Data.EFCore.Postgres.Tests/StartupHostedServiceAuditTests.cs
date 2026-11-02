@@ -8,12 +8,9 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
-using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
-using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -22,52 +19,86 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// composed the way a consumer composes one (the EF Core Postgres driver, its notification stack, the worker pipeline
 /// and a transport) and built, not started; each hosted service it resolves must be one of:
 /// <list type="bullet">
-///   <item>started at a stage, through <see cref="StartupStageGatedService{TService}"/>, at the stage this table names;</item>
-///   <item>a worker whose own loop waits for the schema-ready gate, which opens at the end of Coordinate;</item>
-///   <item>schema initialization and the startup machinery itself, which is what Preflight is;</item>
+///   <item>a worker hosted with its start point (<c>AddWhizbangWorker</c>, <c>AddWhizbangWorkerAtSchemaReady</c>), at
+///     the start point this table names: the data plane and the transport consumer at Accept commands, so nothing
+///     claims or receives before the instance's row says it is eligible for work; the heartbeat and the work that keeps
+///     an instance alive and coordinated when the schema-ready gate opens;</item>
+///   <item>schema initialization and the startup machinery itself, which drive the stages;</item>
 ///   <item>a service that does no database work when it starts (in-memory registration, configuration checks, a
 ///     subscription on the notification connection, or work done only on stop).</item>
 /// </list>
 /// </summary>
 /// <remarks>
-/// A hosted service added without a place in this table fails here, naming it, so the author has to decide its stage
-/// rather than starting it with the host by default. The list is the composition's own answer, which is the check on
-/// the source search that produced the table.
+/// A hosted service added without a place in this table fails here, naming it, so the author has to decide its start
+/// point rather than starting it with the host by default. The list is the composition's own answer, the check on the
+/// source search that produced the table.
 /// </remarks>
+/// <code-under-test>src/Whizbang.Core/Startup/WhizbangWorkerServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/StartupStageGatedService.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Signals/SignalBusServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/WorkerPipelineExtensions.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerBuilderExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs</code-under-test>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 [Category("Startup")]
 [Category("Shard5")]
 public sealed class StartupHostedServiceAuditTests {
-  /// <summary>The services that start at a stage, and the stage.</summary>
-  private static readonly Dictionary<string, StartupStage> _atStage = new(StringComparer.Ordinal) {
-    [nameof(PgSharedNotifyConnection)] = StartupStage.Elect,
-    [nameof(SignalBusHostedService)] = StartupStage.Elect,
-    [nameof(DutyHolderWorker)] = StartupStage.Coordinate,
-    [nameof(PartitionAssignerWorker)] = StartupStage.Coordinate,
+  private const string ACCEPT_COMMANDS = "Accept commands";
+  private const string SCHEMA_READY = "schema ready";
+
+  /// <summary>The services hosted with a start point, and the start point.</summary>
+  private static readonly Dictionary<string, string> _startPoints = new(StringComparer.Ordinal) {
+    // Elect and Coordinate (#1849, #1989).
+    ["PgSharedNotifyConnection"] = "Elect",
+    ["SignalBusHostedService"] = "Elect",
+    ["DutyHolderWorker"] = "Coordinate",
+    ["PartitionAssignerWorker"] = "Coordinate",
+    // Alive and coordinated, not yet eligible for work: when the schema-ready gate opens, at the end of Coordinate.
+    ["HeartbeatWorker"] = SCHEMA_READY,
+    ["PgInstanceLifecycleMonitor"] = SCHEMA_READY,
+    ["StandbyWatcher"] = SCHEMA_READY,
+    ["TypeDefinitionReconcilerHostedService"] = SCHEMA_READY,
+    ["TableStatisticsCollector"] = SCHEMA_READY,
+    ["EventTypeBytesSampler"] = SCHEMA_READY,
+    ["NotifyDebounceStatsCollector"] = SCHEMA_READY,
+    // The transport consumer receives while the read models catch up (owner decision, 2026-11-02).
+    ["TransportConsumerWorker"] = ACCEPT_COMMANDS,
+    // The data plane: nothing claims, drains, flushes or schedules before the row records Accept commands.
+    ["BackupTickCoordinator"] = ACCEPT_COMMANDS,
+    ["ClaimWorker"] = ACCEPT_COMMANDS,
+    ["CoalesceShipWorker"] = ACCEPT_COMMANDS,
+    ["DeadLetterRecoveryWorker"] = ACCEPT_COMMANDS,
+    ["FailureFlushWorker"] = ACCEPT_COMMANDS,
+    ["InboxDispatchWorker"] = ACCEPT_COMMANDS,
+    ["InboxDrainWorker"] = ACCEPT_COMMANDS,
+    ["InboxHandlerWorker"] = ACCEPT_COMMANDS,
+    ["IntegrityAuditWorker"] = ACCEPT_COMMANDS,
+    ["IntegrityCheckpointWorker"] = ACCEPT_COMMANDS,
+    ["IntegritySweepScheduler"] = ACCEPT_COMMANDS,
+    ["LeaseRenewalWorker"] = ACCEPT_COMMANDS,
+    ["MaintenanceWorker"] = ACCEPT_COMMANDS,
+    ["MultiStreamCommandWorker"] = ACCEPT_COMMANDS,
+    ["OrphanInboxJanitor"] = ACCEPT_COMMANDS,
+    ["OutboxCompletionFlushWorker"] = ACCEPT_COMMANDS,
+    ["OutboxDrainWorker"] = ACCEPT_COMMANDS,
+    ["OutboxPublishWorker"] = ACCEPT_COMMANDS,
+    ["PerspectiveCompletionFlushWorker"] = ACCEPT_COMMANDS,
+    ["PerspectiveWorker"] = ACCEPT_COMMANDS,
+    ["PgCommitOrderStamperWorker"] = ACCEPT_COMMANDS,
+    ["PgDurableSignalRetentionWorker"] = ACCEPT_COMMANDS,
+    ["PgDurableSignalTailWorker"] = ACCEPT_COMMANDS,
+    ["RepairDrainWorker"] = ACCEPT_COMMANDS,
+    ["ScheduleWorker"] = ACCEPT_COMMANDS,
+    ["SubscriptionExpansionWorker"] = ACCEPT_COMMANDS,
+    ["TransportDeadLetterDrainWorker"] = ACCEPT_COMMANDS,
   };
 
-  /// <summary>Workers whose own loop waits for the schema-ready gate before their first statement.</summary>
-  private static readonly HashSet<string> _afterTheSchemaReadyGate = new(StringComparer.Ordinal) {
-    "BackupTickCoordinator", "ClaimWorker", "CoalesceShipWorker", "DeadLetterRecoveryWorker",
-    "EventTypeBytesSampler", "FailureFlushWorker", "HeartbeatWorker", "InboxDispatchWorker", "InboxDrainWorker",
-    "InboxHandlerWorker", "IntegrityAuditWorker", "IntegrityCheckpointWorker", "IntegritySweepScheduler",
-    "LeaseRenewalWorker", "LifecyclePhaseWorker", "MaintenanceWorker", "MessageTypeRegistryReconciliationHostedService",
-    "MultiStreamCommandWorker", "NotifyDebounceStatsCollector", "OrphanInboxJanitor", "OutboxCompletionFlushWorker",
-    "OutboxDrainWorker", "OutboxPublishWorker", "PerspectiveCompletionFlushWorker", "PerspectiveMigrationWorker",
-    "PerspectiveWorker", "PgCommitOrderStamperWorker", "PgDurableSignalRetentionWorker", "PgDurableSignalTailWorker",
-    "PgInstanceLifecycleMonitor", "ReadModelsReadyDriver", "RepairDrainWorker", "ScheduleWorker",
-    "ScheduledIntegritySweepReceptorRegistrar", "StandbyWatcher", "SubscriptionExpansionWorker",
-    "TableStatisticsCollector", "TransportConsumerWorker", "TransportDeadLetterDrainWorker",
-    "TypeDefinitionReconcilerHostedService",
-  };
-
-  /// <summary>Preflight itself: schema initialization, and the machinery that records and reports the stages.</summary>
-  private static readonly HashSet<string> _preflight = new(StringComparer.Ordinal) {
+  /// <summary>Schema initialization and the machinery that drives and reports the stages.</summary>
+  private static readonly HashSet<string> _startupMachinery = new(StringComparer.Ordinal) {
     "WhizbangDatabaseInitializerService", "StartupPipelineWorker", "StartupStageHostLifecycle", "StartupReadyService",
+    // Drive Accept commands and Running from the schema-ready and read-model gates: the transitions the workers wait for.
+    "LifecyclePhaseWorker", "ReadModelsReadyDriver",
   };
 
   /// <summary>Services that do no database work when they start.</summary>
@@ -79,7 +110,8 @@ public sealed class StartupHostedServiceAuditTests {
     // In-memory registrations: receptors, backup ticks (run by BackupTickCoordinator), event hooks.
     "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar", "IntegrityManifestReceptorRegistrar",
     "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar", "ScheduledStreamCloseReceptorRegistrar",
-    "SagaWatchdogTickRouterRegistrar", "DefaultBackupTickRegistrar", "IdleActivityTouchHookBinder",
+    "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar", "DefaultBackupTickRegistrar",
+    "IdleActivityTouchHookBinder",
     // Subscriptions on the notification connection, which starts at Elect.
     "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     // In-process state, or the transport's management plane rather than the database.
@@ -98,29 +130,25 @@ public sealed class StartupHostedServiceAuditTests {
     using var host = _turnkeyHost();
     var hosted = host.Services.GetServices<IHostedService>().Select(_describe).ToList();
 
-    var unplaced = hosted.Where(h => h.Stage is null && !_afterTheSchemaReadyGate.Contains(h.Name)
-      && !_preflight.Contains(h.Name) && !_noDatabaseWorkAtStart.Contains(h.Name)).Select(h => h.Name).ToList();
+    var unplaced = hosted.Where(h => h.StartPoint is null && !_startupMachinery.Contains(h.Name)
+      && !_noDatabaseWorkAtStart.Contains(h.Name)).Select(h => h.Name).ToList();
     await Assert.That(unplaced).IsEmpty()
-      .Because("every hosted service must say when it may first touch the database; unplaced: " + string.Join(", ", unplaced));
+      .Because("every hosted service must say when it may first touch the database: register a worker with "
+        + "AddWhizbangWorker or AddWhizbangWorkerAtSchemaReady; unplaced: " + string.Join(", ", unplaced));
 
-    var ungatedButStaged = hosted.Where(h => h.Stage is null && _atStage.ContainsKey(h.Name)).Select(h => h.Name).ToList();
-    await Assert.That(ungatedButStaged).IsEmpty()
-      .Because("these start at a stage, so registering them directly would start them with the host: " + string.Join(", ", ungatedButStaged));
-
-    foreach (var (name, stage) in _atStage) {
-      var registered = hosted.Where(h => h.Name == name && h.Stage is not null).ToList();
-      await Assert.That(registered.Count).IsEqualTo(1).Because($"{name} is registered once, at its stage");
-      await Assert.That(registered[0].Stage).IsEqualTo(stage).Because($"{name} starts at {stage}");
+    var wrongPoint = new List<string>();
+    foreach (var (name, startPoint) in _startPoints) {
+      var registered = hosted.Where(h => h.Name == name).ToList();
+      if (registered.Count != 1 || registered[0].StartPoint != startPoint) {
+        wrongPoint.Add($"{name}: expected once at {startPoint}, found [{string.Join(", ", registered.Select(r => r.StartPoint ?? "with the host"))}]");
+      }
     }
+    await Assert.That(wrongPoint).IsEmpty().Because(string.Join("; ", wrongPoint));
   }
 
-  private static (string Name, StartupStage? Stage) _describe(IHostedService service) => service switch {
-    StartupStageGatedService<PgSharedNotifyConnection> gated => (nameof(PgSharedNotifyConnection), gated.Stage),
-    StartupStageGatedService<SignalBusHostedService> gated => (nameof(SignalBusHostedService), gated.Stage),
-    StartupStageGatedService<DutyHolderWorker> gated => (nameof(DutyHolderWorker), gated.Stage),
-    StartupStageGatedService<PartitionAssignerWorker> gated => (nameof(PartitionAssignerWorker), gated.Stage),
-    _ => (service.GetType().Name, null),
-  };
+  private static (string Name, string? StartPoint) _describe(IHostedService service) => service is GatedHostedService gated
+    ? (gated.Service.GetType().Name, gated.StartPoint)
+    : (service.GetType().Name, null);
 
   private static IHost _turnkeyHost() {
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
