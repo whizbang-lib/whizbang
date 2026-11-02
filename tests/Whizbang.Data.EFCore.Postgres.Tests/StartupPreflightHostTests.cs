@@ -13,6 +13,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Security;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
@@ -45,6 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/CatalogCheckedDdl.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextInitializationRegistry.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Signals/SignalBusServiceCollectionExtensions.cs</code-under-test>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
@@ -127,6 +129,55 @@ public sealed partial class StartupPreflightHostTests {
           && (l.Contains("42P01", StringComparison.Ordinal) || l.Contains("42883", StringComparison.Ordinal))))
         .IsEmpty().Because("no worker reads an object before the stage that creates it");
     } finally {
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// The signal bus starts at Elect (#1636), with the notification connection its loopback probe comes back over. An
+  /// instance held in Preflight (another session holds the schema lock, so the bootstrap waits) has started every
+  /// hosted service the host registers, and no signal transport: the probe has sent nothing. Once the lock is
+  /// released the instance registers, enters Elect, and only then is the bus started.
+  /// </summary>
+  /// <remarks>
+  /// "Every hosted service has started" is a marker registered after the whole composition: the host starts its
+  /// services in registration order, so the marker's start means the bus's own start has already been called.
+  /// </remarks>
+  [Test]
+  [Timeout(300000)]
+  public async Task HeldInPreflight_TheSignalBusStartsNoTransport_AndStartsItAtElectAsync(CancellationToken cancellationToken) {
+    var transport = new RecordingSignalTransport();
+    var contended = new SchemaLockContended();
+    var allStarted = new StartedMarker();
+    var instance = new Instance(_database.ConnectionString, services => {
+      services.AddSingleton<ISignalTransport>(transport);
+      services.AddSingleton<ISchemaInitializationObserver>(contended);
+    }, services => services.AddHostedService(_ => allStarted));
+    transport.Gate = instance.Host.Services.GetRequiredService<IStartupStageGate>();
+
+    await using var holder = new NpgsqlConnection(_database.ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var held = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", holder, held)) {
+      take.Parameters.AddWithValue(SchemaInitializationLockKey.Compute("public"));
+      await take.ExecuteNonQueryAsync(cancellationToken);
+    }
+    var starting = instance.Host.StartAsync(cancellationToken);
+    try {
+      await allStarted.Started.WaitAsync(_deadline, cancellationToken);
+      await contended.Contended.WaitAsync(_deadline, cancellationToken);
+
+      await Assert.That(transport.Started.IsCompleted).IsFalse()
+        .Because("the bus is started at Elect; in Preflight its probe would send pg_notify for a route that cannot answer yet");
+
+      await held.CommitAsync(cancellationToken);
+      await transport.Started.WaitAsync(_deadline, cancellationToken);
+      await Assert.That(transport.ElectReachedAtStart).IsTrue()
+        .Because("the bus's transports are started once the instance has reached Elect");
+      await starting.WaitAsync(_deadline, cancellationToken);
+    } finally {
+      await held.DisposeAsync();
       await instance.Host.StopAsync(CancellationToken.None);
       instance.Host.Dispose();
     }
@@ -363,7 +414,8 @@ public sealed partial class StartupPreflightHostTests {
 
   /// <summary>One instance of a service, composed as a consumer composes it, on the shared database.</summary>
   private sealed class Instance {
-    public Instance(string connectionString, Action<IServiceCollection>? configure = null) {
+    public Instance(string connectionString, Action<IServiceCollection>? configure = null,
+        Action<IServiceCollection>? configureLast = null) {
       var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
       builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
         ["ConnectionStrings:db"] = connectionString,
@@ -379,6 +431,7 @@ public sealed partial class StartupPreflightHostTests {
       builder.Services.RemoveAll<IDutyElector>();
       builder.Services.AddSingleton<IDutyElector>(sp => Elector.Over(
         sp.GetRequiredService<PgRoleElector>(), sp.GetRequiredService<IStartupStageReporter>()));
+      configureLast?.Invoke(builder.Services);
       Host = builder.Build();
     }
 
@@ -466,6 +519,52 @@ public sealed partial class StartupPreflightHostTests {
         await _released.Task.WaitAsync(cancellationToken);
       }
     }
+  }
+
+  /// <summary>A signal transport that records when it was started, and whether the instance had reached Elect then.</summary>
+  private sealed class RecordingSignalTransport : ISignalTransport {
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public IStartupStageGate? Gate { get; set; }
+
+    public Task Started => _started.Task;
+
+    public bool ElectReachedAtStart { get; private set; }
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      ElectReachedAtStart = Gate?.HasReached(StartupStage.Elect) == true;
+      _started.TrySetResult();
+      return Task.CompletedTask;
+    }
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => ValueTask.CompletedTask;
+  }
+
+  /// <summary>Completes when the bootstrap finds the schema lock held and waits for it.</summary>
+  private sealed class SchemaLockContended : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource _contended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Contended => _contended.Task;
+
+    public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      _contended.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Registered after the whole composition: its start means every hosted service before it was started.</summary>
+  private sealed class StartedMarker : IHostedService {
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Started => _started.Task;
+
+    public Task StartAsync(CancellationToken cancellationToken) {
+      _started.TrySetResult();
+      return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   /// <summary>Every line the host logs at Information and above, with its level and any exception's message.</summary>
