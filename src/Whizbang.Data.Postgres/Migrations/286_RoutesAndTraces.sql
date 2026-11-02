@@ -32,7 +32,7 @@
 --
 --              Number 286: reserved for this change (285 to 289).
 --
--- Dependencies: 285 (wh_event_metadata_staging, _wh_metadata_write_settings), 238 (reap_unbounded_ledgers, last word),
+-- Dependencies: 285 (wh_event_metadata_staging, _wh_metadata_write_settings), 279 (reap_unbounded_ledgers, last word),
 --               233 (wh_partition_sweep_relation), 077 (wh_event_body)
 -- Objects: wh_routes, idx_routes_event_type, idx_routes_last_seen, wh_traces, wh_traces_default, idx_traces_correlation,
 --          idx_traces_causation, idx_traces_occurred_at, _wh_try_uuid, _wh_try_timestamptz, _wh_timespan_ms,
@@ -457,7 +457,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_trace_metadata(UUID[]) IS
 -- Retention
 -- ===========================================================================================
 
--- reap_unbounded_ledgers, last word 238_LogSweepClearsTheDefaultPartition.sql, copied whole, with three more tasks:
+-- reap_unbounded_ledgers, last word 279_CollectiveApplyProgress.sql, copied whole, with three more tasks:
 -- staged metadata, traces and idle routes.
 -- <docs>fundamentals/workers/maintenance-steps#ledger-retention</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LedgerRetentionSqlTests.cs:Log_OlderThanTheWindow_IsRemoved_YoungerIsKeptAsync</tests>
@@ -471,6 +471,11 @@ COMMENT ON FUNCTION __SCHEMA__.wh_trace_metadata(UUID[]) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Partitioning/LogPartitionConversionTests.cs:OnceManaged_TheRowDeleteSweepsOnlyTheDefaultPartition_AndLeavesPartitionsToTheDropAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Partitioning/LogPartitionConversionTests.cs:OnceManaged_WithoutADefaultPartition_TheRowDeleteSkipsAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPartitionManagerSqlTests.cs:TheLog_OnceManaged_IsSweptInItsDefaultPartitionOnlyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_RemovesAFinishedRecordPastTheHorizon_AndKeepsAYoungerOneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_KeepsAFinishedRecord_WhileItsWorkRowIsPendingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_KeepsUnfinishedAndAbandonedRecords_AndTheFinishedRecordsOfADeadLetteredCollectiveAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_UnderDebugMode_KeepsEveryRecordAsync</tests>
 -- <docs>data/event-store#retention</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MetadataDistillationSqlTests.cs:Retention_EachWindow_RemovesOnlyWhatIsPastItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MetadataDistillationSqlTests.cs:Retention_DebugMode_RemovesNothingAsync</tests>
@@ -492,6 +497,7 @@ DECLARE
   v_ledger_max INTEGER;
   v_log_relation TEXT;
   v_log_default BOOLEAN;
+  v_progress_days INTEGER;
   v_staging_days INTEGER;   -- 286
   v_trace_days INTEGER;     -- 286
   v_route_days INTEGER;     -- 286
@@ -522,6 +528,9 @@ BEGIN
   SELECT COALESCE(
     (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'route_idle_days'), 365)
     INTO v_route_days;
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'collective_apply_progress_retention_days'), 7)
+    INTO v_progress_days;
   -- 238: the relation the wh_log row delete works on (233): wh_log itself while it is plain or partition maintenance
   -- is off; once it is partitioned and maintained, only its default partition, which holds the rows no partition
   -- covers and which no partition drop ever reaches; NULL when a maintained wh_log has no default partition.
@@ -605,6 +614,36 @@ BEGIN
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
 
+  -- 279: wh_collective_apply_progress, a finished record once it is past its horizon (by applied_at) and the work row
+  -- of its collective is no longer pending, so a re-delivery of a pending collective still finds its finished apply.
+  -- Never an abandoned record, nor a finished record of a collective that has one: those go with the dead letter.
+  v_start := clock_timestamp();
+  v_rows := 0;
+  IF NOT v_debug_mode THEN
+    LOOP
+      DELETE FROM __SCHEMA__.wh_collective_apply_progress d
+      WHERE (d.event_id, d.entry_key) IN (
+        SELECT p.event_id, p.entry_key FROM __SCHEMA__.wh_collective_apply_progress p
+        WHERE p.completed
+          AND NOT p.abandoned
+          AND p.applied_at < NOW() - (v_progress_days * INTERVAL '1 day')
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_collective_apply_progress a
+            WHERE a.event_id = p.event_id AND a.abandoned)
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+            WHERE pe.event_id = p.event_id AND pe.processed_at IS NULL AND pe.perspective_name = '__collective__')
+        LIMIT p_batch_size);
+      GET DIAGNOSTICS v_batch = ROW_COUNT;
+      v_rows := v_rows + v_batch;
+      EXIT WHEN v_batch < p_batch_size;
+    END LOOP;
+  END IF;
+  RETURN QUERY SELECT
+    'purge_collective_apply_progress'::TEXT, v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
   -- 286 (#1726): staged metadata maintenance has not distilled, by recorded_at, on the relation the partition manager
   -- leaves to the row sweep (the table, or its default partition once partitioned and maintained).
   v_start := clock_timestamp();
@@ -681,5 +720,7 @@ COMMENT ON FUNCTION __SCHEMA__.reap_unbounded_ledgers(INTEGER) IS
   '(opt-in) and wh_integrity_ledger, in batches, from their wh_settings windows. Called by perform_maintenance. '
   'Issue #1611: skips the wh_log row delete while wh_log is partitioned and partition maintenance is enabled. '
   'Issue #1694: a partitioned and maintained wh_log is swept in its default partition only (wh_partition_sweep_relation). '
+  'Issue #1969: finished collective apply records past collective_apply_progress_retention_days (default 7), once the '
+  'collective''s work row is no longer pending. '
   'Issue #1726: and staged metadata past metadata_staging_days, traces past trace_retention_days (both the same '
   'way), and routes not taken for route_idle_days.';
