@@ -73,6 +73,47 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       .Because("the fetch returns FULL rows — the stored envelope payload rides back for raw carry");
   }
 
+  /// <summary>
+  /// 300 (#1636): the coalesce shipper's fetch refuses a caller whose own row records that it is not eligible for work,
+  /// as the claims do; an eligible or draining caller, or one with no row (a host that never registers), still folds.
+  /// </summary>
+  [Test]
+  [Arguments("Migrating", 0)]
+  [Arguments("Running", 1)]
+  [Arguments("Stopping", 1)]
+  [Arguments(null, 1)]
+  public async Task FetchPendingCoalesce_ByACallerNotYetEligible_FetchesNothingAsync(string? phase, int expected) {
+    await using var dbContext = CreateDbContext();
+    var instance = new FixedInstance(Guid.CreateVersion7());
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), instanceProvider: instance);
+    var connection = await _openAsync(dbContext);
+    await _seedPendingAsync(connection, "group-e", createdAgoSeconds: 100);
+    if (phase is not null) {
+      await using var register = connection.CreateCommand();
+      register.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, lifecycle_phase)
+        VALUES (@id, 'svc', 'host', 1, NOW(), NOW(), @phase)";
+      register.Parameters.AddWithValue("id", instance.InstanceId);
+      register.Parameters.AddWithValue(nameof(phase), phase);
+      await register.ExecuteNonQueryAsync();
+    }
+
+    var fetched = await coordinator.FetchPendingCoalesceAsync("group-e", limit: 10);
+
+    await Assert.That(fetched.Count).IsEqualTo(expected)
+      .Because("only a caller whose row lets it claim folds the group's singles");
+  }
+
+  private sealed class FixedInstance(Guid id) : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = id;
+    public string ServiceName => "svc";
+    public string HostName => "host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
+
   [Test]
   public async Task FetchPendingCoalesce_WhenStoredMetadataIsJsonNull_SynthesizesMinimalMetadataAsync() {
     // A JSON null is a stored value, not a missing column: it deserializes to no metadata at all.
