@@ -164,12 +164,12 @@ public partial class InboxDrainWorkerGapTests {
     var (_, failures, log) = await _drainUnreadableAsync(streamId,
       [_unreadable(bad, streamId, attempts: 4)], new UnreadableSetup { DeadLetterStore = store, Metrics = metrics });
 
-    var move = store.Moves.Single();
-    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(move.SourceId).IsEqualTo(bad);
-    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.MaxAttemptsExceeded)
+    var (sourceTable, sourceId, reason, errorText) = store.Moves.Single();
+    await Assert.That(sourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(sourceId).IsEqualTo(bad);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.MaxAttemptsExceeded)
       .Because("the bound that fired is the attempt bound, as on every other inbox dead-letter path");
-    await Assert.That(move.ErrorText).IsNotNull().And.IsNotEmpty();
+    await Assert.That(errorText).IsNotNull().And.IsNotEmpty();
     await Assert.That(failures.Items).IsEmpty()
       .Because("a dead-lettered row is gone; failing it as well would report a retry that will never happen");
     var record = _records(log, DeadLetterLog.EVENT_ID).Single();
