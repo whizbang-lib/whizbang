@@ -108,7 +108,8 @@ public class EnvelopeMetadataSlimFormTests {
     await Assert.That(hop.Type).IsEqualTo(HopType.Current);
     await Assert.That(hop.StreamId).IsEqualTo("order-1");
     await Assert.That(hop.ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
-    await Assert.That(hop.TraceParent).IsNull();
+    await Assert.That(hop.TraceParent).IsEqualTo("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+      .Because("#1725: the first hop's trace parent is kept, so perspective spans keep joining the event's trace");
     await Assert.That(hop.CallerMemberName).IsNull();
     await Assert.That(hop.Topic).IsEmpty();
     await Assert.That(slim.DispatchContext).IsNull();

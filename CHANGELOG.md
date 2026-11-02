@@ -43,6 +43,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[AuditEvent(IncludeBody = true)]`; `AuditBodyDefault = Include` does not opt one in, and an `IAuditDecisionHook`
   cannot reopen one. `AuditEligibility.Decide` takes `isEphemeral`. **Upgrade note:** an ephemeral type that was
   audited by default no longer is; add `IncludeBody = true` to keep auditing it.
+- **Stored event metadata is slim at write time, the full form is staged, and every row carries its route id (#1725,
+  WS-2 S9).** Every write path (the outbox and inbox emit chains and `wh_append_event`, which both drivers' direct
+  appends call) now keeps the slim form in `wh_event_body.metadata` (`EnvelopeMetadata.ToSlim()` in SQL: the message id,
+  one hop with the first hop's timestamp, correlation, causation, stream and trace parent, and the folded scope; every
+  other top-level key except `dc` and `rin` kept as written) plus `rid`, the event's route id: a SHA-256 of its type name
+  and its hops reduced to service, topic, execution strategy, caller class and member and policy decisions, so it never
+  changes with instances, lines or per-message values. `RouteNormalizer` is the same function in C#. Under the default
+  write form, `Whizbang:EventStore:Metadata:WriteForm = Linked`, the full form is also appended to
+  `wh_event_metadata_staging` (partitioned by day, one index); `Slim` stages nothing and `Full` keeps every hop in the
+  row. Debug mode, `Whizbang:EventStore:Metadata:FullFor` (type names and namespaces) and
+  `[StoredMetadata(StoredMetadataForm.Full)]` on a type, base class or interface keep a type's rows full. The settings
+  reach the SQL through `wh_settings` (`metadata_write_form`, `metadata_full_for`, `metadata_staging_days`), published
+  every maintenance tick ahead of the idle gate; a missing or unreadable value never fails a write. Migration 285.
+  Measured on 500-event outbox batches: the row keeps 490 bytes of metadata instead of 1,476 (-67%); shared blocks +5%
+  and WAL +13 to 14% under `Linked` (the staged copy, until distilled). **Upgrade note:** stored events written from this release on carry one slim hop; an envelope read
+  back from the event store has no caller information, topic or service instance on its hops (the trace store has them),
+  and `PerspectiveMetadata.Timestamp` is the first hop's time.
+- **Routes and traces: maintenance distills the staged metadata, and Postgres route and trace stores read it (#1726,
+  WS-2 S9b).** Migration 286 adds `wh_routes` (one row per route, with occurrences, first and last seen and duration
+  statistics) and `wh_traces` (one row per event with only its per-message values, partitioned by day). The new
+  `metadata-distillation` maintenance step (both drivers, idle-gated, under the maintainer duty) distills staged rows in
+  batches of 2,000, at most 50 per cycle, with one upsert per route per batch and no event row touched; the row, its
+  trace and its route rebuild the full metadata exactly (`wh_trace_metadata`). New `IRouteStore` (`GetRouteAsync`,
+  `GetRoutesAsync`, `GetRoutesForApplyPathAsync`), `ITraceStore.GetRouteIdAsync` (a default method returning null), and
+  `PostgresRouteTraceStore`, registered separately by `AddWhizbangPostgresRouteStore()` and
+  `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
+  (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
+  last taken (`...:Retention:RouteIdleDays`).
 - **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
   (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
   last append, last version, approximate bytes, state `Active`/`Sealed`/`Archived`, and the seal, disposition and

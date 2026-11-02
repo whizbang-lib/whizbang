@@ -176,8 +176,9 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
 
     await Assert.That(steps).Count().IsGreaterThanOrEqualTo(1);
     await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo(
-        [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
-      .Because("the driver registers wh_log, wh_signals and wh_lifecycle_completions, each read once however often the driver is added");
+        [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
+         PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
+      .Because("the driver registers wh_log, the staged metadata, the traces, wh_signals and wh_lifecycle_completions, each read once however often the driver is added");
   }
 
   // A context that maps nothing, so it names no schema for the framework's tables.

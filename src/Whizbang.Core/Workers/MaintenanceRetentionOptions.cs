@@ -111,4 +111,21 @@ public sealed class MaintenanceRetentionOptions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
   public int? CollectiveApplyProgressDays { get; set; }
+
+  /// <summary>
+  /// Days a trace (<c>wh_traces</c>, one event's trip distilled from its staged metadata) is kept. Publishes
+  /// <c>trace_retention_days</c>; the database default is 30.
+  /// </summary>
+  /// <remarks>
+  /// Within the window an event's full metadata is rebuilt from its row, its trace and its route; after it, the row and
+  /// its route still say how the event got here.
+  /// </remarks>
+  public int? TraceDays { get; set; }
+
+  /// <summary>
+  /// Days a route (<c>wh_routes</c>) is kept after it was last taken. Publishes <c>route_idle_days</c>; the database
+  /// default is 365.
+  /// </summary>
+  /// <remarks>A route still taken is never removed, so only paths that left with old code age out.</remarks>
+  public int? RouteIdleDays { get; set; }
 }

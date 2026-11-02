@@ -141,7 +141,8 @@ public class PartitionedTableTests {
 
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
-      [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(2)), PartitionedTables.LifecycleCompletions(4)]);
+      [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
+       PartitionedTables.Signals(TimeSpan.FromDays(2)), PartitionedTables.LifecycleCompletions(4)]);
     await Assert.That(() => ((IServiceCollection)null!).AddFrameworkPartitionedTables()).ThrowsExactly<ArgumentNullException>();
   }
 
@@ -153,7 +154,18 @@ public class PartitionedTableTests {
 
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
-      [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
+      [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
+       PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
       .Because("seven days is the default of both SignalRetention and LifecycleCompletionRetentionDays");
+  }
+
+  [Test]
+  public async Task TheStagedMetadataAndTheTraces_AreDailyByRecordedAt_KeptForTheirSettingsAsync() {
+    await Assert.That(PartitionedTables.StagedMetadata).IsEqualTo(
+      PartitionedTable.RetainedBySetting("wh_event_metadata_staging", "recorded_at", TimeSpan.FromDays(1), "metadata_staging_days", 2))
+      .Because("staged metadata only has to outlast maintenance catching up: two days by default (#1725)");
+    await Assert.That(PartitionedTables.Traces).IsEqualTo(
+      PartitionedTable.RetainedBySetting("wh_traces", "recorded_at", TimeSpan.FromDays(1), "trace_retention_days", 30))
+      .Because("a trace is kept thirty days by default (#1726)");
   }
 }

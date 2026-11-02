@@ -68,4 +68,17 @@ public interface ITraceStore {
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithEnvelopesWithoutCurrentHop_UsesMinValueTimestampAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithNoHops_UsesMinValueTimestampAsync</tests>
   Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default);
+
+  /// <summary>
+  /// The route id of a stored message, the key into <see cref="IRouteStore.GetRouteAsync"/>: the step from one trace to
+  /// the route it is an occurrence of. Null when the message is not held, or the store does not know routes.
+  /// </summary>
+  /// <remarks>A default method returning null, so an implementation written before routes existed needs no change.</remarks>
+  /// <param name="messageId">The message.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <returns>The route id, or null.</returns>
+  /// <docs>fundamentals/persistence/observability#routes-and-traces</docs>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetRouteIdAsync_HeldMessage_IsItsRouteId_AndAnUnknownOneIsNullAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetRouteIdAsync_OnAStoreWithoutRoutes_IsNullAsync</tests>
+  Task<Guid?> GetRouteIdAsync(MessageId messageId, CancellationToken ct = default) => Task.FromResult<Guid?>(null);
 }

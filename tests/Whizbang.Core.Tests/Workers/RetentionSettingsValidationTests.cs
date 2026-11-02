@@ -40,6 +40,8 @@ public class RetentionSettingsValidationTests {
   [Arguments("StreamPurgeAuditDays")]
   [Arguments("IntegrityLedgerMaxEntries")]
   [Arguments("CollectiveApplyProgressDays")]
+  [Arguments("TraceDays")]
+  [Arguments("RouteIdleDays")]
   public async Task ANegativeMaintenanceRetention_IsRejectedByNameAsync(string property) {
     var retention = new MaintenanceRetentionOptions();
     switch (property) {
@@ -54,6 +56,8 @@ public class RetentionSettingsValidationTests {
       case "StreamPurgeAuditDays": retention.StreamPurgeAuditDays = -1; break;
       case "IntegrityLedgerMaxEntries": retention.IntegrityLedgerMaxEntries = -1; break;
       case "CollectiveApplyProgressDays": retention.CollectiveApplyProgressDays = -1; break;
+      case "TraceDays": retention.TraceDays = -1; break;
+      case "RouteIdleDays": retention.RouteIdleDays = -1; break;
       default: retention.CollectiveOrderingHeadDays = -1; break;
     }
 

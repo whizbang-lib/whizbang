@@ -327,6 +327,11 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/archive-store#restore-requests</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
           ArchiveRestoreRequestStep.FromServices));
+        // TURNKEY: the maintenance step that distills staged event metadata into routes and traces (#1726), under the
+        // maintainer duty.
+        // <docs>data/event-store#distillation</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
+          MetadataDistillationStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>

@@ -235,4 +235,18 @@ public class InMemoryTraceStore : ITraceStore {
 
     return Task.FromResult(results);
   }
+
+  /// <summary>
+  /// The route id of a held message, computed from its payload's type and its hops by <see cref="RouteNormalizer"/>,
+  /// the same normalization the Postgres write paths stamp on the row; null when the message is not held.
+  /// </summary>
+  /// <param name="messageId">The message.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <returns>The route id, or null.</returns>
+  /// <docs>fundamentals/persistence/observability#routes-and-traces</docs>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetRouteIdAsync_HeldMessage_IsItsRouteId_AndAnUnknownOneIsNullAsync</tests>
+  public Task<Guid?> GetRouteIdAsync(MessageId messageId, CancellationToken ct = default) =>
+    Task.FromResult<Guid?>(_traces.TryGetValue(messageId, out var envelope)
+      ? RouteNormalizer.RouteId(TypeNameFormatter.Format(envelope.Payload.GetType()), envelope.Hops)
+      : null);
 }

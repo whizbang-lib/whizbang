@@ -140,6 +140,7 @@ internal static class ProcessWideOptionsBinding {
 
     AddDeadLetterLogging(services);
     AddDatabaseFailureEscalation(services);
+    AddEventStoreMetadata(services);
 
     // The IOptions<WhizbangCoreOptions> view (read by the EF Core lens queries and work coordinator)
     // is a separate object from the singleton AddWhizbang registers; both read the same section.
@@ -163,6 +164,30 @@ internal static class ProcessWideOptionsBinding {
     // The dead-letter paths take the bound, validated instance itself, not IOptions<T>: an optional interface
     // parameter is what WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
     services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DeadLetterLoggingOptions>>().Value);
+  }
+
+  /// <summary>
+  /// Registers <see cref="EventStoreMetadataOptions"/>, bound from <c>Whizbang:EventStore:Metadata</c> and validated when
+  /// the host starts (#1725). Idempotent: the binding and the validator are each registered once however often this
+  /// runs, so <see cref="EventStoreMetadataOptions.FullFor"/>, a list the binder appends to, is bound once.
+  /// </summary>
+  /// <docs>data/event-store#stored-metadata</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:EventStoreMetadata_BindsFromItsSectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:EventStoreMetadata_RegisteredTwice_BindsTheListOnceAsync</tests>
+  internal static void AddEventStoreMetadata(IServiceCollection services) {
+    services.AddOptions<EventStoreMetadataOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<EventStoreMetadataOptions>, EventStoreMetadataOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<EventStoreMetadataOptions>, EventStoreMetadataBinding>());
+  }
+
+  /// <summary>Applies <c>Whizbang:EventStore:Metadata</c> to <see cref="EventStoreMetadataOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class EventStoreMetadataBinding(IServiceProvider services) : IConfigureOptions<EventStoreMetadataOptions> {
+    public void Configure(EventStoreMetadataOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, "Whizbang:EventStore:Metadata").Bind(options);
+#pragma warning restore IL2026
+    }
   }
 
   /// <summary>Applies <c>Whizbang:DeadLetterLogging</c> to <see cref="DeadLetterLoggingOptions"/>.</summary>
