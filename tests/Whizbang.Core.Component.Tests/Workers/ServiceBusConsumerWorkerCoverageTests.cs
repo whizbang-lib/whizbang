@@ -361,6 +361,99 @@ public class ServiceBusConsumerWorkerCoverageTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  // #1976: a message that fails here is retried (the transport redelivers it, or the inbox failure is counted against
+  // the attempts bound), and is dead-lettered only at the bound, which logs the dead-letter record. Each attempt is
+  // therefore a Warning, and Error is kept for the dead-letter record.
+  private const int QUEUED_FAILURE_EVENT_ID = 14;
+  private const int ERROR_PROCESSING_MESSAGE_EVENT_ID = 16;
+
+  [Test]
+  public async Task HandleMessage_WhenProcessingThrows_LogsTheAttemptAtWarningWithItsExceptionAsync() {
+    var strategy = new TestWorkCoordinatorStrategy(
+      () => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    var logger = new DeadLetterRecordLogger<ServiceBusConsumerWorker>();
+
+    var transport = new CapturingBatchTransport();
+    var worker = _buildWorker(
+      transport,
+      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      services,
+      logger: logger);
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // An envelope type the worker cannot parse fails the message inside its processing scope.
+    await Assert.That(async () =>
+      await transport.CapturedBatchHandler!(
+        [new TransportMessage(_buildJsonEnvelope(MessageId.New(), Guid.NewGuid()), "MessageEnvelope`1[[]], Whizbang.Core")],
+        CancellationToken.None)
+    ).Throws<InvalidOperationException>();
+
+    var attempts = logger.Entries.Where(e => e.EventId == ERROR_PROCESSING_MESSAGE_EVENT_ID).ToList();
+    await Assert.That(attempts.Count).IsEqualTo(1);
+    await Assert.That(attempts[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("the transport redelivers the message, so this attempt is a Warning");
+    await Assert.That(attempts[0].Exception).IsTypeOf<InvalidOperationException>()
+      .Because("the attempt's exception is attached, so the Warning says what failed");
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task HandleMessage_WhenAStreamFails_LogsTheQueuedFailureAtWarningAsync() {
+    var messageId = MessageId.New();
+    var failingStreamId = Guid.NewGuid();
+    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Component.Tests";
+    var batch = new WorkBatch {
+      InboxWork = [
+        new InboxWork {
+          MessageId = messageId.Value,
+          Envelope = _buildJsonEnvelope(messageId, failingStreamId),
+          MessageType = messageTypeName,
+          StreamId = failingStreamId,
+          Status = MessageProcessingStatus.None,
+          Attempts = 0
+        }
+      ],
+      OutboxWork = [],
+      PerspectiveWork = []
+    };
+    var strategy = new CompletionThrowingWorkCoordinatorStrategy(batch);
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    var logger = new DeadLetterRecordLogger<ServiceBusConsumerWorker>();
+
+    var transport = new CapturingBatchTransport();
+    var worker = _buildWorker(
+      transport,
+      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      services,
+      logger: logger);
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var envelopeType = $"MessageEnvelope`1[[{messageTypeName}]], Whizbang.Core";
+    await transport.CapturedBatchHandler!(
+      [new TransportMessage(_buildJsonEnvelope(messageId, failingStreamId), envelopeType)], CancellationToken.None);
+
+    await Assert.That(strategy.Failures.Count).IsEqualTo(1)
+      .Because("the failure is queued against the inbox row, so the attempts bound governs it");
+    var queued = logger.Entries.Where(e => e.EventId == QUEUED_FAILURE_EVENT_ID).ToList();
+    await Assert.That(queued.Count).IsEqualTo(1);
+    await Assert.That(queued[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("a queued failure is retried and dead-lettered at the bound, so it is a Warning");
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   // ========================================
   // Helper Methods
   // ========================================
@@ -369,12 +462,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
       ITransport transport,
       ServiceBusConsumerOptions options,
       ServiceCollection services,
-      ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null) {
+      ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+      ILogger<ServiceBusConsumerWorker>? logger = null) {
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     return new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: scopeFactory,
-      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      logger: logger ?? new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),

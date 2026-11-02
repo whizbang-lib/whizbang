@@ -294,9 +294,10 @@ public partial class OrderedStreamProcessor(ILogger<OrderedStreamProcessor> logg
   )]
   static partial void LogSuccessfullyProcessedMessage(ILogger logger, Guid messageId, Guid streamId, MessageProcessingStatus status);
 
+  // #1976: the failure handler records the attempt, which is retried and dead-lettered at the bound, so a Warning.
   [LoggerMessage(
     EventId = 6,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Failed to process message {MessageId} from stream {StreamId}"
   )]
   static partial void LogFailedToProcessMessage(ILogger logger, Exception ex, Guid messageId, Guid streamId);
@@ -322,9 +323,10 @@ public partial class OrderedStreamProcessor(ILogger<OrderedStreamProcessor> logg
   )]
   static partial void LogSuccessfullyProcessedOutboxMessage(ILogger logger, Guid messageId, Guid streamId);
 
+  // #1976: the failure handler records the attempt, which is retried and dead-lettered at the bound, so a Warning.
   [LoggerMessage(
     EventId = 10,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Failed to process outbox message {MessageId} from stream {StreamId}"
   )]
   static partial void LogFailedToProcessOutboxMessage(ILogger logger, Exception ex, Guid messageId, Guid streamId);

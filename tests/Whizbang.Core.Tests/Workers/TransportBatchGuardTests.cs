@@ -25,11 +25,11 @@ namespace Whizbang.Core.Tests.Workers;
 public class TransportBatchGuardTests {
 
   private sealed class CapturingLogger : ILogger {
-    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => Noop.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-      => Entries.Add((logLevel, formatter(state, exception)));
+      => Entries.Add((logLevel, formatter(state, exception), exception));
     private sealed class Noop : IDisposable { public static readonly Noop Instance = new(); public void Dispose() { } }
   }
 
@@ -58,8 +58,12 @@ public class TransportBatchGuardTests {
              + "exact confusion that once stopped a host with exit 0 and no error log");
     await Assert.That(escaped!.InnerException).IsSameReferenceAs(timeout);
     await Assert.That(((TransportBatchFailedException)escaped).BatchCount).IsEqualTo(50);
-    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue()
-      .Because("swallowing without logging would trade a silent death for a silent data stall");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning && e.Exception is not null)).IsTrue()
+      .Because("swallowing without logging would trade a silent death for a silent data stall; the batch is "
+             + "redelivered and the broker dead-letters it past its delivery count, so the attempt is a Warning "
+             + "carrying its exception (#1976)");
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse()
+      .Because("Error is kept for a dead-lettered message, and this batch is retried");
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("57014", StringComparison.Ordinal))).IsTrue()
       .Because("naming the SQLSTATE sends an operator to the query and its timeout, which is where "
              + "the problem is — 'a batch failed' sends them to the message, which is fine");
@@ -78,7 +82,10 @@ public class TransportBatchGuardTests {
 
     await Assert.That(escaped).IsTypeOf<TransportBatchFailedException>();
     await Assert.That(escaped!.InnerException).IsTypeOf<InvalidOperationException>();
-    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(1);
+    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(1)
+      .Because("the batch is redelivered, so the failed attempt is a Warning (#1976)");
+    await Assert.That(logger.Entries[0].Exception).IsTypeOf<InvalidOperationException>();
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
     await Assert.That(logger.Entries[0].Message.Contains("12", StringComparison.Ordinal)).IsTrue()
       .Because("the batch size tells an operator whether this was one stray message or a systemic "
              + "failure of a full batch");
@@ -162,7 +169,8 @@ public class TransportBatchGuardTests {
     await Assert.That(escaped).IsTypeOf<TransportBatchFailedException>()
       .Because("the HOST is alive, so this is one failed batch — classifying against the batch "
              + "token would call it a shutdown and take the process down");
-    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning && e.Exception is not null)).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
   }
 
   [Test]

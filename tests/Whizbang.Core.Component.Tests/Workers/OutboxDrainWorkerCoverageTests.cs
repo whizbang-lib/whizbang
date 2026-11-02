@@ -368,7 +368,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       OutboxDrainWorkerOptions? options = null,
       ILifecycleMessageDeserializer? deserializer = null,
       IServiceProvider? sp = null,
-      IReceptorRegistry? runtimeReceptorRegistry = null) {
+      IReceptorRegistry? runtimeReceptorRegistry = null,
+      ILogger<OutboxDrainWorker>? logger = null) {
     sp ??= new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -381,7 +382,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       schemaReadyGate: gate,
       options: Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
-      logger: NullLogger<OutboxDrainWorker>.Instance,
+      logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,
       publishStrategy: publish ?? new ThrowIfCalledPublishStrategy(),
       lifecycleMessageDeserializer: deserializer ?? new JsonLifecycleMessageDeserializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),

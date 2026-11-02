@@ -89,7 +89,7 @@ public class RabbitMQTransportLoggingBranchTests {
   }
 
   [Test]
-  public async Task PublishAsync_GenericFailureWithLogger_LogsPublishErrorAsync() {
+  public async Task PublishAsync_GenericFailureWithLogger_LogsThePublishAttemptAtWarningAsync() {
     var channel = new RecordingChannel {
       PublishExceptionSelector = _ => new NotSupportedException("wire failure")
     };
@@ -100,11 +100,15 @@ public class RabbitMQTransportLoggingBranchTests {
     await Assert.That(async () => await transport.PublishAsync(
       RabbitTestWire.NewEnvelope(), new TransportDestination("test-exchange", "orders.created"))).Throws<InvalidOperationException>();
 
-    await Assert.That(logger.Entries.Any(e =>
-      e.Level == LogLevel.Error
+    await Assert.That(logger.EntriesWithExceptions.Any(e =>
+      e.Level == LogLevel.Warning
+      && e.Exception is not null
       && e.Message.Contains("Failed to publish message", StringComparison.Ordinal)
       && e.Message.Contains("orders.created", StringComparison.Ordinal))).IsTrue()
-      .Because("the error must name the routing key so an operator can find the failed route");
+      .Because("the line must name the routing key so an operator can find the failed route; the outbox retries the "
+             + "publish and dead-letters it at the bound, so the attempt is a Warning carrying its exception (#1976)");
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse()
+      .Because("Error is kept for a dead-lettered message");
   }
 
   #endregion
@@ -239,7 +243,7 @@ public class RabbitMQTransportLoggingBranchTests {
   [Test]
   [Arguments(null, "unknown")]
   [Arguments("retry-1", "retry-1")]
-  public async Task Receive_HandlerThrowsBelowMaxWithLogger_LogsErrorAndRetryWarningAsync(string? messageId, string expectedId) {
+  public async Task Receive_HandlerThrowsBelowMaxWithLogger_LogsTheAttemptAndRetryAtWarningAsync(string? messageId, string expectedId) {
     var channel = new RecordingChannel();
     var logger = new CapturingLogger<RabbitMQTransport>();
     await _subscribeAsync(channel, logger, () => throw new InvalidOperationException("handler boom"));
@@ -249,8 +253,12 @@ public class RabbitMQTransportLoggingBranchTests {
     await RabbitTestWire.DeliverAsync(channel, props, body, 1);
 
     await Assert.That(channel.NackAttempts.Single().Requeue).IsTrue();
-    await Assert.That(logger.Entries.Any(e =>
-      e.Level == LogLevel.Error && e.Message.Contains("Error processing message " + expectedId, StringComparison.Ordinal))).IsTrue();
+    // #1976: the message is requeued and dead-lettered past its delivery count, so the attempt is a Warning carrying
+    // its exception; Error is kept for the dead-letter record.
+    await Assert.That(logger.EntriesWithExceptions.Any(e =>
+      e.Level == LogLevel.Warning && e.Exception is not null
+      && e.Message.Contains("Error processing message " + expectedId, StringComparison.Ordinal))).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
     await Assert.That(logger.Entries.Any(e =>
       e.Level == LogLevel.Warning
       && e.Message.Contains("requeueing for retry", StringComparison.Ordinal)

@@ -794,9 +794,11 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogQueuedCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
 
+  // #1976: a failed message is retried (redelivered, or its inbox failure counted against the attempts bound) and
+  // dead-lettered only at the bound, which logs the dead-letter record, so the attempt is a Warning.
   [LoggerMessage(
     EventId = 14,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Queued failure for {MessageId}: {Error}"
   )]
   static partial void LogQueuedFailure(ILogger logger, Guid messageId, string error);
@@ -808,9 +810,11 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogSuccessfullyProcessedMessage(ILogger logger, MessageId messageId);
 
+  // #1976: a failed message is retried (redelivered, or its inbox failure counted against the attempts bound) and
+  // dead-lettered only at the bound, which logs the dead-letter record, so the attempt is a Warning.
   [LoggerMessage(
     EventId = 16,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Error processing message {MessageId}"
   )]
   static partial void LogErrorProcessingMessage(ILogger logger, MessageId messageId, Exception ex);

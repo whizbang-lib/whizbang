@@ -13,6 +13,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 internal sealed class CapturingLogger<T> : ILogger<T> {
   private readonly Lock _sync = new();
   private readonly List<(LogLevel Level, string Message)> _entries = [];
+  private readonly List<Exception?> _exceptions = [];
 
   /// <summary>Invoked synchronously after each entry is recorded.</summary>
   public Action<LogLevel, string>? OnLog { get; set; }
@@ -25,6 +26,15 @@ internal sealed class CapturingLogger<T> : ILogger<T> {
     }
   }
 
+  /// <summary>Every entry with the exception it carried, in the order logged.</summary>
+  public IReadOnlyList<(LogLevel Level, string Message, Exception? Exception)> EntriesWithExceptions {
+    get {
+      lock (_sync) {
+        return [.. _entries.Select((e, i) => (e.Level, e.Message, _exceptions[i]))];
+      }
+    }
+  }
+
   public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
   public bool IsEnabled(LogLevel logLevel) => true;
@@ -33,6 +43,7 @@ internal sealed class CapturingLogger<T> : ILogger<T> {
     var message = formatter(state, exception);
     lock (_sync) {
       _entries.Add((logLevel, message));
+      _exceptions.Add(exception);
     }
     OnLog?.Invoke(logLevel, message);
   }

@@ -103,7 +103,7 @@ internal static class AsbTransportTestData {
 /// </summary>
 internal sealed class RecordingTransportLogger : ILogger<AzureServiceBusTransport> {
   private readonly Lock _sync = new();
-  private readonly List<(LogLevel Level, string Message)> _entries = [];
+  private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = [];
 
   /// <summary>Raised synchronously from Log — usable as a deterministic completion signal.</summary>
   public event Action<LogLevel, string>? MessageLogged;
@@ -111,6 +111,21 @@ internal sealed class RecordingTransportLogger : ILogger<AzureServiceBusTranspor
   public bool Contains(LogLevel level, string fragment) {
     lock (_sync) {
       return _entries.Exists(e => e.Level == level && e.Message.Contains(fragment, StringComparison.Ordinal));
+    }
+  }
+
+  /// <summary>Whether an entry at <paramref name="level"/> contains <paramref name="fragment"/> and carries an exception.</summary>
+  public bool ContainsWithException(LogLevel level, string fragment) {
+    lock (_sync) {
+      return _entries.Exists(e => e.Level == level && e.Exception is not null
+        && e.Message.Contains(fragment, StringComparison.Ordinal));
+    }
+  }
+
+  /// <summary>Whether any entry is at <paramref name="level"/> or above.</summary>
+  public bool AnyAtOrAbove(LogLevel level) {
+    lock (_sync) {
+      return _entries.Exists(e => e.Level >= level);
     }
   }
 
@@ -128,7 +143,7 @@ internal sealed class RecordingTransportLogger : ILogger<AzureServiceBusTranspor
   public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
     var message = formatter(state, exception);
     lock (_sync) {
-      _entries.Add((logLevel, message));
+      _entries.Add((logLevel, message, exception));
     }
     MessageLogged?.Invoke(logLevel, message);
   }

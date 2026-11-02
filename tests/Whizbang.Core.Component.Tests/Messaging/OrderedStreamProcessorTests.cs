@@ -713,8 +713,10 @@ public class OrderedStreamProcessorTests {
 
     // Assert - failure logger + stop-processing warning fired; second message never ran
     await Assert.That(processedCount).IsEqualTo(0);
-    await Assert.That(logger.Messages.Any(m => m.Contains("Failed to process message"))).IsTrue();
     await Assert.That(logger.Messages.Any(m => m.Contains("Stopping stream"))).IsTrue();
+    // #1976: the failure handler records the attempt, so the message is retried and dead-lettered at the bound; the
+    // attempt is a Warning carrying its exception, and Error is kept for the dead-letter record.
+    await _assertAttemptAtWarningAsync(logger, "Failed to process message");
   }
 
   [Test]
@@ -787,8 +789,18 @@ public class OrderedStreamProcessorTests {
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - outbox failure logger fired
-    await Assert.That(logger.Messages.Any(m => m.Contains("Failed to process outbox message"))).IsTrue();
+    // Assert - outbox failure logger fired, at Warning (#1976): the failure handler records the attempt for retry
+    await _assertAttemptAtWarningAsync(logger, "Failed to process outbox message");
+  }
+
+  private static async Task _assertAttemptAtWarningAsync(CapturingLogger<OrderedStreamProcessor> logger, string line) {
+    var attempts = logger.Entries.Where(e => e.Message.Contains(line, StringComparison.Ordinal)).ToList();
+    await Assert.That(attempts.Count).IsEqualTo(1);
+    await Assert.That(attempts[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("a failed attempt that will be retried is a Warning; Error is kept for the dead-letter record");
+    await Assert.That(attempts[0].Exception).IsTypeOf<InvalidOperationException>()
+      .Because("the attempt's exception is attached, so the Warning says what failed");
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
   }
 
   // Helper methods
@@ -905,6 +917,9 @@ public class OrderedStreamProcessorTests {
   private sealed class CapturingLogger<T> : ILogger<T> {
     public List<string> Messages { get; } = [];
 
+    /// <summary>Every entry with its level and exception, for the tests that assert what a line is logged at.</summary>
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -915,7 +930,9 @@ public class OrderedStreamProcessorTests {
       TState state,
       Exception? exception,
       Func<TState, Exception?, string> formatter) {
-      Messages.Add(formatter(state, exception));
+      var message = formatter(state, exception);
+      Messages.Add(message);
+      Entries.Add((logLevel, message, exception));
     }
 
   }

@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -1516,7 +1517,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
       ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30,
-      PerspectiveMetrics? metrics = null) {
+      PerspectiveMetrics? metrics = null, ILogger<PerspectiveWorker>? logger = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1554,7 +1555,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       eventTypeProvider: registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
-      logger: NullLogger<PerspectiveWorker>.Instance,
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
