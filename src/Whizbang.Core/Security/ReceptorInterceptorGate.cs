@@ -84,12 +84,16 @@ internal static partial class ReceptorInterceptorGate {
   /// What a receptor invocation does with the pipeline's answer: true to run, false to skip quietly, or the denial
   /// exception for every action that must not pass silently.
   /// </summary>
-  internal static bool Decide(InterceptorResult result, Type receptorType, IMessageEnvelope envelope, IServiceProvider scopedProvider) {
+  internal static bool Decide(InterceptorResult result, Type receptorType, IMessageEnvelope envelope, IServiceProvider scopedProvider) =>
+    result.Allow || Decide(result, receptorType, envelope, scopedProvider.GetService<ILogger<ReceptorInterceptorPipeline>>());
+
+  /// <summary><see cref="Decide(InterceptorResult, Type, IMessageEnvelope, IServiceProvider)"/> with the logger in hand.</summary>
+  internal static bool Decide(InterceptorResult result, Type receptorType, IMessageEnvelope envelope, ILogger? logger) {
     if (result.Allow) {
       return true;
     }
     if (result.OnDenied == DeniedAction.DropQuiet) {
-      if (scopedProvider.GetService<ILogger<ReceptorInterceptorPipeline>>() is { } logger) {
+      if (logger is not null) {
         LogDroppedQuietly(logger, TypeNameFormatter.DisplayName(receptorType), envelope.MessageId.Value, result.Reason ?? "none given");
       }
       return false;

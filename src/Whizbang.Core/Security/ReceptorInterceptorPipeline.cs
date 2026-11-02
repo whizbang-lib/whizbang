@@ -56,6 +56,33 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
   }
 
   /// <summary>
+  /// Asks the interceptors whether <paramref name="receptorType"/> may handle the message, and applies the answer the
+  /// way every framework invocation path does: true to invoke; false for a <see cref="DeniedAction.DropQuiet"/> denial,
+  /// logged as a warning; and <see cref="Exceptions.ReceptorInvocationDeniedException"/> for every other denial. Use it
+  /// from code that invokes a receptor outside the dispatcher and the receptor invoker.
+  /// </summary>
+  /// <param name="receptorType">The receptor about to be invoked.</param>
+  /// <param name="envelope">The message's envelope.</param>
+  /// <param name="context">The scope context the receptor would see.</param>
+  /// <param name="logger">Where a quiet drop is logged; null logs nothing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True to invoke the receptor; false when it was dropped quietly.</returns>
+  /// <exception cref="Exceptions.ReceptorInvocationDeniedException">An interceptor denied the receptor with an action
+  /// other than <see cref="DeniedAction.DropQuiet"/>.</exception>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusRawReceptorInterceptorTests.cs</tests>
+  public async ValueTask<bool> AdmitAsync(
+      Type receptorType,
+      IMessageEnvelope envelope,
+      IScopeContext? context,
+      Microsoft.Extensions.Logging.ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(receptorType);
+    ArgumentNullException.ThrowIfNull(envelope);
+    var result = await EvaluateFirstDenialAsync(receptorType, envelope, context, cancellationToken).ConfigureAwait(false);
+    return ReceptorInterceptorGate.Decide(result, receptorType, envelope, logger);
+  }
+
+  /// <summary>
   /// Runs every interceptor and returns the strictest denial (DeadLetter > Quarantine >
   /// Throw > DropQuiet) encountered. Use this when peer interceptors can disagree and you
   /// need the safest action — e.g., one interceptor would DropQuiet but another insists

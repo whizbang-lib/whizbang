@@ -709,7 +709,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // The receptor interceptors are asked before the row is completed (#1996), so a denied message can still be
       // dead-lettered or retried. A host with no interceptor returns at once.
       if (!stateOnly && typedEnvelope is not null && receptorInvoker is not null) {
-        var admission = await receptorInvoker.EvaluateAdmissionAsync(typedEnvelope, _inboxHandlingStages, ct);
+        var admission = await receptorInvoker.EvaluateAdmissionAsync(typedEnvelope, ReceptorDenial.InboxHandlingStages, ct);
         if (!admission.Allow) {
           await _handleReceptorDenialAsync(work, admission, ct);
           return;
@@ -881,25 +881,18 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
   private async Task _handleReceptorDenialAsync(InboxWork work, InterceptorResult denial, CancellationToken ct) {
-    var detail = $"A receptor interceptor denied inbox message {work.MessageId} ({work.MessageType}) with "
-      + $"DeniedAction.{denial.OnDenied}: {denial.Reason ?? "no reason given"}";
+    var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
     LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, denial.Reason ?? "no reason given");
-    switch (denial.OnDenied) {
-      case DeniedAction.DeadLetter:
-        await _deadLetterOrFailAsync(work, MessageFailureReason.ReceptorDenied, detail, cause: null, ct);
-        break;
-      case DeniedAction.Quarantine:
-        await _deadLetterOrFailAsync(work, MessageFailureReason.ReceptorQuarantined, detail, cause: null, ct);
-        break;
-      default:
-        await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
-          MessageId = work.MessageId,
-          CompletedStatus = work.Status,
-          Error = detail,
-          Reason = MessageFailureReason.Unknown,
-        }, ct);
-        break;
+    if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is { } reason) {
+      await _deadLetterOrFailAsync(work, reason, detail, cause: null, ct);
+      return;
     }
+    await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+      MessageId = work.MessageId,
+      CompletedStatus = work.Status,
+      Error = detail,
+      Reason = MessageFailureReason.Unknown,
+    }, ct);
   }
 
   /// <summary>
@@ -1408,12 +1401,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       _logLifecycleError(messageId, nameof(LifecycleStage.ImmediateDetached), ex);
     }
   }
-
-  // The stages inbox delivery runs a message's receptors at, which the receptor interceptors are asked about before the
-  // row is completed (#1996)
-  private static readonly LifecycleStage[] _inboxHandlingStages = [
-    LifecycleStage.PreInboxInline, LifecycleStage.PreInboxDetached,
-    LifecycleStage.PostInboxInline, LifecycleStage.PostInboxDetached];
 
   /// <summary>
   /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
