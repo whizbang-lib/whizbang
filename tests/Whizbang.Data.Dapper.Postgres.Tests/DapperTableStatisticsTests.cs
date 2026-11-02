@@ -58,7 +58,7 @@ public class DapperTableStatisticsTests {
 
     await hosted.OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(cancellationToken);
 
-    var collectors = hosted.OfType<TableStatisticsCollector>().ToList();
+    var collectors = hosted.OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<TableStatisticsCollector>().ToList();
     await Assert.That(collectors.Count).IsEqualTo(1)
       .Because("the Dapper driver registers the collector, once");
     var collector = collectors[0];

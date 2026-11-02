@@ -161,7 +161,7 @@ public class DataOnlyRoleE2ETests {
       }
     });
     // A message through the running service: published, stored, claimed and applied to a perspective row.
-    var perspectives = second.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
+    var perspectives = second.Services.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<PerspectiveWorker>().Single();
     var streamId = (Guid)TrackedGuid.New();
     var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     perspectives.OnPerspectiveEventProcessed += e => {

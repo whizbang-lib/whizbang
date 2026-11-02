@@ -99,7 +99,7 @@ public class DapperTableStatisticsDatabaseTests {
     var hosted = provider.GetServices<IHostedService>().ToList();
     await hosted.OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(cancellationToken);
 
-    var collector = hosted.OfType<TableStatisticsCollector>().Single();
+    var collector = hosted.OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<TableStatisticsCollector>().Single();
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     collector.CycleCompleted += () => cycled.TrySetResult();
     using var stop = new CancellationTokenSource();

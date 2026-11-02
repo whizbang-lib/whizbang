@@ -44,7 +44,7 @@ public class MultiStreamCommandPostgresRegistrationTests {
 
     await Assert.That(sp.GetRequiredService<IMultiStreamCommandStore>()).IsTypeOf<PgMultiStreamCommandStore>();
     var hosted = sp.GetServices<IHostedService>().ToList();
-    await Assert.That(hosted.OfType<MultiStreamCommandWorker>().Single()).IsSameReferenceAs(sp.GetRequiredService<MultiStreamCommandWorker>());
+    await Assert.That(hosted.OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<MultiStreamCommandWorker>().Single()).IsSameReferenceAs(sp.GetRequiredService<MultiStreamCommandWorker>());
     await Assert.That(hosted.OfType<MultiStreamCommandSubscriber>().Count()).IsEqualTo(1);
   }
 
@@ -52,7 +52,7 @@ public class MultiStreamCommandPostgresRegistrationTests {
   public async Task RegisteredTwice_HostsOneWorkerAsync() {
     await using var sp = _build(after: s => s.AddWhizbangPostgresNotifications());
 
-    await Assert.That(sp.GetServices<IHostedService>().OfType<MultiStreamCommandWorker>().Count()).IsEqualTo(1)
+    await Assert.That(sp.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<MultiStreamCommandWorker>().Count()).IsEqualTo(1)
       .Because("two workers on one instance would claim the same streams twice over");
   }
 
