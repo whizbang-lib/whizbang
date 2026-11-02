@@ -200,14 +200,15 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// 300 (#1636) reverses 229's "the caller counts itself whatever its row says" for a caller whose row records that it
-  /// is not eligible yet: it gets nothing. 229 counted it so that, ranked as absent, it would not fall to a solo rank and
+  /// Flipped by 300 (#1636). The name is 229's, kept because 229's claim_work links to it and a shipped migration is
+  /// never edited; the rule it names is reversed. 300 drops 229's "the caller counts itself whatever its row says" for a
+  /// caller whose row records that it is not eligible yet: it gets nothing. 229 counted it so that, ranked as absent, it would not fall to a solo rank and
   /// take every partition; refusing it outright has no such risk, and a starting instance's share is already its
   /// peers' (they rank it out, and the assigner leaves it out). A data plane that started before its row recorded
   /// Accept commands claims nothing until it does.
   /// </summary>
   [Test]
-  public async Task Claim_ACallerThatIsNotYetEligible_GetsNothingAsync() {
+  public async Task Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync() {
     var (self, peer) = _pair();
     await using var conn = await _openAsync();
     await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));

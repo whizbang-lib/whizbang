@@ -1179,6 +1179,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Nothing claims work before the instance's row says it is eligible (part of #1636).** The data plane starts only
+  once the row records Accept commands: a failed write keeps it waiting until the next accepted heartbeat writes the
+  held stage. `IWorkCoordinator.RecordsInstanceTransitions` (false by default, true for the EF Core and Dapper drivers)
+  says whether there is a row to record on; a host with none starts its data plane at once. Migration 300 makes the
+  database refuse such a caller too: `claim_work` and `wh_claim_multi_stream_work` give nothing to a caller whose own
+  row is not eligible for work, and the coalesce shipper's fetch folds nothing for one (new `wh_instance_may_claim`).
+  This reverses 229's "the caller counts itself whatever its row says" for that case; a draining caller still claims
+  its share, a caller that records no phase (an older build) and a caller with no row are served as before. `claim_work`
+  decides it from the row its registration probe already reads, so the claim makes no extra lookup.
 - **A host stopped before its schema is ready ends quietly (#1991).** The shutdown service that deregisters the
   instance is hosted to start when the schema-ready gate opens, so a host stopped during Preflight or Migrate does not
   run deregistration against instance tables that may not exist yet, and logs no warning for it.

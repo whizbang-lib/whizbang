@@ -228,10 +228,13 @@ starts it there; the worker holds no wait on `ISchemaReadyGate`.
 - Two tests keep it that way: `StartupHostedServiceAuditTests` (every hosted service of a turnkey host has a
   start point or a stated reason it needs none) and `WorkerStartGateSourceGuardTests` (no hosted service in
   `src` names `ISchemaReadyGate`, except the listed startup machinery).
-- Open gap (owner decision pending, RED `StartupStageGateTests.AnEligibleStage_WhoseRowWriteFailed_IsNotReached...`):
-  the gate opens on the Accept-commands transition even when the row write failed and is held. The claim SQL does not
-  stop the worker then: `claim_work` (229) counts its caller whatever its row says and, when the assigner left the
-  instance out, ranks itself, so it claims a share its peers are also given (stream leases keep the work single). The
-  held write lands on the next accepted heartbeat, which bounds the window. Multi-stream claims behave the same; the
-  coalesce shipper is not instance-scoped at all; schedules and orphan claims follow ownership, which a new instance
-  does not have; the transport consumer only stores rows, and claims process them.
+- The data plane's gate opens only once the row records Accept commands (the reporter tells observers `recorded`). A
+  failed write is held, and the next accepted heartbeat's registration signal writes it and tells them again; a host
+  whose coordinator keeps no instance rows (`RecordsInstanceTransitions` false, or no coordinator) reports every stage
+  as recorded, so it starts at once.
+- The database refuses such a caller as well (300): `claim_work`, `wh_claim_multi_stream_work` and the coalesce fetch
+  give nothing to a caller whose own row may not claim (`wh_instance_may_claim`: eligible, or draining). A draining
+  caller still claims its share (under a published assignment its partitions would otherwise sit unclaimed until the
+  assigner republishes); an older build that records no phase, and a caller with no row, are served as before.
+  `WorkEligibilitySqlTests.Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync` keeps 229's name, because 229 links
+  to it and a shipped migration is never edited, and asserts the reversed rule.
