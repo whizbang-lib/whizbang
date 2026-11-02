@@ -3,8 +3,9 @@
 
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.SystemEvents;
 
-namespace Whizbang.Core.SystemEvents;
+namespace Whizbang.Core.Commands.System;
 
 /// <summary>
 /// Asks an origin service to re-derive the audit records of the events it stored (#1724). The origin selects its stored
@@ -14,10 +15,13 @@ namespace Whizbang.Core.SystemEvents;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Dispatch it on the origin service (an operator rebuilding a lost or truncated ledger), or send it to the origin from
-/// the audit service. Every filter is optional and conjunctive; an empty command rebuilds everything up to the origin's
-/// cap, <see cref="RedeliveryPumpOptions.MaxEventsPerRequest"/>, which <see cref="MaxEvents"/> can lower but never
-/// raise. Page through a larger history with <see cref="FromCommitSequence"/>.
+/// A durable system command, like <see cref="RebuildPerspectiveCommand"/>: dispatched in process it rebuilds this
+/// service's records; sent, it is broadcast to every service, and each rebuilds the records of the events it stored.
+/// It is one-shot operator intent, so it is control-plane traffic (no user security context, dropped rather than
+/// dead-lettered) but NOT in the supersedable <c>sys-control</c> class, whose short TTL would silently lose it.
+/// Every filter is optional and conjunctive; an empty command rebuilds everything up to each origin's cap,
+/// <see cref="RedeliveryPumpOptions.MaxEventsPerRequest"/>, which <see cref="MaxEvents"/> can lower but never raise.
+/// Page through a larger history with <see cref="FromCommitSequence"/>.
 /// </para>
 /// <para>
 /// Only the type rules are applied again: the mode, <see cref="AuditEventAttribute"/> and the ephemeral exclusion. An
@@ -28,8 +32,8 @@ namespace Whizbang.Core.SystemEvents;
 /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditRebuildRequestReceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/SystemControlTagTests.cs:DurableSystemCommands_DoNotCarryTheControlTagAsync</tests>
 [PinnedId("1cd01d44-ef74-4cd5-881e-08e958aada64")]
-[SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
 public sealed record RequestAuditRebuildCommand : ICommand, IControlPlaneMessage, Whizbang.Core.Audit.IBoundedCommandAudit {
   private static readonly string[] _idLists = [nameof(StreamIds)];
 

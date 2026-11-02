@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.SystemEvents;
 

@@ -43,8 +43,8 @@ namespace Whizbang.Core.SystemEvents;
 /// <param name="outboxChannel">The deferred outbox channel for queuing audit events.</param>
 /// <param name="options">System event configuration options.</param>
 /// <param name="ephemeralModeResolver">
-/// Recognizes ephemeral types, which are excluded from audit unless they keep their body (#1730); null recognizes the
-/// <see cref="IEphemeralEvent"/> marker only.
+/// Recognizes ephemeral types, which are excluded from audit unless they keep their body (#1730). Required: the
+/// container supplies the default <see cref="EphemeralModeResolver"/> over the generated catalog.
 /// </param>
 public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
@@ -53,7 +53,7 @@ public sealed class AuditingEventStoreDecorator(
     Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
     IAuditDecisionHook auditDecisionHook,
     ILogger<AuditingEventStoreDecorator> logger,
-    IEphemeralModeResolver? ephemeralModeResolver = null) : ForwardingEventStoreDecorator(inner) {
+    IEphemeralModeResolver ephemeralModeResolver) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -72,9 +72,9 @@ public sealed class AuditingEventStoreDecorator(
   // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
   private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
 
-  // Recognizes a type declared ephemeral through a base record or interface (#1730). Without one, only the
-  // IEphemeralEvent marker is recognized, as at every other flag-derivation site.
-  private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
+  // Recognizes a type declared ephemeral through a base record or interface (#1730). Required, with the TryAdd default
+  // TryAddWhizbangDefaults registers, so a hand-built decorator cannot silently miss [Ephemeral] types.
+  private readonly IEphemeralModeResolver _ephemeralModeResolver = ArgumentGuard.NotNull(ephemeralModeResolver);
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(

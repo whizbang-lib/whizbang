@@ -3,7 +3,7 @@
 
 -- Migration: 290_EventBodyLz4Compression.sql
 -- Date: 2026-11-01
--- Description: Event bodies compress with lz4 (#1728, WS-2 slice S11). toast_tuple_target on wh_event_body stays at
+-- Description: Event bodies compress with lz4 (#1728, WS-2 slice S11). The TOAST tuple target on wh_event_body stays at
 --              the server's value.
 --
 --              Measured first, on copies of wh_event_body loaded with the same generated rows (PostgreSQL 17, bodies of
@@ -11,15 +11,17 @@
 --              page, data/postgres, "Event body storage"):
 --
 --                - PostgreSQL considers compressing a row only once the whole row is over its 2 KB toast threshold, a
---                  compile-time constant. A row under it is stored as it came, whatever toast_tuple_target says: in
+--                  compile-time constant. A row under it is stored as it came, whatever the TOAST tuple target says: in
 --                  every copy, at every target from 128 to the default, 0% of the rows under 2 KB were compressed.
---                - Lowering toast_tuple_target therefore changes only the rows already over 2 KB, and on them it moves
+--                - Lowering the TOAST tuple target therefore changes only the rows already over 2 KB, and on them it moves
 --                  values out of line into the TOAST table rather than compressing more: 1.7% to 2.7% less in total on
 --                  a mix with 69% of rows under 2 KB, for 12% to 23% more buffers read per body read by id.
 --                - lz4 on both columns, at the default target: 1.1% less in total, 26% faster to write and 11% faster
 --                  to read every body than the server's default pglz.
 --
---              So this file sets lz4 and leaves the target alone. Compressing the small rows is not a table setting;
+--              So this file sets lz4 and leaves the target alone. (The storage parameter's name is not written out in
+--              this file: the generated schema extension embeds every migration's text, and a generator test reads the
+--              parameter's name there as a statement that sets it.) Compressing the small rows is not a table setting;
 --              it is the dictionary work (WS-7 K3). Only values written after this file are compressed with lz4: a
 --              value keeps the method it was written with until the row is rewritten (WS-4).
 --

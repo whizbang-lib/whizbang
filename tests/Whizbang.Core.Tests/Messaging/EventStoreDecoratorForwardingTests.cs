@@ -30,7 +30,7 @@ public class EventStoreDecoratorForwardingTests {
   public static IEnumerable<Func<IEventStore>> Decorators() => [
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
     () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
-    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)),
     () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
     () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
     () => new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(new ProbeAwareStore(), new NoArchiveStore(), readThrough: true),
@@ -40,7 +40,7 @@ public class EventStoreDecoratorForwardingTests {
   public static IEnumerable<Func<IEventStore>> ThroughArchiveForwarders() => [
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
     () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
-    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)),
     () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
     () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
   ];

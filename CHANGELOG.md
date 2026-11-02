@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smaller, 12% to 23% more buffers per body read). Existing bodies keep their compression until rewritten.
 - **Audit records can be re-derived (#1724, WS-2 S7).** Every audit writer names a record
   `AuditLedger.RecordIdFor(originalEventId)`, a UUIDv5 under `sys-audit-record`, so a record derived again is the same
-  record and the audit perspective holds one row per audited event. `RequestAuditRebuildCommand`, handled on the
-  origin by the built-in `AuditRebuildRequestReceptor`, selects stored events as a redelivery does (tenant, streams,
+  record and the audit perspective holds one row per audited event. `RequestAuditRebuildCommand` (a durable system command in
+  `Whizbang.Core.Commands.System`; sent, every service rebuilds its own), handled by the built-in
+  `AuditRebuildRequestReceptor`, selects stored events as a redelivery does (tenant, streams,
   commit-sequence range, capped and paged by `RedeliveryPumpOptions`), keeps the types audit eligibility admits, and
   queues their records to the outbox with the event's own time, correlation and causation. **Upgrade note:** audit
   record ids are no longer random; a reader that treated two records of one event as two entries now sees one.

@@ -266,7 +266,7 @@ public class RedeliveryRequestReceptorTests {
 
     await registrar.StartAsync(CancellationToken.None);
 
-    var stages = registry.Registered.Where(r => r.Msg == typeof(Whizbang.Core.SystemEvents.RequestAuditRebuildCommand))
+    var stages = registry.Registered.Where(r => r.Msg == typeof(Whizbang.Core.Commands.System.RequestAuditRebuildCommand))
       .Select(r => r.Stage).ToList();
     await Assert.That(stages).IsEquivalentTo([
       LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])

@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// command reaches it whether dispatched in-process (operator-initiated) or arriving over the inbox from
 /// a damaged consumer. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// <see cref="AuditRebuildRequestReceptor"/> joins the same three stages for the same reasons: an operator dispatches
-/// <see cref="Whizbang.Core.SystemEvents.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
+/// <see cref="Whizbang.Core.Commands.System.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
 /// there (#1724).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
@@ -45,9 +45,9 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PreOutboxInline);
     registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PostInboxInline);
     var auditRebuild = new AuditRebuildRequestReceptor(scopeFactory, auditRebuildLogger);
-    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
-    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);
-    registry.Register<Whizbang.Core.SystemEvents.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PostInboxInline);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PostInboxInline);
     return Task.CompletedTask;
   }
 

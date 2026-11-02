@@ -36,7 +36,7 @@ public class AuditingEventStoreDecoratorBranchCoverageTests {
     var decorator = new AuditingEventStoreDecorator(
       inner, channel, Options.Create(new SystemEventOptions().EnableEventAudit()),
       new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      NoOpinionAuditDecisionHook.Instance, logger: null!);
+      NoOpinionAuditDecisionHook.Instance, logger: null!, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance));
     var envelope = new MessageEnvelope<UnregisteredAuditedEvent> {
       MessageId = MessageId.New(),
       Payload = new UnregisteredAuditedEvent("probe"),

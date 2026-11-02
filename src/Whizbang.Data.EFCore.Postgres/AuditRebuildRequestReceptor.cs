@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.SystemEvents;
 
