@@ -207,6 +207,16 @@ public class RouteTraceStoreTests : EFCoreTestBase {
     await Assert.That(hop.PolicyDecisions).IsEquivalentTo([new RoutePolicyDecision("Tenancy", "tenant-present", true), new RoutePolicyDecision("Routing", "topic-by-namespace", false)]);
     await Assert.That(route.Durations.Count).IsEqualTo(2L);
     await Assert.That(route.Durations.MinMilliseconds).IsEqualTo(12.5);
+    await Assert.That(route.Durations.MaxMilliseconds).IsEqualTo(12.5);
+    await Assert.That(route.Durations.TotalMilliseconds).IsEqualTo(25d).Because("two occurrences of 12.5 ms each");
+    await using (var first = conn.CreateCommand()) {
+      first.CommandText = "SELECT min(recorded_at), max(recorded_at) FROM wh_traces";
+      await using var reader = await first.ExecuteReaderAsync();
+      await reader.ReadAsync();
+      await Assert.That(route.FirstSeen).IsEqualTo(reader.GetFieldValue<DateTimeOffset>(0))
+        .Because("first seen is when the route's first occurrence was staged");
+      await Assert.That(route.LastSeen).IsEqualTo(reader.GetFieldValue<DateTimeOffset>(1));
+    }
     await Assert.That(route.Durations.Buckets.Count).IsEqualTo(6);
   }
 

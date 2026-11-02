@@ -44,6 +44,16 @@ public class StoredMetadataRegistryTests {
   }
 
   [Test]
+  [Arguments(StoredMetadataForm.Full)]
+  [Arguments(StoredMetadataForm.Default)]
+  public async Task TheAttribute_CarriesTheFormItIsGivenAsync(StoredMetadataForm form) {
+    var attribute = new StoredMetadataAttribute(form);
+
+    await Assert.That(attribute.Form).IsEqualTo(form)
+      .Because("the generator reads the form from the attribute's constructor argument, which Form exposes");
+  }
+
+  [Test]
   public async Task RegisterFull_ABlankName_ThrowsAsync() {
     await Assert.That(() => StoredMetadataRegistry.RegisterFull(" ")).Throws<ArgumentException>();
   }

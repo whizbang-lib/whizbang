@@ -46,6 +46,7 @@ public enum StoredMetadataForm {
 /// <param name="form">The form the type's rows take.</param>
 /// <docs>data/event-store#keeping-an-event-type-full</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StoredMetadataRegistryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/StoredMetadataRegistryTests.cs:TheAttribute_CarriesTheFormItIsGivenAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface, AllowMultiple = false, Inherited = true)]
 public sealed class StoredMetadataAttribute(StoredMetadataForm form) : Attribute {
   /// <summary>The form the type's rows take.</summary>
