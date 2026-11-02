@@ -1,10 +1,12 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Microsoft.Extensions.Options;
 
 namespace Whizbang.Core.Workers;
 
+#pragma warning disable CA1707 // Repo style: public const/static-readonly fields are ALL_CAPS_SNAKE per editorconfig.
 /// <summary>
 /// When a worker loop's run of transient database failures stops being a blip and becomes worth an alert
 /// (<see cref="DatabaseFailureEscalation"/>). Bound from <c>Whizbang:DatabaseFailureEscalation</c>.
@@ -28,11 +30,24 @@ public sealed class DatabaseFailureEscalationOptions {
   public const string SECTION = "Whizbang:DatabaseFailureEscalation";
 
   /// <summary>
+  /// The default <see cref="ConsecutiveFailures"/>: 3, so a single lost statement, or a pair of them, never makes a run
+  /// on its own.
+  /// </summary>
+  public const int DEFAULT_CONSECUTIVE_FAILURES = 3;
+
+  /// <summary>
+  /// The default <see cref="FailingFor"/>: one minute, long enough that a failover of a few seconds logs only Warnings
+  /// and short enough that a database that stays down is alerted on within about a minute.
+  /// </summary>
+  public static readonly TimeSpan DEFAULT_FAILING_FOR = TimeSpan.FromMinutes(1);
+
+  /// <summary>
   /// How many transient database failures in a row a worker meets before its run can escalate. At least 1.
   /// </summary>
   /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
-  public int ConsecutiveFailures { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
+  public int ConsecutiveFailures { get; set; } = DEFAULT_CONSECUTIVE_FAILURES;
 
   /// <summary>
   /// How long a worker's run of transient database failures lasts, from its first failure, before it can escalate.
@@ -40,19 +55,34 @@ public sealed class DatabaseFailureEscalationOptions {
   /// </summary>
   /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
-  public TimeSpan FailingFor { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
+  public TimeSpan FailingFor { get; set; } = DEFAULT_FAILING_FOR;
 }
+#pragma warning restore CA1707
 
 /// <summary>
 /// Refuses a <see cref="DatabaseFailureEscalationOptions"/> that cannot be met as written, naming the configuration
 /// key. Registered with the options and checked when the host starts.
 /// </summary>
 /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesFewerThanOneFailure_NamingTheKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesANegativeTime_NamingTheKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_UnmeetableSetting_IsRefusedAtStartupAsync</tests>
 public sealed class DatabaseFailureEscalationOptionsValidator : IValidateOptions<DatabaseFailureEscalationOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, DatabaseFailureEscalationOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    return ValidateOptionsResult.Success;
+    var failures = new List<string>(2);
+    if (options.ConsecutiveFailures < 1) {
+      failures.Add(
+        $"{DatabaseFailureEscalationOptions.SECTION}:{nameof(DatabaseFailureEscalationOptions.ConsecutiveFailures)} is "
+        + $"{options.ConsecutiveFailures.ToString(CultureInfo.InvariantCulture)}; a run of failures is at least 1 long.");
+    }
+    if (options.FailingFor < TimeSpan.Zero) {
+      failures.Add(
+        $"{DatabaseFailureEscalationOptions.SECTION}:{nameof(DatabaseFailureEscalationOptions.FailingFor)} is "
+        + $"{options.FailingFor.ToString("c", CultureInfo.InvariantCulture)}; it is zero (escalate on the count alone) or more.");
+    }
+    return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 }

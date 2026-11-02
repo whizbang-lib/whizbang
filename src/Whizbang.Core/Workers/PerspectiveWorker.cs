@@ -5480,7 +5480,7 @@ public partial class PerspectiveWorker(
 
   // Event id 8 ("Error processing perspective cursors") retired with the rethrow it accompanied: it
   // named no stream, said nothing about what had failed, and the line after it was the host stopping.
-  [LoggerMessage(EventId = TRANSIENT_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Perspective batch lost to a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "{StreamCount} stream(s) go back for a sibling to take and the loop backs off and continues: {StreamIds}")]
   static partial void LogTransientBatchFailure(

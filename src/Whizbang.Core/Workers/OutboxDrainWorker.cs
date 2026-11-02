@@ -1677,7 +1677,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <summary>The event id of a drain batch lost to a failure that is this framework's own defect.</summary>
   internal const int BATCH_DRAIN_FAILURE_EVENT_ID = 54;
 
-  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Outbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "the streams re-offer via the claim backstop")]
   static partial void LogTransientBatchDrainFailed(

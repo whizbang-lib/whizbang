@@ -668,7 +668,7 @@ public sealed partial class InboxDrainWorker(
   /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 7;
 
-  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Inbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "the streams re-offer via the claim backstop")]
   static partial void LogTransientBatchDrainFailed(

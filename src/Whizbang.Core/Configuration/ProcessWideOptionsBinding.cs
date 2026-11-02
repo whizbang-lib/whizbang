@@ -139,6 +139,7 @@ internal static class ProcessWideOptionsBinding {
       }));
 
     AddDeadLetterLogging(services);
+    AddDatabaseFailureEscalation(services);
 
     // The IOptions<WhizbangCoreOptions> view (read by the EF Core lens queries and work coordinator)
     // is a separate object from the singleton AddWhizbang registers; both read the same section.
@@ -170,6 +171,33 @@ internal static class ProcessWideOptionsBinding {
     public void Configure(DeadLetterLoggingOptions options) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       Section(services, DeadLetterLoggingOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+    }
+  }
+
+  /// <summary>
+  /// Registers <see cref="DatabaseFailureEscalationOptions"/>, bound from <c>Whizbang:DatabaseFailureEscalation</c> and
+  /// validated when the host starts (#1986). Idempotent, and the plain bound instance is registered too, so every
+  /// type-activated worker loop that reports a transient database failure takes the configured threshold.
+  /// </summary>
+  /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationWiringTests.cs</tests>
+  internal static void AddDatabaseFailureEscalation(IServiceCollection services) {
+    services.AddOptions<DatabaseFailureEscalationOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DatabaseFailureEscalationOptions>, DatabaseFailureEscalationOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<DatabaseFailureEscalationOptions>, DatabaseFailureEscalationBinding>());
+    // The workers take the bound, validated instance itself, not IOptions<T>: an optional interface parameter is what
+    // WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
+    services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DatabaseFailureEscalationOptions>>().Value);
+  }
+
+  /// <summary>Applies <c>Whizbang:DatabaseFailureEscalation</c> to <see cref="DatabaseFailureEscalationOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class DatabaseFailureEscalationBinding(IServiceProvider services) : IConfigureOptions<DatabaseFailureEscalationOptions> {
+    public void Configure(DatabaseFailureEscalationOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, DatabaseFailureEscalationOptions.SECTION).Bind(options);
 #pragma warning restore IL2026
     }
   }
