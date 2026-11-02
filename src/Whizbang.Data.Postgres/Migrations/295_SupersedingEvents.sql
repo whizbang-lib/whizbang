@@ -32,7 +32,7 @@
 --
 --              Number 295: reserved for this change (296 to 299, also reserved, are unused).
 --
--- Dependencies: 266 (last word of _wh_event_flags_from_names), 271 (last word of _emit_event_store_chain,
+-- Dependencies: 266 (last word of _wh_event_flags_from_names), 285 (last word of _emit_event_store_chain,
 --               _emit_event_store_chain_for_inbox and wh_append_event), 221 (last word of perform_maintenance),
 --               263 (the digest reduction this copies), 093 (_wh_refold_epochs_covering, _wh_bump_origin_generation),
 --               212 (wh_event_destruction_hold), 209 (wh_perspective_snapshots.snapshot_version)
@@ -340,7 +340,8 @@ COMMENT ON FUNCTION __SCHEMA__._wh_event_flags_from_names(TEXT) IS
 -- The emit chains and the direct append stamp the key and queue the older events
 -- ===========================================================================================
 
--- _emit_event_store_chain: last word 271, with the superseding key and the queue.
+-- _emit_event_store_chain: last word 285 (slim stored metadata, route ids, staging), with the superseding key and
+-- the queue.
 
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
 -- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
@@ -362,6 +363,13 @@ COMMENT ON FUNCTION __SCHEMA__._wh_event_flags_from_names(TEXT) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_Refuse_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_AutoRestore_DeadLettersAwaitingRestore_AndQueuesOneRequestPerStreamAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/ArchivedStreamEmitCostScenarioTests.cs:EmitChain_With266sProbeAndWith271s_ReportAsync</tests>
+-- <docs>data/event-store#stored-metadata</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:OutboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:FullListedType_KeepsTheFullRow_ByTypeAndByNamespaceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:DebugMode_KeepsEveryRowFullAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:WriteFormFull_KeepsFullRows_AndStagesNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:WriteFormSlim_StoresSlimRows_AndStagesNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/StoredMetadataEmitCostScenarioTests.cs:EmitChain_FullAgainstLinked_ReportAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
@@ -388,6 +396,9 @@ DECLARE
   v_ends_a_stream BOOLEAN;                 -- 266: the batch carries a terminal event
   v_any_sealed BOOLEAN;                    -- 271: a stream of the batch is sealed
   v_any_archived BOOLEAN;                  -- 271: a stream of the batch is archived (and not sealed)
+  v_write_form TEXT;                       -- 285: Full, Slim or Linked
+  v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
+  v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
 BEGIN
   IF p_outbox_message_ids IS NULL OR cardinality(p_outbox_message_ids) = 0 THEN
     RETURN 0;
@@ -442,6 +453,10 @@ BEGIN
     PERFORM __SCHEMA__._wh_refuse_archived_stream_outbox_events(p_outbox_message_ids, p_instance_id, p_now);
   END IF;
 
+  -- 285 (#1725): the stored-metadata settings, read once for the whole batch.
+  SELECT s.write_form, s.full_for, s.keep_all INTO v_write_form, v_full_for, v_keep_all
+  FROM __SCHEMA__._wh_metadata_write_settings() s;
+
   -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
   -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
   -- so version assignment matches canonical event_id ordering. Without this, two events stored
@@ -471,13 +486,14 @@ BEGIN
   ),
   -- Migration 072: materialize the extracted payload + built metadata ONCE, so the pointer INSERT
   -- and the ephemeral body offload read identical values without recomputing the JSON extraction.
-  computed AS (
+  computed_full AS (
     SELECT
       oe.message_id,
       oe.stream_id,
       SPLIT_PART(__SCHEMA__.normalize_event_type(oe.message_type), ',', 1) AS aggregate_type,
       __SCHEMA__.normalize_event_type(oe.message_type) AS event_type,
       COALESCE(oe.event_data::jsonb -> 'p', oe.event_data::jsonb -> 'Payload', oe.event_data::jsonb -> 'payload') AS body_data,
+      COALESCE(oe.event_data::jsonb -> 'h', oe.event_data::jsonb -> c_field_hops, oe.event_data::jsonb -> 'hops', '[]'::jsonb) AS hops,
       jsonb_build_object(
         c_field_message_id, COALESCE(oe.event_data::jsonb -> 'id', oe.event_data::jsonb -> c_field_message_id, oe.event_data::jsonb -> 'messageId'),
         c_field_hops, COALESCE(oe.event_data::jsonb -> 'h', oe.event_data::jsonb -> c_field_hops, oe.event_data::jsonb -> 'hops', '[]'::jsonb)
@@ -487,7 +503,7 @@ BEGIN
         THEN jsonb_build_object('ephemeral_expires_at',
                p_now + ((oe.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
         ELSE '{}'::jsonb
-      END AS body_meta,
+      END AS full_meta,
       oe.scope,
       oe.row_num,
       oe.flags,
@@ -495,6 +511,22 @@ BEGIN
       -- a row carrying the flag gets one, so a stray 'sk' on another event is never read.
       CASE WHEN COALESCE(oe.flags, 0) & c_flag_superseding <> 0 THEN oe.metadata::jsonb ->> 'sk' END AS supersede_key
     FROM outbox_events oe
+  ),
+  -- 285 (#1725): each event's route id, and the metadata its row keeps: the full form (plus the route id) under debug
+  -- mode, under the Full form or for a listed type, otherwise the slim form. Pure CPU on values already in hand.
+  -- Materialized, so each event's route id is computed once however many times the next step reads it.
+  computed_routes AS MATERIALIZED (
+    SELECT cf.*, __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id
+    FROM computed_full cf
+  ),
+  computed AS (
+    SELECT cr.*,
+      CASE
+        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
+        THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
+      END AS body_meta
+    FROM computed_routes cr
   ),
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
@@ -533,6 +565,15 @@ BEGIN
     -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
     ON CONFLICT DO NOTHING
     RETURNING event_id
+  ),
+  -- 285 (#1725): under the Linked form, the full form is appended to the staging table for maintenance to distill into
+  -- routes and traces. Append-only: the key is new for every stored event, so there is nothing to check.
+  staged_metadata AS (
+    INSERT INTO __SCHEMA__.wh_event_metadata_staging (event_id, recorded_at, route_id, event_type, metadata)
+    SELECT c.message_id, p_now, c.route_id, split_part(c.event_type, ',', 1), c.full_meta
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    WHERE v_write_form = 'Linked'
   ),
   -- Migration 087 (A1c): incrementally fold the just-stored events into wh_stream_digests.
   -- Bucket + predicates mirror ComputeStreamDigestsAsync (the full-sweep recompute) exactly:
@@ -740,9 +781,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729).';
+  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729).';
 
--- _emit_event_store_chain_for_inbox: last word 271, with the superseding key and the queue.
+-- _emit_event_store_chain_for_inbox: last word 285, with the superseding key and the queue.
 
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
 -- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
@@ -756,6 +797,8 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingEventReaperSqlTests.cs:Emit_Inbox_StampsTheKey_AndQueuesTheOlderOneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:InboxAppend_Refuse_DeadLettersTheRow_AndStoresTheRestAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:InboxAppend_AutoRestore_DeadLettersAwaitingRestore_AndQueuesTheRequestAsync</tests>
+-- <docs>data/event-store#stored-metadata</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:InboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -787,6 +830,9 @@ DECLARE
   v_any_sealed BOOLEAN;                    -- 271: a candidate's stream is sealed
   v_any_archived BOOLEAN;                  -- 271: a candidate's stream is archived (and not sealed)
   v_archived_refused UUID[];               -- 271: the rows an archived stream refused
+  v_write_form TEXT;                       -- 285: Full, Slim or Linked
+  v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
+  v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
 BEGIN
   -- Migration 087: resolve the LOCAL service id once. store_inbox_messages (062) COALESCEs a
   -- missing envelope SourceServiceId to the local id, so a wh_inbox row attributed to SELF (or
@@ -887,6 +933,10 @@ BEGIN
       v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types, p_instance_id, p_now);
   END IF;
 
+  -- 285 (#1725): the stored-metadata settings, read once for the whole batch.
+  SELECT s.write_form, s.full_for, s.keep_all INTO v_write_form, v_full_for, v_keep_all
+  FROM __SCHEMA__._wh_metadata_write_settings() s;
+
   -- Auto-create event_store rows for inbox rows owned by this instance that:
   --   - are events (is_event = true)
   --   - have a stream_id
@@ -978,13 +1028,14 @@ BEGIN
   -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
   -- the per-row form is defensive, see _emit_event_store_chain above for the rationale.
   -- Migration 072: materialize the extracted payload + built metadata ONCE (see outbox fn above).
-  computed AS (
+  computed_full AS (
     SELECT
       ie.message_id,
       ie.stream_id,
       SPLIT_PART(__SCHEMA__.normalize_event_type(ie.message_type), ',', 1) AS aggregate_type,
       __SCHEMA__.normalize_event_type(ie.message_type) AS event_type,
       COALESCE(ie.event_data::jsonb -> 'p', ie.event_data::jsonb -> 'Payload', ie.event_data::jsonb -> 'payload') AS body_data,
+      COALESCE(ie.event_data::jsonb -> 'h', ie.event_data::jsonb -> c_field_hops, ie.event_data::jsonb -> 'hops', '[]'::jsonb) AS hops,
       jsonb_build_object(
         c_field_message_id, COALESCE(ie.event_data::jsonb -> 'id', ie.event_data::jsonb -> c_field_message_id, ie.event_data::jsonb -> 'messageId'),
         c_field_hops, COALESCE(ie.event_data::jsonb -> 'h', ie.event_data::jsonb -> c_field_hops, ie.event_data::jsonb -> 'hops', '[]'::jsonb)
@@ -994,7 +1045,7 @@ BEGIN
         THEN jsonb_build_object('ephemeral_expires_at',
                p_now + ((ie.metadata::jsonb ->> 'ett')::int * INTERVAL '1 second'))
         ELSE '{}'::jsonb
-      END AS body_meta,
+      END AS full_meta,
       ie.scope,
       ie.row_num,
       ie.flags,
@@ -1011,6 +1062,22 @@ BEGIN
       END AS origin_service_id,
       NULLIF(ie.source_commit_sequence, 0) AS origin_commit_sequence
     FROM storable_events ie
+  ),
+  -- 285 (#1725): each event's route id, and the metadata its row keeps: the full form (plus the route id) under debug
+  -- mode, under the Full form or for a listed type, otherwise the slim form. Pure CPU on values already in hand.
+  -- Materialized, so each event's route id is computed once however many times the next step reads it.
+  computed_routes AS MATERIALIZED (
+    SELECT cf.*, __SCHEMA__._wh_route_id(split_part(cf.event_type, ',', 1), cf.hops) AS route_id
+    FROM computed_full cf
+  ),
+  computed AS (
+    SELECT cr.*,
+      CASE
+        WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
+        THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
+      END AS body_meta
+    FROM computed_routes cr
   ),
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
@@ -1052,6 +1119,15 @@ BEGIN
     -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
     ON CONFLICT DO NOTHING
     RETURNING event_id
+  ),
+  -- 285 (#1725): under the Linked form, the full form is appended to the staging table for maintenance to distill into
+  -- routes and traces. Append-only: the key is new for every stored event, so there is nothing to check.
+  staged_metadata AS (
+    INSERT INTO __SCHEMA__.wh_event_metadata_staging (event_id, recorded_at, route_id, event_type, metadata)
+    SELECT c.message_id, p_now, c.route_id, split_part(c.event_type, ',', 1), c.full_meta
+    FROM computed c
+    JOIN stored_events se ON se.event_id = c.message_id
+    WHERE v_write_form = 'Linked'
   ),
   -- Migration 087 (A1c): incrementally fold the just-stored events into wh_stream_digests.
   -- Bucket + predicates mirror ComputeStreamDigestsAsync (the full-sweep recompute) exactly:
@@ -1300,9 +1376,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729).';
+  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729).';
 
--- wh_append_event: last word 271, with the superseding key and the queue. The signature is the same, and the
+-- wh_append_event: last word 285, with the superseding key and the queue. The signature is the same, and the
 -- overloads are cleared first because this name has had more than one arity (README rule 5).
 SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 
@@ -1325,6 +1401,11 @@ SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:DirectAppend_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:DirectAppend_AutoRestore_RaisesTheRestoreState_AndStoresNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveAppendPolicyTests.cs:AppendAsync_ToAnArchivedStream_Refuse_ThrowsStreamArchivedExceptionAsync</tests>
+-- <docs>data/event-store#stored-metadata</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:DirectAppend_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:EFCoreEventStore_Append_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:DirectAppend_KeysTheSlimFormDoesNotReduce_AreKeptAsWrittenAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataTests.cs:AppendAsync_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_append_event(
   p_event_id UUID,
   p_stream_id UUID,
@@ -1354,6 +1435,12 @@ DECLARE
   v_ends_stream BOOLEAN;                   -- 266: this event seals its stream
   v_closed RECORD;                         -- 271: the stream's row when it is sealed or archived
   v_policy TEXT;                           -- 271: the AppendToArchived policy of an archived stream's type
+  v_write_form TEXT;                       -- 285: Full, Slim or Linked
+  v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
+  v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
+  v_full JSONB;                            -- 285: the metadata as the caller wrote it
+  v_route_id UUID;                         -- 285: the event's route id
+  v_body_meta JSONB;                       -- 285: the metadata its row keeps
 BEGIN
   -- The emit chains' key for this stream (214), so a direct append and a chain emit serialize too.
   PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || p_stream_id::text));
@@ -1399,6 +1486,19 @@ BEGIN
       HINT = 'Publish the ephemeral events on their own stream.';
   END IF;
 
+  -- 285 (#1725): the row keeps the slim form unless the event is kept full, and carries its route id; under the Linked
+  -- form the metadata as written is staged. The two drivers write different forms (EnvelopeMetadata, Hops; the Dapper
+  -- store's, hops), and the slim form reduces whichever hop list is there and keeps every other key as written.
+  SELECT s.write_form, s.full_for, s.keep_all INTO v_write_form, v_full_for, v_keep_all
+  FROM __SCHEMA__._wh_metadata_write_settings() s;
+  v_full := COALESCE(p_metadata, '{}'::jsonb);
+  v_route_id := __SCHEMA__._wh_route_id(split_part(p_event_type, ',', 1), COALESCE(v_full -> 'Hops', v_full -> 'hops'));
+  v_body_meta := CASE
+    WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(p_event_type, ',', 1), v_full_for)
+    THEN v_full || jsonb_build_object('rid', v_route_id)
+    ELSE __SCHEMA__._wh_slim_event_metadata(v_full, v_route_id)
+  END;
+
   -- 295 (#1729): a superseding event's key, from the metadata the driver stamped it in, on a row carrying the flag only.
   v_key := CASE WHEN COALESCE(p_flags, 0) & c_flag_superseding <> 0 THEN p_metadata ->> 'sk' END;
 
@@ -1427,11 +1527,16 @@ BEGIN
   -- The body half of the pointer/body split (077). Constraint-less ON CONFLICT, as the emit chain writes it:
   -- event_id is the table's only key.
   INSERT INTO __SCHEMA__.wh_event_body (event_id, event_data, metadata)
-  VALUES (p_event_id, p_event_data, p_metadata)
+  VALUES (p_event_id, p_event_data, v_body_meta)
   ON CONFLICT DO NOTHING
   -- 260: measured on the row the insert formed, as the emit chains measure theirs (the values as the row holds them,
   -- before any TOAST compression), so the two paths count a body the same way.
   RETURNING pg_column_size(event_data) + pg_column_size(metadata) INTO v_body_bytes;
+
+  IF v_write_form = 'Linked' THEN
+    INSERT INTO __SCHEMA__.wh_event_metadata_staging (event_id, recorded_at, route_id, event_type, metadata)
+    VALUES (p_event_id, p_created_at, v_route_id, split_part(p_event_type, ',', 1), v_full);
+  END IF;
 
   -- 225 (#1600): fold the event into its stream digest bucket, as the emit chain's digest_folds does, still under
   -- the stream lock taken above. One event, so one row: the chain's bit_xor and COUNT(*) over a single event are
@@ -1495,8 +1600,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_append_event(UUID, UUID, UUID, TEXT, TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ, INTEGER) IS
-'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), 0) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 228: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546). 260: keeps the stream''s wh_stream_lifecycle row (#1732). 266: refuses an append to a sealed stream, raising SQLSTATE WHS01 (StreamSealedException), and a terminal event seals its stream (#1733). 267: a new stream starts at version 1, as on the outbox and inbox paths; an existing stream continues from its highest version (#1913). 271: refuses an append to an archived stream, raising SQLSTATE WHA01 (Refuse) or WHA02 (AutoRestore) by its type''s AppendToArchived policy (StreamArchivedException, #1738). 295: stamps a superseding event''s key and queues the older events of its key for the reaper (#1729).';
-
+'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), 0) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 228: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546). 260: keeps the stream''s wh_stream_lifecycle row (#1732). 266: refuses an append to a sealed stream, raising SQLSTATE WHS01 (StreamSealedException), and a terminal event seals its stream (#1733). 267: a new stream starts at version 1, as on the outbox and inbox paths; an existing stream continues from its highest version (#1913). 271: refuses an append to an archived stream, raising SQLSTATE WHA01 (Refuse) or WHA02 (AutoRestore) by its type''s AppendToArchived policy (StreamArchivedException, #1738). 285: the row keeps the slim form unless kept full, carries its route id, and under the Linked form the metadata as written is staged (#1725). 295: stamps a superseding event''s key and queues the older events of its key for the reaper (#1729).';
 
 -- ===========================================================================================
 -- perform_maintenance: last word 221, copied whole, with the superseded-event reaper as Task 16. Nothing else changes.
