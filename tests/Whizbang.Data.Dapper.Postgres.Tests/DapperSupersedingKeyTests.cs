@@ -46,7 +46,7 @@ public class DapperSupersedingKeyTests : PostgresTestBase {
     await conn.OpenAsync();
     var keys = (await conn.QueryAsync<string?>(
       "SELECT supersede_key FROM wh_event_store WHERE stream_id = @stream ORDER BY version", new { stream })).ToList();
-    await Assert.That(keys).IsEquivalentTo(new string?[] { "model-a", null, "model-a" }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    await Assert.That(keys).IsEquivalentTo(["model-a", null, "model-a"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the superseding events carry their key and the ordinary event none");
     var queued = await conn.ExecuteScalarAsync<long>(
       "SELECT count(*) FROM wh_superseded_events q JOIN wh_event_store es ON es.event_id = q.event_id " +
