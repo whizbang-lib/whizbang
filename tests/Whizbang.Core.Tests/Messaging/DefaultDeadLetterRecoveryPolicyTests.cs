@@ -135,6 +135,21 @@ public class DefaultDeadLetterRecoveryPolicyTests {
   }
 
   /// <summary>
+  /// A message a receptor interceptor denied is denied the same way on every re-drive, so it is held for an operator
+  /// and never redriven on its own, whether it was dead-lettered or quarantined (#1996).
+  /// </summary>
+  [Test]
+  [Arguments(MessageFailureReason.ReceptorDenied)]
+  [Arguments(MessageFailureReason.ReceptorQuarantined)]
+  public async Task GetPolicy_ReceptorDenial_HoldsForReviewWithoutRedriveAsync(MessageFailureReason reason) {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(reason));
+    await Assert.That(result.Name).IsEqualTo("HoldForReview");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(0);
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
+  /// <summary>
   /// A message the outbox batcher could not store is re-stored by recovery, soon and often, and held for review once
   /// that budget is spent (#1871).
   /// </summary>
