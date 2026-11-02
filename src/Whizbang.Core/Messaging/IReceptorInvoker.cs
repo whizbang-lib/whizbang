@@ -59,4 +59,27 @@ public interface IReceptorInvoker {
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Asks the registered receptor interceptors, ahead of the stages, whether the receptors this message would run at
+  /// <paramref name="stages"/> may run. Returns the first denial that must not pass silently (dead-letter, quarantine
+  /// or throw), or an allowed result. A <see cref="Security.Attributes.DeniedAction.DropQuiet"/> denial is not
+  /// reported here: it skips that one receptor when it would run.
+  /// </summary>
+  /// <remarks>
+  /// The inbox worker calls this before it completes a row, so a denied message can be dead-lettered or retried
+  /// instead of completed. Each receptor is still gated again immediately before it runs. The default implementation,
+  /// for invokers that do not gate receptors, allows everything.
+  /// </remarks>
+  /// <param name="envelope">The message envelope.</param>
+  /// <param name="stages">The stages whose receptors are checked.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The first loud denial, or <see cref="Security.InterceptorResult.Allowed"/>.</returns>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
+  ValueTask<Security.InterceptorResult> EvaluateAdmissionAsync(
+      IMessageEnvelope envelope,
+      IReadOnlyList<LifecycleStage> stages,
+      CancellationToken cancellationToken = default) =>
+    new(Security.InterceptorResult.Allowed);
 }

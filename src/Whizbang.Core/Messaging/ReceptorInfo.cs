@@ -64,8 +64,14 @@ namespace Whizbang.Core.Messaging;
 /// The receptor's <c>[DefaultRouting]</c>, if it declares one: where a message it returns goes when the
 /// message carries no route of its own. A cascade from a lifecycle stage applies it, as a local call does.
 /// </param>
+/// <param name="ReceptorType">
+/// The receptor class, which a receptor interceptor is asked about before the receptor runs. Generated entries set it;
+/// a runtime registration leaves it null and is identified by <paramref name="RuntimeInstance"/>'s type instead.
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
@@ -76,7 +82,8 @@ public sealed record ReceptorInfo(
     bool IsIdempotent = false,
     bool IsOnceAcrossServices = false,
     object? RuntimeInstance = null,
-    Dispatch.DispatchModes? DefaultRouting = null
+    Dispatch.DispatchModes? DefaultRouting = null,
+    Type? ReceptorType = null
 );
 
 /// <summary>

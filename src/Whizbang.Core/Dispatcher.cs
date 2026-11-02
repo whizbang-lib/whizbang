@@ -396,6 +396,9 @@ public abstract partial class Dispatcher(
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
+      if (!await _admitRuntimeReceptorAsync(receptor, message, envelope, scope.ServiceProvider, CancellationToken.None).ConfigureAwait(false)) {
+        return null;
+      }
       return await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, CancellationToken.None).ConfigureAwait(false);
     };
   }
@@ -544,11 +547,21 @@ public abstract partial class Dispatcher(
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
+      if (!await _admitRuntimeReceptorAsync(receptor, message, envelope, scope.ServiceProvider, cancellationToken).ConfigureAwait(false)) {
+        continue;
+      }
       var result = await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, cancellationToken).ConfigureAwait(false);
       // A result-returning runtime receptor's result cascades, as it does on a send (#1410 follow-up)
       await CascadeLocalResultAsync(result, message, messageType, envelope, cancellationToken).ConfigureAwait(false);
     }
   }
+
+  /// <summary>A receptor registered at runtime is gated by its instance's type, as a generated one is by its class (#1996).</summary>
+  private ValueTask<bool> _admitRuntimeReceptorAsync(ReceptorInfo receptor, object message, IMessageEnvelope envelope,
+      IServiceProvider scopedProvider, CancellationToken cancellationToken) =>
+    (receptor.ReceptorType ?? receptor.RuntimeInstance?.GetType()) is { } receptorType
+      ? AdmitReceptorAsync(receptorType, message, scopedProvider, envelope, cancellationToken)
+      : new ValueTask<bool>(true);
 
   private static DispatchPolicyEngine _resolvePolicyEngine(IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IDispatchPolicyRegistry>();
@@ -822,6 +835,12 @@ public abstract partial class Dispatcher(
     return _reEmissionDiagnostic;
   }
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+  // The receptor interceptors (#1996), resolved once: null when none is registered, so a receptor invocation then
+  // costs one null check and no service resolution
+  private readonly Security.ReceptorInterceptorPipeline? _receptorInterceptors = Security.ReceptorInterceptorGate.Active(serviceProvider);
+
+  /// <summary>Whether any receptor interceptor is registered, so receptor invocations are gated (#1996).</summary>
+  internal bool HasReceptorInterceptors => _receptorInterceptors is not null;
   // Where the detached stages this dispatcher starts are recorded, so a stopping host waits for them before it disposes
   // the provider they resolve their receptors from (#1721). A container that never ran TryAddWhizbangDefaults has no
   // host drain, so a private record keeps the call path uniform there.
@@ -6356,6 +6375,66 @@ public abstract partial class Dispatcher(
 
     // The one writer of the hop's stream key; StreamIdentity reads it back on every storing site (#1798).
     return StreamIdentity.HopMetadata(streamId.Value);
+  }
+
+  /// <summary>
+  /// Asks the registered receptor interceptors whether <paramref name="receptorType"/> may handle
+  /// <paramref name="message"/>. The generated receptor invocations call this immediately before every receptor they
+  /// run, on every local path (send, local invoke, publish, and the receptors of a cascaded message), after the
+  /// invocation's security context is established, so the interceptors see the scope context the receptor sees (#1996).
+  /// </summary>
+  /// <typeparam name="TMessage">The message type the receptor is declared for.</typeparam>
+  /// <param name="receptorType">The receptor class.</param>
+  /// <param name="message">The message.</param>
+  /// <param name="scopedProvider">The invocation's scoped provider.</param>
+  /// <param name="envelope">The envelope in hand, if any; the message's own registered envelope is used otherwise.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True to invoke the receptor; false when an interceptor dropped it quietly.</returns>
+  /// <exception cref="Security.Exceptions.ReceptorInvocationDeniedException">An interceptor denied the receptor with an
+  /// action other than <see cref="Security.Attributes.DeniedAction.DropQuiet"/>.</exception>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs</tests>
+  protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
+      IMessageEnvelope? envelope, CancellationToken cancellationToken) where TMessage : notnull =>
+    _receptorInterceptors is null
+      ? new ValueTask<bool>(true)
+      : Security.ReceptorInterceptorGate.AdmitAsync(_receptorInterceptors, receptorType, _envelopeForAdmission(message, envelope),
+          Security.ReceptorInterceptorGate.ReceptorScopeContext(scopedProvider), scopedProvider, cancellationToken);
+
+  /// <summary>
+  /// <see cref="AdmitReceptorAsync"/> for a synchronous receptor, which runs on the caller's thread: every interceptor
+  /// that applies to it must complete synchronously.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type the receptor is declared for.</typeparam>
+  /// <param name="receptorType">The receptor class.</param>
+  /// <param name="message">The message.</param>
+  /// <param name="scopedProvider">The invocation's scoped provider.</param>
+  /// <returns>True to invoke the receptor; false when an interceptor dropped it quietly.</returns>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs:LocalInvoke_DeniedSyncReceptor_DoesNotRunAsync</tests>
+  protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) where TMessage : notnull =>
+    _receptorInterceptors is null
+      || Security.ReceptorInterceptorGate.Admit(_receptorInterceptors, receptorType, _envelopeForAdmission(message, null),
+          Security.ReceptorInterceptorGate.ReceptorScopeContext(scopedProvider), scopedProvider);
+
+  /// <summary>
+  /// The envelope an interceptor is shown: the one in hand when it carries this message, else the one the dispatcher
+  /// registered for the message, else a local envelope built for the question (carrying the hops of the one in hand).
+  /// Only built when an interceptor is registered.
+  /// </summary>
+  private IMessageEnvelope _envelopeForAdmission<TMessage>(TMessage message, IMessageEnvelope? envelope) where TMessage : notnull {
+    if (envelope is not null && ReferenceEquals(envelope.Payload, message)) {
+      return envelope;
+    }
+    if (_envelopeRegistry?.TryGetEnvelope(message) is { } registered) {
+      return registered;
+    }
+    return new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = envelope is null ? [] : [.. envelope.Hops],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
   }
 
   /// <summary>

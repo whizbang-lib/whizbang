@@ -60,6 +60,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly Configuration.ReceptorInvocationTracking _invocationTracking;
   private readonly Configuration.DoubleFireBehavior _onDoubleFire;
   private readonly IReceptorFiringObserver? _firingObserver;
+  // The receptor interceptors (#1996): null when none is registered, so a receptor then costs one null check
+  private readonly ReceptorInterceptorPipeline? _receptorInterceptors;
   private ILogger? _logger;
 
   /// <summary>
@@ -145,7 +147,67 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Optional test-only observer. Null in production when nothing is registered.
     _firingObserver = scopedProvider.GetService<IReceptorFiringObserver>();
+
+    _receptorInterceptors = ReceptorInterceptorGate.Active(scopedProvider);
   }
+
+  /// <summary>Whether any receptor interceptor is registered, so receptor invocations are gated (#1996).</summary>
+  internal bool HasReceptorInterceptors => _receptorInterceptors is not null;
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The interceptors are shown the scope context the receptors would be shown: the one the security provider
+  /// establishes from the envelope, or the scope the envelope carries when no provider is registered. With no
+  /// interceptor registered this returns at once without looking up a receptor.
+  /// </remarks>
+  public async ValueTask<InterceptorResult> EvaluateAdmissionAsync(
+      IMessageEnvelope envelope,
+      IReadOnlyList<LifecycleStage> stages,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(envelope);
+    ArgumentNullException.ThrowIfNull(stages);
+    if (_receptorInterceptors is null || _extractMessage(envelope) is not { } message) {
+      return InterceptorResult.Allowed;
+    }
+    var messageType = message.GetType();
+    var receptorTypes = new List<Type>();
+    foreach (var stage in stages) {
+      foreach (var receptor in _registry.GetReceptorsFor(messageType, stage)) {
+        if (_receptorTypeOf(receptor) is { } receptorType && !receptorTypes.Contains(receptorType)) {
+          receptorTypes.Add(receptorType);
+        }
+      }
+    }
+    if (receptorTypes.Count == 0) {
+      return InterceptorResult.Allowed;
+    }
+
+    var securityContext = await _establishStageSecurityContextAsync(envelope, stages[0], messageType, cancellationToken).ConfigureAwait(false);
+    var context = securityContext ?? envelope.GetCurrentScope() ?? ReceptorInterceptorGate.ReceptorScopeContext(_scopedProvider);
+    foreach (var receptorType in receptorTypes) {
+      var result = await _receptorInterceptors.EvaluateFirstDenialAsync(receptorType, envelope, context, cancellationToken).ConfigureAwait(false);
+      if (!result.Allow && result.OnDenied != Security.Attributes.DeniedAction.DropQuiet) {
+        return result;
+      }
+    }
+    return InterceptorResult.Allowed;
+  }
+
+  /// <summary>
+  /// The receptor class an interceptor is asked about: the generated entry's type, or a runtime registration's instance
+  /// type. Null for a hand-built entry that names neither.
+  /// </summary>
+  private static Type? _receptorTypeOf(ReceptorInfo receptor) => receptor.ReceptorType ?? receptor.RuntimeInstance?.GetType();
+
+  /// <summary>
+  /// Asks the interceptors whether this receptor may run, immediately before it would (#1996). True to run; false for a
+  /// quiet drop; throws <see cref="ReceptorInvocationDeniedException"/> for every other denial.
+  /// </summary>
+  private ValueTask<bool> _admitAsync(ReceptorInfo receptor, IMessageEnvelope envelope, CancellationToken cancellationToken) =>
+    _receptorInterceptors is null || _receptorTypeOf(receptor) is not { } receptorType
+      ? new ValueTask<bool>(true)
+      : ReceptorInterceptorGate.AdmitAsync(_receptorInterceptors, receptorType, envelope,
+          ReceptorInterceptorGate.ReceptorScopeContext(_scopedProvider), _scopedProvider, cancellationToken);
 
   /// <inheritdoc/>
   public async ValueTask InvokeAsync(
@@ -645,6 +707,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
 
     if (await _isDoubleFireAndSkipOrThrowAsync(receptor, ctx, messageId, streamId, sourceService, cancellationToken).ConfigureAwait(false)) {
+      return;
+    }
+
+    // The receptor interceptors decide before anything of the receptor runs (#1996). A denial skips it, records no
+    // invocation and cascades nothing; a denial that must not pass silently throws to the stage's caller.
+    if (!await _admitAsync(receptor, ctx.Envelope, cancellationToken).ConfigureAwait(false)) {
       return;
     }
 
