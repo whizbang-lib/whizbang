@@ -4,6 +4,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Archival;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Lifecycle;
@@ -70,9 +74,137 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
   public string Name => STEP_NAME;
 
   /// <inheritdoc />
-  public Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
-    _ = _timeProvider;
-    _ = _logger;
-    return Task.CompletedTask;
+  public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(services);
+    var ledger = services.GetRequiredService<IStreamDispositionLedger>();
+    var lifecycle = services.GetRequiredService<IOptions<StreamLifecycleOptions>>().Value;
+    var backoff = TimeSpan.FromSeconds(services.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.DestructionRetryBackoffSeconds);
+    var now = _timeProvider.GetUtcNow();
+    _ = await ledger.ScheduleAsync(lifecycle.FinalizeGrace, lifecycle.SweepBatchSize, now, cancellationToken).ConfigureAwait(false);
+    foreach (var due in await ledger.GetDueAsync(now, lifecycle.SweepBatchSize, cancellationToken).ConfigureAwait(false)) {
+      try {
+        await _disposeAsync(services, ledger, due, now + backoff, cancellationToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogDispositionThrew(_logger, due.StreamId, ex);
+        await ledger.SetDueAsync(due.StreamId, now + backoff, cancellationToken).ConfigureAwait(false);
+      }
+    }
   }
+
+  // Runs one due stream and writes its next due time: cleared when its disposition ran (or it was done already), before
+  // the PostDestruction hook, so a slow or failing notification never leaves a disposed stream scheduled; otherwise when
+  // to try again.
+  private async Task _disposeAsync(
+      IServiceProvider services, IStreamDispositionLedger ledger, DueStreamDisposition due, DateTimeOffset retryAt, CancellationToken ct) {
+    if (due.Readiness == StreamDispositionReadiness.Done) {
+      await ledger.SetDueAsync(due.StreamId, null, ct).ConfigureAwait(false);
+      return;
+    }
+    if (due.Readiness != StreamDispositionReadiness.Ready) {
+      LogNotReady(_logger, due.StreamId, due.Readiness, retryAt);
+      await ledger.SetDueAsync(due.StreamId, retryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    await _takeFinalSnapshotsAsync(services, ledger, due.StreamId, ct).ConfigureAwait(false);
+
+    var context = new DestructionContext {
+      Reason = DestructionReason.FinalizeGraceElapsed,
+      Granularity = DestructionGranularity.Stream,
+      StreamId = due.StreamId,
+      DeclaredDefault = Disposition.Archive,
+    };
+    var hook = services.GetService<IDestructionHook>();
+    var decision = hook is null
+      ? DestructionResult.Proceed()
+      : await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
+    if (decision.Cancel || decision.DeferUntil.HasValue) {
+      var until = decision.DeferUntil ?? retryAt;
+      LogVetoed(_logger, due.StreamId, until);
+      await ledger.SetDueAsync(due.StreamId, until, ct).ConfigureAwait(false);
+      return;
+    }
+    if (!await _runAsync(services, decision.Disposition ?? context.DeclaredDefault, context, ct).ConfigureAwait(false)) {
+      await ledger.SetDueAsync(due.StreamId, retryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    await ledger.SetDueAsync(due.StreamId, null, ct).ConfigureAwait(false);
+    if (hook is not null) {
+      try {
+        await hook.OnAfterDestructionAsync(context, ct).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogPostHookThrew(_logger, due.StreamId, ex);
+      }
+    }
+  }
+
+  // The final snapshot: each perspective with a cursor on the stream that this host can run snapshots its row at the
+  // cursor's event. A perspective this host has no runner for, or a cursor at no event, is skipped; a NewGeneration
+  // append to the stream then reads as AutoRestore, which loses nothing.
+  private static async Task _takeFinalSnapshotsAsync(IServiceProvider services, IStreamDispositionLedger ledger, Guid streamId, CancellationToken ct) {
+    var registry = services.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      return;
+    }
+    foreach (var cursor in await ledger.GetCursorsAsync(streamId, ct).ConfigureAwait(false)) {
+      if (cursor.LastEventId is not { } eventId || registry.GetRunner(cursor.PerspectiveName, services) is not { } runner) {
+        continue;
+      }
+      await runner.BootstrapSnapshotAsync(streamId, cursor.PerspectiveName, eventId, ct).ConfigureAwait(false);
+    }
+  }
+
+  // Runs the disposition; true when it ran.
+  private async Task<bool> _runAsync(IServiceProvider services, Disposition disposition, DestructionContext context, CancellationToken ct) {
+    var streamId = context.StreamId!.Value;
+    switch (disposition) {
+      case Disposition.Archive: {
+          var written = await services.GetRequiredService<IArchiveStore>()
+            .WriteAsync(ArchiveBatch.WholeStream(streamId), ct).ConfigureAwait(false);
+          if (!written.Archived) {
+            LogArchiveRefused(_logger, streamId, written.Status);
+          }
+          return written.Archived;
+        }
+      case Disposition.Delete:
+        await _purgeAsync(services, streamId, ct).ConfigureAwait(false);
+        return true;
+      case Disposition.Compact when services.GetService<ICompactionHandler>() is { } compactor:
+        await compactor.CompactAsync(context, ct).ConfigureAwait(false);
+        await _purgeAsync(services, streamId, ct).ConfigureAwait(false);
+        return true;
+      default:
+        LogUnavailable(_logger, streamId, disposition,
+          disposition == Disposition.Compact ? "it needs an ICompactionHandler registered, and none is" : "it has not shipped");
+        return false;
+    }
+  }
+
+  private static Task<StreamPurgeReport> _purgeAsync(IServiceProvider services, Guid streamId, CancellationToken ct) =>
+    services.GetRequiredService<IStreamPurger>().PurgeAsync(new StreamPurgeRequest {
+      StreamIds = [streamId],
+      RequestedBy = STEP_NAME,
+      Reason = "The sealed stream's FinalizeGrace passed and its disposition purges it",
+    }, ct);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Disposition of sealed stream {StreamId} deferred until {RetryAt}: {Readiness}")]
+  static partial void LogNotReady(ILogger logger, Guid streamId, StreamDispositionReadiness readiness, DateTimeOffset retryAt);
+
+  [LoggerMessage(Level = LogLevel.Information, Message = "Disposition of sealed stream {StreamId} deferred by the PreDestruction hook until {Until}")]
+  static partial void LogVetoed(ILogger logger, Guid streamId, DateTimeOffset until);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Archiving sealed stream {StreamId} was refused ({Status}); its disposition is deferred")]
+  static partial void LogArchiveRefused(ILogger logger, Guid streamId, string status);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Sealed stream {StreamId} kept: its disposition is {Disposition}, which cannot run: {Reason}")]
+  static partial void LogUnavailable(ILogger logger, Guid streamId, Disposition disposition, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Disposition of sealed stream {StreamId} failed and is deferred")]
+  static partial void LogDispositionThrew(ILogger logger, Guid streamId, Exception exception);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "PostDestruction hook threw for sealed stream {StreamId}; its disposition already ran")]
+  static partial void LogPostHookThrew(ILogger logger, Guid streamId, Exception exception);
 }

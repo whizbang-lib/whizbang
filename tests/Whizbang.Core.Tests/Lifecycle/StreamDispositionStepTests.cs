@@ -274,7 +274,7 @@ public class StreamDispositionStepTests {
 
   [Test]
   public async Task AFinalSnapshotThatFails_Defers_AndNothingIsDisposedAsync() {
-    var h = _harness(runner: new Runner([], new InvalidOperationException("snapshot store down")), hookFor: log => new Hook(log));
+    var h = _harness(hookFor: log => new Hook(log), runner: new Runner([], new InvalidOperationException("snapshot store down")));
 
     await h.RunAsync();
 
@@ -313,7 +313,7 @@ public class StreamDispositionStepTests {
 
   [Test]
   public async Task AnArchiveTheStoreRefuses_Defers_AndLogsItsStatusAsync() {
-    var h = _harness(storeStatus: ArchiveStatus.BLOCKED, hookFor: log => new Hook(log));
+    var h = _harness(hookFor: log => new Hook(log), storeStatus: ArchiveStatus.BLOCKED);
 
     await h.RunAsync();
 
@@ -337,7 +337,7 @@ public class StreamDispositionStepTests {
 
   [Test]
   public async Task Compact_RunsTheHandler_ThenPurges_AndWithNoHandler_DefersAndLogsAsync() {
-    var withHandler = _harness(withCompactor: true, hookFor: log => new Hook(log, DestructionResult.Proceed(Disposition.Compact)));
+    var withHandler = _harness(hookFor: log => new Hook(log, DestructionResult.Proceed(Disposition.Compact)), withCompactor: true);
     var without = _harness(hookFor: log => new Hook(log, DestructionResult.Proceed(Disposition.Compact)));
 
     await withHandler.RunAsync();

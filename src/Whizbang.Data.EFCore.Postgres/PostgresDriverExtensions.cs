@@ -332,6 +332,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#distillation</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
           MetadataDistillationStep.FromServices));
+        // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
+          new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, global::Whizbang.Core.Lifecycle.StreamDispositionStep>(
+          global::Whizbang.Core.Lifecycle.StreamDispositionStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>

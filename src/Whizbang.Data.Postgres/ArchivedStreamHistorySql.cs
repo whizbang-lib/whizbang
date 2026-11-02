@@ -33,16 +33,16 @@ internal static class ArchivedStreamHistorySql {
     """;
 
   /// <summary>
-  /// The stream's last version: its newest hot version, else the last version a stream archived whole recorded on its
-  /// tombstone, else -1. The ledger lookup is the second argument of the <c>COALESCE</c>, so it runs only when nothing is
-  /// hot.
+  /// The stream's last version: its newest hot version, else the last version its ledger row records (a stream archived
+  /// whole keeps it on its tombstone, and so does one that started a new generation, #1734), else -1. The ledger lookup is
+  /// the second argument of the <c>COALESCE</c>, so it runs only when nothing is hot.
   /// </summary>
   /// <param name="prefix">The schema prefix (<see cref="PgIdentifier.QualifyPrefix"/>), empty for the search path.</param>
   /// <returns>The statement; one <c>bigint</c> column.</returns>
   internal static string LastSequence(string prefix) => $"""
     SELECT COALESCE(
       (SELECT MAX(e.version) FROM {prefix}wh_event_store e WHERE e.stream_id = @StreamId),
-      (SELECT l.last_version FROM {prefix}wh_stream_lifecycle l WHERE l.stream_id = @StreamId AND l.state = 'Archived'),
+      (SELECT l.last_version FROM {prefix}wh_stream_lifecycle l WHERE l.stream_id = @StreamId),
       -1)
     """;
 
