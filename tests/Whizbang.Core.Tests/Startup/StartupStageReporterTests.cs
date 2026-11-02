@@ -274,14 +274,27 @@ public class StartupStageReporterTests {
   }
 
   [Test]
-  public async Task WithoutAWorkCoordinator_NothingIsWrittenAsync() {
+  public async Task WithoutAWorkCoordinator_ThereIsNothingToRecord_SoEachStageIsReportedAsCurrentAsync() {
+    // A host with no storage has no instance row: there is nothing to wait for, so its data plane starts at its stage
+    // rather than waiting for a record that can never come (#1636). Before any registration signal as well.
     var (reporter, _, observer, _, _) = _build(withCoordinator: false);
-    await reporter.InstanceRegisteredAsync();
 
+    await reporter.EnterAsync(StartupStage.AcceptingCommands, "accepting");
     await reporter.EnterAsync(StartupStage.Running, "serving");
 
-    await Assert.That(observer.Changes[^1].Recorded).IsFalse()
-      .Because("a host with no storage has no instance rows");
+    await Assert.That(observer.Changes.Select(c => c.Recorded)).IsEquivalentTo([true, true])
+      .Because("with no row to record on, every stage is as recorded as it can be");
+  }
+
+  [Test]
+  public async Task ACoordinatorThatKeepsNoInstanceRows_IsNotWritten_AndEachStageIsReportedAsCurrentAsync() {
+    var (reporter, coordinator, observer, _, _) = _build();
+    coordinator.Records = false;
+
+    await reporter.EnterAsync(StartupStage.AcceptingCommands, "accepting");
+
+    await Assert.That(coordinator.Transitions).IsEmpty().Because("there is no row to write");
+    await Assert.That(observer.Changes[^1].Recorded).IsTrue();
   }
 
   // --- one write per transition: stage, phase and version together (#1636) -------------------------
@@ -560,6 +573,9 @@ public class StartupStageReporterTests {
       [.. Transitions.Where(t => t.Stage is not null).Select(t => (t.Stage!.Value, t.Message!))];
     public List<Guid> InstanceIds { get; } = [];
     public bool RowExists { get; set; } = true;
+    /// <summary>Whether this coordinator keeps instance rows; false is a store with nothing to record.</summary>
+    public bool Records { get; set; } = true;
+    public bool RecordsInstanceTransitions => Records;
     public Exception? Failure { get; set; }
     public bool Hang { get; set; }
     public Action? OnWrite { get; set; }

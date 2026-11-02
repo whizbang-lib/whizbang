@@ -215,6 +215,50 @@ public class WhizbangWorkerRegistrationTests {
   }
 
   [Test]
+  [Timeout(30000)]
+  public async Task AHostWithNoStorage_StartsItsDataPlaneAtAcceptCommandsAsync(CancellationToken cancellationToken) {
+    // Nothing to record: no coordinator keeps an instance row, so the gate does not wait for one (#1636).
+    var (reporter, gate) = _reporterAndGate(coordinator: null);
+    var inner = new Probe { StartedWhen = () => gate.HasReached(StartupStage.AcceptingCommands) };
+    using var wrapper = new StartupStageGatedService<Probe>(inner, StartupStage.AcceptingCommands, gate);
+    await wrapper.StartAsync(cancellationToken);
+
+    await reporter.EnterAsync(StartupStage.AcceptingCommands, "accepting", cancellationToken);
+    await wrapper.Started.WaitAsync(cancellationToken);
+
+    await Assert.That(inner.StartPointReachedWhenStarted).IsTrue();
+    await wrapper.StopAsync(cancellationToken);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AFailedAcceptCommandsWrite_HoldsTheDataPlane_UntilTheNextHeartbeatWritesItAsync(
+      CancellationToken cancellationToken) {
+    // The row write fails, so the row still records the stage before and the instance is not eligible: the data plane
+    // waits. The retry is the next accepted heartbeat, whose registration signal writes the held stage (#1636).
+    var coordinator = new FlakyRecorder { Fails = true };
+    var (reporter, gate) = _reporterAndGate(coordinator);
+    var inner = new Probe { StartedWhen = () => gate.HasReached(StartupStage.AcceptingCommands) };
+    using var wrapper = new StartupStageGatedService<Probe>(inner, StartupStage.AcceptingCommands, gate);
+    await wrapper.StartAsync(cancellationToken);
+    await reporter.InstanceRegisteredAsync(cancellationToken);
+
+    await reporter.EnterAsync(StartupStage.AcceptingCommands, "accepting", cancellationToken);
+
+    await Assert.That(gate.HasReached(StartupStage.AcceptingCommands)).IsFalse()
+      .Because("the write failed, so the row does not say the instance is eligible yet");
+    await Assert.That(inner.Starts).IsEqualTo(0);
+
+    coordinator.Fails = false;
+    await reporter.InstanceRegisteredAsync(cancellationToken);   // the next accepted heartbeat
+    await wrapper.Started.WaitAsync(cancellationToken);
+
+    await Assert.That(inner.StartPointReachedWhenStarted).IsTrue();
+    await Assert.That(coordinator.Written).IsEqualTo(1);
+    await wrapper.StopAsync(cancellationToken);
+  }
+
+  [Test]
   public async Task NullArguments_AreRefusedAsync() {
     await Assert.That(() => new SchemaReadyGatedService<Probe>(null!, new SchemaReadyGate())).Throws<ArgumentNullException>();
     await Assert.That(() => new SchemaReadyGatedService<Probe>(new Probe(), null!)).Throws<ArgumentNullException>();
@@ -232,6 +276,38 @@ public class WhizbangWorkerRegistrationTests {
       null!, _ => new Probe())).Throws<ArgumentNullException>();
     await Assert.That(() => new ServiceCollection().AddWhizbangWorkerAtSchemaReady<Probe>(null!))
       .Throws<ArgumentNullException>();
+  }
+
+  private static (StartupStageReporter Reporter, StartupStageGate Gate) _reporterAndGate(
+      Whizbang.Core.Messaging.IWorkCoordinator? coordinator) {
+    var services = new ServiceCollection();
+    if (coordinator is not null) {
+      services.AddScoped(_ => coordinator);
+    }
+    var gate = new StartupStageGate(SchemaReadyGate.AlreadyReady());
+    var reporter = new StartupStageReporter(
+      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      new Whizbang.Core.Observability.ServiceInstanceProvider(
+        new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
+      [gate],
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<StartupStageReporter>.Instance,
+      new Whizbang.Core.Observability.LibraryVersionProvider("1.0.0"));
+    return (reporter, gate);
+  }
+
+  /// <summary>A coordinator that keeps instance rows, and whose transition write fails until told otherwise.</summary>
+  private sealed class FlakyRecorder : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
+    public bool Fails { get; set; }
+    public int Written { get; private set; }
+    public bool RecordsInstanceTransitions => true;
+
+    public Task<bool> RecordInstanceTransitionAsync(InstanceTransition transition, CancellationToken cancellationToken = default) {
+      if (Fails) {
+        throw new InvalidOperationException("the database did not answer");
+      }
+      Written++;
+      return Task.FromResult(true);
+    }
   }
 
   /// <summary>Records each start and stop, and whether its start point had been reached when it was started.</summary>
