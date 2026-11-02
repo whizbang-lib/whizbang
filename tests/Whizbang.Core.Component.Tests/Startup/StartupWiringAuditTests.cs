@@ -232,6 +232,7 @@ public class StartupWiringAuditTests {
 
   /// <summary>Records every instance-row write a participant makes, by kind.</summary>
   private sealed class TransitionRecorder : IWorkCoordinator {
+    public bool RecordsInstanceTransitions => true;
     public List<string> Calls { get; } = [];
 
     public Task<bool> RecordInstanceTransitionAsync(

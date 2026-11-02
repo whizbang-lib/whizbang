@@ -1826,6 +1826,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>This driver keeps instance rows, so a stage counts as recorded only once its write lands (#1636).</remarks>
+  public bool RecordsInstanceTransitions => true;
+
+  /// <inheritdoc />
   public async Task<bool> RecordInstanceTransitionAsync(
       Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(transition);

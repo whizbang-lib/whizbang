@@ -86,7 +86,10 @@ public interface IStartupStageObserver {
   /// The stage changed (a transition, progress within it, or a skip), or a held stage was written.
   /// </summary>
   /// <param name="snapshot">The stage as it now stands.</param>
-  /// <param name="recorded">Whether the instance's row now records it.</param>
+  /// <param name="recorded">
+  /// Whether the instance's row now records it; also true when there is no row to record on (no storage, or a
+  /// coordinator that keeps no instance rows), so nothing waits for a record that cannot come.
+  /// </param>
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task the reporter awaits.</returns>
   ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken);
