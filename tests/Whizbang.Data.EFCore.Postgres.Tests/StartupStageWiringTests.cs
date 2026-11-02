@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// The Postgres driver's workers each start at the stage they need (#1636): the shared notification connection and
-/// its alive-lock at the end of Preflight, the duty holder (maintainer votes, and the vacuum on winning) and the
+/// its alive-lock at the end of Preflight, the signal bus with it, the duty holder (maintainer votes, and the vacuum on winning) and the
 /// partition assigner at Coordinate. The work-available probes read nothing while the schema-ready gate is closed, and
 /// the roles health component reads nothing before Elect.
 /// </summary>
@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/RoleAssignmentServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PartitionAssignerRegistration.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Signals/SignalBusServiceCollectionExtensions.cs</code-under-test>
 [Category("Startup")]
 [Category("Shard5")]
 public sealed class StartupStageWiringTests {
@@ -57,6 +58,19 @@ public sealed class StartupStageWiringTests {
     await Assert.That(notify.Inner).IsSameReferenceAs(provider.GetRequiredService<PgSharedNotifyConnection>());
     await Assert.That(hosted.OfType<PgSharedNotifyConnection>()).IsEmpty()
       .Because("an ungated registration would start the connection with the host");
+  }
+
+  [Test]
+  public async Task TheSignalBus_StartsAtElect_WithTheNotificationConnection_OnceAsync() {
+    await using var provider = _build();
+    var hosted = provider.GetServices<IHostedService>().ToList();
+
+    var bus = hosted.OfType<StartupStageGatedService<SignalBusHostedService>>().Single();
+    await Assert.That(bus.Stage).IsEqualTo(StartupStage.Elect)
+      .Because("the bus's loopback probe sends pg_notify and comes back over the notification connection, which starts at Elect");
+    await Assert.That(bus.Inner).IsSameReferenceAs(provider.GetRequiredService<SignalBusHostedService>());
+    await Assert.That(hosted.OfType<SignalBusHostedService>()).IsEmpty()
+      .Because("an ungated registration would start the bus, and its probe, with the host in Preflight");
   }
 
   [Test]

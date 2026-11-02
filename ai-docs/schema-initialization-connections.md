@@ -596,7 +596,8 @@ instance. Three things had to be true at once, and each is now false:
    segments and the core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
 2. **Workers ran before their stage.** The duty holder, the partition assigner, the notification connection and the
    work-available probes started with the host. They are registered with `AddHostedServiceAtStage` now (Coordinate,
-   Coordinate, end of Preflight) or read the schema-ready gate, and the stage gate falls back to that gate for every
+   Coordinate, end of Preflight; the signal bus, whose self-test loops back over that connection, at Elect too) or
+   read the schema-ready gate, and the stage gate falls back to that gate for every
    stage up to Coordinate, so a host whose schema is provisioned out of band never waits. The migrator election is
    not gated: it is what Elect is. Do not move a worker that the election itself needs behind Coordinate.
 3. **A deadlock ended the attempt.** Since #1637 a step is its own transaction; a step that loses a deadlock is now
@@ -615,6 +616,8 @@ It keys on the host's `IServiceScopeFactory` now, and a call made while one runs
 | `StartupPreflightHostTests.NothingVotesBeforeCoordinate_AndNoWorkerAsksForAnObjectThatDoesNotExistYetAsync` | a role vote before Coordinate, or a worker's 42P01/42883 during startup |
 | `StartupPreflightHostTests.ASecondInitialization_ReturnsOnlyOnceTheFirstHasFinishedAsync` | an explicit initialization not joining the hosted one |
 | `StartupStageWiringTests` | a worker registered ungated again |
+| `StartupHostedServiceAuditTests.EveryHostedService_HasAPlaceInTheStageTable_AndTheStagedOnesStartAtTheirStageAsync` | a new hosted service in the turnkey host with no stated stage; the table there is the list of what starts when |
+| `StartupPreflightHostTests.HeldInPreflight_TheSignalBusStartsNoTransport_AndStartsItAtElectAsync` | the signal bus (and its `pg_notify` self-test) starting in Preflight |
 
 ## A fixture does not create its own database
 
