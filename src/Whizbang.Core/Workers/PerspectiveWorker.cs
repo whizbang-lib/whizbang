@@ -2023,6 +2023,7 @@ public partial class PerspectiveWorker(
   /// it cannot read), each row is read on its own, so the rows that can be read still are and the one that cannot is
   /// identified; its exception is kept in <paramref name="rowErrors"/> for the failure recorded against it.
   /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_ReadThrowsForOneRow_AppliesTheRestAndFailsThatRowAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_ReadThrowsForEveryRow_FailsEveryRowAsync</tests>
   private List<MessageEnvelope<IEvent>> _deserializeDrainRows(
@@ -4555,6 +4556,7 @@ public partial class PerspectiveWorker(
   /// Rewind path: acquire stream lock, restore from snapshot and replay events.
   /// A rewind that throws is logged as an attempt and rethrown, so the group's failure handler fails its rows (#1983).
   /// </summary>
+  /// <docs>operations/workers/perspective-worker#rewind-failures</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.RewindFailure.cs:Rewind_ThatThrows_FailsItsRowsForRetry_InsteadOfCompletingThemAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.RewindFailure.cs:Rewind_ThatThrows_LogsTheAttemptAtWarningWithItsExceptionAsync</tests>
   private async Task<(PerspectiveCursorCompletion Result, bool LockSkipped)> _executeRewindPathAsync(
