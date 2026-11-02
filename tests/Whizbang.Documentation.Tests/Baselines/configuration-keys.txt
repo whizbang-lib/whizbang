@@ -7,6 +7,7 @@ ConnectionPool:MinPoolSize
 ConnectionPool:Timeout
 ConnectionStrings:*
 ServiceName
+Whizbang:Archive:AzureBlob:AccessTier
 Whizbang:Archive:AzureBlob:CompressionLevel
 Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
