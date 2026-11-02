@@ -68,6 +68,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_instance_may_claim(__SCHEMA__.wh_service_insta
 -- ---------------------------------------------------------------------------------------------
 -- claim_work: last word 229, refusing a caller whose own row may not claim.
 -- ---------------------------------------------------------------------------------------------
+SELECT __SCHEMA__.drop_all_overloads('claim_work');
+
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkSqlTests.cs:ClaimWork_OutboxHasUnprocessedWork_ReturnsThatWorkAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimOrphanedAcquisitionBoundSqlTests.cs:ClaimWork_DoesNotAcquireMoreThanItsCallerAskedForAsync</tests>
