@@ -32,8 +32,13 @@ namespace Whizbang.Core.Workers;
 /// catches it and abandons (or, past the broker's delivery limit, dead-letters) instead of completing,
 /// and the typed signal is never a cancellation, so no filter mistakes it for a shutdown.
 /// </para>
+/// <para>
+/// The failed batch is logged at Warning with its exception (#1976): the host stays up and the batch is
+/// redelivered, so the line is a failed attempt, and a message the broker gives up on is logged at Error
+/// once, as the dead-letter record, when the dead-letter drain takes it into custody.
+/// </para>
 /// </remarks>
-/// <docs>operations/workers/transport-consumer</docs>
+/// <docs>messaging/transports/transport-consumer#failed-batches</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchGuardTests.cs</tests>
 public static partial class TransportBatchGuard {
 
@@ -84,7 +89,7 @@ public static partial class TransportBatchGuard {
 
   [LoggerMessage(
     EventId = 90,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Transport batch of {BatchCount} message(s) failed. It is reported to the transport as failed "
             + "and is not settled as consumed: the transport abandons it for redelivery, and past the broker's "
             + "max delivery count the broker dead-letters it. The host stays up.")]
@@ -92,7 +97,7 @@ public static partial class TransportBatchGuard {
 
   [LoggerMessage(
     EventId = 91,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Transport batch of {BatchCount} message(s) failed because the DATABASE canceled the "
             + "statement (SQLSTATE 57014) — typically a command timeout, not a shutdown. It is reported "
             + "to the transport as failed and is not settled as consumed: the transport abandons it for "

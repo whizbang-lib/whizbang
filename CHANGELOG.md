@@ -667,6 +667,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is refused when the host starts. **Upgrade:** the default changes from Warning to Error, so an alert keyed on Error
   may start firing for dead letters. To keep the old severity, set `Whizbang:DeadLetterLogging:Level` to `Warning`. A
   query keyed on the retired EventIds 5, 6 or 10 reads EventId 1901 instead.
+- **A failed attempt that will be retried logs at Warning on every path, so Error means a message was dead-lettered
+  (#1976).** Each of these lines reports one attempt of a message that is retried, and dead-lettered only at its bound,
+  when the dead-letter record (EventId 1901) is logged; each now logs at Warning with the attempt's exception attached:
+  the outbox drain worker's publish failure (EventId 7) and envelope it could not read (EventId 6); the perspective
+  worker's apply failure (EventId 14) and its drain-mode `Error processing perspective`; the generated perspective
+  runner's `no progress to save` and `Failed to save partial progress`, which it rethrows to the worker; the Azure
+  Service Bus transport's `Error processing message`, `Error processing session message`, `Failed to publish message`
+  and send-timeout line; the RabbitMQ transport's `Error processing message`, `Error processing batch` and `Failed to
+  publish message`; the transport batch guard's failed batch (EventIds 90 and 91); the service bus consumer worker's
+  `Error processing message` (EventId 16) and queued failure (EventId 14); and the ordered stream processor's failed
+  inbox and outbox messages (EventIds 6 and 10). A failing post-apply receptor on the collective sink, which shared
+  the perspective worker's EventId 14 and is not retried, now logs the lifecycle failure line (EventId 22) and stays at
+  Error. **Upgrade:** an alert keyed on any of these lines at Error stops firing. Alert on the dead-letter record,
+  EventId 1901 `MessageDeadLettered`, which is logged once for each message that is dead-lettered.
 - **A failing receptor's span records the exception as an OpenTelemetry `exception` event (#1902).** When a receptor
   throws, its span keeps status Error and now carries one `exception` event (`Activity.AddException`) with
   `exception.type`, `exception.message` and `exception.stacktrace`, so a backend that turns exception events into

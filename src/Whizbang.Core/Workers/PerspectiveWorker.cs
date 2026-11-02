@@ -2749,7 +2749,8 @@ public partial class PerspectiveWorker(
       var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
       if (storedForm is null) {
 #pragma warning disable CA1848
-        _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
+        // #1976: the parked rows are retried and dead-lettered at the bound, so the attempt is a Warning.
+        _logger.LogWarning(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
 #pragma warning restore CA1848
         await _parkLeasedRowsAsync(leasedRows, ex.Message, MessageFailureReason.Unknown, ct);
       }
@@ -4205,7 +4206,9 @@ public partial class PerspectiveWorker(
         await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
           context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
+        // The apply committed and the receptor is not run again, so this is a lifecycle failure, not a failed apply
+        // attempt (#1976): it keeps the lifecycle line's Error.
+        LogErrorInvokingLifecycleReceptors(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
         _metrics?.Errors.Add(1);
       }
     }
@@ -5518,9 +5521,11 @@ public partial class PerspectiveWorker(
   )]
   static partial void LogPerspectiveCursorCompleted(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
 
+  // #1976: a failed apply is recorded against its leased rows, retried, and dead-lettered at the bound, which logs the
+  // dead-letter record (EventId 1901). Each attempt is a Warning carrying its exception.
   [LoggerMessage(
     EventId = 14,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Error processing perspective cursor: {PerspectiveName} for stream {StreamId}"
   )]
   static partial void LogErrorProcessingPerspectiveCursor(ILogger logger, Exception ex, string perspectiveName, Guid streamId);

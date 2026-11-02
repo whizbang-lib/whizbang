@@ -358,7 +358,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         ex
       );
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(
+      // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+      _logger?.LogWarning(
         ex,
         "Failed to publish message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
         envelope.MessageId,
@@ -719,7 +720,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       _logger?.LogWarning(ex,
         "RabbitMQ channel closed while processing batch from queue {QueueName} — messages will be redelivered", queueName);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(ex,
+      // #1976: the batch is requeued for redelivery, so the failed attempt is a Warning.
+      _logger?.LogWarning(ex,
         "Error processing batch of {BatchSize} messages from queue {QueueName} — NACKing for redelivery", deserialized.Count, queueName);
       await _nackFailedBatchAsync(successfulPending);
     }
@@ -1423,7 +1425,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     string queueName,
     Exception ex
   ) {
-    _logger?.LogError(
+    // #1976: the message is requeued, or dead-lettered past its delivery count and recorded when the dead-letter drain
+    // takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger?.LogWarning(
       ex,
       "Error processing message {MessageId} from queue {QueueName}",
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,

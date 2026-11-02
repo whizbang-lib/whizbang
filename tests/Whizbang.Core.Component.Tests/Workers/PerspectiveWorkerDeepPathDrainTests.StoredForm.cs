@@ -237,8 +237,14 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     var records = logger.Collector.GetSnapshot();
     await Assert.That(records.Any(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID)).IsFalse();
-    await Assert.That(records.Any(r => r.Level == Microsoft.Extensions.Logging.LogLevel.Error
-      && r.Message.Contains("Error processing perspective", StringComparison.Ordinal))).IsTrue();
+    // #1976: the parked rows are retried and dead-lettered at the bound, so this attempt is a Warning carrying its
+    // exception; Error is kept for the dead-letter record.
+    var attempt = records.Where(r => r.Message.Contains("Error processing perspective", StringComparison.Ordinal)).ToList();
+    await Assert.That(attempt.Count).IsEqualTo(1);
+    await Assert.That(attempt[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(attempt[0].Exception).IsNotNull();
+    await Assert.That(records.Any(r => r.Level >= Microsoft.Extensions.Logging.LogLevel.Error)).IsFalse()
+      .Because("nothing was dead-lettered, so nothing logs at Error");
     await Assert.That(failures.Count).IsEqualTo(0);
 
     var (category, parked) = harness.FailureCapture.Items.Single();

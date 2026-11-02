@@ -1536,11 +1536,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               "DbContext's schema.")]
   static partial void LogLocalServiceIdLookupFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 6, Level = LogLevel.Error,
+  // #1976: the row is failed, so the attempts bound governs it and the pre-publish gate dead-letters it at the bound,
+  // which logs the dead-letter record. The attempt itself is a Warning.
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]
   static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
 
-  [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+  // #1976: a failed publish is retried and dead-lettered at the bound, which logs the dead-letter record (EventId
+  // 1901); each attempt is a Warning carrying its exception.
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: publish threw for {MessageId}")]
   static partial void LogPublishFailed(ILogger logger, Guid messageId, Exception ex);
 
