@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
 
@@ -19,56 +20,54 @@ namespace Whizbang.Core.Startup;
 /// in it is the wrapper's fault, which the host handles exactly as it would have handled the service's.
 /// </para>
 /// <para>
-/// With no gate registered (a host composed without the worker pipeline, which therefore records no stages) the
-/// service starts with the host, as it did before it was wrapped.
+/// With no stage gate registered (a host composed without the worker pipeline, which therefore records no stages) a
+/// service that needs <see cref="StartupStage.Coordinate"/> or an earlier stage starts with the host, as it did before
+/// it was wrapped, and one that needs a later stage starts when the schema-ready gate opens, the latest point such a
+/// host has; with neither gate it starts with the host.
 /// </para>
 /// </remarks>
 /// <typeparam name="TService">The hosted service it starts.</typeparam>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs</tests>
-public sealed class StartupStageGatedService<TService> : BackgroundService where TService : class, IHostedService {
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/WhizbangWorkerRegistrationTests.cs</tests>
+public sealed class StartupStageGatedService<TService> : GatedHostedService<TService> where TService : class, IHostedService {
   private readonly IStartupStageGate? _gate;
-  private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly ISchemaReadyGate? _schemaReady;
 
   /// <summary>Creates the wrapper.</summary>
   /// <param name="inner">The service to start at the stage.</param>
   /// <param name="stage">The startup stage the service needs.</param>
   /// <param name="gate">This instance's stage gate; null starts the service with the host, as it would start unwrapped.</param>
-  public StartupStageGatedService(TService inner, StartupStage stage, IStartupStageGate? gate) {
-    ArgumentNullException.ThrowIfNull(inner);
-    Inner = inner;
-    Stage = stage;
-    _gate = gate;
+  public StartupStageGatedService(TService inner, StartupStage stage, IStartupStageGate? gate)
+    : this(inner, stage, gate, schemaReady: null) {
   }
 
-  /// <summary>The service this starts.</summary>
-  public TService Inner { get; }
+  /// <summary>Creates the wrapper, with the schema-ready gate to fall back on when there is no stage gate.</summary>
+  /// <param name="inner">The service to start at the stage.</param>
+  /// <param name="stage">The startup stage the service needs.</param>
+  /// <param name="gate">This instance's stage gate.</param>
+  /// <param name="schemaReady">
+  /// The schema-ready gate, waited for instead when there is no stage gate and <paramref name="stage"/> comes after
+  /// <see cref="StartupStage.Coordinate"/>.
+  /// </param>
+  public StartupStageGatedService(TService inner, StartupStage stage, IStartupStageGate? gate, ISchemaReadyGate? schemaReady)
+    : base(inner) {
+    Stage = stage;
+    _gate = gate;
+    _schemaReady = schemaReady;
+  }
 
   /// <summary>The startup stage the service waits for.</summary>
   public StartupStage Stage { get; }
 
-  /// <summary>Completes once the service has been started.</summary>
-  public Task Started => _started.Task;
-
   /// <inheritdoc />
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+  protected override Task WaitToStartAsync(CancellationToken stoppingToken) {
     if (_gate is not null) {
-      await _gate.WaitForAsync(Stage, stoppingToken).ConfigureAwait(false);
+      return _gate.WaitForAsync(Stage, stoppingToken);
     }
-    await Inner.StartAsync(stoppingToken).ConfigureAwait(false);
-    _started.TrySetResult();
-    if (Inner is BackgroundService background) {
-      // Set by StartAsync, which has returned.
-      await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
-    }
-  }
-
-  /// <inheritdoc />
-  public override async Task StopAsync(CancellationToken cancellationToken) {
-    await base.StopAsync(cancellationToken).ConfigureAwait(false);
-    if (_started.Task.IsCompleted) {
-      await Inner.StopAsync(cancellationToken).ConfigureAwait(false);
-    }
+    return Stage > StartupStage.Coordinate && _schemaReady is not null
+      ? _schemaReady.WaitForReadyAsync(stoppingToken)
+      : Task.CompletedTask;
   }
 }
 
@@ -91,7 +90,8 @@ public static class StartupStageGatedServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(factory);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, StartupStageGatedService<TService>>(sp =>
-      new StartupStageGatedService<TService>(factory(sp), stage, sp.GetService<IStartupStageGate>())));
+      new StartupStageGatedService<TService>(
+        factory(sp), stage, sp.GetService<IStartupStageGate>(), sp.GetService<ISchemaReadyGate>())));
     return services;
   }
 }
