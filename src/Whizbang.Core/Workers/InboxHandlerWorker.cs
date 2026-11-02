@@ -128,7 +128,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     LogDiagFlushEntered(_logger, batch.Count);
 
     // A stalled flush looks identical from outside whichever phase it is stuck in — rows simply stop
-    // completing — but the two phases have completely different causes: the pinned pool being
+    // completing; but the two phases have completely different causes: the pinned pool being
     // exhausted, or the coordinator call queueing behind the SAME concurrency gate the dispatch path
     // is consuming. Timing each phase separately is what turns "commits stopped" into a specific
     // answer instead of a deploy cycle per guess.

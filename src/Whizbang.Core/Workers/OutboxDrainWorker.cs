@@ -249,7 +249,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <inheritdoc />
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates drain channel polling, per-stream dispatch, and shutdown propagation — the branches are tightly coupled and inlining them keeps the lease/in-flight invariants visible at one site.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates drain channel polling, per-stream dispatch, and shutdown propagation; the branches are tightly coupled and inlining them keeps the lease/in-flight invariants visible at one site.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxPerStream);
 

@@ -9,7 +9,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
 /// Runs <see cref="IMessageTypeRegistryPopulator.PopulateAsync"/> once at
-/// startup — hosted to start when the schema-ready gate opens (#1636) — to reconcile
+/// startup (hosted to start when the schema-ready gate opens, #1636) to reconcile
 /// the persisted message-type registry against the compile-time
 /// <see cref="IMessageTypeCatalog"/>. Replaces the pre-2026-06-12
 /// <c>services.BuildServiceProvider()</c> + <c>using</c> pattern that ran the

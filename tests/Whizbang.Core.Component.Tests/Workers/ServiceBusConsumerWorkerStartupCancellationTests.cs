@@ -44,7 +44,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
     await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(cancellationToken))
       .Throws<OperationCanceledException>()
-      .Because("a host stopped before the worker started must not leave the signal unsettled — "
+      .Because("a host stopped before the worker started must not leave the signal unsettled: "
              + "during shutdown that is a host that never exits");
     await Assert.That(worker.SubscriptionsReady.IsCanceled).IsTrue()
       .Because("the worker has to settle the signal itself; a wait that only ends on the waiter's "

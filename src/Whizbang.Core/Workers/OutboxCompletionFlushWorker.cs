@@ -69,7 +69,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   }
 
   private async Task _flushBatchAsync(IReadOnlyList<Guid> ids, CancellationToken ct) {
-    // Killswitch is honored here too — the inner BatchFlusher loop runs independently of
+    // Killswitch is honored here too: the inner BatchFlusher loop runs independently of
     // ExecuteAsync once started, so the ExecuteAsync short-circuit alone isn't enough to
     // suppress flushes. Drop the batch silently when disabled.
     if (!_options.Enabled) {

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// The proposal's headline ungated defect: <see cref="PerspectiveWorker"/> ran its startup work —
-/// registry initialization, orphan-lifecycle reconcile, rewind repair — against a database that may
+/// registry initialization, orphan-lifecycle reconcile, rewind repair, against a database that may
 /// not have been migrated yet. The host now starts the worker at Accept commands (#1636); what is
 /// left to the worker is to settle its public startup-scan signal when the host stops before then.
 /// </summary>
