@@ -277,11 +277,8 @@ public class DapperRowRetentionTests : PostgresTestBase {
       services.AddSingleton(guard);
     }
     var provider = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(), gate,
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      provider.GetRequiredService<IServiceScopeFactory>(), Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }
 

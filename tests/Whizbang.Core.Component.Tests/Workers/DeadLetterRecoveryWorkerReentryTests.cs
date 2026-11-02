@@ -157,11 +157,8 @@ public class DeadLetterRecoveryWorkerReentryTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     await using var provider = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50, EnableGenerationReplay = false }),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new DefaultGenerationProvider(),

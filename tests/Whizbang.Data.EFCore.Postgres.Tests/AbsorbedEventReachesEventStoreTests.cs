@@ -107,7 +107,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new ServiceInstanceProvider((Guid)TrackedGuid.New(), SERVICE, "host", 1),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(routing),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

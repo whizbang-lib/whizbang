@@ -211,8 +211,6 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var invoker = new CapturingReceptorInvoker();
     var deserializer = new CountingLifecycleDeserializer();
 
@@ -227,7 +225,6 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -391,8 +388,6 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var invoker = new CapturingReceptorInvoker();
     var deserializer = new CountingLifecycleDeserializer();
 
@@ -407,7 +402,6 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

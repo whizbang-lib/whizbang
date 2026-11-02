@@ -237,11 +237,8 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton(new WorkCoordinatorOptions());
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new CoalesceShipWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       logger: NullLogger<CoalesceShipWorker>.Instance,
       compositeFactory: new CompositeFactory(),

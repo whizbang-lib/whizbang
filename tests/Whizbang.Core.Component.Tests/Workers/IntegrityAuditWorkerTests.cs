@@ -603,7 +603,6 @@ public class IntegrityAuditWorkerTests {
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
-      ISchemaReadyGate? gate = null,
       ILogger<IntegrityAuditWorker>? logger = null) {
     var services = new ServiceCollection();
     if (sweepState is not null) {
@@ -624,7 +623,6 @@ public class IntegrityAuditWorkerTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityAuditWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? new SchemaReadyGate(),
       Options.Create(options),
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
@@ -758,24 +756,6 @@ public class IntegrityAuditWorkerTests {
     }
   }
 
-  /// <summary>
-  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
-  /// "the worker is parked at the barrier" signal; the infinite delay then observes the stopping
-  /// token exactly as the real gate's wait does.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_AuditDisabled_ParksWithoutAuditingAsync(CancellationToken testToken) {
@@ -786,7 +766,7 @@ public class IntegrityAuditWorkerTests {
     var worker = _buildWorker(
       coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { AuditEnabled = false },
-      gate: _readyGate(), logger: logger);
+      logger: logger);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -809,37 +789,4 @@ public class IntegrityAuditWorkerTests {
       .Because("a disabled audit must not touch the coordinator at all");
   }
 
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
-    // A host that fails during migration stops everything it built. The audit reads integrity
-    // tables that do not exist yet, so it must return rather than run or fault.
-    var coordinator = new AuditCoordinator();
-    var gate = new BlockingGate();
-    var worker = _buildWorker(
-      coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { AuditEnabled = true },
-      gate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(executeTask.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse();
-    await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(0)
-      .Because("nothing may run before the schema the integrity tables live in exists");
-  }
-
-  private static SchemaReadyGate _readyGate() {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    return gate;
-  }
 }

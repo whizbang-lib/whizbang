@@ -207,7 +207,6 @@ public class HeartbeatWorkerTickPlanTests {
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-      schemaReadyGate: _readyGate(),
       options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 30, SlowIntervalSeconds = 60 }),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -221,10 +220,4 @@ public class HeartbeatWorkerTickPlanTests {
     public bool IsAliveLockHeld { get; set; } = held;
   }
 
-  /// <summary>The worker refuses a null gate; a ready one lets the loop past its startup wait.</summary>
-  private static SchemaReadyGate _readyGate() {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    return gate;
-  }
 }

@@ -342,7 +342,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
@@ -481,7 +480,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),

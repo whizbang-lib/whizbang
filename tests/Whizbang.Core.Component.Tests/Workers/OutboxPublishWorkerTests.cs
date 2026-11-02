@@ -139,8 +139,6 @@ public class OutboxPublishWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeSingularStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -148,7 +146,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -183,8 +180,6 @@ public class OutboxPublishWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeBulkStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -192,7 +187,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -237,8 +231,6 @@ public class OutboxPublishWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeSingularStrategy { ReadyValue = false };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     // The not-ready hold renews the held row's lease through the work coordinator (#1606).
     var coordinator = new HeldLeaseCoordinator(new FakeTimeProvider(), TimeSpan.FromMinutes(5));
@@ -248,7 +240,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       // Short retry delay so we don't sit in the busy-loop guard for the full 100ms default
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, TransportNotReadyRetryDelayMilliseconds = 25 }),
@@ -288,8 +279,6 @@ public class OutboxPublishWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeSingularStrategy { ShouldFailPublish = true };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -297,7 +286,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -342,7 +330,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -372,50 +359,4 @@ public class OutboxPublishWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
-  [Test]
-  public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var channel = new FakeWorkChannelWriter();
-    var completion = new FakeOutboxCompletionChannel();
-    var failure = new FakeFailureChannel();
-    var strategy = new FakeSingularStrategy();
-    var gate = new SchemaReadyGate();  // not marked ready
-
-    var sp = new ServiceCollection().BuildServiceProvider();
-    var worker = new OutboxPublishWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      workChannelWriter: channel,
-      outboxCompletionChannel: completion,
-      failureChannel: failure,
-      schemaReadyGate: gate,
-      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      publishStrategy: strategy,
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider(),
-      pinnedPool: NoOpPinnedConnectionPool.Instance,
-      occurrenceGate: new NoOpOccurrencePublishGate());
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    var work = _makeWork();
-    await channel.WriteAsync(work, cts.Token);
-
-    // No publish while gate is closed.
-    await Task.WhenAny(strategy.FirstPublished.Task, Task.Delay(300, CancellationToken.None));
-    await Assert.That(strategy.FirstPublished.Task.IsCompleted).IsFalse();
-
-    // Open gate — publish proceeds.
-    gate.MarkReady();
-    var published = await strategy.FirstPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(published.MessageId).IsEqualTo(work.MessageId);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-  }
 }

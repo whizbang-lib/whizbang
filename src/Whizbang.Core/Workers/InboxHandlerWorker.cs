@@ -20,10 +20,11 @@ namespace Whizbang.Core.Workers;
 public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandlerCommitChannel {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IFailureChannel _failureChannel;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxHandlerWorkerOptions _options;
   private readonly ILogger<InboxHandlerWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
+  // The clock a flush phase is timed on, so a stalled phase is named on the host's clock (a test's fake one included).
+  private readonly TimeProvider _time;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
   // #1788: rows wait here for their commit while held by the inbox channel writer; each flush releases them.
   private readonly IInboxChannelWriter _inboxChannelWriter;
@@ -35,14 +36,13 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   /// <remarks>The inbox channel writer is the one the dispatch path holds rows in; each flush releases the rows it finishes (#1788).</remarks>
-  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
+  /// <param name="timeProvider">The clock the inner flusher's coalesce window, retry backoff and drain bound run on, and each flush phase is timed on; null uses <see cref="TimeProvider.System"/>. The container supplies the host's registered clock.</param>
   /// <docs>operations/configuration/configuration-reference</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:InboxHandlerWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<InboxHandlerWorkerOptions> options,
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
@@ -55,13 +55,13 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(failureChannel);
     _failureChannel = failureChannel;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
+    _time = timeProvider ?? TimeProvider.System;
+    // Started when the host starts this worker, at Accept commands (#1636): nothing is flushed before then.
+    _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger, timeProvider, started: false);
     // The queue depth is observable (#740): the one place dispatched-but-uncommitted work waits in memory.
     metrics?.ObserveHandlerCommitQueue(() => _flusher.Pending);
   }
@@ -83,6 +83,14 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     }
 
     return _flusher.EnqueueAsync(request, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    // The flusher starts with the worker (#1636), here rather than in ExecuteAsync: the host runs ExecuteAsync on the
+    // thread pool, and a stop that lands before it runs would otherwise find a flusher that never started.
+    _flusher.Start();
+    return base.StartAsync(cancellationToken);
   }
 
   /// <inheritdoc />
@@ -120,23 +128,18 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     LogDiagFlushEntered(_logger, batch.Count);
 
     // A stalled flush looks identical from outside whichever phase it is stuck in — rows simply stop
-    // completing — but the three phases have completely different causes: the schema gate never
-    // signalling, the pinned pool being exhausted, or the coordinator call queueing behind the SAME
-    // concurrency gate the dispatch path is consuming. Timing each phase separately is what turns
-    // "commits stopped" into a specific answer instead of a deploy cycle per guess.
-    var phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-    await _schemaReadyGate.WaitForReadyAsync(ct);
-    _warnIfSlowPhase("schema-ready-gate", phaseStart, batch.Count);
-    LogDiagFlushSchemaReady(_logger, batch.Count);
-
-    phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+    // completing — but the two phases have completely different causes: the pinned pool being
+    // exhausted, or the coordinator call queueing behind the SAME concurrency gate the dispatch path
+    // is consuming. Timing each phase separately is what turns "commits stopped" into a specific
+    // answer instead of a deploy cycle per guess.
+    var phaseStart = _time.GetTimestamp();
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(InboxHandlerWorker), ct);
     _warnIfSlowPhase("pinned-connection", phaseStart, batch.Count);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+    phaseStart = _time.GetTimestamp();
     var results = await coordinator.CommitHandlerBatchAsync(batch, ct);
     // This one also covers the coordinator's own WorkCoordinatorGate acquisition, which the dispatch
     // path competes for — a commit starving behind acquisition is the shape worth catching here.
@@ -219,7 +222,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   /// <summary>Warns when one flush phase dominates, naming WHICH phase so the cause is not a guess.</summary>
   private void _warnIfSlowPhase(string phase, long startTimestamp, int batchCount) {
-    var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(startTimestamp);
+    var elapsed = _time.GetElapsedTime(startTimestamp);
     if (elapsed >= _slowPhaseThreshold) {
       LogFlushPhaseSlow(_logger, phase, (long)elapsed.TotalMilliseconds, batchCount);
     }
@@ -282,10 +285,6 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
     Message = "DIAG[F1] flush callback entered: batch={Count}")]
   static partial void LogDiagFlushEntered(ILogger logger, int count);
-
-  [LoggerMessage(EventId = 21, Level = LogLevel.Debug,
-    Message = "DIAG[F2] schema gate ready, opening scope: batch={Count}")]
-  static partial void LogDiagFlushSchemaReady(ILogger logger, int count);
 
   [LoggerMessage(EventId = 22, Level = LogLevel.Debug,
     Message = "DIAG[F3] CommitHandlerBatchAsync returned: batch={Count} successes={Successes} failures={Failures}")]

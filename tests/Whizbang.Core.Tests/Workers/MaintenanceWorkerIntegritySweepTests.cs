@@ -84,12 +84,9 @@ public class MaintenanceWorkerIntegritySweepTests {
       services.AddSingleton(metrics);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new CapturingLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger);
     return (worker, logger);

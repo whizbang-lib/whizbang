@@ -9,7 +9,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
 /// Runs <see cref="IMessageTypeRegistryPopulator.PopulateAsync"/> once at
-/// startup — after the schema gate opens, when one is registered — to reconcile
+/// startup — hosted to start when the schema-ready gate opens (#1636) — to reconcile
 /// the persisted message-type registry against the compile-time
 /// <see cref="IMessageTypeCatalog"/>. Replaces the pre-2026-06-12
 /// <c>services.BuildServiceProvider()</c> + <c>using</c> pattern that ran the
@@ -29,23 +29,12 @@ namespace Whizbang.Data.Dapper.Postgres;
 internal sealed partial class MessageTypeRegistryReconciliationHostedService(
     ILogger<MessageTypeRegistryReconciliationHostedService> logger,
     IMessageTypeCatalog? catalog = null,
-    IMessageTypeRegistryPopulator? populator = null,
-    Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null) : BackgroundService {
-
+    IMessageTypeRegistryPopulator? populator = null) : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (catalog is null || populator is null) {
       LogSkipped(logger);
       return;
     }
-
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
-
     await populator.PopulateAsync(stoppingToken).ConfigureAwait(false);
   }
 

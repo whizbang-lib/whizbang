@@ -203,15 +203,12 @@ public class InboxDispatchWorkerCompositeCommitTests {
     var inbox = new FakeInboxChannelWriter();
     var commitChannel = new FakeHandlerCommitChannel();
     var failures = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: inbox,
       handlerCommitChannel: commitChannel,
       failureChannel: failures,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger ?? NullLogger<InboxDispatchWorker>.Instance,

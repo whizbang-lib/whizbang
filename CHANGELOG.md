@@ -744,6 +744,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every worker is hosted with the point it starts at, and none holds a gate of its own (part of #1636).**
+  `AddWhizbangWorker<TWorker>(stage)` (Accept commands unless another stage is named) and
+  `AddWhizbangWorkerAtSchemaReady<TWorker>()` host a worker that the host starts at that point and stops normally on
+  shutdown; the worker contains no wait on the schema-ready gate. The data plane (claim, inbox, outbox, perspective,
+  drain, flush, lease, maintenance, integrity, schedule, commit-order stamper, durable-signal, dead-letter and
+  multi-stream workers, the backup-tick coordinator, the orphan-inbox janitor and the integrity sweep scheduler) and
+  the transport consumer start at Accept commands, so nothing claims or receives before the instance's row records
+  that it is eligible for work; the transport consumer receives while the read models catch up. The heartbeat, the
+  instance lifecycle monitor, the standby watcher, the statistics collectors and the type and message-type registry
+  reconcilers start when the schema-ready gate opens, as before. The five flush workers' flushers start with the
+  worker rather than at construction. A worker whose startup others wait on implements the new
+  `IStartAbandonedObserver` and settles that signal when the host stops before its start point
+  (`TransportConsumerWorker.SubscriptionsReady`, `ServiceBusConsumerWorker.SubscriptionsReady`,
+  `PerspectiveWorker.StartupScanComplete`). A turnkey host audit and a source guard fail when a hosted service has no
+  start point or decides its own start on the schema-ready gate. **Upgrade note:** the `ISchemaReadyGate` constructor
+  parameter is removed from every worker that had one; a host that registers `ServiceBusConsumerWorker`,
+  `PerspectiveMigrationWorker` or its own worker with `AddHostedService` should use `AddWhizbangWorker` instead, or it
+  starts with the host, before the schema is migrated.
+
 - **A transient database failure in a worker loop logs at Warning, and only a failure that persists logs an Error
   (#1986).** A worker loop that meets a transient database failure (a dropped connection, a timeout, a deadlock, a
   failover) puts its batch back and retries, so nothing is lost; each one now logs at Warning with its reason and

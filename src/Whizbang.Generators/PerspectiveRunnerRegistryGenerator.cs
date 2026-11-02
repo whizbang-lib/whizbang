@@ -426,7 +426,9 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // Singleton + hosted forward so the SAME instance is resolvable by type — the read-model
     // barrier waits on its StartupScanComplete.
     source.AppendLine("    global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<global::Whizbang.Core.Workers.PerspectiveWorker>(services);");
-    source.AppendLine("    services.AddHostedService(sp => global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<global::Whizbang.Core.Workers.PerspectiveWorker>(sp));");
+    // Hosted the way the core pipeline hosts it (#1636), so the two registrations deduplicate and the worker starts at
+    // Accept commands, never with the host.
+    source.AppendLine("    global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker(services, global::Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<global::Whizbang.Core.Workers.PerspectiveWorker>(sp));");
     source.AppendLine();
     source.AppendLine("    return services;");
     source.AppendLine("  }");

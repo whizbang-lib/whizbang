@@ -30,7 +30,6 @@ public class OutboxCompletionFlushWorkerBranchCoverageTests {
       IOptions<WorkCoordinatorOptions> coordinatorOptions) =>
     new(
       scopeFactory: scopeFactory,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: options,
       coordinatorOptions: coordinatorOptions,
       logger: NullLogger<OutboxCompletionFlushWorker>.Instance,

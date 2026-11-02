@@ -143,11 +143,8 @@ public class RetentionAutoAdoptionTests : EFCoreTestBase {
       services.AddSingleton(Options.Create(new PerspectiveRowRetentionOptions { AutoAcknowledge = value }));
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }

@@ -18,25 +18,32 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// <para>
 /// Register a worker through <see cref="WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker{TWorker}(Microsoft.Extensions.DependencyInjection.IServiceCollection, StartupStage)"/>
-/// rather than deriving from this.
+/// or <see cref="WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady{TWorker}(Microsoft.Extensions.DependencyInjection.IServiceCollection)"/>;
+/// the two wrappers they host are <see cref="StartupStageGatedService{TService}"/> and
+/// <see cref="SchemaReadyGatedService{TService}"/>.
 /// </para>
 /// </remarks>
-/// <typeparam name="TService">The hosted service it starts.</typeparam>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/WhizbangWorkerRegistrationTests.cs</tests>
-public abstract class GatedHostedService<TService> : BackgroundService where TService : class, IHostedService {
+public abstract class GatedHostedService : BackgroundService {
   private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>Creates the wrapper.</summary>
-  /// <param name="inner">The service to start at the start point.</param>
-  protected GatedHostedService(TService inner) {
-    ArgumentNullException.ThrowIfNull(inner);
-    Inner = inner;
+  /// <param name="service">The service to start at the start point.</param>
+  private protected GatedHostedService(IHostedService service) {
+    ArgumentNullException.ThrowIfNull(service);
+    Service = service;
   }
 
   /// <summary>The service this starts.</summary>
-  public TService Inner { get; }
+  public IHostedService Service { get; }
+
+  /// <summary>
+  /// Where the service starts, as an operator reads it: a startup stage's name (for example <c>Accept commands</c>) or
+  /// <c>schema ready</c>.
+  /// </summary>
+  public abstract string StartPoint { get; }
 
   /// <summary>Completes once the service has been started.</summary>
   public Task Started => _started.Task;
@@ -49,9 +56,9 @@ public abstract class GatedHostedService<TService> : BackgroundService where TSe
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
-    await Inner.StartAsync(stoppingToken).ConfigureAwait(false);
+    await Service.StartAsync(stoppingToken).ConfigureAwait(false);
     _started.TrySetResult();
-    if (Inner is BackgroundService background) {
+    if (Service is BackgroundService background) {
       // Set by StartAsync, which has returned.
       await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
     }
@@ -59,9 +66,15 @@ public abstract class GatedHostedService<TService> : BackgroundService where TSe
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {
+    // Waits for the wait above to end, so whether the service was started is settled below.
     await base.StopAsync(cancellationToken).ConfigureAwait(false);
     if (_started.Task.IsCompleted) {
-      await Inner.StopAsync(cancellationToken).ConfigureAwait(false);
+      await Service.StopAsync(cancellationToken).ConfigureAwait(false);
+    } else {
+      // The host stopped before the start point: the service is never started, and one whose startup others wait on
+      // settles that signal now. Decided here rather than where the wait is canceled, because a host that stops early
+      // enough cancels the wait before it ever ran.
+      (Service as IStartAbandonedObserver)?.OnStartAbandoned(new CancellationToken(canceled: true));
     }
   }
 }

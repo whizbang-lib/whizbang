@@ -238,15 +238,12 @@ public class InboxDispatchWorkerBranchCoverageTests {
     public Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker> Logger { get; init; } = NullLogger<InboxDispatchWorker>.Instance;
 
     public InboxDispatchWorker Build(IServiceProvider sp) {
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
       return new InboxDispatchWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         instanceProvider: new FakeInstanceProvider(),
         inboxChannelWriter: Inbox,
         handlerCommitChannel: HandlerCommit,
         failureChannel: Failure,
-        schemaReadyGate: gate,
         options: Options.Create(WorkerOptions),
         coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
         logger: Logger,

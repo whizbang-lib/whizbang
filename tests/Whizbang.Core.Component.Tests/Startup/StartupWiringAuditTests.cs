@@ -274,9 +274,11 @@ public class StartupWiringAuditTests {
     await cts.CancelAsync();
     await started;
 
-    var watcher = (StandbyWatcher)services
-      .Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(StandbyWatcher))
-      .ImplementationFactory!(sp);
+    // Hosted to start when the schema-ready gate opens (#1636): the wrapper the registration builds holds the watcher.
+    var watcher = ((SchemaReadyGatedService<StandbyWatcher>)services
+      .Single(d => d.ServiceType == typeof(IHostedService)
+        && d.ImplementationFactory?.Method.ReturnType == typeof(SchemaReadyGatedService<StandbyWatcher>))
+      .ImplementationFactory!(sp)).Inner;
     await watcher.StartAsync(cancellationToken);
     var poll = await clock.NextArmedAsync(cancellationToken);
     await Assert.That(poll).IsEqualTo(ProbeClock.Origin + sp.GetRequiredService<StandbyWatcherOptions>().PollInterval)
@@ -293,7 +295,8 @@ public class StartupWiringAuditTests {
       .Where(d => d.ServiceType == typeof(IHostedService))
       .Select(d => d.ImplementationType ?? d.ImplementationFactory?.Method.ReturnType)
       .Where(t => t is not null)
-      .Select(t => t!.Name)
+      // A worker hosted with its start point (#1636) is registered as its wrapper; name the worker it starts.
+      .Select(t => t!.IsGenericType ? t.GetGenericArguments()[0].Name : t.Name)
       .ToList();
 
     foreach (var expected in new[] {

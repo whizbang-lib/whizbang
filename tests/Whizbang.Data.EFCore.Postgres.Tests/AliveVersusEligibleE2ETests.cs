@@ -228,10 +228,8 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
       var lifecycleOptions = new WhizbangLifecycleOptions();
       Lifecycle = new WhizbangLifecycleState(new WhizbangLifecycleCoordinator([_instanceState], lifecycleOptions), lifecycleOptions);
       _driver = new LifecyclePhaseWorker(Lifecycle, StartupGate, ReadGate);
-      var alreadyMigrated = new SchemaReadyGate();
-      alreadyMigrated.MarkReady();
       _heartbeat = new HeartbeatWorker(
-        scopeFactory, Instance, alreadyMigrated, Options.Create(new HeartbeatWorkerOptions()),
+        scopeFactory, Instance, Options.Create(new HeartbeatWorkerOptions()),
         NullLogger<HeartbeatWorker>.Instance, Lifecycle, new LibraryVersionProvider("999.9.9"),
         NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance);
       _heartbeat.OnHeartbeatRecorded += () => _firstBeat.TrySetResult();

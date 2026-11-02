@@ -175,7 +175,6 @@ public class ServiceBusConsumerWorkerDropGateTests {
       scopeFactory: scopeFactory,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
       receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),

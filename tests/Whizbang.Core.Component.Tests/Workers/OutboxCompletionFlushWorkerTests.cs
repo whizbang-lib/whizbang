@@ -45,11 +45,8 @@ public class OutboxCompletionFlushWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new OutboxCompletionFlushWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxCompletionFlushWorkerOptions {
         Flusher = new BatchFlusherOptions {
           MaxBatchSize = 100,
@@ -80,46 +77,6 @@ public class OutboxCompletionFlushWorkerTests {
   }
 
   [Test]
-  public async Task FlushBatch_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var coord = new CapturingCoordinator();
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coord);
-    var sp = services.BuildServiceProvider();
-
-    var gate = new SchemaReadyGate();  // gate NOT marked ready
-    var worker = new OutboxCompletionFlushWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
-      options: Options.Create(new OutboxCompletionFlushWorkerOptions {
-        Flusher = new BatchFlusherOptions {
-          MaxBatchSize = 100,
-          CoalesceWindowMs = 25,
-          ImmediateFlushThreshold = 1,  // immediate flush on first item
-          ChannelCapacity = 1_000
-        }
-      }),
-      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<OutboxCompletionFlushWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    await worker.EnqueueAsync(TrackedGuid.New());
-
-    // Confirm the flush callback is held back by the gate — coord receives nothing.
-    _ = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(300, CancellationToken.None));
-
-    // Open gate — flush proceeds.
-    gate.MarkReady();
-    var batch = await coord.FirstBatch.Task.WaitAsync(TimeSpan.FromSeconds(30));
-    await Assert.That(batch.Count).IsGreaterThanOrEqualTo(1);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
   public async Task ExecuteAsync_DisabledOptions_NoFlushHappensAsync() {
     var coord = new CapturingCoordinator();
     var services = new ServiceCollection();
@@ -130,7 +87,6 @@ public class OutboxCompletionFlushWorkerTests {
     gate.MarkReady();  // gate ready, but Enabled=false should still skip the flush loop
     var worker = new OutboxCompletionFlushWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxCompletionFlushWorkerOptions {
         Enabled = false,
         Flusher = new BatchFlusherOptions {

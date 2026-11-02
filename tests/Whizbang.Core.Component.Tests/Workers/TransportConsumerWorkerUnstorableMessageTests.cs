@@ -422,7 +422,6 @@ public class TransportConsumerWorkerUnstorableMessageTests {
       metrics: null,
       logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

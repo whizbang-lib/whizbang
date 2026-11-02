@@ -137,9 +137,9 @@ promised depended on which wait the worker happened to be in.
   `_onGateAvailabilityChanged` use it. `RequestImmediatePoll` is unchanged.
 - Tests that prove "prompt" behavior must not race a cadence: `ClaimWorkerGateCadenceTests.
   GateFlipsToAvailable_TriggersImmediatePollAsync` uses an hour-long interval so the only way a poll
-  can arrive inside the safety-net wait is the transition waking the loop. Likewise, tests that
-  prove "nothing before the gate" (`UngatedWorkerAdoptionTests`) use an `ISchemaReadyGate` double
-  that reports when the worker is parked on it instead of sleeping and hoping.
+  can arrive inside the safety-net wait is the transition waking the loop. Likewise, a test that
+  proves a worker does nothing before its start point waits on the wrapper's own signal
+  (`GatedHostedService.Started`, the stage gate it was handed) instead of sleeping and hoping.
 - Both tests failed exactly once each under the coverage-instrumented parallel suite before this
   change and never in isolation; that pattern (timing budget, passes alone) is the signature to look
   for. `ClaimWorkerReemissionBackoffTests` pins that completion feedback still cannot reach the nap.
@@ -204,3 +204,29 @@ health surface telling the same story; each one is pinned by `StartupStageReport
   over `Stopping` until it stops, because the host's stop does not advance the lifecycle; the stage alone already
   keeps the instance out.
 
+
+## Workers start where their registration says (#1636)
+
+A worker never decides for itself when to start. It is registered with its start point and the host
+starts it there; the worker holds no wait on `ISchemaReadyGate`.
+
+- `AddWhizbangWorker<T>(stage)` hosts the worker in `StartupStageGatedService<T>`, started once the
+  instance reaches the stage (Accept commands unless another is named). `AddWhizbangWorkerAtSchemaReady<T>()`
+  hosts it in `SchemaReadyGatedService<T>`, started when the gate opens at the end of Coordinate. Both derive
+  from `GatedHostedService`, whose `Service`, `StartPoint` and `Started` are what audits and tests read.
+- The data plane and the transport consumer start at Accept commands, after the reporter has written the
+  row (the gate's observer is told after the write), so none claims or receives before the row says the
+  instance is eligible. The heartbeat, the lifecycle monitor, the standby watcher, the statistics collectors,
+  the registry reconcilers and the shutdown deregistration start at schema ready.
+- Without a stage gate (a host composed without the worker pipeline), a stage after Coordinate falls back to
+  the schema-ready gate; Coordinate and earlier start with the host, as they did before they were wrapped.
+- A worker whose startup others wait on implements `IStartAbandonedObserver` and settles that signal when
+  the host stops before its start point (subscriptions ready, the perspective startup scan).
+- The five flush workers' `BatchFlusher` is constructed unstarted and started by the worker's `StartAsync` (not
+  `ExecuteAsync`, which the host runs on the thread pool and a prompt stop can preempt), so a flush cannot run
+  before the worker's start point.
+- Two tests keep it that way: `StartupHostedServiceAuditTests` (every hosted service of a turnkey host has a
+  start point or a stated reason it needs none) and `WorkerStartGateSourceGuardTests` (no hosted service in
+  `src` names `ISchemaReadyGate`, except the listed startup machinery).
+- The transition a worker waits for opens even when the row write failed and is held; the claim SQL refuses
+  an instance whose row is not eligible, so a held write delays work rather than letting it run early.

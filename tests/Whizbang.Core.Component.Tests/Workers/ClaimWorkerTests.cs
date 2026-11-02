@@ -91,13 +91,10 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -130,13 +127,10 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -167,13 +161,10 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 10_000,            // very long
         PollingMaxIntervalMilliseconds = 60_000           // very long
@@ -223,7 +214,6 @@ public class ClaimWorkerTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         Enabled = false,
         PollingIntervalMilliseconds = 50,
@@ -253,52 +243,6 @@ public class ClaimWorkerTests {
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
       .Because("a disabled worker parks until shutdown rather than exiting — an exit would free "
              + "the host to treat the service as finished");
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var coord = new FakeCoordinator();
-    var services = new ServiceCollection();
-    services.TryAddWhizbangDefaults();
-    services.AddSingleton<IWorkCoordinator>(coord);
-    var sp = services.BuildServiceProvider();
-
-    var gate = new SignallingSchemaGate();  // not marked ready
-    var worker = new ClaimWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new StubInstanceProvider(),
-      notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
-      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      logger: NullLogger<ClaimWorker>.Instance,
-      outboxChannel: new WorkChannelWriter(),
-      inboxChannel: new InboxChannelWriter(),
-      perspectiveChannel: new PerspectiveChannelWriter(),
-      perspectiveDrainChannel: new PerspectiveDrainChannel(),
-      outboxDrainChannel: new OutboxDrainChannel(),
-      inboxDrainChannel: new InboxDrainChannel(),
-      signalingGate: NullNotifySignalingGate.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    // Wait until the worker is provably parked ON the gate before judging it. A bare 300 ms
-    // delay could not tell "held by the closed gate" from "not dequeued by the thread pool yet",
-    // so the assertion below was equally true of a worker whose body had never run.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-    await Assert.That(coord.CallCount).IsEqualTo(0)
-      .Because("a closed schema gate must hold the claim loop, and the worker is now provably "
-             + "parked on that gate rather than merely slow to start");
-
-    // Open gate — claim fires.
-    gate.MarkReady();
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(1);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -417,13 +361,10 @@ public class ClaimWorkerTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -482,13 +423,10 @@ public class ClaimWorkerTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -548,13 +486,10 @@ public class ClaimWorkerTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -611,13 +546,10 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -645,30 +577,6 @@ public class ClaimWorkerTests {
 
   /// <summary>EventId of <c>LogDisabled</c> on <see cref="ClaimWorker"/> — the killswitch trace.</summary>
   private const int CLAIM_WORKER_DISABLED_EVENT_ID = 4;
-
-  /// <summary>
-  /// A schema gate that publishes when a waiter arrives.
-  /// </summary>
-  /// <remarks>
-  /// Lets a test distinguish "the worker is parked on the closed gate" from "the worker has not
-  /// been dequeued yet" — the two are indistinguishable from a timed delay, and only the first
-  /// makes a "nothing was claimed" assertion mean anything.
-  /// </remarks>
-  private sealed class SignallingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
-  }
 
   /// <summary>
   /// Completes when a chosen <c>EventId</c> is logged.

@@ -127,10 +127,8 @@ public class MaintenanceWorkerRetentionSyncTests {
       services.AddSingleton(Options.Create(ephemeral));
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new CapturingLogger();
-    var worker = new MaintenanceWorker(sp.GetRequiredService<IServiceScopeFactory>(), gate, Options.Create(options), logger);
+    var worker = new MaintenanceWorker(sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(options), logger);
     return (worker, logger);
   }
 

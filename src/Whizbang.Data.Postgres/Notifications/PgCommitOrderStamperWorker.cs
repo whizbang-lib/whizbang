@@ -67,7 +67,6 @@ public sealed partial class PgCommitOrderStamperWorker(
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
   INotifySignalingGate? notifySignalingGate = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
@@ -83,7 +82,6 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly CommitOrderStampSizer _sizer = new(stamperOptions.Value.BatchSize, stamperOptions.Value.DrainBatchSize);
   // Measures each stamp call, which the next call's size answers to (#1327).
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
   // works because Npgsql strips credentials from both NpgsqlConnection.
@@ -158,14 +156,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     // The leader loop calls stamp_pending_commit_sequences — a function the migration defines.
-    // Hold at the schema gate before election; a disabled stamper (above) never waits.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
+    // The host starts this worker at Accept commands (#1636), after the migration.
 
     var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     // One stamper per SCHEMA, not per database: the advisory lock spans the database, and a

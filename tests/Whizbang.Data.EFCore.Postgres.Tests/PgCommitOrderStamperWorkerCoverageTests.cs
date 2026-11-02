@@ -31,13 +31,6 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     }
   }
 
-  private sealed class ThrowingSchemaReadyGate : Whizbang.Core.Workers.ISchemaReadyGate {
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
-      Task.FromException(new OperationCanceledException("schema never became ready"));
-  }
-
   /// <summary>
   /// Captures only EventId 6 (<c>LogIterationError</c>) so a test can wait for a deterministic
   /// count of failed leader-election iterations instead of sleeping. Every non-cancellation
@@ -77,8 +70,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
 
   private static PgCommitOrderStamperWorker _newWorker(
       string? directConnectionString = null,
-      ILogger<PgCommitOrderStamperWorker>? logger = null,
-      Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null) {
+      ILogger<PgCommitOrderStamperWorker>? logger = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = directConnectionString,
     };
@@ -93,8 +85,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       config,
       new NoOpSharedNotifyConnection(),
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
-      dutyElector: null,
-      schemaReadyGate: schemaReadyGate);
+      dutyElector: null);
   }
 
   /// <summary>
@@ -108,29 +99,6 @@ public class PgCommitOrderStamperWorkerCoverageTests {
 
     await Assert.That(worker.TotalStamped).IsEqualTo(0)
       .Because("nothing has stamped yet — a fresh worker's cumulative counter must read zero, not garbage or a stale value");
-  }
-
-  /// <summary>
-  /// Production impact if this guard regresses: a cancellation raised while the stamper is still
-  /// waiting for the schema to finish migrating would otherwise crash the worker (or worse, be
-  /// swallowed by the host as a startup failure) instead of shutting down cleanly like every
-  /// other cooperative-cancellation path in this loop.
-  /// </summary>
-  [Test]
-  public async Task ExecuteAsync_SchemaGateThrowsOperationCanceled_ShutsDownCleanlyAsync() {
-    var worker = _newWorker(schemaReadyGate: new ThrowingSchemaReadyGate());
-
-    await worker.StartAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the worker must finish (not hang) once the schema-ready wait is canceled");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a canceled schema-ready wait is a clean-shutdown signal, not a fault the host should see as a crash");
-    await Assert.That(worker.IsLeader).IsFalse()
-      .Because("the worker returned before ever attempting leader election");
-
-    await worker.StopAsync(CancellationToken.None);
   }
 
   /// <summary>

@@ -28,7 +28,7 @@ public class TableStatisticsCollectorTests {
     var worker = new TableStatisticsCollector(
   scopeFactory: new AlwaysDisposedScopeFactory(),
   metrics: metrics,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+  logger: NullLogger<TableStatisticsCollector>.Instance,
       options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
       timeProvider: new ArmedTimerClock());
 
@@ -95,7 +95,7 @@ public class TableStatisticsCollectorTests {
     var worker = new TableStatisticsCollector(
   scopeFactory: new SingleProviderScopeFactory(provider),
   metrics: metrics,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+  logger: NullLogger<TableStatisticsCollector>.Instance,
       options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

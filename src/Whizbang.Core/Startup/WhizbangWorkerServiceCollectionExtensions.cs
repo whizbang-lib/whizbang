@@ -89,7 +89,7 @@ public static class WhizbangWorkerServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(factory);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SchemaReadyGatedService<TWorker>>(sp =>
-      new SchemaReadyGatedService<TWorker>(factory(sp), sp.GetService<ISchemaReadyGate>())));
+      new SchemaReadyGatedService<TWorker>(factory(sp), StartupStageGatedServiceCollectionExtensions.SchemaReadyGateOf(sp))));
     return services;
   }
 }

@@ -15,8 +15,10 @@ using Whizbang.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -249,6 +251,8 @@ public sealed partial class StartupStageHostTests {
   private static partial Regex _migrateLine();
 
   private IHost _buildHost(StageLog log, StageWatch watch, StartWatch? starts = null) {
+    // With a start watch the host also consumes its transport, so the watch sees the transport consumer start.
+    var withConsumer = starts is not null;
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:db"] = _database.ConnectionString,
@@ -261,7 +265,14 @@ public sealed partial class StartupStageHostTests {
     if (starts is not null) {
       builder.Services.AddSingleton<IStartupStageObserver>(starts);
     }
-    _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    var core = builder.Services.AddWhizbang();
+    if (withConsumer) {
+      _ = core.WithRouting(static r => r.OwnDomains("stages.commands"));
+    }
+    var whizbang = core.WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    if (withConsumer) {
+      _ = whizbang.AddTransportConsumer();
+    }
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
     var host = builder.Build();
     watch.Attach(host.Services);

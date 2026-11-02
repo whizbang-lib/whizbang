@@ -53,7 +53,6 @@ public sealed partial class PgInstanceLifecycleMonitor(
   ILogger<PgInstanceLifecycleMonitor> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   IOptions<HeartbeatWorkerOptions>? heartbeatOptions = null,
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null,
@@ -66,7 +65,6 @@ public sealed partial class PgInstanceLifecycleMonitor(
   private readonly ILogger<PgInstanceLifecycleMonitor> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   private readonly HeartbeatWorkerOptions _heartbeat = heartbeatOptions?.Value ?? new HeartbeatWorkerOptions();
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private readonly InstanceLivenessMetrics? _metrics = metrics;
@@ -113,15 +111,9 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    // Death detection reads wh_service_instances; hold at the schema gate so the first
-    // tick never scans (or announces takeover from) a table the migration hasn't built yet.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
+    // Death detection reads wh_service_instances: the host starts this monitor when the schema-ready
+    // gate opens (#1636), so the first tick never scans (or announces takeover from) a table the
+    // migration hasn't built yet.
 
     while (!stoppingToken.IsCancellationRequested) {
       var next = ComputeTickInterval(null, StaleThreshold);

@@ -51,7 +51,7 @@ public class RepairDrainWorkerCoverageTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, _) = _buildLoop(
       new StreamIntegrityOptions { RepairDrainEnabled = false },
-      clock, SchemaReadyGate.AlreadyReady(), origin);
+      clock, origin);
     coordinator.Eligible.Add(
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
@@ -89,7 +89,7 @@ public class RepairDrainWorkerCoverageTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, _) = _buildLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
-      clock, SchemaReadyGate.AlreadyReady(), origin);
+      clock, origin);
     coordinator.ThrowOnClaim.Enqueue(new OperationCanceledException("simulated"));
     coordinator.Eligible.Add(
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
@@ -122,7 +122,7 @@ public class RepairDrainWorkerCoverageTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, transport) = _buildLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
-      clock, SchemaReadyGate.AlreadyReady(), origin);
+      clock, origin);
     coordinator.ThrowOnClaim.Enqueue(new InvalidOperationException("simulated transient failure"));
     coordinator.Eligible.Add(
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
@@ -206,7 +206,7 @@ public class RepairDrainWorkerCoverageTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static (RepairDrainWorker Worker, ScriptedCoordinator Coordinator, CaptureTransport Transport) _buildLoop(
-      StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate, Guid origin) {
+      StreamIntegrityOptions options, TimeProvider clock, Guid origin) {
     var coordinator = new ScriptedCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -223,7 +223,6 @@ public class RepairDrainWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance,
       clock);
@@ -249,7 +248,6 @@ public class RepairDrainWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance);
     return (worker, coordinator, transport, tracker);

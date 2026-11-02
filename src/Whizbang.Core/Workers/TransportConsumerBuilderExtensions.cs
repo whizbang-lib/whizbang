@@ -367,7 +367,6 @@ public static class TransportConsumerBuilderExtensions {
           sp.GetRequiredService<TransportMetrics>(),
           sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TransportConsumerWorker>>(),
           sp.GetRequiredService<IServiceInstanceProvider>(),
-          sp.GetRequiredService<ISchemaReadyGate>(),
           sp.GetRequiredService<IOptions<RoutingOptions>>(),
           sp.GetRequiredService<IWorkChannelWriter>(),
           sp.GetRequiredService<IOptions<ClaimWorkerOptions>>(),
@@ -386,9 +385,16 @@ public static class TransportConsumerBuilderExtensions {
 
     services.TryAddSingleton<NoTransportConfiguredNotice>();
     // Singleton + forwards so the SAME worker instance is the hosted service and the readiness contributor:
-    // Ready composes its SubscriptionsReady signal.
+    // Ready composes its SubscriptionsReady signal. The worker is hosted to start at Accept commands (#1636, owner
+    // decision 2026-11-02): it receives while the read models catch up, and never before the instance's row records
+    // that it is eligible for work. With no transport the notice stands in, and does no database work.
     services.AddSingleton<IHostedService>(sp =>
-      (IHostedService?)sp.GetService<TransportConsumerWorker>() ?? sp.GetRequiredService<NoTransportConfiguredNotice>());
+      sp.GetService<TransportConsumerWorker>() is { } worker
+        ? new Whizbang.Core.Startup.StartupStageGatedService<TransportConsumerWorker>(worker,
+          Whizbang.Core.Startup.StartupStage.AcceptingCommands,
+          sp.GetService<Whizbang.Core.Startup.IStartupStageGate>(),
+          Whizbang.Core.Startup.StartupStageGatedServiceCollectionExtensions.SchemaReadyGateOf(sp))
+        : sp.GetRequiredService<NoTransportConfiguredNotice>());
     services.AddSingleton<Whizbang.Core.Startup.IStartupReadinessContributor>(sp =>
       (Whizbang.Core.Startup.IStartupReadinessContributor?)sp.GetService<TransportConsumerWorker>()
         ?? sp.GetRequiredService<NoTransportConfiguredNotice>());

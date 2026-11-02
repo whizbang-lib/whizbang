@@ -77,7 +77,6 @@ public class LeaseRenewalWorkerCoverageTests {
     var logger = new SignalLogger("disabled via options");
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
       logger: logger,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -116,7 +115,6 @@ public class LeaseRenewalWorkerCoverageTests {
       .BuildServiceProvider();
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Enabled = false,
         Flusher = new BatchFlusherOptions {
@@ -161,7 +159,6 @@ public class LeaseRenewalWorkerCoverageTests {
     var instance = new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1);
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 },
       }),

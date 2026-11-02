@@ -32,34 +32,23 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task CanceledWhileWaitingForTheSchemaGate_CancelsTheReadinessSignalAsync(
+  public async Task StoppedBeforeItsStartPoint_CancelsTheReadinessSignalAsync(
       CancellationToken cancellationToken) {
-    // A host whose schema step never completes: the gate is never marked ready, so the worker is
-    // still parked on it when shutdown arrives.
-    var neverReady = new SignallingSchemaGate();
-    var worker = _worker(new StubTransport(), neverReady);
+    // A host whose schema step never completes: the worker's start point is never reached, so the
+    // host never starts it, and stopping the host is what tells it (#1636).
+    var worker = _worker(new StubTransport());
+    using var hosted = new Whizbang.Core.Startup.SchemaReadyGatedService<ServiceBusConsumerWorker>(worker, new SchemaReadyGate());
+    await hosted.StartAsync(cancellationToken);
 
-    using var stopping = new CancellationTokenSource();
-    await worker.StartAsync(stopping.Token);
-
-    // Park on the gate first, exactly as the sibling test waits for SubscribeEntered. StartAsync
-    // only queues ExecuteAsync via Task.Run(_, stoppingToken), and Task.Run skips the delegate
-    // entirely when the token is already canceled at dequeue time — so canceling straight after
-    // StartAsync could leave _subscriptionsReady untouched. This assertion still "passed" then,
-    // because a signal nobody ever settles throws OperationCanceledException off the test's own
-    // timeout token instead of off the worker's TrySetCanceled — the opposite of what it claims
-    // to prove, and only after burning the whole timeout.
-    await neverReady.Entered.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-    await stopping.CancelAsync();
+    await hosted.StopAsync(CancellationToken.None);
 
     await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(cancellationToken))
       .Throws<OperationCanceledException>()
-      .Because("returning from startup without settling the signal parks every waiter forever — "
+      .Because("a host stopped before the worker started must not leave the signal unsettled — "
              + "during shutdown that is a host that never exits");
     await Assert.That(worker.SubscriptionsReady.IsCanceled).IsTrue()
       .Because("the worker has to settle the signal itself; a wait that only ends on the waiter's "
              + "own timeout is precisely the hang under test, and reads identically from outside");
-    await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
@@ -69,7 +58,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
     // Past the gate and into subscription setup, which is where a broker that is slow to answer
     // leaves the worker when shutdown arrives.
     var transport = new StubTransport { BlockSubscribeUntilCanceled = true };
-    var worker = _worker(transport, SchemaReadyGate.AlreadyReady());
+    var worker = _worker(transport);
 
     using var stopping = new CancellationTokenSource();
     await worker.StartAsync(stopping.Token);
@@ -83,7 +72,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
-  private static ServiceBusConsumerWorker _worker(ITransport transport, ISchemaReadyGate gate) {
+  private static ServiceBusConsumerWorker _worker(ITransport transport) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddLogging();
@@ -94,7 +83,6 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      schemaReadyGate: gate,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
@@ -104,30 +92,6 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
       });
-  }
-
-  /// <summary>
-  /// A never-ready schema gate that publishes when a waiter arrives.
-  /// </summary>
-  /// <remarks>
-  /// The gate-stage counterpart of <see cref="StubTransport.SubscribeEntered"/>: it marks the
-  /// moment the worker is provably inside the window the first test is about, so shutdown can be
-  /// aimed at that window instead of at whenever the thread pool got around to the body.
-  /// </remarks>
-  private sealed class SignallingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
   }
 
   /// <summary>

@@ -51,15 +51,13 @@ public sealed partial class PgDurableSignalRetentionWorker(
   IConfiguration configuration,
   ILogger<PgDurableSignalRetentionWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null
+  INotificationDataSource? notificationDataSource = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ILogger<PgDurableSignalRetentionWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
 
   /// <summary>Sweep interval — hourly is plenty; wh_signals rows are small doorbell records.
   /// Init-settable so tests can observe the gate/sweep sequencing in test time.</summary>
@@ -72,13 +70,6 @@ public sealed partial class PgDurableSignalRetentionWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // The sweep DELETEs from wh_signals. Gate BEFORE the interval delay — the delay is a
     // courtesy, not a barrier, and a migration slower than one interval must still never race it.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
 
     // First sweep runs after one interval, not immediately at startup — matches other maintenance
     // workers in the codebase and prevents startup contention on the DB.

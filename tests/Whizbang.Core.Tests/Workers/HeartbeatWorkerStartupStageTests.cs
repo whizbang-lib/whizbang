@@ -52,12 +52,9 @@ public class HeartbeatWorkerStartupStageTests {
     services.AddSingleton<IStartupStageReporter>(stages);
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-      schemaReadyGate: gate,
       options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 30, SlowIntervalSeconds = 60 }),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,

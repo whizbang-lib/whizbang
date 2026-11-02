@@ -65,7 +65,6 @@ public class MaintenanceWorkerHousekeepingGateTests {
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance,
       metrics: null,

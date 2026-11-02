@@ -106,9 +106,9 @@ public class WhizbangWorkerRegistrationTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task AtSchemaReady_WithNoGate_TheWorkerStartsWithTheHostAsync(CancellationToken cancellationToken) {
+  public async Task AtSchemaReady_WithNoSchemaToInitialize_TheWorkerStartsWithTheHostAsync(CancellationToken cancellationToken) {
     var inner = new Probe();
-    using var wrapper = new SchemaReadyGatedService<Probe>(inner, schemaReady: null);
+    using var wrapper = new SchemaReadyGatedService<Probe>(inner, SchemaReadyGate.AlreadyReady());
 
     await wrapper.StartAsync(cancellationToken);
     await wrapper.Started.WaitAsync(cancellationToken);
@@ -216,7 +216,10 @@ public class WhizbangWorkerRegistrationTests {
 
   [Test]
   public async Task NullArguments_AreRefusedAsync() {
-    await Assert.That(() => new SchemaReadyGatedService<Probe>(null!, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new SchemaReadyGatedService<Probe>(null!, new SchemaReadyGate())).Throws<ArgumentNullException>();
+    await Assert.That(() => new SchemaReadyGatedService<Probe>(new Probe(), null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageGatedService<Probe>(new Probe(), StartupStage.Running, null, null!))
+      .Throws<ArgumentNullException>();
     await Assert.That(() => WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker<Probe>(null!))
       .Throws<ArgumentNullException>();
     await Assert.That(() => WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker<Probe>(

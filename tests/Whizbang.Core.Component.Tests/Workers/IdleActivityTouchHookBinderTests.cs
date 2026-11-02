@@ -75,14 +75,12 @@ public class IdleActivityTouchHookBinderTests {
     services.TryAddWhizbangDefaults();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
-    var gate = SchemaReadyGate.AlreadyReady();
     var instance = new StubInstanceProvider();
 
     var claimWorker = new ClaimWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
       notificationListener: listener,
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions()),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -98,7 +96,6 @@ public class IdleActivityTouchHookBinderTests {
     var heartbeatWorker = new HeartbeatWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
-      schemaReadyGate: gate,
       options: Options.Create(new HeartbeatWorkerOptions()),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,

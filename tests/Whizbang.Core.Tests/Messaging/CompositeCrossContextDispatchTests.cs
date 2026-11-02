@@ -244,15 +244,12 @@ public class CompositeCrossContextDispatchTests {
   private static InboxDispatchWorker _worker(
       IServiceProvider sp, ILifecycleMessageDeserializer deserializer,
       CapturingCommitChannel commits, CapturingFailureChannel failures, IDeadLetterStore deadLetters) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: commits,
       failureChannel: failures,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

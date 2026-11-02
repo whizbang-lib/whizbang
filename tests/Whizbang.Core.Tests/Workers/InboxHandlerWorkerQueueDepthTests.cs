@@ -61,7 +61,6 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       failureChannel: new NoFailures(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,

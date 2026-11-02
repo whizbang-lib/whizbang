@@ -156,8 +156,7 @@ public class PassiveCounterDriftLockTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions()),
       whizbangMetrics: new WhizbangMetrics(factory),
-      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance);
     recorder.Collect();
 
     await Assert.That(recorder.Measurements.Any(m => m.Instrument == "whizbang.transport_dlq.drained" && m.Value == 0)).IsTrue()

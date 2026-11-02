@@ -111,13 +111,15 @@ public class FlushWorkerClockWiringTests {
     var window = TimeSpan.FromMilliseconds(flusher.CoalesceWindowMs);
     var drainBound = TimeSpan.FromMilliseconds(flusher.DrainTimeoutMs);
 
+    // The flusher starts with the worker (#1636), so the worker is started first; the item waits in the channel until then.
+    await worker.StartAsync(cancellationToken);
     await enqueueOne(sp, cancellationToken);
 
     // One item is below every worker's immediate-flush threshold, so the flusher opens its coalesce window
     await clock.WaitForArmedAsync(window, cancellationToken);
     clock.Advance(window);
 
-    // The flush parks on the schema gate, which nothing opens; the stop's drain bound is what ends it
+    // The flush fails (no coordinator is registered) and parks in its retry backoff; the stop's drain bound is what ends it
     var stop = worker.StopAsync(CancellationToken.None);
     await clock.WaitForArmedAsync(drainBound, cancellationToken);
     clock.Advance(drainBound);

@@ -50,15 +50,6 @@ public class MaintenanceWorkerCoverageTests {
     }
   }
 
-  /// <summary>A gate whose wait is already canceled the instant it is awaited, with no real delay
-  /// or dependence on the caller's token — the deterministic way to exercise a cancellation that
-  /// arrives while still waiting on schema readiness, without racing a real cancel against it.</summary>
-  private sealed class ImmediatelyCanceledGate : ISchemaReadyGate {
-    public bool IsReady => false;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.FromCanceled(new CancellationToken(true));
-    public void MarkReady() { }
-  }
-
   /// <summary>
   /// Minimal <see cref="IWorkCoordinator"/> covering only the calls these tests drive; every other
   /// member relies on the interface's own safe no-op default. Hooks are optional so one fake serves
@@ -124,36 +115,6 @@ public class MaintenanceWorkerCoverageTests {
 
   [Test]
   [NotInParallel("WhizbangBackgroundServiceTests")]
-  public async Task ExecuteAsync_SchemaGateWaitCanceled_StopsWithoutEnteringTheLoopAsync() {
-    // If a cancellation that arrives while still waiting on schema readiness were swallowed into
-    // the maintenance loop instead of stopping the worker, the very first cycle would run SQL
-    // against a schema nobody has confirmed exists yet.
-    var coord = new StubCoordinator();
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coord);
-    var sp = services.BuildServiceProvider();
-    var worker = new MaintenanceWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new ImmediatelyCanceledGate(),
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
-      NullLogger<MaintenanceWorker>.Instance);
-
-    await worker.StartAsync(CancellationToken.None);
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the wait was canceled, not a tick failing, so the worker must exit promptly rather than hang");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a canceled readiness wait is a clean stop, not a fault");
-    await Assert.That(coord.PerformMaintenanceCallCount).IsEqualTo(0)
-      .Because("no maintenance cycle may run before schema readiness is confirmed");
-
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  [NotInParallel("WhizbangBackgroundServiceTests")]
   public async Task ExecuteAsync_CycleThrowsOperationCanceled_BreaksTheLoopInsteadOfRetryingAsync() {
     // A cycle torn down by cancellation (host shutdown mid-cycle) must stop the loop immediately.
     // If this were ever folded into the generic "log and retry next interval" path instead, a
@@ -177,7 +138,6 @@ public class MaintenanceWorkerCoverageTests {
     var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 0 }),
       logger);
 
@@ -214,7 +174,6 @@ public class MaintenanceWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 0 }),
       NullLogger<MaintenanceWorker>.Instance);
 
@@ -251,7 +210,6 @@ public class MaintenanceWorkerCoverageTests {
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger,
       metrics: null,
@@ -284,7 +242,6 @@ public class MaintenanceWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, LifecycleCompletionRetentionDays = 30 }),
       logger);
 
@@ -380,7 +337,6 @@ public class MaintenanceWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
 
@@ -443,7 +399,6 @@ public class MaintenanceWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }
@@ -539,7 +494,6 @@ public class MaintenanceWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
 

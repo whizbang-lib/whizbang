@@ -17,20 +17,12 @@ namespace Whizbang.Core.Fingerprint;
 /// <remarks>Creates the hosted service.</remarks>
 public sealed partial class TypeDefinitionReconcilerHostedService(
     TypeDefinitionReconciler reconciler,
-    ISchemaReadyGate schemaReadyGate,
     ILogger<TypeDefinitionReconcilerHostedService> logger) : BackgroundService {
   private readonly TypeDefinitionReconciler _reconciler = reconciler;
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly ILogger<TypeDefinitionReconcilerHostedService> _logger = logger;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) {
-      return;
-    }
-
     try {
       var summary = await _reconciler.ReconcileAsync(stoppingToken).ConfigureAwait(false);
       LogCompleted(_logger, summary.DriftDetected, summary.TypesReclassified);

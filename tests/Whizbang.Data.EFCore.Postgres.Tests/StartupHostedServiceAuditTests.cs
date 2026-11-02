@@ -8,16 +8,18 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Every hosted service a turnkey host registers says when it may first touch the database (#1636). The host is
-/// composed the way a consumer composes one (the EF Core Postgres driver, its notification stack, the worker pipeline
-/// and a transport) and built, not started; each hosted service it resolves must be one of:
+/// composed the way a consumer composes one (the EF Core Postgres driver, its notification stack, the worker pipeline,
+/// a transport and its consumer) and built, not started; each hosted service it resolves must be one of:
 /// <list type="bullet">
 ///   <item>a worker hosted with its start point (<c>AddWhizbangWorker</c>, <c>AddWhizbangWorkerAtSchemaReady</c>), at
 ///     the start point this table names: the data plane and the transport consumer at Accept commands, so nothing
@@ -82,7 +84,6 @@ public sealed class StartupHostedServiceAuditTests {
     ["LeaseRenewalWorker"] = ACCEPT_COMMANDS,
     ["MaintenanceWorker"] = ACCEPT_COMMANDS,
     ["MultiStreamCommandWorker"] = ACCEPT_COMMANDS,
-    ["OrphanInboxJanitor"] = ACCEPT_COMMANDS,
     ["OutboxCompletionFlushWorker"] = ACCEPT_COMMANDS,
     ["OutboxDrainWorker"] = ACCEPT_COMMANDS,
     ["OutboxPublishWorker"] = ACCEPT_COMMANDS,
@@ -159,7 +160,8 @@ public sealed class StartupHostedServiceAuditTests {
       ["ConnectionStrings:db"] = "Host=localhost;Database=audit;Username=audit;Password=audit",
     });
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
-    _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    _ = builder.Services.AddWhizbang().WithRouting(static r => r.OwnDomains("audit.commands"))
+      .WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres.AddTransportConsumer();
     return builder.Build();
   }
 }

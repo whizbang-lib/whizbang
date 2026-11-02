@@ -88,8 +88,6 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var listenerConfig = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var listenerInstanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(listenerConfig);
@@ -112,7 +110,6 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: listener,
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof
@@ -259,7 +256,6 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: listener,
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof

@@ -67,8 +67,6 @@ public class ClaimWorkerBusWakeTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var bus = new SignalBus(transports: [new InMemorySignalTransport()], pullSources: []);
 
@@ -76,7 +74,6 @@ public class ClaimWorkerBusWakeTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       // Huge polling intervals: without the bus wake, the SecondCall.WaitAsync would time out
       // long before the adaptive-poll timer fires again.
       options: Options.Create(new ClaimWorkerOptions {

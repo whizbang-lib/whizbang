@@ -259,7 +259,7 @@ public static class ServiceCollectionExtensions {
     // gracefully no-ops when IMessageTypeCatalog isn't registered (matches the prior null-
     // catalog log line).
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
@@ -420,7 +420,7 @@ public static class ServiceCollectionExtensions {
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
     // the populator run to host startup via an IHostedService that uses the REAL provider.
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
