@@ -39,7 +39,11 @@ public sealed class DatabaseFailureEscalation {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(timeProvider);
     ArgumentNullException.ThrowIfNull(logger);
+    Options = options;
   }
+
+  /// <summary>The threshold this tracker escalates at.</summary>
+  public DatabaseFailureEscalationOptions Options { get; }
 
   /// <summary>Records one transient database failure the worker met.</summary>
   /// <param name="failure">The failure, as the shared classifier named it.</param>

@@ -65,6 +65,9 @@ public sealed partial class InboxDrainWorker(
   private readonly DatabaseFailureEscalation _databaseFailures = new(
     nameof(InboxDrainWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
     timeProvider ?? TimeProvider.System, ArgumentGuard.NotNull(logger));
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
   // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
   // inbox drain pipeline to quiesce before truncating tables.

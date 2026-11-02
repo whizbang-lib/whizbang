@@ -47,6 +47,9 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
   private readonly TimeProvider _time;
   private readonly DatabaseFailureEscalation _databaseFailures;
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   private readonly PerspectiveMetrics? _perspectiveMetrics;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 

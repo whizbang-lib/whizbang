@@ -316,6 +316,9 @@ public partial class PerspectiveWorker(
   private readonly DatabaseFailureEscalation _databaseFailures = new(
     nameof(PerspectiveWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
     timeProvider ?? TimeProvider.System, logger);
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   // How many batch failures this worker has contained, so a consumer loop can tell a batch that ran
   // clean from one that recovered from a failure inside itself.
   private int _containedBatchFailures;

@@ -77,6 +77,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
   private readonly DatabaseFailureEscalation _databaseFailures;
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery _receptorRegistry;
   private readonly IReceptorRegistry _runtimeReceptorRegistry;
