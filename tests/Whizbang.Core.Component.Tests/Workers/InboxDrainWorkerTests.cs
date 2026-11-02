@@ -380,6 +380,8 @@ public class InboxDrainWorkerTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
+    var failures = new RecordingFailureChannel();
+    services.AddSingleton<IFailureChannel>(failures);
     var sp = services.BuildServiceProvider();
 
     var worker = new InboxDrainWorker(
@@ -400,6 +402,16 @@ public class InboxDrainWorkerTests {
     await Assert.That(inboxChannelWriter.Written.Count).IsEqualTo(1)
       .Because("Only the good row should be enqueued; the malformed one is logged + skipped.");
     await Assert.That(inboxChannelWriter.Written.First().MessageId).IsEqualTo(goodMsg);
+    await Assert.That(failures.Items.Select(f => f.MessageId)).IsEquivalentTo([badMsg])
+      .Because("the skipped row is failed, so it is backed off and bounded by the attempt limit rather than re-fetched forever (#1983)");
+  }
+
+  private sealed class RecordingFailureChannel : IFailureChannel {
+    public ConcurrentQueue<MessageFailure> Items { get; } = new();
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
+      Items.Enqueue(failure);
+      return ValueTask.CompletedTask;
+    }
   }
 
   /// <summary>

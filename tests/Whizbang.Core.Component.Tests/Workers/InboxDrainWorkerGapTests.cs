@@ -27,7 +27,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// branches (empty fetch, newRows==0), cancellation short-circuits, and the Debug perf log.
 /// </summary>
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class InboxDrainWorkerGapTests {
+public partial class InboxDrainWorkerGapTests {
 
   // --- fakes ---
 
@@ -265,6 +265,10 @@ public class InboxDrainWorkerGapTests {
       ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    // What the drain resolves for a row it cannot read (#1983).
+    services.AddSingleton<IFailureChannel>(new UnreadableFailureChannel());
+    services.AddSingleton<IDeadLetterStore>(NullDeadLetterStore.Instance);
+    services.AddOptions();
     var sp = services.BuildServiceProvider();
 
     if (gate is null) {

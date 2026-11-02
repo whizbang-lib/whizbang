@@ -1174,6 +1174,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     private int _deserializeCallCount;
 
     public bool ThrowOnDeserialize { get; init; }
+    /// <summary>A call that is given any of these events throws, as a store or decorator does on one row it cannot read.</summary>
+    public HashSet<Guid> ThrowForEventIds { get; init; } = [];
     public int DeserializeCallCount => Volatile.Read(ref _deserializeCallCount);
 
     public void EnqueueDeserialized(List<MessageEnvelope<IEvent>> envelopes) =>
@@ -1181,7 +1183,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       Interlocked.Increment(ref _deserializeCallCount);
-      if (ThrowOnDeserialize) {
+      if (ThrowOnDeserialize || streamEvents.Any(row => ThrowForEventIds.Contains(row.EventId))) {
         throw new InvalidOperationException("simulated deserialization failure");
       }
       if (_deserializedResponses.TryDequeue(out var next)) {
