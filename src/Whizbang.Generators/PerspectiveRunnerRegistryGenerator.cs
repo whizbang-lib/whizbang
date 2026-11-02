@@ -418,8 +418,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Register shutdown service BEFORE workers (LIFO: stops AFTER workers)");
-    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work");
-    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.WhizbangShutdownService>();");
+    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work. Hosted to start when the");
+    source.AppendLine("    // schema-ready gate opens (#1991): an instance stopped before then is not deregistered, so a stop during");
+    source.AppendLine("    // Preflight or Migrate runs nothing against instance tables that may not exist yet.");
+    source.AppendLine("    global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<global::Whizbang.Core.Workers.WhizbangShutdownService>(services);");
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
     source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");

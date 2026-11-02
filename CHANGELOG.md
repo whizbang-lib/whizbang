@@ -1179,6 +1179,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A host stopped before its schema is ready ends quietly (#1991).** The shutdown service that deregisters the
+  instance is hosted to start when the schema-ready gate opens, so a host stopped during Preflight or Migrate does not
+  run deregistration against instance tables that may not exist yet, and logs no warning for it.
 - **A retried collective apply resumes after its last committed batch, and a replay folds a collective only as far as
   the live sink applied it (#1969, #1970, #1981).** The collective sink applied a collective in batches, each in a
   transaction of its own, with its cursor in memory only, so every retry (a busy apply lock, a failure, a crash, a

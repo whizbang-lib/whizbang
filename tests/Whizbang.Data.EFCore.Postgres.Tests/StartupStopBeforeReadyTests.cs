@@ -20,8 +20,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// A host stopped before its schema is ready ends quietly (#1991): stopped while it waits in Preflight on a fresh
-/// database, it does not try to deregister an instance whose tables may not exist yet, and nothing it logs on the way
-/// out is a warning or an error.
+/// database, it does not try to deregister an instance whose tables may not exist yet, and nothing it logs from the stop
+/// on is a warning or an error.
 /// </summary>
 /// <remarks>
 /// The host is held in Preflight by another session holding the schema lock, and the stop is issued on the bootstrap's
@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public sealed class StartupStopBeforeReadyTests {
   /// <summary>The schema lock for the default schema: the advisory key the bootstrap and the pass take.</summary>
-  private const long SCHEMA_LOCK = 573948201;
+  private static readonly long _schemaLock = SchemaInitializationLockKey.Compute("public");
   private static readonly TimeSpan _deadline = TimeSpan.FromSeconds(120);
 
   private PerTestDatabase _database;
@@ -57,27 +57,33 @@ public sealed class StartupStopBeforeReadyTests {
   public async Task AHostStoppedInPreflight_DoesNotDeregister_AndLogsNoWarningOrErrorAsync(CancellationToken cancellationToken) {
     await using var holder = new NpgsqlConnection(_database.ConnectionString);
     await holder.OpenAsync(cancellationToken);
-    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({SCHEMA_LOCK})", holder)) {
+    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({_schemaLock})", holder)) {
       await take.ExecuteNonQueryAsync(cancellationToken);
     }
     var log = new LevelLog();
     var contended = new Contended();
     var host = _buildHost(log, contended);
     try {
-      await host.StartAsync(cancellationToken);
+      // Not awaited: the host finishes starting only once startup is ready, which a held schema lock never lets it be.
+      var starting = host.StartAsync(cancellationToken);
       await contended.Signal.WaitAsync(_deadline, cancellationToken);
+      var beforeStop = log.Lines.Count;
 
       await host.StopAsync(cancellationToken);
+      await starting.WaitAsync(_deadline, cancellationToken);
 
       await Assert.That(log.Lines).DoesNotContain(l => l.Contains("deregistering instance", StringComparison.Ordinal))
         .Because("an instance stopped before its schema is ready has nothing to deregister, and its tables may not exist");
-      var loud = log.Lines.Where(l => l.StartsWith("Warning", StringComparison.Ordinal) || l.StartsWith("Error", StringComparison.Ordinal)
+      var loud = log.Lines.Skip(beforeStop).Where(l => l.StartsWith("Warning", StringComparison.Ordinal) || l.StartsWith("Error", StringComparison.Ordinal)
         || l.StartsWith("Critical", StringComparison.Ordinal)).ToList();
-      await Assert.That(loud).IsEmpty().Because("a stop during Preflight ends quietly; logged: " + string.Join(" | ", loud));
+      await Assert.That(loud).IsEmpty()
+        .Because("a stop during Preflight ends quietly; logged after the stop: " + string.Join(" | ", loud));
     } finally {
+      // Released before the host is disposed: the bootstrap is still waiting on it, on a connection the host owns.
+      await using (var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({_schemaLock})", holder)) {
+        await release.ExecuteNonQueryAsync(CancellationToken.None);
+      }
       host.Dispose();
-      await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({SCHEMA_LOCK})", holder);
-      await release.ExecuteNonQueryAsync(CancellationToken.None);
     }
   }
 
