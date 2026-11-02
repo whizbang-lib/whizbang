@@ -47,7 +47,9 @@ public sealed partial class InboxDrainWorker(
   IOptions<InboxDrainWorkerOptions> options,
   JsonSerializerOptions jsonOptions,
   ILogger<InboxDrainWorker> logger,
-  ClaimChurnFeedback? churnFeedback = null) : BackgroundService {
+  ClaimChurnFeedback? churnFeedback = null,
+  TimeProvider? timeProvider = null,
+  DatabaseFailureEscalationOptions? databaseFailureEscalation = null) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ClaimChurnFeedback? _churnFeedback = churnFeedback;
@@ -59,6 +61,10 @@ public sealed partial class InboxDrainWorker(
   private readonly InboxDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = ArgumentGuard.NotNull(jsonOptions);
   private readonly ILogger<InboxDrainWorker> _logger = ArgumentGuard.NotNull(logger);
+  // #1986: a run of transient database failures logs one Error past the threshold, and one line when it ends.
+  private readonly DatabaseFailureEscalation _databaseFailures = new(
+    nameof(InboxDrainWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
+    timeProvider ?? TimeProvider.System, ArgumentGuard.NotNull(logger));
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
   // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
   // inbox drain pipeline to quiesce before truncating tables.
@@ -114,6 +120,7 @@ public sealed partial class InboxDrainWorker(
           if (distinctStreams.Count > 0) {
             await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
           }
+          _databaseFailures.Succeeded();
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
         } catch (Exception ex) {
@@ -123,8 +130,10 @@ public sealed partial class InboxDrainWorker(
           // continue loses nothing. The shared classifier decides which of the two lines it is, so
           // a deadlock that will pass and a defect that will not read differently in a log.
           WorkerLoopRecovery.Report(ex,
-            (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlStateOrNone, cause),
+            (transient, cause) => {
+              LogTransientBatchDrainFailed(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+              _databaseFailures.Failed(transient);
+            },
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           _setIdleState(active: false);

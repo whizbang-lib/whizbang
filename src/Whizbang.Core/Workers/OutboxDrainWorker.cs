@@ -76,6 +76,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly ConcurrentDictionary<Guid, byte> _failedStreams = new();
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
+  private readonly DatabaseFailureEscalation _databaseFailures;
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery _receptorRegistry;
   private readonly IReceptorRegistry _runtimeReceptorRegistry;
@@ -206,7 +207,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
-    DeadLetterLoggingOptions? deadLetterLogging = null) {
+    DeadLetterLoggingOptions? deadLetterLogging = null,
+    TimeProvider? timeProvider = null,
+    DatabaseFailureEscalationOptions? databaseFailureEscalation = null) {
     _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -231,6 +234,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _jsonOptions = jsonOptions;
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
+    // #1986: a run of transient database failures logs one Error past the threshold, and one line when it ends.
+    _databaseFailures = new DatabaseFailureEscalation(
+      nameof(OutboxDrainWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
+      timeProvider ?? TimeProvider.System, logger);
     _publishStrategy = publishStrategy;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
@@ -316,6 +323,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               await _holdForTransportAsync([.. distinctStreams], stoppingToken);
             }
           }
+          _databaseFailures.Succeeded();
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
         } catch (Exception ex) {
@@ -328,8 +336,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // continuation that lost a deadlock does not get here until its own retries are spent
           // (_continueRoundAsync, #936): the claim backstop is the last resort, not the first.
           WorkerLoopRecovery.Report(ex,
-            (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlStateOrNone, cause),
+            (transient, cause) => {
+              LogTransientBatchDrainFailed(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+              _databaseFailures.Failed(transient);
+            },
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the

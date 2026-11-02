@@ -46,6 +46,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ClaimChurnFeedback? _churnFeedback;
   /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
   private readonly TimeProvider _time;
+  private readonly DatabaseFailureEscalation _databaseFailures;
   private readonly PerspectiveMetrics? _perspectiveMetrics;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
@@ -158,7 +159,9 @@ public sealed partial class ClaimWorker : BackgroundService {
     // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
     Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null,
     // #1535: each claim's round trip is recorded as whizbang.perspective.claim.duration.
-    PerspectiveMetrics? perspectiveMetrics = null) {
+    PerspectiveMetrics? perspectiveMetrics = null,
+    // #1986: when a run of transient database failures escalates to one Error; null takes the defaults.
+    DatabaseFailureEscalationOptions? databaseFailureEscalation = null) {
     _priorityHooks = priorityHooks;
     _perspectiveMetrics = perspectiveMetrics;
 #pragma warning restore S107
@@ -195,6 +198,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     _completionMeter = completionMeter;
     _churnFeedback = churnFeedback;
     _time = timeProvider ?? TimeProvider.System;
+    _databaseFailures = new DatabaseFailureEscalation(
+      nameof(ClaimWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(), _time, logger);
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -450,6 +455,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var batch = await _claimOnceAsync(stoppingToken);
+        // The claim reached the database and came back: whatever run of failures came before has ended.
+        _databaseFailures.Succeeded();
         var hadWork = batch.OutboxWork.Count > 0
                    || batch.InboxWork.Count > 0
                    || batch.PerspectiveStreamIds.Count > 0
@@ -547,7 +554,10 @@ public sealed partial class ClaimWorker : BackgroundService {
         // an operator can tell a passing failure from a defect. This loop already had a cadence of
         // its own, so it reports and lets the empty-poll backoff below carry the waiting.
         WorkerLoopRecovery.Report(ex,
-          (transient, cause) => LogTransientFailure(_logger, transient.Reason, transient.SqlState ?? "none", cause),
+          (transient, cause) => {
+            LogTransientFailure(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+            _databaseFailures.Failed(transient);
+          },
           cause => LogError(_logger, cause));
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
         _claimAgainNow = false;
