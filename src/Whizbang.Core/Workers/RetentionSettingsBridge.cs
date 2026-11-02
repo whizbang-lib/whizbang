@@ -60,6 +60,7 @@ public static class RetentionSettingsBridge {
     new("schedule_run_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.ScheduleRunDays), o => o.ScheduleRunDays),
     new("stream_purge_audit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.StreamPurgeAuditDays), o => o.StreamPurgeAuditDays),
     new("integrity_ledger_max_entries", MAINTENANCE + nameof(MaintenanceRetentionOptions.IntegrityLedgerMaxEntries), o => o.IntegrityLedgerMaxEntries),
+    new("collective_apply_progress_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.CollectiveApplyProgressDays), o => o.CollectiveApplyProgressDays),
   ];
 
   private static readonly IntegerSetting<EphemeralOptions>[] _ephemeral = [

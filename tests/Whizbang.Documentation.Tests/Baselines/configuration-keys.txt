@@ -548,6 +548,7 @@ Whizbang:Workers:Maintenance:Partitioning:Enabled
 Whizbang:Workers:Maintenance:Partitioning:Strategy
 Whizbang:Workers:Maintenance:ReindexBloatThreshold
 Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
+Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays
 Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
 Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours

@@ -152,15 +152,17 @@ public class PerspectiveRunnerSplitSnapshotTests {
     // Issue #1002: the end of a run serializes before the write only when the snapshot after it is due.
     const string RUN_DUE = "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true"
       + "&&!pendingPurge&&updatedModelisnotnull&&hasWrittenUpdate&&lastSuccessfulEventId.HasValue"
-      + "&&_eventsSinceLastSnapshot+eventsProcessed>=_snapshotCadence().Threshold;";
+      + "&&_eventsSinceLastSnapshot+eventsProcessed>=_snapshotCadence().Threshold"
+      + "&&!collectiveInFlight;";
     await Assert.That(runner).Contains(RUN_DUE);
     await Assert.That(runner.IndexOf(RUN_DUE, StringComparison.Ordinal))
       .IsLessThan(runner.IndexOf("awaitSaveModelAndCheckpointAsync(", StringComparison.Ordinal));
     await Assert.That(runner).Contains("_eventsSinceLastSnapshot+=eventsProcessed;if(snapshotDue){")
       .Because("the snapshot after the write is taken on the same decision, so the two cannot disagree");
-    // The end of a rewind snapshots whenever snapshots are on.
+    // The end of a rewind snapshots whenever snapshots are on, unless it folded a collective still in flight (#1981).
     await Assert.That(runner).Contains(
-      "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue;");
+      "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue"
+      + "&&outcome.CollectivesSettled;");
     await Assert.That(runner).Contains("private(intThreshold,intRetention)_snapshotCadence(){");
   }
 }

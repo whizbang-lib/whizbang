@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
@@ -49,6 +50,11 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly IReadOnlyList<ICollectiveInMemoryExecutor> _executors;
   private readonly Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? _archivedStreams;
   private readonly IReadOnlyList<string> _collectiveStreamTypes;
+  private readonly Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? _reach;
+
+  // The reach each collective a replay merged in was read with, by the event instance the replay folds (#1970). Weak, so
+  // an event the replay is done with takes its reach with it.
+  private readonly ConditionalWeakTable<IEvent, CollectiveApplyReach> _reaches = [];
 
   /// <summary>Creates a replay applier that finds collective streams through the hot event store only.</summary>
   /// <param name="entries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
@@ -91,7 +97,10 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     : this(entries, services, eventStore, eventStoreQuery, executors,
         archivedStreams: archive is null
           ? null
-          : (streamTypes, tenant, ct) => ArchivedCollectiveStreams.ListAsync(archive, streamTypes, tenant, ct)) {
+          : (streamTypes, tenant, ct) => ArchivedCollectiveStreams.ListAsync(archive, streamTypes, tenant, ct),
+        reach: archive is null
+          ? null
+          : (eventIds, ct) => CollectiveApplyReach.ReadAsync(archive, eventIds, ct)) {
   }
 
   /// <summary>Creates a replay applier whose archived collective streams come from <paramref name="archivedStreams"/>.</summary>
@@ -101,13 +110,15 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>
   /// <param name="executors">The per-model in-memory executors (one per <c>TModel</c>).</param>
   /// <param name="archivedStreams">Lists the archived streams of the given stream types in a tenant; null lists none.</param>
+  /// <param name="reach">Reads how far the live sink applied the given collectives (#1970); null folds every one in full.</param>
   internal CollectiveReplayApplier(
       IReadOnlyList<CollectiveApplyEntry> entries,
       IServiceProvider services,
       IEventStore eventStore,
       IEventStoreQuery eventStoreQuery,
       IReadOnlyList<ICollectiveInMemoryExecutor> executors,
-      Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? archivedStreams) {
+      Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? archivedStreams,
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null) {
     ArgumentNullException.ThrowIfNull(entries);
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(eventStore);
@@ -119,6 +130,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     _eventStoreQuery = eventStoreQuery;
     _executors = executors;
     _archivedStreams = archivedStreams;
+    _reach = reach;
     // Every registered collective type, not only one model's: collectives sharing an ordering key share a stream, and
     // the ledger records a stream's type as its first event's, which can be another model's collective. A registered
     // collective's type is a concrete type a generated registration names with typeof, so it always has a full name.
@@ -220,9 +232,33 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       byStream.Add(collectives);
     }
 
+    await _readReachAsync(allCollectives, cancellationToken).ConfigureAwait(false);
     var orderedCollectives = allCollectives.OrderByMessageId().ToList();
     _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
     return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
+  }
+
+  /// <summary>
+  /// Reads how far the live sink applied each collective the replay merges in (#1970), and keeps it with the event the
+  /// replay folds, so <see cref="ApplyInMemory"/> folds each handler's apply only into the rows it reached.
+  /// </summary>
+  private async Task _readReachAsync(List<MessageEnvelope<IEvent>> collectives, CancellationToken cancellationToken) {
+    if (_reach is null || collectives.Count == 0) {
+      return;
+    }
+    var reaches = await _reach([.. collectives.Select(c => c.MessageId.Value)], cancellationToken).ConfigureAwait(false);
+    foreach (var collective in collectives) {
+      if (reaches.TryGetValue(collective.MessageId.Value, out var reach)) {
+        _reaches.AddOrUpdate(collective.Payload, reach);
+      }
+    }
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync</tests>
+  public bool IsInFlight(IEvent collectiveEvent) {
+    ArgumentNullException.ThrowIfNull(collectiveEvent);
+    return _reaches.TryGetValue(collectiveEvent, out var reach) && reach.Queued;
   }
 
   /// <summary>
@@ -334,11 +370,15 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var eventType = collectiveEvent.GetType();
     var executor = _resolveExecutor(modelType);
     var model = currentModel;
+    // How far the live sink applied it, when the replay read that (#1970): each handler's apply folds only into the rows
+    // it reached, or that it will never reach.
+    _reaches.TryGetValue(collectiveEvent, out var reach);
 
     // Every [CollectiveApplyFor] entry for this (event, model) runs — mirrors the live dispatcher, which fans
     // out to all matching entries (e.g. two applies on one model).
     foreach (var entry in _entries) {
-      if (entry.ModelType != modelType || entry.EventType != eventType) {
+      if (entry.ModelType != modelType || entry.EventType != eventType
+          || reach?.Reaches(entry.EntryKey, streamId) == false) {
         continue;
       }
       var handler = _services.GetRequiredService(entry.HandlerType);

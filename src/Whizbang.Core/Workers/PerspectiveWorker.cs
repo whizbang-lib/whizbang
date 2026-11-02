@@ -3671,9 +3671,10 @@ public partial class PerspectiveWorker(
 
     // Drain re-offer during the completion-flush window: a prior dispatch already completed these
     // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
-    // still sees them and the cursor read may not reflect the advance yet — without this guard the
-    // sink re-reads the same collective envelope and re-runs the entire batched UPDATE (idempotent,
-    // N× the DB work; observed live as same-second full-count/0-row re-applies). Mirror of the
+    // still sees them and the cursor read may not reflect the advance yet. Without this guard the
+    // sink re-reads the same collective envelope and dispatches it again: each handler's progress
+    // record (#1969) skips an apply that finished and resumes one that did not, so nothing is applied
+    // twice, but the guard still saves the dispatch and its per-handler record reads. Mirror of the
     // per-event path's _filterDuplicateWorkItems. Only the ALL-completed case skips — a mixed set
     // means a new collective event arrived and the cursor-driven dispatch below handles ordering.
     // Both producers drop Guid.Empty before calling, and held-back rows are earlier runs' ids, so
@@ -3745,9 +3746,9 @@ public partial class PerspectiveWorker(
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
         // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
         // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
-        // (the failure count drives dead-lettering) and its row is not completed: it applies later, in full, even
-        // if some of its batches committed. The collectives this run applied before it are complete (#1003), so the
-        // retry starts at this one.
+        // (the failure count drives dead-lettering) and its row is not completed: it applies later, resuming after the
+        // last batch that committed, which its progress record names (#1969). The collectives this run applied before
+        // it are complete (#1003), so the retry starts at this one.
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
         await _completeAppliedCollectivesAsync(
           scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),

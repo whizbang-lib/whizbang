@@ -41,6 +41,8 @@ public interface ICollectiveSnapshotFence {
 /// When nothing is in flight, every collective of the row stamped at or below it is complete, and one stamped later is
 /// stamped above it.</param>
 /// <param name="CollectiveInFlight">Whether a collective of the row is not yet complete: its sink work is unprocessed, its
-/// event is unstamped, or it was stamped past the read's <c>afterSequence</c>.</param>
+/// event is unstamped, it was stamped past the read's <c>afterSequence</c>, or its apply was dead-lettered before it
+/// completed and the dead letter is neither recovered nor purged (an abandoned apply record, #1970), since recovery may yet
+/// reach rows the apply never reached.</param>
 /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
 public sealed record CollectiveSnapshotFenceReading(long? CompleteThroughSequence, bool CollectiveInFlight);

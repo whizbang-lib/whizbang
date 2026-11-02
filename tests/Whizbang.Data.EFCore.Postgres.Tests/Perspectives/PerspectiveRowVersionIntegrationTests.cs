@@ -446,7 +446,7 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
       [], new HashSet<string>(StringComparer.Ordinal), [], BumpVersion: false, [], ReplaceWhere: null);
     await EFCoreCollectiveAdapter<ActionTestModel>.ExecuteAsync(
       context, new RenameSpec(s => s.SetProperty(m => m.Name, name)), r => r.Data.Id == id, plan,
-      CollectiveApplyOptions.Default, "tenant:row-version", Guid.CreateVersion7());
+      CollectiveApplyOptions.Default, "tenant:row-version", Guid.CreateVersion7(), entryKey: "RenameHandler.Rename:ActionTestModel");
   }
 
   /// <summary>A non-Postgres context: the store must degrade to unchecked rather than issue Postgres SQL.</summary>

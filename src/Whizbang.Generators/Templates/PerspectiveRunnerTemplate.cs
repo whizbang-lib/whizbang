@@ -647,6 +647,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // True once Apply has contributed a concrete model OR the row came from DB.
     // When false at save time, updatedModel is only the scaffolded default and must not be written.
     var hasWrittenUpdate = modelLoadedFromDb;
+    var collectiveInFlight = false;
     var rowChanged = false;  // True once this batch actually wrote or purged the row
     var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
     Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
@@ -800,6 +801,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
                 typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
             hasWrittenUpdate = true;
+            // #1970: a collective still in flight may yet reach the row live, so this run's snapshot would not say what it holds.
+            collectiveInFlight |= _collectiveReplayApplier.IsInFlight(@event);
           }
           processedEvents.Add(envelope);
           eventsProcessed++;
@@ -927,7 +930,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // place is serialized before it only when a snapshot is actually due.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue
-            && _eventsSinceLastSnapshot + eventsProcessed >= _snapshotCadence().Threshold;
+            && _eventsSinceLastSnapshot + eventsProcessed >= _snapshotCadence().Threshold
+            && !collectiveInFlight;
         if (pendingPurge) {
           // A stream that began this batch purged and stayed so has no row to remove.
           if (purgeEventId.HasValue) {
@@ -1922,6 +1926,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
           producedByApply = true;
           heldThrough.Fold(envelope.LocalCommitSequence);
+          // #1970: a collective still in flight may yet reach the row live, so no snapshot of this replay says what it holds.
+          if (_collectiveReplayApplier!.IsInFlight(@event)) {
+            heldThrough.MeetInFlight();
+          }
         }
         eventsProcessed++;
         continue;
@@ -2005,7 +2013,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // caps total snapshots per stream so this can't bloat the table without bound.
       if (rewindSnapshotInterval > 0
           && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-          && !pendingPurge && updatedModel is not null && producedByApply) {
+          && !pendingPurge && updatedModel is not null && producedByApply && heldThrough.Settled) {
         eventsSinceIntermediateSnapshot++;
         if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
           try {
@@ -2070,6 +2078,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       FrontierCommitSequence = frontierCommitSequence,
       ModelAtLastEvent = modelAtLastEvent,
       CollectivesHeldThrough = heldThrough.Mark,
+      CollectivesSettled = heldThrough.Settled,
     }, cancellationToken);
   }
 
@@ -2119,7 +2128,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var replayCheckpointCommitSequence = frontierCommitSequence
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
         // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
-        var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
+        var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue
+            && outcome.CollectivesSettled;
         // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
         snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
@@ -2159,7 +2169,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
       // rewinds — defeating the deterministic-replay invariant the column was added for.
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-          && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue) {
+          && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue
+          && outcome.CollectivesSettled) {
         var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
             lastSuccessfulEventId.Value, cancellationToken);
         await _snapshotStore.CreateSnapshotAsync(
@@ -2306,6 +2317,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public JsonDocument? ModelAtLastEvent { get; set; }
     // How far the row held its collectives at its last event (#1963): the mark the replay's snapshot records.
     public long? CollectivesHeldThrough { get; set; }
+    // #1970: false when the replay folded a collective still in flight; its snapshot is then not taken.
+    public bool CollectivesSettled { get; set; } = true;
   }
 
   /// <summary>Where a replay starts: the snapshot's event, its archive mark and its collectives mark (#1963).</summary>
@@ -2346,6 +2359,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     /// unstamped collective was folded.
     /// </summary>
     public long? Mark => foldsCollectives && !_unstamped ? _held : null;
+
+    /// <summary>A folded collective was still in flight (#1970): the live sink may yet apply it to the row.</summary>
+    public void MeetInFlight() => Settled = false;
+
+    /// <summary>Whether no folded collective was in flight, so the replay's snapshots may be taken.</summary>
+    public bool Settled { get; private set; } = true;
 
     private static long? _max(long? a, long? b) => a is long x && b is long y ? Math.Max(x, y) : a ?? b;
   }

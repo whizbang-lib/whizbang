@@ -110,7 +110,9 @@ public static class CollectiveApplyHookPlanner {
       .Select(c => new CollectiveStoreColumn(c, columnValues[c]))
       .ToArray();
 
-    return new CollectiveApplyHookPlan<TModel>(modelSetters, removed, storeColumns, bump, andWheres, replaceWhere);
+    return new CollectiveApplyHookPlan<TModel>(modelSetters, removed, storeColumns, bump, andWheres, replaceWhere) {
+      ApplyTimestamp = context.ApplyTimestamp,
+    };
   }
 
   /// <summary>

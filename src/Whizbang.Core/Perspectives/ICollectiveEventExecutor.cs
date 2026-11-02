@@ -54,7 +54,9 @@ public interface ICollectiveEventExecutor {
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> matching <paramref name="evt"/>'s scope kind.</param>
   /// <param name="dbContextOrSession">Driver-specific session (a <c>DbContext</c> for EF Core, an <c>NpgsqlConnection</c> for Dapper). The implementation casts to the type it expects; wrong-type input throws <see cref="ArgumentException"/>.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event: the apply's progress record is kept under it and the
+  /// entry's <see cref="CollectiveApplyEntry.EntryKey"/>, so a retry resumes after the last committed batch (#1969); also
+  /// emitted in the apply-completion telemetry.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
 #pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain

@@ -27,9 +27,9 @@ public interface ICollectiveDispatcher {
   /// dispatcher uses <see cref="ICollectiveEvent.Scope"/> to find the
   /// right resolver and the event's runtime type to find every
   /// matching <see cref="CollectiveApplyEntry"/>.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event.
-  /// Written by the executor to the audit-pointer column on every
-  /// affected row in the same SQL UPDATE that performs the mutation.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event. Each handler's apply keeps its progress record
+  /// under it and the entry's <see cref="CollectiveApplyEntry.EntryKey"/>, so a dispatch of the same event again resumes
+  /// after the last committed batch and skips a finished handler (#1969).</param>
   /// <param name="dbContextOrSession">Driver-specific session
   /// (<c>DbContext</c> for EF Core, <c>NpgsqlConnection</c> for
   /// Dapper). Forwarded as <see cref="object"/> to each executor —

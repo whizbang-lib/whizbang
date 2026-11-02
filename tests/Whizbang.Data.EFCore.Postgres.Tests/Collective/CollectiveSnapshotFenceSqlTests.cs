@@ -102,6 +102,55 @@ public class CollectiveSnapshotFenceSqlTests : EFCoreTestBase {
       .Because("a collective that completed between the two reads may have changed the row after the first, so the snapshot cannot say whether it holds it");
   }
 
+  // ===== Owner decision (2026-11-01): an abandoned apply is in flight until its dead letter is recovered or purged =====
+
+  [Test]
+  public async Task Fence_WithACollectiveOfTheRowDeadLetteredPartway_IsInFlightAsync() {
+    await _partlyAppliedThenDeadLetteredAsync(GRANTED, "tenant-a");
+
+    var reading = await _fence().ReadAsync("tenant-a", _modelTypes, afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsTrue()
+      .Because("recovery may yet apply it to the rows its batches never reached, so a snapshot cannot say whether it holds it");
+  }
+
+  [Test]
+  public async Task Fence_AfterTheDeadLetterIsRecovered_AndTheApplyCompleted_IsQuietAgainAsync() {
+    var (eventId, deadLetter) = await _partlyAppliedThenDeadLetteredAsync(GRANTED, "tenant-a");
+
+    // Recovery resumes the apply, which completes its record, and the completion settles the dead letter Recovered.
+    await _executeAsync(
+      "UPDATE wh_collective_apply_progress SET completed = true, abandoned = false WHERE event_id = @id AND entry_key <> '*'; "
+      + "UPDATE wh_dead_letters SET recovery_status = 3, recovered_at = now() WHERE dead_letter_id = @dl", eventId, deadLetter);
+
+    var reading = await _fence().ReadAsync("tenant-a", _modelTypes, afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsFalse()
+      .Because("every row now holds it, and the record that said a handler applied nothing went with the recovery");
+  }
+
+  [Test]
+  public async Task Fence_AfterTheDeadLetterIsPurged_IsQuietAgainAsync() {
+    var (eventId, deadLetter) = await _partlyAppliedThenDeadLetteredAsync(GRANTED, "tenant-a");
+
+    await _executeAsync("DELETE FROM wh_dead_letters WHERE dead_letter_id = @dl", eventId, deadLetter);
+
+    var reading = await _fence().ReadAsync("tenant-a", _modelTypes, afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsFalse()
+      .Because("purging the dead letter removes its abandoned records: the collective will never reach the other rows");
+  }
+
+  [Test]
+  public async Task Fence_IgnoresAnAbandonedCollectiveOfAnotherTenantOrTypeAsync() {
+    await _partlyAppliedThenDeadLetteredAsync(GRANTED, "tenant-b");
+    await _partlyAppliedThenDeadLetteredAsync(UNRELATED, "tenant-a");
+
+    var reading = await _fence().ReadAsync("tenant-a", _modelTypes, afterSequence: null);
+
+    await Assert.That(reading.CollectiveInFlight).IsFalse();
+  }
+
   [Test]
   public async Task Fence_OfAnEmptyStore_IsQuiet_WithNoMarkAsync() {
     var reading = await _fence().ReadAsync("tenant-a", _modelTypes, afterSequence: null);
@@ -123,7 +172,7 @@ public class CollectiveSnapshotFenceSqlTests : EFCoreTestBase {
 
   // One event on a stream of its own, with its scope's tenant and its stamp; when workProcessed is given, a collective with
   // a sink work row, processed or not.
-  private async Task _eventAsync(string eventType, string? tenant, long? commitSequence, bool? workProcessed) {
+  private async Task<(Guid EventId, Guid StreamId)> _eventAsync(string eventType, string? tenant, long? commitSequence, bool? workProcessed) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     var streamId = Guid.CreateVersion7();
@@ -142,7 +191,7 @@ public class CollectiveSnapshotFenceSqlTests : EFCoreTestBase {
       await insert.ExecuteNonQueryAsync();
     }
     if (workProcessed is not bool processed) {
-      return;
+      return (eventId, streamId);
     }
     await using var work = connection.CreateCommand();
     work.CommandText = """
@@ -153,5 +202,46 @@ public class CollectiveSnapshotFenceSqlTests : EFCoreTestBase {
     work.Parameters.AddWithValue("id", eventId);
     work.Parameters.AddWithValue("processed", processed);
     await work.ExecuteNonQueryAsync();
+    return (eventId, streamId);
+  }
+
+  // Dead-letters the collective's pending sink work row; the dead-letter trigger marks its unfinished apply abandoned (#1970).
+  private async Task<Guid> _deadLetterAsync(Guid eventId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var deadLetter = Guid.NewGuid();
+    await using var move = connection.CreateCommand();
+    move.CommandText = """
+      SELECT move_to_dead_letters(@dl, 'wh_perspective_events',
+        (SELECT event_work_id FROM wh_perspective_events WHERE event_id = @id AND perspective_name = '__collective__'),
+        1, 'failed', gen_random_uuid(), 'test')
+      """;
+    move.Parameters.AddWithValue("dl", deadLetter);
+    move.Parameters.AddWithValue("id", eventId);
+    await move.ExecuteNonQueryAsync();
+    return deadLetter;
+  }
+
+  private async Task _executeAsync(string sql, Guid eventId, Guid deadLetter) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    if (sql.Contains("@id", StringComparison.Ordinal)) {
+      command.Parameters.AddWithValue("id", eventId);
+    }
+    if (sql.Contains("@dl", StringComparison.Ordinal)) {
+      command.Parameters.AddWithValue("dl", deadLetter);
+    }
+    await command.ExecuteNonQueryAsync();
+  }
+
+  // A collective of the row whose apply reached part of its rows, then was dead-lettered.
+  private async Task<(Guid EventId, Guid DeadLetter)> _partlyAppliedThenDeadLetteredAsync(string eventType, string tenant) {
+    var (eventId, _) = await _eventAsync(eventType, tenant, commitSequence: 10, workProcessed: false);
+    await _executeAsync(
+      "INSERT INTO wh_collective_apply_progress (event_id, entry_key, through_id, completed, applied_at) "
+      + "VALUES (@id, 'H.Apply:M', gen_random_uuid(), false, now())", eventId, Guid.Empty);
+    return (eventId, await _deadLetterAsync(eventId));
   }
 }

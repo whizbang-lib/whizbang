@@ -77,4 +77,17 @@ public interface ICollectiveReplayApplier {
   /// <docs>fundamentals/perspectives/rebuild#blue-green</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:CollectiveEventTypeNamesFor_NamesTheModelsCollectivesOnlyAsync</tests>
   IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) => [];
+
+  /// <summary>
+  /// Whether <paramref name="collectiveEvent"/>, as a replay merged it in, is still in flight on the live path (#1970): its
+  /// collective sink work row is pending, so the live sink may yet apply it to rows the replay did not fold it into. A
+  /// replay that folds such a collective takes no snapshot, since no mark says which of its rows a snapshot would hold.
+  /// The default says none is.
+  /// </summary>
+  /// <param name="collectiveEvent">A collective event the replay merged in.</param>
+  /// <returns>True when the collective is still in flight.</returns>
+  /// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeInFlightCollectivesWereKnown_SaysNoneIsInFlightAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync</tests>
+  bool IsInFlight(IEvent collectiveEvent) => false;
 }
