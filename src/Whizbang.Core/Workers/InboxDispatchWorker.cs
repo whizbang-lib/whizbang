@@ -1037,12 +1037,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Commits an expansion as one step (#737): the composite row's completion and its children go through
   /// <see cref="IWorkCoordinator.CommitHandlerResultAsync"/> before this returns, so the row is never in the
   /// "expanded but not yet committed" state the claim loop can see and re-offer, and the children never wait
-  /// in the batched commit channel (#740). A failed commit leaves the row leased and unprocessed for the
-  /// claim loop to re-offer (the deterministic child ids make that re-expansion a repeat at the key), counts
-  /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
-  /// the dispatch scope the batched channel is used as before, with a warning naming the cost. Returns true only
-  /// when the commit landed here, so work that must follow a landed expansion can tell it did.
+  /// in the batched commit channel (#740). A failed commit leaves the row unprocessed, counts the failure, records
+  /// it against the row through the failure channel (so the retry is backed off, the next claim counts the attempt,
+  /// and the row is dead-lettered past <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>, #1983), and
+  /// releases the in-flight entry so the re-offer is not filtered; the deterministic child ids make the re-expansion
+  /// a repeat at the key. Without a coordinator in the dispatch scope the batched channel is used as before, with a
+  /// warning naming the cost. Returns true only when the commit landed here, so work that must follow a landed
+  /// expansion can tell it did.
   /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#transactional-expansion</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Composite_WhoseCommitFails_IsFailedForBackoffAndTheAttemptBound_AndLoggedAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Composite_WhoseCommitFails_ReleasesTheRowForRetry_AndCountsTheFailureAsync</tests>
   private async Task<bool> _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
@@ -1056,6 +1061,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _compositeMetrics?.CommitFailures.Add(1);
       LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
+      // #1983: recorded against the row, so its retry is backed off and released, the next claim counts the attempt,
+      // and the attempt bound dead-letters it. Unrecorded, the row stayed leased and was re-offered every poll.
+      await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+        MessageId = request.HandlerId,
+        CompletedStatus = MessageProcessingStatus.None,
+        Error = ex.Message,
+        Reason = MessageFailureReason.Unknown,
+      }, ct).ConfigureAwait(false);
       return false;
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
@@ -1528,9 +1541,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             + "stays leased and pending, so a re-offer can expand it again (the derived child ids make that a repeat at the key, not a copy).")]
   static partial void LogCompositeCommitWithoutCoordinator(ILogger logger, Guid messageId, int childCount);
 
-  [LoggerMessage(EventId = 73, Level = LogLevel.Error,
-    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but the commit failed; the row stays leased and unprocessed "
-            + "and the claim loop re-offers it, where the same child ids are derived again and the store absorbs the repeat.")]
+  [LoggerMessage(EventId = 73, Level = LogLevel.Warning,
+    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but the commit failed; the row is failed and retried "
+            + "with backoff, where the same child ids are derived again and the store absorbs the repeat, and it is dead-lettered "
+            + "once its attempts pass MaxInboxAttempts.")]
   static partial void LogCompositeCommitFailed(ILogger logger, Guid messageId, int childCount, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Information,

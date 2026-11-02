@@ -1095,6 +1095,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its collective. Renaming a handler type, method or model between an apply's attempts gives the retry a new key, and
   it then applies in full again. **API:** `EFCoreCollectiveAdapter<TModel>.ExecuteAsync` takes the entry key after the
   event id; `DapperCollectiveEventApplier<TModel>.ApplyAsync` takes an optional event id.
+- **Four failures that were retried with no bound now end in a dead letter (#1983).** Each failed attempt is now
+  recorded against its work row, so the retry is backed off and counted, and the row is dead-lettered at its existing
+  bound with the one dead-letter record (EventId 1901 `MessageDeadLettered`); the per-attempt lines drop to Warning.
+  - A rewind that throws on the claimed per-event path fails its rows (bounded by `MaxPerspectiveEventAttempts`).
+    Before, the rows were completed with nothing applied and the cursor stayed flagged, so the next work on the stream
+    retried the rewind and discarded its rows too. `PerspectiveWorker` EventId 58 is now a Warning.
+  - A stored event the drain cannot read fails its rows (`SerializationError`, bounded by
+    `MaxPerspectiveEventAttempts`), and the readable events fetched with it are applied. Before, a read that threw
+    dropped the whole fetch with an Error line, and a row the store skipped recorded nothing, so both re-claimed
+    forever. A read that throws is retried row by row to find the unreadable rows; `PerspectiveWorker` EventId 78
+    (Warning) reports them. A row whose event type the service does not register is left for an instance that can
+    read it, as before.
+  - An inbox row whose envelope cannot be read is failed (`SerializationError`) and, past `MaxInboxAttempts`,
+    dead-lettered by the inbox drain. Before, it was skipped with nothing recorded and never reached the dispatch
+    worker's attempt bound, so it was fetched and skipped forever. `InboxDrainWorker` EventId 5 is now a Warning; a
+    dead-letter move that fails is EventId 64 (Warning) and the row is failed for another try.
+  - A composite whose commit fails is failed through the failure channel (bounded by `MaxInboxAttempts`). Before, the
+    row stayed leased and was re-offered every poll with no backoff and no attempt counted. `InboxDispatchWorker`
+    EventId 73 is now a Warning. **Upgrade note:** alerts keyed on EventIds 5, 58 or 73 at Error stop firing; alert on
+    EventId 1901.
 - **A snapshot records which collectives its row holds, and a replay from it folds exactly the rest (#1963).** A live
   snapshot is the row as the live apply read it, while the collective sink applies collectives to rows on its own, a
   key at a time and a batch at a time. A rewind from the snapshot decided by the snapshot's event alone, so a collective

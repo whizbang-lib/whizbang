@@ -530,8 +530,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
   // ============================================================
 
   /// <summary>
-  /// A failed composite commit with no composite meter wired is still swallowed, and the row is
-  /// still released for the claim loop to re-offer.
+  /// A failed composite commit with no composite meter wired is still contained, recorded as the row's failure, and
+  /// the row is still released for the claim loop to re-offer.
   /// </summary>
   [Test]
   public async Task CompositeCommitFails_WithoutCompositeMetrics_StillReleasesRowForRetryAsync() {
@@ -553,7 +553,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
       .Because("a failed commit leaves the row unprocessed; its in-flight entry must not block the re-offer");
     await Assert.That(parts.HandlerCommit.All).IsEmpty()
       .Because("the expansion is committed through the coordinator only, never re-routed to the batched channel");
-    await Assert.That(parts.Failure.All).IsEmpty();
+    await Assert.That(parts.Failure.All.Select(f => f.Failure.MessageId)).IsEquivalentTo([work.MessageId])
+      .Because("the failed commit is recorded against the row, so it is backed off and bounded by the attempt limit (#1983)");
   }
 
   // ============================================================

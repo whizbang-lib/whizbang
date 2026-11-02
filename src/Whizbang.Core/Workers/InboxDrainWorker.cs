@@ -404,7 +404,7 @@ public sealed partial class InboxDrainWorker(
             try {
               work = _toInboxWork(row);
             } catch (Exception ex) {
-              LogDeserializeFailed(_logger, row.MessageId, ex);
+              await _failUnreadableRowAsync(scope.ServiceProvider, row, ex, ct);
               continue;
             }
             // Retried rows yield to fresh work when they already dominate the set. Deferred rows
@@ -504,7 +504,7 @@ public sealed partial class InboxDrainWorker(
         try {
           work = _toInboxWork(row);
         } catch (Exception ex) {
-          LogDeserializeFailed(_logger, row.MessageId, ex);
+          await _failUnreadableRowAsync(scope.ServiceProvider, row, ex, ct);
           continue;
         }
         totalDeserMs += (System.Diagnostics.Stopwatch.GetTimestamp() - deserStart)
@@ -604,6 +604,89 @@ public sealed partial class InboxDrainWorker(
     }
   }
 
+  /// <summary>
+  /// Bounds a row whose envelope cannot be read (#1983). Past <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>
+  /// it is moved to the dead-letter store and logged with the one dead-letter record; otherwise it is failed through
+  /// the failure channel, so its retry is backed off, its lease released, and the next claim counts the attempt.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The attempt bound is otherwise applied by the dispatch worker, which a row that cannot be read never reaches.
+  /// Before, the row was skipped with nothing recorded: it stayed leased, was fetched again on every poll, was claimed
+  /// again with another attempt once its lease lapsed, and was never failed or dead-lettered.
+  /// </para>
+  /// <para>
+  /// A move that fails, or a host with no dead-letter store, fails the row instead, so it is backed off and the move
+  /// is tried again on its next attempt. A move that finds the row already gone logs nothing: the path that moved it
+  /// logged its record. The collaborators come from the drain's scope, as the work coordinator does.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/inbox-dispatch-worker#unreadable-rows</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_BelowTheAttemptBound_IsFailedForBackoff_AndLoggedAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_InTheTailOfAStreamThatFilledItsPage_IsFailedTooAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_IsDeadLetteredWithOneRecord_AndNotFailedAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_LogsTheRecordAtTheConfiguredLevelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_AlreadyGone_LogsNoRecordAndFailsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_WhenTheMoveFails_IsFailedForAnotherTryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_WithNoDeadLetterStore_IsFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_WithNoAttemptBound_IsFailedAsync</tests>
+  private async Task _failUnreadableRowAsync(IServiceProvider services, InboxBatchRow row, Exception exception, CancellationToken ct) {
+    var maxAttempts = services.GetRequiredService<IOptions<InboxDispatchWorkerOptions>>().Value.MaxInboxAttempts;
+    if (maxAttempts is int bound && row.Attempts > bound
+        && await _tryDeadLetterUnreadableRowAsync(services, row, bound, exception, ct)) {
+      return;
+    }
+    LogDeserializeFailed(_logger, row.MessageId, row.Attempts, exception);
+    await services.GetRequiredService<IFailureChannel>().EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+      MessageId = row.MessageId,
+      CompletedStatus = (MessageProcessingStatus)row.Status,
+      Error = exception.Message,
+      Reason = MessageFailureReason.SerializationError,
+    }, ct);
+  }
+
+  /// <summary>
+  /// Moves an unreadable row past its attempt bound to the dead-letter store. True when the row is dealt with (moved,
+  /// or already gone); false when there is no store or the move failed, and the row is to be failed instead.
+  /// </summary>
+  private async Task<bool> _tryDeadLetterUnreadableRowAsync(
+      IServiceProvider services, InboxBatchRow row, int bound, Exception exception, CancellationToken ct) {
+    var store = services.GetRequiredService<IDeadLetterStore>();
+    if (!store.IsConfigured) {
+      return false;
+    }
+    var errorText = $"InboxDrainWorker dead-lettered an inbox row whose envelope cannot be read: attempts={row.Attempts} > max={bound}: {exception.Message}";
+    try {
+      var movedId = await store.MoveAsync(
+        deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+        sourceTable: DeadLetterSourceTable.INBOX,
+        sourceId: row.MessageId,
+        failureReason: MessageFailureReason.MaxAttemptsExceeded,
+        errorText: errorText,
+        instanceId: _instanceProvider.InstanceId,
+        generation: services.GetRequiredService<IGenerationProvider>().GetGeneration(),
+        ct: ct);
+      if (movedId is not null) {
+        var metrics = services.GetService<DeadLetterMetrics>();
+        metrics?.Added.Add(1,
+          new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.MaxAttemptsExceeded)));
+        metrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)MessageFailureReason.MaxAttemptsExceeded, errorText);
+        DeadLetterLog.MessageDeadLettered(_logger, DeadLetterLog.LevelFrom(services.GetService<DeadLetterLoggingOptions>()),
+          exception, row.MessageId, row.MessageType, nameof(MessageFailureReason.MaxAttemptsExceeded), errorText);
+      }
+      return true;
+    } catch (Exception moveFailure) {
+      LogUnreadableRowDeadLetterFailed(_logger, row.MessageId, moveFailure);
+      return false;
+    }
+  }
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "InboxDrainWorker could not dead-letter inbox row {MessageId}, whose envelope cannot be read; it is failed and "
+            + "the move is tried again on its next attempt")]
+  static partial void LogUnreadableRowDeadLetterFailed(ILogger logger, Guid messageId, Exception exception);
+
   private InboxWork _toInboxWork(InboxBatchRow row) {
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
@@ -669,9 +752,10 @@ public sealed partial class InboxDrainWorker(
             + "waiting behind it.")]
   static partial void LogPoisonGateForcedProgress(ILogger logger, int rowCount, int attempts);
 
-  [LoggerMessage(EventId = 5, Level = LogLevel.Error,
-    Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId}")]
-  static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId} (attempt {Attempts}); the row is failed and "
+            + "retried with backoff, and dead-lettered once its attempts pass MaxInboxAttempts")]
+  static partial void LogDeserializeFailed(ILogger logger, Guid messageId, int attempts, Exception ex);
 
   /// <summary>
   /// Reports fetched rows' attempt counts to the claim window's feedback seam.

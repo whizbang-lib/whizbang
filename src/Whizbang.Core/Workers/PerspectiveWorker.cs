@@ -1927,8 +1927,8 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Drain-mode prerequisites + batch fetch + typed deserialization. Returns null whenever
-  /// downstream processing should be skipped (missing dependencies, no rows, deserialize threw,
-  /// or zero typed envelopes produced) so the caller can short-circuit cleanly.
+  /// downstream processing should be skipped (missing dependencies, no rows, or zero typed envelopes produced) so the
+  /// caller can short-circuit cleanly. Rows that cannot be read are failed for retry before it returns (#1983).
   /// </summary>
   private async Task<(List<MessageEnvelope<IEvent>> TypedEvents, ILookup<Guid, StreamEventData> RawByEventId)?> _tryFetchAndDeserializeDrainModeEventsAsync(
       AsyncServiceScope scope,
@@ -1998,17 +1998,11 @@ public partial class PerspectiveWorker(
       return null;
     }
 
-    // Deserialize raw events into typed envelopes (AOT-safe).
+    // Deserialize raw events into typed envelopes (AOT-safe). A row that cannot be read fails (#1983).
     var eventTypes = _eventTypeProvider.GetEventTypes();
-    List<MessageEnvelope<IEvent>> typedEvents;
-    try {
-      typedEvents = eventStore.DeserializeStreamEvents(rowsToParse, eventTypes);
-    } catch (Exception ex) {
-#pragma warning disable CA1848
-      _logger.LogError(ex, "Drain mode: DeserializeStreamEvents threw {ExceptionType}: {Message}", ex.GetType().Name, ex.Message);
-#pragma warning restore CA1848
-      return null;
-    }
+    var rowErrors = new Dictionary<Guid, Exception>();
+    var typedEvents = _deserializeDrainRows(eventStore, rowsToParse, eventTypes, rowErrors);
+    await _failUnreadableDrainRowsAsync(rowsToParse, typedEvents, eventTypes, rowErrors, cancellationToken).ConfigureAwait(false);
 
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
@@ -2023,6 +2017,91 @@ public partial class PerspectiveWorker(
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
   }
+
+  /// <summary>
+  /// Reads the fetched rows into typed envelopes. When the read throws for the batch (a store or decorator that does not skip a row
+  /// it cannot read), each row is read on its own, so the rows that can be read still are and the one that cannot is
+  /// identified; its exception is kept in <paramref name="rowErrors"/> for the failure recorded against it.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_ReadThrowsForOneRow_AppliesTheRestAndFailsThatRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_ReadThrowsForEveryRow_FailsEveryRowAsync</tests>
+  private List<MessageEnvelope<IEvent>> _deserializeDrainRows(
+      IEventStore eventStore, List<StreamEventData> rows, IReadOnlyList<Type> eventTypes, Dictionary<Guid, Exception> rowErrors) {
+    try {
+      return eventStore.DeserializeStreamEvents(rows, eventTypes);
+    } catch (Exception batchFailure) {
+      LogDrainReadSplitByRow(_logger, batchFailure, rows.Count);
+      var typed = new List<MessageEnvelope<IEvent>>(rows.Count);
+      foreach (var row in rows) {
+        try {
+          typed.AddRange(eventStore.DeserializeStreamEvents([row], eventTypes));
+        } catch (Exception rowFailure) {
+          // Not swallowed: the row is failed with this exception and logged by _failUnreadableDrainRowsAsync.
+          rowErrors[row.EventId] = rowFailure;
+        }
+      }
+      return typed;
+    }
+  }
+
+  /// <summary>
+  /// Fails every fetched row whose event could not be read: the read threw for it, or the store skipped it. Each row
+  /// is reported through the failure channel, so the database records the failure, backs the retry off, and the
+  /// pre-apply dead-letter filter (<see cref="FilterDeadLetteredAsync"/>) moves it once its failures pass
+  /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>, with the one dead-letter record (#1983).
+  /// </summary>
+  /// <remarks>
+  /// A row whose event type this service does not register is not failed: a rolling deploy can lease an event of a
+  /// type only the newer version knows to an older instance, and counting it toward the bound there would dead-letter
+  /// an event an instance that can read it is about to apply. It stays leased as before and is picked up again.
+  /// Before, an unreadable row recorded nothing: its lease lapsed, it was claimed again and failed to read again,
+  /// forever, and a read that threw held back every other row fetched with it.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_StoreSkipsARowItCannotRead_FailsThatRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_RowOfATypeThisServiceDoesNotKnow_IsNotFailedAsync</tests>
+  private async Task _failUnreadableDrainRowsAsync(
+      List<StreamEventData> rows, List<MessageEnvelope<IEvent>> typedEvents, IReadOnlyList<Type> eventTypes,
+      Dictionary<Guid, Exception> rowErrors, CancellationToken ct) {
+    var read = new HashSet<Guid>(typedEvents.Count);
+    foreach (var envelope in typedEvents) {
+      read.Add(envelope.MessageId.Value);
+    }
+    if (read.Count >= rows.Count) {
+      return;
+    }
+    Dictionary<string, Type>? typeMap = null;
+    var failed = 0;
+    StreamEventData? first = null;
+    foreach (var row in rows) {
+      if (read.Contains(row.EventId)) {
+        continue;
+      }
+      typeMap ??= EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+      if (!EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out _)) {
+        continue;
+      }
+      first ??= row;
+      failed++;
+      var error = rowErrors.TryGetValue(row.EventId, out var rowError)
+        ? $"Stored event {row.EventId} of type {row.EventType} could not be read: {rowError.Message}"
+        : $"Stored event {row.EventId} of type {row.EventType} could not be read; the event store skipped it";
+      await _parkLeasedRowsAsync([row.EventWorkId], error, MessageFailureReason.SerializationError, ct).ConfigureAwait(false);
+    }
+    if (first is not null) {
+      LogUnreadableDrainRowsFailed(_logger, rowErrors.GetValueOrDefault(first.EventId), failed, first.EventId, first.EventType);
+    }
+  }
+
+  [LoggerMessage(EventId = 79, Level = LogLevel.Debug,
+    Message = "Drain mode: reading {Count} fetched row(s) threw; reading them one at a time to find the rows that cannot be read")]
+  static partial void LogDrainReadSplitByRow(ILogger logger, Exception exception, int count);
+
+  [LoggerMessage(EventId = 78, Level = LogLevel.Warning,
+    Message = "Drain mode: {Count} stored event row(s) could not be read (first: event {EventId} of type {EventType}); "
+            + "they are failed and retried with backoff, and dead-lettered once their failures pass MaxPerspectiveEventAttempts")]
+  static partial void LogUnreadableDrainRowsFailed(ILogger logger, Exception? exception, int count, Guid eventId, string eventType);
 
   /// <summary>
   /// #1759: the fetched rows a drain session still has to parse: every row whose event_work_id is not in the cooldown
@@ -4475,8 +4554,11 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Rewind path: acquire stream lock, restore from snapshot and replay events.
-  /// Throws OperationCanceledException if lock cannot be acquired (caller handles via continue).
+  /// A rewind that throws is logged as an attempt and rethrown, so the group's failure handler fails its rows (#1983).
   /// </summary>
+  /// <docs>operations/workers/perspective-worker#rewind-failures</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.RewindFailure.cs:Rewind_ThatThrows_FailsItsRowsForRetry_InsteadOfCompletingThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.RewindFailure.cs:Rewind_ThatThrows_LogsTheAttemptAtWarningWithItsExceptionAsync</tests>
   private async Task<(PerspectiveCursorCompletion Result, bool LockSkipped)> _executeRewindPathAsync(
       IPerspectiveRunner runner,
       Guid streamId,
@@ -4516,24 +4598,18 @@ public partial class PerspectiveWorker(
           new RewindRequest(streamId, perspectiveName, rewindTriggerEventId, TriggerCommitSequence: null, eventsBehind),
           enablePerspectiveSpans, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Isolate rewind failures — a single stream's failure must not crash the worker.
-        // The stream will retry on the next polling cycle. The rewind itself is already counted
-        // as failed by the helper; this is the work item's own outcome.
+        // #1983: the group's failure handler fails the work rows, so they are retried with backoff and dead-lettered
+        // at MaxPerspectiveEventAttempts, as the drain path does for a rewind that throws. Returning an empty
+        // completion here used to complete the rows with nothing applied and leave the cursor flagged, so every later
+        // batch on the stream retried the rewind, without a bound, and discarded its rows too. The rewind itself is
+        // counted as failed by the helper; this line is the attempt.
         LogRewindFailed(_logger, ex, perspectiveName, streamId, rewindTriggerEventId);
-        _metrics?.Errors.Add(1);
-
-        return (new PerspectiveCursorCompletion {
-          StreamId = streamId,
-          PerspectiveName = perspectiveName,
-          LastEventId = Guid.Empty,
-          Status = PerspectiveProcessingStatus.None,
-          RowChanged = false,  // the rewind threw, so nothing was written
-        }, LockSkipped: false);
+        throw;
+      } finally {
+        // Stop keepalive, whichever way the rewind ended.
+        await keepaliveCts.CancelAsync();
+        try { await keepaliveTask; } catch (OperationCanceledException) { /* expected */ }
       }
-
-      // Stop keepalive
-      await keepaliveCts.CancelAsync();
-      try { await keepaliveTask; } catch (OperationCanceledException) { /* expected */ }
     } finally {
       if (lockAcquired) {
         await _streamLocker.ReleaseLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, cancellationToken);
@@ -5957,8 +6033,8 @@ public partial class PerspectiveWorker(
 
   [LoggerMessage(
     EventId = 58,
-    Level = LogLevel.Error,
-    Message = "Perspective rewind failed for {PerspectiveName} stream {StreamId} — trigger event {TriggerEventId}. Stream will retry on next cycle."
+    Level = LogLevel.Warning,
+    Message = "Perspective rewind failed for {PerspectiveName} stream {StreamId}, trigger event {TriggerEventId}. Its rows are failed and retried with backoff, and dead-lettered once their failures pass MaxPerspectiveEventAttempts."
   )]
   static partial void LogRewindFailed(ILogger logger, Exception exception, string perspectiveName, Guid streamId, Guid triggerEventId);
 

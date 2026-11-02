@@ -191,7 +191,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
   }
 
   private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true,
-      StreamIntegrityOptions? integrityOptions = null) {
+      StreamIntegrityOptions? integrityOptions = null, Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker>? logger = null) {
     var coordinator = new RecordingCoordinator { FailWith = commitFailure };
     var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
     if (withCoordinator) {
@@ -214,7 +214,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<InboxDispatchWorker>.Instance,
+      logger: logger ?? NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -324,6 +324,42 @@ public class InboxDispatchWorkerCompositeCommitTests {
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>
+  /// A composite whose commit fails is failed through the failure channel (#1983), so the failure is recorded against
+  /// the row, its retry is backed off, the next claim counts the attempt, and the row is dead-lettered once its attempts
+  /// pass <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>. Before, nothing was recorded: the row stayed
+  /// leased, was re-offered on the next poll with no backoff and no attempt counted, and was expanded and failed
+  /// again, logging an Error each time.
+  /// </summary>
+  [Test]
+  public async Task Composite_WhoseCommitFails_IsFailedForBackoffAndTheAttemptBound_AndLoggedAtWarningAsync() {
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<InboxDispatchWorker>();
+    using var h = _harness(new Composite(new RowAdded("a")), commitFailure: new InvalidOperationException("store unavailable"),
+      logger: logger);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var failing = _compositeWork();
+    await h.Inbox.WriteAsync(failing, cts.Token);
+    // The release is the last thing the failed commit does, after the failure is recorded.
+    await h.Inbox.Released(failing.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var (category, failure) = h.Failures.All.Single();
+    await Assert.That(category).IsEqualTo(WorkCategory.Inbox);
+    await Assert.That(failure.MessageId).IsEqualTo(failing.MessageId)
+      .Because("the failure is recorded against the composite row, which backs it off and lets the claim count the attempt");
+    await Assert.That(failure.Error).Contains("store unavailable", StringComparison.Ordinal);
+    var attempt = logger.Collector.GetSnapshot().Single(r => r.Id.Id == COMPOSITE_COMMIT_FAILED_EVENT_ID);
+    await Assert.That(attempt.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .Because("the row is retried and dead-lettered at the attempt bound, where the dead-letter record is the Error");
+    await Assert.That(attempt.Exception?.Message).IsEqualTo("store unavailable");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  private const int COMPOSITE_COMMIT_FAILED_EVENT_ID = 73;
 
   [Test]
   public async Task Composite_Meters_CountReceivedExpansionsChildrenAndUnsubscribedDropsAsync() {
