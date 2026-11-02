@@ -88,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ICompactionHandler`, kept and logged without one) or refuse `CryptoShred`. **Breaking:**
   `IStreamPrefixTruncator.TruncateAsync` takes a `Disposition` in place of its `archive` flag, and
   `DestructionResult.Proceed()` with no argument now runs the declared disposition instead of `Delete`
-  (`DestructionResult.Disposition` is nullable). New analyzer **WHIZ135** fails the build on `Destruction.OnCompaction`
+  (`DestructionResult.Disposition` is nullable). New analyzer **WHIZ137** fails the build on `Destruction.OnCompaction`
   and `Destruction.Archived`, which have no handler for event bodies.
 - **The version questions read the archive (#1933).** `GetLastSequenceAsync` answers a stream archived whole with its
   tombstone's last version, and `HasStreamEventsBeforeAsync` counts archived (or deleted-archive) history, on both

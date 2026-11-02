@@ -887,7 +887,7 @@ public sealed partial class MaintenanceWorker(
         return DestructionBatch.None;
       }
       // #1735: the disposition the hook returned, or the declared one (Delete: every Destruction value that names
-      // another disposition is refused at compile time by WHIZ135). One the reaper cannot carry out holds the batch.
+      // another disposition is refused at compile time by WHIZ137). One the reaper cannot carry out holds the batch.
       var disposition = result.Disposition ?? context.DeclaredDefault;
       var compactor = disposition == Whizbang.Core.Lifecycle.Disposition.Compact
         ? sp.GetService<Whizbang.Core.Lifecycle.ICompactionHandler>()

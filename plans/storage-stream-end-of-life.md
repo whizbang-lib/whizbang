@@ -218,14 +218,14 @@ Original slice text:
 ### S6. Wire `Disposition`
 
 **Status (2026-11-01):** implemented on `feat/1734-storage` (#1735, bundled with #1734). Owner decisions of 2026-11-01:
-the ephemeral reaper refuses `Archive` (held for the retry backoff and logged), WHIZ135 flags `Destruction.Archived` as
-well as `OnCompaction`, and an event-level archive is its own issue; `DestructionResult.Disposition` is nullable and
+the ephemeral reaper refuses `Archive` (held for the retry backoff and logged), WHIZ137 flags `Destruction.Archived` as
+well as `OnCompaction`, and an event-level archive is #1975; `DestructionResult.Disposition` is nullable and
 `Proceed()` runs the declared disposition. As built: `IStreamPrefixTruncator.TruncateAsync(streamId, throughVersion,
 Disposition)` replaces the `archive` flag (the stored `ScheduledStreamClose` keeps its flag, mapped to Archive or
 Delete); the full-history guard runs on the disposition that will run; `ICompactionHandler` is the developer's Compact
 (truncate: handler then discard, `compaction_unavailable` without one; reaper: handler then reap, held without one);
 CryptoShred is refused everywhere (`crypto_shred_unavailable`). `DestructionContext.ThroughVersion` tells a stream hook the
-cut. Docs: `stream-end-of-life.md#dispositions`, `operations/diagnostics/whiz135.md`, `ephemeral-events.md`.
+cut. Docs: `stream-end-of-life.md#dispositions`, `operations/diagnostics/whiz137.md`, `ephemeral-events.md`.
 
 Original slice text:
 

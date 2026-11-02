@@ -11,11 +11,11 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// WHIZ135 (#1735): a <c>Destruction</c> value whose handler has not shipped is a compile error, not a silent delete.
+/// WHIZ137 (#1735): a <c>Destruction</c> value whose handler has not shipped is a compile error, not a silent delete.
 /// <c>OnCompaction</c> has no framework handler, and <c>Archived</c> has none for event bodies, so either is refused
 /// wherever it is named; <c>WhenConsumed</c> and <c>AfterTtl</c> are acted on and pass.
 /// </summary>
-/// <docs>operations/diagnostics/whiz135</docs>
+/// <docs>operations/diagnostics/whiz137</docs>
 [Category("Analyzers")]
 public class UnshippedDestructionAnalyzerTests {
   private const string HEADER = """
@@ -35,7 +35,7 @@ public class UnshippedDestructionAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<UnshippedDestructionAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ135").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ137").ToArray();
     await Assert.That(found.Length).IsEqualTo(1);
     await Assert.That(found[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("OnCompaction");
@@ -52,7 +52,7 @@ public class UnshippedDestructionAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<UnshippedDestructionAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ135").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ137").ToArray();
     await Assert.That(found.Length).IsEqualTo(1);
     await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Archived");
   }
@@ -80,6 +80,6 @@ public class UnshippedDestructionAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<UnshippedDestructionAnalyzer>(source);
 
-    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ135")).IsFalse();
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ137")).IsFalse();
   }
 }

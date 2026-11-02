@@ -8,7 +8,7 @@ namespace Whizbang.Core.Attributes;
 /// *destruction* axis — named to match the Pre/PostDestruction hooks, not framed as retention: an
 /// ephemeral event is emphatically <em>not</em> retained. <see cref="WhenConsumed"/> and <see cref="AfterTtl"/>
 /// are acted on at run time; <see cref="OnCompaction"/> and <see cref="Archived"/> have no handler for event bodies yet,
-/// and naming either is a compile error (WHIZ135, #1735) rather than a silent delete.
+/// and naming either is a compile error (WHIZ137, #1735) rather than a silent delete.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public enum Destruction {
@@ -29,7 +29,7 @@ public enum Destruction {
   /// <summary>
   /// Fold the detail into an authoritative ephemeral summary (a carry-forward <c>Compacted&lt;T&gt;</c>),
   /// then truncate the detail. (E3.) <strong>Not shipped</strong>: the framework has no compaction handler for event
-  /// bodies, so naming it is a compile error (WHIZ135). A PreDestruction hook can return
+  /// bodies, so naming it is a compile error (WHIZ137). A PreDestruction hook can return
   /// <c>Disposition.Compact</c> with a developer's <c>ICompactionHandler</c> registered instead.
   /// </summary>
   OnCompaction = 2,
@@ -37,7 +37,7 @@ public enum Destruction {
   /// <summary>
   /// Move the detail to cold storage (preserved, not erased), then drop it from the hot store. (A1.)
   /// <strong>Not shipped</strong> for event bodies: the archive store moves a stream's prefix or whole stream, so naming
-  /// it is a compile error (WHIZ135); archive a stream through <c>IArchiveStore</c> or a prefix truncate instead.
+  /// it is a compile error (WHIZ137); archive a stream through <c>IArchiveStore</c> or a prefix truncate instead.
   /// </summary>
   Archived = 3
 }
