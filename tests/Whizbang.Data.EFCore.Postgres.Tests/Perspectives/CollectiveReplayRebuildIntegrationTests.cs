@@ -769,6 +769,42 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       .Because("the control for the deferral: with nothing in flight the rebuild snapshots every event");
   }
 
+  // Owner decision (2026-11-01): a collective dead-lettered partway counts as in flight for the snapshot fence. A snapshot
+  // taken then would record it as held by the rows its batches never reached; once recovery completes those rows live, a
+  // rewind from that snapshot would never fold it into them.
+  [Test]
+  public async Task Rewind_AfterRecoveryCompletedACollectiveDeadLetteredPartway_FoldsItIntoTheRowsTheRecoveryReachedAsync() {
+    var (sp, first, second, bonus, bonusStream) = await _twoRowsAndABonusAsync(withSnapshots: true);
+    await using var services = sp;
+    await _bonusRecordAsync(bonus, through: first, completed: false);
+    var deadLetter = Guid.NewGuid();
+    await _executeAsync(
+      "SELECT move_to_dead_letters(@s, 'wh_perspective_events', @e, 1, 'failed', gen_random_uuid(), 'test')",
+      deadLetter, await _queueBonusAsync(bonus, bonusStream));
+
+    // While the bonus is dead-lettered, the second row (which it never reached) is applied live.
+    await _applyLiveAsync(sp, second);
+
+    // Recovery resumes the apply, reaches the second row, completes, and settles the dead letter Recovered.
+    await _executeAsync(
+      "UPDATE wh_collective_apply_progress SET through_id = @s, completed = true, abandoned = false WHERE event_id = @e AND entry_key <> '*'",
+      second, bonus);
+    await _executeAsync(
+      "UPDATE wh_dead_letters SET recovery_status = 3, recovered_at = now() WHERE dead_letter_id = @s AND @e IS NOT NULL",
+      deadLetter, bonus);
+    Guid trigger;
+    await using (var scope = sp.CreateAsyncScope()) {
+      trigger = await _appendMintedAsync(
+        scope.ServiceProvider.GetRequiredService<IEventStore>(), second, new RebuildCreditedEvent { StreamId = second, Amount = 2m });
+    }
+    await _stampAsync();
+
+    _ = await _rewindAsync(sp, second, trigger);
+
+    await Assert.That(await _balanceAsync(sp, second)).IsEqualTo(112m)
+      .Because("the recovery applied the bonus to the second row live, so its rewind folds it: 100 + 10 + 2");
+  }
+
   private async Task<Guid> _lastEventIdAsync(Guid stream) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
