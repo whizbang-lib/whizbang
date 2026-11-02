@@ -1052,7 +1052,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its unfinished applies abandoned, and records that a handler with no record applied nothing. A rewind or rebuild
   (`wh_collective_apply_reach`) folds a collective in full when its apply completed or left no record, only into the
   rows it reached when it is partway or abandoned, and not at all when it applied nothing or is still queued and not
-  started; a replay that meets a collective still in flight takes no snapshot. Dead-letter recovery resumes the apply
+  started; a replay that meets a collective still in flight takes no snapshot. The collective snapshot fence counts a
+  collective with an abandoned record as in flight, so live and bootstrap snapshots of its rows defer (counted in
+  `whizbang.perspective.snapshots_deferred`) until its dead letter is recovered or purged. Dead-letter recovery resumes the apply
   and completes the rest exactly once. Maintenance sweeps a finished record past
   `Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays` (`collective_apply_progress_retention_days`,
   default 7) once its collective's work row is no longer pending; an abandoned record goes with the last dead letter of

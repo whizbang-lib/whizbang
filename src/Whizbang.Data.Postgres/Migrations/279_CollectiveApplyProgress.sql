@@ -28,6 +28,12 @@
 --              rebuild folds a collective into a row only where the live sink applied it or will not apply it.
 --              Dead-letter recovery resumes the apply after through_id and completes the rest exactly once.
 --
+--              The snapshot fence (276, #1963) counts a collective with an abandoned record as in flight (owner
+--              decision, 2026-11-01): a snapshot taken while it is dead-lettered would record it as held by rows its
+--              batches never reached, which recovery may yet reach live. When the dead letter settles Recovered, a
+--              trigger clears the collective's abandoned marks and removes the '*' record (every handler then has a
+--              record of its own); purging the dead letter removes them as below. Either way the fence is quiet again.
+--
 --              Retention: maintenance (reap_unbounded_ledgers) sweeps a finished record past
 --              collective_apply_progress_retention_days (default 7) once its collective's work row is no longer
 --              pending. An abandoned record is deleted with the last dead letter of its collective; after that a
@@ -37,9 +43,11 @@
 --
 -- Dependencies: 050 (wh_dead_letters, wh_dead_letters_stream_idx), 073 (ix_perspective_events_event_id_unprocessed),
 --               238 (last word of reap_unbounded_ledgers), 241 (last word of move_to_dead_letters, whose perspective
---               capture records the event id and the perspective name)
+--               capture records the event id and the perspective name), 236 (_wh_settle_recovered_dead_letter, which
+--               sets recovered_at), 276 (last word of wh_collective_snapshot_fence)
 -- Objects: wh_collective_apply_progress, _wh_collective_progress_abandon, _wh_collective_progress_forget,
---          trg_wh_collective_progress_abandon, trg_wh_collective_progress_forget, wh_collective_apply_reach,
+--          _wh_collective_progress_recovered, trg_wh_collective_progress_abandon, trg_wh_collective_progress_forget,
+--          trg_wh_collective_progress_recovered, wh_collective_apply_reach, wh_collective_snapshot_fence,
 --          reap_unbounded_ledgers
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
@@ -93,6 +101,40 @@ CREATE TRIGGER trg_wh_collective_progress_abandon
   FOR EACH ROW
   WHEN (NEW.source_table = 'wh_perspective_events' AND NEW.perspective_name = '__collective__')
   EXECUTE FUNCTION __SCHEMA__._wh_collective_progress_abandon();
+
+-- ────────────────────────────────────────────────────────────────────────────────────────────────
+-- A recovered dead letter clears the abandoned marks (owner decision, 2026-11-01). The recovery resumed the apply and the
+-- completion settled the dead letter Recovered (_wh_settle_recovered_dead_letter, 236): every handler's apply has finished
+-- and has a record of its own, so the '*' record is removed and no record of the collective stays abandoned. The snapshot
+-- fence stops counting the collective as in flight.
+-- <docs>fundamentals/messaging/collective-events#dead-lettered-collectives</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_AfterTheDeadLetterIsRecovered_AndTheApplyCompleted_IsQuietAgainAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_AfterRecoveryCompletedACollectiveDeadLetteredPartway_FoldsItIntoTheRowsTheRecoveryReachedAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_collective_progress_recovered() RETURNS TRIGGER AS $$
+DECLARE
+  v_event_id UUID := (NEW.envelope ->> 'event_id')::UUID;
+BEGIN
+  DELETE FROM __SCHEMA__.wh_collective_apply_progress
+  WHERE event_id = v_event_id AND entry_key = '*';
+
+  UPDATE __SCHEMA__.wh_collective_apply_progress
+  SET abandoned = FALSE
+  WHERE event_id = v_event_id AND abandoned;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_collective_progress_recovered() IS
+  'Trigger (owner decision, 2026-11-01): a dead-lettered collective settled Recovered clears its abandoned marks and its '
+  '''*'' record, so the snapshot fence stops counting it as in flight.';
+
+DROP TRIGGER IF EXISTS trg_wh_collective_progress_recovered ON __SCHEMA__.wh_dead_letters;
+CREATE TRIGGER trg_wh_collective_progress_recovered
+  AFTER UPDATE OF recovered_at ON __SCHEMA__.wh_dead_letters
+  FOR EACH ROW
+  WHEN (OLD.recovered_at IS NULL AND NEW.recovered_at IS NOT NULL
+        AND NEW.source_table = 'wh_perspective_events' AND NEW.perspective_name = '__collective__')
+  EXECUTE FUNCTION __SCHEMA__._wh_collective_progress_recovered();
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- An abandoned record goes with its dead letter (#1970, the owner's retention choice). When the last dead letter of a
@@ -161,6 +203,80 @@ $$ LANGUAGE sql STABLE;
 COMMENT ON FUNCTION __SCHEMA__.wh_collective_apply_reach(UUID[]) IS
   'How far each apply of the given collectives reached (#1970): every progress record, and which collectives are still '
   'queued. A replay folds a collective into a row only as far as the live sink has applied it or will not.';
+
+-- ONE overload: the sweep force-replays by name and a second signature would be left behind.
+SELECT __SCHEMA__.drop_all_overloads('wh_collective_snapshot_fence');
+
+-- ────────────────────────────────────────────────────────────────────────────────────────────────
+-- wh_collective_snapshot_fence, last word 276_CollectiveSnapshotFence.sql, copied whole. The only change: a collective of
+-- the tenant and types with an abandoned apply record (#1970: dead-lettered partway, or before any batch) is in flight
+-- (owner decision, 2026-11-01), until its dead letter is recovered or purged. The probe reads the abandoned records,
+-- which the progress table holds only while a dead letter does, and finds each one's event by its primary key.
+-- <docs>fundamentals/perspectives/snapshots#collectives</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_WithNoCollectiveOfTheRowInFlight_IsQuiet_AndMarksTheStoresHighestCommitSequenceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_WithACollectiveOfTheRowStillQueued_IsInFlightAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_WithACollectiveOfTheRowCompleteButUnstamped_IsInFlightAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_IgnoresAnotherTenantsCollectives_AndCollectivesOfOtherTypesAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_OfARowWithNoTenant_SeesOnlyCollectivesWithNoTenantAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_AfterAMark_IsInFlight_WhenACollectiveOfTheRowWasStampedPastItAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_OfAnEmptyStore_IsQuiet_WithNoMarkAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_WithACollectiveOfTheRowDeadLetteredPartway_IsInFlightAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_AfterTheDeadLetterIsRecovered_AndTheApplyCompleted_IsQuietAgainAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_AfterTheDeadLetterIsPurged_IsQuietAgainAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveSnapshotFenceSqlTests.cs:Fence_IgnoresAnAbandonedCollectiveOfAnotherTenantOrTypeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_AfterRecoveryCompletedACollectiveDeadLetteredPartway_FoldsItIntoTheRowsTheRecoveryReachedAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_collective_snapshot_fence(
+  p_tenant TEXT,
+  p_event_types TEXT[],
+  p_after BIGINT
+) RETURNS TABLE(
+  out_complete_through BIGINT,
+  out_in_flight BOOLEAN
+) AS $$
+  SELECT
+    (SELECT max(es.commit_sequence)
+     FROM __SCHEMA__.wh_event_store es
+     WHERE es.commit_sequence IS NOT NULL),
+    EXISTS (
+      SELECT 1
+      FROM __SCHEMA__.wh_perspective_events pe
+      INNER JOIN __SCHEMA__.wh_event_store es
+        ON es.stream_id = pe.stream_id
+        AND es.event_id = pe.event_id
+      WHERE pe.perspective_name = '__collective__'
+        AND pe.processed_at IS NULL
+        AND pe.stream_version IS NOT NULL
+        AND es.event_type = ANY(p_event_types)
+        AND (es.scope ->> 't') IS NOT DISTINCT FROM p_tenant)
+    OR EXISTS (
+      SELECT 1
+      FROM __SCHEMA__.wh_event_store es
+      WHERE es.commit_sequence IS NULL
+        AND es.event_type = ANY(p_event_types)
+        AND (es.scope ->> 't') IS NOT DISTINCT FROM p_tenant)
+    OR EXISTS (
+      SELECT 1
+      FROM __SCHEMA__.wh_collective_apply_progress p
+      INNER JOIN __SCHEMA__.wh_event_store es
+        ON es.event_id = p.event_id
+      WHERE p.abandoned
+        AND es.event_type = ANY(p_event_types)
+        AND (es.scope ->> 't') IS NOT DISTINCT FROM p_tenant)
+    OR (p_after IS NOT NULL AND EXISTS (
+      SELECT 1
+      FROM __SCHEMA__.wh_event_store es
+      WHERE es.commit_sequence IS NOT NULL
+        AND es.commit_sequence > p_after
+        AND es.event_type = ANY(p_event_types)
+        AND (es.scope ->> 't') IS NOT DISTINCT FROM p_tenant));
+$$ LANGUAGE sql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_collective_snapshot_fence(TEXT, TEXT[], BIGINT) IS
+  'The collective snapshot fence (#1963): the store''s highest commit sequence, and whether a collective of the tenant and '
+  'types is in flight (its __collective__ work row unprocessed, its event unstamped, or, when p_after is given, stamped '
+  'past it). Read before a snapshot''s row read and after its write; the snapshot records the mark only when neither '
+  'read finds one in flight. One statement, so both answers come from one view. 279: a collective with an abandoned apply '
+  'record (dead-lettered before it completed) is in flight until its dead letter is recovered or purged.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- reap_unbounded_ledgers, last word 238_LogSweepClearsTheDefaultPartition.sql, copied whole. The only change: a last task

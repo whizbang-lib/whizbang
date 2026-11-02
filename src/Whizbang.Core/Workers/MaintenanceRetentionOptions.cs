@@ -107,7 +107,7 @@ public sealed class MaintenanceRetentionOptions {
   /// finished apply and skips it. An abandoned record, left by a dead letter, is not swept by age: it goes with the last
   /// dead letter of its collective, and after that a rewind folds that collective in full again.
   /// </remarks>
-  /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
+  /// <docs>fundamentals/workers/maintenance-steps#ledger-retention</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
   public int? CollectiveApplyProgressDays { get; set; }

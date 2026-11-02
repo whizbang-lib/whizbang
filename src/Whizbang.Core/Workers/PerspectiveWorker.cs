@@ -3670,9 +3670,10 @@ public partial class PerspectiveWorker(
 
     // Drain re-offer during the completion-flush window: a prior dispatch already completed these
     // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
-    // still sees them and the cursor read may not reflect the advance yet — without this guard the
-    // sink re-reads the same collective envelope and re-runs the entire batched UPDATE (idempotent,
-    // N× the DB work; observed live as same-second full-count/0-row re-applies). Mirror of the
+    // still sees them and the cursor read may not reflect the advance yet. Without this guard the
+    // sink re-reads the same collective envelope and dispatches it again: each handler's progress
+    // record (#1969) skips an apply that finished and resumes one that did not, so nothing is applied
+    // twice, but the guard still saves the dispatch and its per-handler record reads. Mirror of the
     // per-event path's _filterDuplicateWorkItems. Only the ALL-completed case skips — a mixed set
     // means a new collective event arrived and the cursor-driven dispatch below handles ordering.
     // Both producers drop Guid.Empty before calling, and held-back rows are earlier runs' ids, so
