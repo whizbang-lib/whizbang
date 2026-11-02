@@ -186,6 +186,33 @@ public class ArchivedStreamHistoryProbeSqlTests : EFCoreTestBase {
     await Assert.That(await store.HasStreamEventsBeforeAsync(stream, ids[0])).IsFalse().Because("the control: rolled back");
   }
 
+  [Test]
+  public async Task Questions_InAnAbortedTransaction_Throw_AndTheContextsConnectionStaysUsableAfterTheRollbackAsync() {
+    // A statement that fails inside the context's transaction aborts it, so the next question fails inside its own try;
+    // the failure reaches the caller and the context's connection is released as it was taken.
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 1);
+    var store = _store(ctx);
+    var transaction = await ctx.Database.BeginTransactionAsync();
+    await using (var failing = connection.CreateCommand()) {
+      failing.CommandText = "SELECT 1 / 0";
+      await Assert.That(async () => await failing.ExecuteScalarAsync()).Throws<PostgresException>();
+    }
+
+    var thrown = await Assert.That(async () => await store.GetLastSequenceAsync(stream)).Throws<PostgresException>();
+
+    await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.InFailedSqlTransaction)
+      .Because("the question ran in the aborted transaction and its failure is not swallowed");
+    await Assert.That(connection.State).IsEqualTo(ConnectionState.Open)
+      .Because("the caller opened the connection, so the question's own open and close leave it open");
+    await transaction.RollbackAsync();
+    await transaction.DisposeAsync();
+    await Assert.That(await store.GetLastSequenceAsync(stream)).IsEqualTo(1L)
+      .Because("the control: after the rollback the same question answers on the same connection");
+  }
+
   // ── Cost ─────────────────────────────────────────────────────────────────────────────────────────
 
   [Test]
