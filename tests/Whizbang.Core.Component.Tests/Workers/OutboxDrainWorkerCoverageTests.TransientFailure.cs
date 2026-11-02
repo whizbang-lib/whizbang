@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -94,6 +95,9 @@ public partial class OutboxDrainWorkerCoverageTests {
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      // A clock that never moves: the recovery line's duration then reads exactly zero, which only the injected
+      // clock can give.
+      timeProvider: new FakeTimeProvider(),
       databaseFailureEscalation: escalation);
 
     using var cts = new CancellationTokenSource();
@@ -152,6 +156,8 @@ public partial class OutboxDrainWorkerCoverageTests {
     await Assert.That(recovered).Count().IsEqualTo(1)
       .Because("#1986: the batch that drains after the failure tells the escalation the database is answering");
     await Assert.That(recovered[0].Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(recovered[0].Message).Contains("after 00:00:00 of", StringComparison.Ordinal)
+      .Because("the run is measured on the worker's injected clock, never the real one");
   }
 
   [Test]
