@@ -73,6 +73,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       : [.. ledger.ToPinnedFormerNames()];
   }
 
+  /// <summary>The type's non-blank <c>[PinnedId]</c> value, or null when it has none.</summary>
+  private static string? _pinnedId(INamedTypeSymbol typeSymbol) {
+    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
+        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
+
+    return pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
+        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
+        !string.IsNullOrWhiteSpace(pinnedIdValue)
+      ? pinnedIdValue
+      : null;
+  }
+
   private static MessageTypeCatalogEntryInfo? _extractEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
@@ -115,15 +127,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var messageKind = isCommand ? COMMAND_KIND : EVENT_KIND;
     var kind = isPerspective ? "perspective" : messageKind;
 
-    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
-
-    string? pinnedId = null;
-    if (pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
-        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
-        !string.IsNullOrWhiteSpace(pinnedIdValue)) {
-      pinnedId = pinnedIdValue;
-    }
+    var pinnedId = _pinnedId(typeSymbol);
 
     // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
     // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
