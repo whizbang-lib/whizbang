@@ -48,7 +48,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// A worker with one consumer loop whose first cursor read deadlocks and whose later reads succeed,
   /// on a fake clock, so the loop's backoff after the failure lasts until the test steps the clock.
   /// </summary>
-  private static DeadlockingBatchWorker _createDeadlockingBatchWorker(string perspectiveName) {
+  private static DeadlockingBatchWorker _createDeadlockingBatchWorker(
+      string perspectiveName, DatabaseFailureEscalationOptions? escalation = null) {
     var coordinator = new RecordingWorkCoordinator();
     coordinator.SetNextCursorException(FakeDbException.WithSqlState("40P01", message: "deadlock detected"));
     var instanceProvider = new FakeInstanceProvider();
@@ -106,7 +107,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // One consumer loop so the batch that fails and the batch that follows are the same loop's.
         MaxConcurrentDrainConsumers = 1
       })).Value),
-      timeProvider: time);
+      timeProvider: time,
+      databaseFailureEscalation: escalation);
 
     return new DeadlockingBatchWorker(worker, harness, coordinator, runner, logger, time);
   }
@@ -141,7 +143,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     var reported = logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID);
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("#1986: the batch goes back and the loop retries, so a transient database failure is a Warning");
     await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
     await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
     await Assert.That(reported[0].Message).Contains(deadlockedStreamId.ToString(), StringComparison.Ordinal)
@@ -167,6 +170,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(runner.RunCallCount).IsEqualTo(1);
     await Assert.That(logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)).Count().IsEqualTo(1);
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
+    await Assert.That(logger.Lines.Where(l => l.Level >= LogLevel.Error)).IsEmpty()
+      .Because("#1986: one deadlock is far below the escalation threshold, so it pages nobody");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -209,5 +214,48 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(logger.LinesWith(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID)).IsEmpty();
     await Assert.That(runner.RunCallCount).IsEqualTo(0)
       .Because("nothing after the failed batch ran");
+  }
+
+  /// <summary>
+  /// The perspective worker reports its transient failures to the escalation and tells it when a batch runs clean: with
+  /// a threshold of one failure, the deadlocked batch logs the one Error and the batch after it the recovery line.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task Worker_TransientFailurePastTheThreshold_EscalatesOnceAndSaysWhenItRecoversAsync(CancellationToken cancellationToken) {
+    const string perspectiveName = "Deep.EscalatedPerspective";
+    var (worker, harness, _, _, logger, time) = _createDeadlockingBatchWorker(
+      perspectiveName, new DatabaseFailureEscalationOptions { ConsecutiveFailures = 1, FailingFor = TimeSpan.Zero });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = Guid.CreateVersion7(),
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }, cts.Token);
+    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, cancellationToken);
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = Guid.CreateVersion7(),
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }, cts.Token);
+    await FakeClockPump.StepUntilAsync(
+      time, logger.WhenLoggedAsync(DatabaseFailureEscalation.RECOVERED_EVENT_ID, cancellationToken));
+
+    var escalated = logger.LinesWith(DatabaseFailureEscalation.ESCALATED_EVENT_ID);
+    await Assert.That(escalated).Count().IsEqualTo(1);
+    await Assert.That(escalated[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(escalated[0].Message).Contains(nameof(PerspectiveWorker), StringComparison.Ordinal);
+    var recovered = logger.LinesWith(DatabaseFailureEscalation.RECOVERED_EVENT_ID);
+    await Assert.That(recovered).Count().IsEqualTo(1);
+    await Assert.That(recovered[0].Level).IsEqualTo(LogLevel.Information);
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

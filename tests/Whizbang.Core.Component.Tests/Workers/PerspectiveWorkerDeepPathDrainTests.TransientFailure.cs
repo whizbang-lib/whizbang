@@ -37,7 +37,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   /// and the runner the batch after the failure reached.
   /// </summary>
   private static async Task<FailedBatchRun> _runBatchAfterAFailedFetchAsync(
-      Exception firstFetchFailure, int expectedEventId, CancellationToken cancellationToken, Exception? releaseFailure = null) {
+      Exception firstFetchFailure, int expectedEventId, LogLevel expectedLevel, CancellationToken cancellationToken,
+      Exception? releaseFailure = null) {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator { ReleaseException = releaseFailure };
@@ -70,7 +71,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     var reported = logger.LinesWith(expectedEventId);
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(reported[0].Level).IsEqualTo(expectedLevel);
     await Assert.That(reported[0].Message).Contains(streamId.ToString(), StringComparison.Ordinal)
       .Because("an operator reads which streams the lost batch was carrying from the one line");
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
@@ -84,7 +85,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   public async Task DrainMode_TransientDatabaseFailure_IsReportedOnceAndTheLoopContinuesAsync(CancellationToken cancellationToken) {
     var run = await _runBatchAfterAFailedFetchAsync(
       FakeDbException.WithSqlState("40P01", message: "deadlock detected"),
-      PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, cancellationToken);
+      PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, LogLevel.Warning, cancellationToken);
 
     var reported = run.Logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)[0];
     await Assert.That(reported.Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
@@ -92,6 +93,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(reported.Exception).IsTypeOf<FakeDbException>();
     await Assert.That(run.Logger.LinesWith(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID)).IsEmpty()
       .Because("a deadlock is not a defect, and an operator paged for one would find nothing to fix");
+    await Assert.That(run.Logger.Lines.Where(l => l.Level >= LogLevel.Error)).IsEmpty()
+      .Because("#1986: each transient database failure is a Warning, and one is far below the escalation threshold");
 
     var released = run.Coordinator.PerspectiveLeaseReleases.Single();
     await Assert.That(released).IsEquivalentTo([run.StreamId])
@@ -105,9 +108,11 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   public async Task DrainMode_FailureThatIsNotTheDatabases_IsReportedAsADefectAndTheLoopContinuesAsync(CancellationToken cancellationToken) {
     var run = await _runBatchAfterAFailedFetchAsync(
       new InvalidOperationException("a defect in the fetch"),
-      PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID, cancellationToken);
+      PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID, LogLevel.Error, cancellationToken);
 
     var reported = run.Logger.LinesWith(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID)[0];
+    await Assert.That(reported.Level).IsEqualTo(LogLevel.Error)
+      .Because("#1986: a failure that is not the database's is a defect and wants fixing, so it stays an Error");
     await Assert.That(reported.Exception).IsTypeOf<InvalidOperationException>();
     await Assert.That(run.Logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)).IsEmpty()
       .Because("the loop survives a defect too, but it must not be filed as the database's doing");
@@ -155,7 +160,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     // batch's leases then lapse on their own, which is what happened before any of this existed.
     var run = await _runBatchAfterAFailedFetchAsync(
       FakeDbException.WithSqlState("40P01"),
-      PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, cancellationToken,
+      PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, LogLevel.Warning, cancellationToken,
       releaseFailure: new NotImplementedException("this store does not release leases"));
 
     var noted = run.Logger.LinesWith(LEASES_NOT_RELEASED_EVENT_ID);
