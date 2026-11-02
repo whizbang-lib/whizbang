@@ -38,7 +38,7 @@ namespace Whizbang.Core.Workers;
 /// once, as the dead-letter record, when the dead-letter drain takes it into custody.
 /// </para>
 /// </remarks>
-/// <docs>operations/workers/transport-consumer</docs>
+/// <docs>messaging/transports/transport-consumer#failed-batches</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchGuardTests.cs</tests>
 public static partial class TransportBatchGuard {
 
