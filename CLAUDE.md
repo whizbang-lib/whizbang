@@ -45,6 +45,23 @@ same PR. `Directory.Build.props` is a **local placeholder**, never the source of
 
 ---
 
+## Gravity: the design principle behind every API
+
+**Design so the path of least resistance is the correct design and architecture.** The core system forces you down
+the right path: if you trip and fall, you fall toward the gravity.
+
+- When the same correct behavior is needed in many places, **the core system owns it** through a pipeline, a
+  registration or a generator. Never rely on every author remembering to call a shared helper: a helper still depends
+  on the next author choosing it.
+- **Back it with enforcement**: a test or an analyzer diagnostic (an error from the start) that fails when something
+  bypasses the registration, so a new contributor cannot quietly opt out.
+- **Make the safe behavior the default** for a consumer who configures nothing.
+- When reviewing or proposing a change, ask what the easiest path produces. If the easy path is wrong, the API is wrong.
+
+Worked example: workers are registered with the startup stage they start at, and the host starts them only then; a
+worker contains no gate code, and a test fails when a hosted service has no stage (#1636). See the docs site,
+`contributors/gravity`, and `ai-docs/code-standards.md#gravity`.
+
 ## Essential Standards
 
 ### Code Style
