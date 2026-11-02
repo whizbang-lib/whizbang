@@ -38,4 +38,27 @@ public static class AuditLedger {
   /// <param name="tenantId">The audited event's tenant; null or empty is the no-tenant ledger.</param>
   /// <returns>The tenant's ledger stream id; the same tenant always yields the same id.</returns>
   public static Guid StreamFor(string? tenantId) => NameBasedGuid.V5(Namespace, tenantId ?? string.Empty);
+
+  /// <summary>The name the record namespace is derived from.</summary>
+  public const string RECORD_NAMESPACE_NAME = "sys-audit-record";
+
+  /// <summary>The namespace every audit record id is derived within: <c>UUIDv5(nil, "sys-audit-record")</c>.</summary>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordNamespace_IsTheVersionFiveIdOfSysAuditRecordUnderTheNilNamespaceAsync</tests>
+  public static Guid RecordNamespace { get; } = NameBasedGuid.V5(Guid.Empty, RECORD_NAMESPACE_NAME);
+
+  /// <summary>
+  /// The id of the audit record of the event <paramref name="originalEventId"/>: <c>UUIDv5(RecordNamespace, id)</c>, the
+  /// event id written in its 36-character lower-case form. Every audit writer and the ledger rebuild use it, so a record
+  /// derived again from the same event is the same record, and the audit perspective, which keys a record by its id,
+  /// holds one row for it however often it is delivered (#1724). Reproducible in Postgres as
+  /// <c>uuid_generate_v5(uuid_generate_v5(uuid_nil(), 'sys-audit-record'), original_event_id::text)</c>.
+  /// <strong>Never change it:</strong> a rebuild must derive the ids the records already carry.
+  /// </summary>
+  /// <param name="originalEventId">The id of the audited event.</param>
+  /// <returns>The record's id.</returns>
+  /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_KnownEvent_MatchesTheReferenceVectorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_SameEvent_IsTheSameRecordAsync</tests>
+  public static Guid RecordIdFor(Guid originalEventId) =>
+    NameBasedGuid.V5(RecordNamespace, originalEventId.ToString("D", System.Globalization.CultureInfo.InvariantCulture));
 }

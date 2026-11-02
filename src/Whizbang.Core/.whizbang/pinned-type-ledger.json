@@ -44,6 +44,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "1cd01d44-ef74-4cd5-881e-08e958aada64",
+      "clrTypeName": "Whizbang.Core.Commands.System.RequestAuditRebuildCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "c50126f7-aa4f-4cb8-b46f-36f589e0c36b",
       "clrTypeName": "Whizbang.Core.Commands.System.ResumeProcessingCommand",
       "kind": "command",

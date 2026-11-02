@@ -49,6 +49,8 @@ public class SystemControlTagTests {
     typeof(DiagnosticsCommand),
     typeof(PauseProcessingCommand),
     typeof(ResumeProcessingCommand),
+    // An audit ledger rebuild (#1724) is one-shot operator intent too: expiring it would silently lose the rebuild.
+    typeof(RequestAuditRebuildCommand),
   ];
 
   private static readonly Type[] _durableCompositeEnvelopes = [

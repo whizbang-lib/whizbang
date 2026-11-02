@@ -76,6 +76,51 @@ public class AuditDependencyInjectionWiringTests {
              + "container never passes leaves every record equally anonymous");
   }
 
+  [Test]
+  public async Task ComposedDecoratorReceivesTheRegisteredEphemeralResolverAsync() {
+    var channel = new RecordingChannel();
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStore>(new NoopStore());
+    services.AddSingleton<IDeferredOutboxChannel>(channel);
+    services.AddSingleton<IEphemeralModeResolver>(_plainEventIsEphemeral());
+    services.AddSystemEvents(opts => opts.EnableEventAudit());
+
+    var store = services.BuildServiceProvider().GetRequiredService<IEventStore>();
+    await store.AppendAsync(Guid.NewGuid(), _envelope(new PlainEvent { Name = "x" }));
+
+    // OptOut audits PlainEvent unless the decorator learns from the resolver that it is ephemeral (#1730).
+    await Assert.That(channel.QueuedMessages).IsEmpty()
+      .Because("the resolver is what recognizes a type declared ephemeral through a base record, so the composed "
+             + "decorator must be given it");
+  }
+
+  [Test]
+  public async Task DecoratedStoreReceivesTheRegisteredEphemeralResolverAsync() {
+    var channel = new RecordingChannel();
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStore>(_ => new NoopStore());
+    services.AddSingleton<IDeferredOutboxChannel>(channel);
+    services.AddSingleton<IEphemeralModeResolver>(_plainEventIsEphemeral());
+    services.Configure<SystemEventOptions>(opts => opts.EnableEventAudit());
+    services.DecorateEventStoreWithAuditing();
+
+    var store = services.BuildServiceProvider().GetRequiredService<IEventStore>();
+    await store.AppendAsync(Guid.NewGuid(), _envelope(new PlainEvent { Name = "x" }));
+
+    await Assert.That(channel.QueuedMessages).IsEmpty();
+  }
+
+  private static EphemeralModeResolver _plainEventIsEphemeral() =>
+    new(new SingleEntryCatalog(new MessageTypeCatalogEntry(
+      typeof(PlainEvent), "Whizbang.Core.Tests.SystemEvents.AuditDependencyInjectionWiringTests+PlainEvent", "event", null) {
+      Ephemeral = new Whizbang.Core.Attributes.EphemeralInfo(
+        Whizbang.Core.Attributes.Destruction.WhenConsumed, Whizbang.Core.Attributes.TransientStorage.PersistedRow)
+    }));
+
+  private sealed class SingleEntryCatalog(MessageTypeCatalogEntry entry) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [entry];
+  }
+
   private static MessageEnvelope<T> _envelope<T>(T payload) => new() {
     MessageId = MessageId.New(),
     Payload = payload,

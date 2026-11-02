@@ -91,7 +91,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
     var decorator = new AuditingEventStoreDecorator(
       new InertStore(), channel, Options.Create(options),
       new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
+      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance));
     return (decorator, channel);
   }
 

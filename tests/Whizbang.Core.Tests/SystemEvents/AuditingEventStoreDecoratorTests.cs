@@ -36,7 +36,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -47,7 +47,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -58,7 +58,7 @@ public class AuditingEventStoreDecoratorTests {
     var channel = new MockDeferredOutboxChannel();
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -562,6 +562,91 @@ public class AuditingEventStoreDecoratorTests {
   [AuditEvent(IncludeBody = true)]
   internal sealed record BodyKeptEvent([property: StreamId] Guid Id, string Note) : IEvent;
 
+  // Ephemeral through the shipped marker, which needs no resolver to recognize.
+  internal sealed record EphemeralPresence([property: StreamId] Guid Id) : IEphemeralEvent;
+
+  [AuditEvent(IncludeBody = true)]
+  internal sealed record EphemeralBodyKept([property: StreamId] Guid Id) : IEphemeralEvent;
+
+  // Ephemeral only in the generated catalog, as a type declared [Ephemeral] through a base record is.
+  internal sealed record CatalogEphemeral([property: StreamId] Guid Id) : IEvent;
+
+  #endregion
+
+  #region Name-based record ids (#1724)
+
+  [Test]
+  public async Task AppendAsync_TheRecordId_IsDerivedFromTheAuditedEventAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var envelope = _createTestEnvelope(new TestEvent { Name = "named" });
+
+    await decorator.AppendAsync(Guid.NewGuid(), envelope);
+
+    await Assert.That(channel.QueuedMessages.Single().Envelope.Payload.GetProperty("Id").GetGuid())
+      .IsEqualTo(AuditLedger.RecordIdFor(envelope.MessageId.Value));
+  }
+
+  #endregion
+
+  #region Ephemeral events (#1730)
+
+  [Test]
+  public async Task AppendAsync_AnEphemeralEvent_IsNotAuditedAsync() {
+    var (decorator, inner, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new EphemeralPresence(Guid.Empty)));
+
+    await Assert.That(inner.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(channel.QueuedMessages).IsEmpty()
+      .Because("a record pointing at an ephemeral event dangles once the origin reaps it");
+  }
+
+  [Test]
+  public async Task AppendAsync_AnEphemeralEventThatKeepsItsBody_IsAuditedWithItAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new EphemeralBodyKept(Guid.Empty)));
+
+    await Assert.That(channel.QueuedMessages.Single().Envelope.Payload.TryGetProperty("OriginalBody", out _)).IsTrue();
+  }
+
+  [Test]
+  public async Task AppendAsync_ATypeTheCatalogDeclaresEphemeral_IsNotAuditedAsync() {
+    var resolver = new EphemeralModeResolver(new SingleEntryCatalog(new MessageTypeCatalogEntry(
+      typeof(CatalogEphemeral), "Whizbang.Core.Tests.SystemEvents.AuditingEventStoreDecoratorTests+CatalogEphemeral", "event", null) {
+      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.PersistedRow)
+    }));
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit(), resolver);
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new CatalogEphemeral(Guid.Empty)));
+
+    await Assert.That(channel.QueuedMessages).IsEmpty();
+  }
+
+  [Test]
+  public async Task AppendAsync_TheSameTypeUnderACatalogThatDoesNotDeclareIt_IsAuditedAsync() {
+    // The control for the test above: the catalog is what makes it ephemeral.
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new CatalogEphemeral(Guid.Empty)));
+
+    await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Constructor_WithNullEphemeralResolver_ThrowsArgumentNullExceptionAsync() {
+    // Required, with a TryAdd default: an optional resolver would be silently absent wherever the decorator is built by hand.
+    await Assert.That(() => new AuditingEventStoreDecorator(new MockEventStore(), new MockDeferredOutboxChannel(),
+        Options.Create(new SystemEventOptions()),
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+        Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, NullLogger<AuditingEventStoreDecorator>.Instance, null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  private sealed class SingleEntryCatalog(MessageTypeCatalogEntry entry) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [entry];
+  }
+
   #endregion
 
   #region Audit body (#1588)
@@ -607,12 +692,13 @@ public class AuditingEventStoreDecoratorTests {
   #region Helper Methods
 
   private static (AuditingEventStoreDecorator Decorator, MockEventStore Inner, MockDeferredOutboxChannel Channel)
-      _createDecorator(Action<SystemEventOptions>? configure = null) {
+      _createDecorator(Action<SystemEventOptions>? configure = null, IEphemeralModeResolver? ephemeralModeResolver = null) {
     var options = new SystemEventOptions();
     configure?.Invoke(options);
     var inner = new MockEventStore();
     var channel = new MockDeferredOutboxChannel();
-    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
+    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance,
+      ephemeralModeResolver: ephemeralModeResolver ?? new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
     return (decorator, inner, channel);
   }
 

@@ -243,7 +243,7 @@ public class StreamResolutionParityTests {
     var decorator = new AuditingEventStoreDecorator(
       new InertStore(), channel, Options.Create(new SystemEventOptions().EnableEventAudit()),
       new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
+      NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance));
     decorator.AppendAsync(_s1, new ParityEvent(_s1, "audited")).GetAwaiter().GetResult();
     var record = channel.Queued.Single();
     return new Delivery([_recordIdOf(record)], [_receive(record.Envelope, typeof(EventAudited))]);
