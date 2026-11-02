@@ -164,7 +164,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     // with jittered backoff so contention clears here, not at the __collective__ sink's attempt counter. Each
     // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
     // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
-    // onBatchApplied first (#964) — see EFCoreCollectiveAdapter's twin note. onBatchApplied is also the per-batch
+    // onBatchApplied first (#964); see EFCoreCollectiveAdapter's twin note. onBatchApplied is also the per-batch
     // lease-renewal seam after every committed batch.
     var (total, _) = await CollectiveApplyProgress.RunAsync(
       from => CollectiveApplyContention.WaitingForTheLockAsync(

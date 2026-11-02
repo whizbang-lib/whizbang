@@ -190,7 +190,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     }
 
     // The per-batch transaction must run inside the DbContext's execution strategy: a DbContext configured
-    // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy — the norm in production) forbids
+    // with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy, the norm in production) forbids
     // a user-initiated BeginTransaction outside strategy.ExecuteAsync (the transaction must be one retriable
     // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
     // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
