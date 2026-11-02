@@ -962,7 +962,7 @@ public sealed partial class MaintenanceWorker(
     LogDispositionUnavailable(_logger, targets.Count, disposition, reason, until);
   }
 
-  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
     Message = "Ephemeral reap of {Count} event(s) held until {Until}: their disposition is {Disposition}, which the reaper cannot carry out: {Reason}")]
   private static partial void LogDispositionUnavailable(ILogger logger, int count, Whizbang.Core.Lifecycle.Disposition disposition, string reason, DateTimeOffset until);
 
