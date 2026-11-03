@@ -84,7 +84,9 @@ public sealed class IntegrityDeferringReceptor<TMessage> : IReceptor<TMessage> w
   }
 
   /// <summary>The drain's handler: reads the recorded message back and runs the wrapped receptor.</summary>
+  /// <remarks>The wrapped receptor opens its own scope, as it does when dispatched, so the drain's scope is unused.</remarks>
   internal async Task HandleDeferredAsync(string payload, IServiceProvider services, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(services);
     var message = JsonSerializer.Deserialize(payload, RegisteredJson.TypeInfo<TMessage>())
       ?? throw new JsonException($"The recorded {DeliveryType} delivery read back as null.");
     await Inner.HandleAsync(message, cancellationToken).ConfigureAwait(false);
