@@ -16,15 +16,19 @@ namespace Whizbang.Sagas;
 /// container, through <see cref="SagaItemStreams.Of(Guid, string)"/>, which reads the process-wide namespace.
 /// </remarks>
 /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
-/// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_WarnsAtStartNamingBothAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_WarnsNamingBothAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/FirstRegistrationSlotConcurrencyTests.cs:TheConflictWarning_IsLoggedWhenItsHostStarts_AndStopsWithNothingToDoAsync</tests>
 internal sealed partial class SagaItemStreamNamespaceConflictWarning(
     ILogger<SagaItemStreamNamespaceConflictWarning> logger, Guid processWide, Guid requested) : IHostedService {
 
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {
-    LogNamespaceNotApplied(logger, requested, processWide);
+    Report();
     return Task.CompletedTask;
   }
+
+  /// <summary>Logs the warning naming both namespaces. What <see cref="StartAsync"/> does when the host starts.</summary>
+  internal void Report() => LogNamespaceNotApplied(logger, requested, processWide);
 
   /// <inheritdoc/>
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

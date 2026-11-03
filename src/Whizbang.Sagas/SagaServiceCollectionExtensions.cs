@@ -49,7 +49,7 @@ public static class SagaServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:HostWithItsOwnTickReceptor_SubscribesOnce_AndEachTickIsRecoveredOnceAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:TwoContainers_EachResolveADeriverForTheirOwnNamespaceAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaItemStreamNamespacePerHostTests.cs:TwoHostsWithDifferentNamespaces_EachHostsWatchdogReadsItsOwnItemsAsTerminalAsync</tests>
-  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_WarnsAtStartNamingBothAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_WarnsNamingBothAsync</tests>
   public static IServiceCollection AddWhizbangSagas(this IServiceCollection services, Action<SagaOptions>? configure = null) {
     ArgumentNullException.ThrowIfNull(services);
 

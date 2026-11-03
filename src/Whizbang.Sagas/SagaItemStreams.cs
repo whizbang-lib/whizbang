@@ -75,40 +75,29 @@ public static class SagaItemStreams {
   /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
   /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs</tests>
   public static Guid AppDefaultNamespace {
-    get => Volatile.Read(ref _registered)?.Namespace ?? DefaultNamespace;
+    get => _registration.Current ?? DefaultNamespace;
     // Tests only: overwrites whatever is registered. Registrations go through RegisterAppDefaultNamespace.
-    internal set => Volatile.Write(ref _registered, new Registration(value));
+    internal set => _registration.Overwrite(value);
   }
 
-  /// <summary>The registered namespace, or null before the first registration. Replaced whole, never mutated.</summary>
-  private static Registration? _registered;
-
-  private sealed record Registration(Guid Namespace);
+  /// <summary>The process-wide registration: first wins, atomically.</summary>
+  private static readonly FirstRegistrationSlot _registration = new();
 
   /// <summary>
-  /// Registers <paramref name="namespaceId"/> as the process-wide namespace unless one is registered already, atomically
-  /// so registrations racing from several threads settle on one.
+  /// Registers <paramref name="namespaceId"/> as the process-wide namespace unless one is registered already.
   /// </summary>
   /// <param name="namespaceId">The namespace a registration asks for.</param>
   /// <returns>The namespace in effect afterward: <paramref name="namespaceId"/> for the first registration, the first
   /// registration's namespace for every later one.</returns>
-  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ConcurrentRegistrations_SettleOnOneNamespace_ThatEveryRegistrationIsToldAsync</tests>
-  internal static Guid RegisterAppDefaultNamespace(Guid namespaceId) {
-    var prior = Interlocked.CompareExchange(ref _registered, new Registration(namespaceId), null);
-    return prior?.Namespace ?? namespaceId;
-  }
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_DoesNotOverwriteTheFirstAsync</tests>
+  internal static Guid RegisterAppDefaultNamespace(Guid namespaceId) => _registration.Register(namespaceId);
 
   /// <summary>
   /// Clears the registration so the next one is the first; for tests that share this process-wide value. Disposing the
   /// returned scope puts back exactly what was there, including no registration at all.
   /// </summary>
   /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ResetForTesting_DisposingTheScope_PutsBackTheRegistrationItClearedAsync</tests>
-  internal static IDisposable ResetAppDefaultNamespaceForTesting() =>
-    new RegistrationRestore(Interlocked.Exchange(ref _registered, null));
-
-  private sealed class RegistrationRestore(Registration? saved) : IDisposable {
-    public void Dispose() => Volatile.Write(ref _registered, saved);
-  }
+  internal static IDisposable ResetAppDefaultNamespaceForTesting() => _registration.Reset();
 
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /
