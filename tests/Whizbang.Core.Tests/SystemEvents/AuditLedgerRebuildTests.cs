@@ -214,6 +214,58 @@ public class AuditLedgerRebuildTests {
       .Because("OptIn audits only marked types, and a type this build does not know carries no mark");
   }
 
+  /// <summary>
+  /// The rebuild's skip of an unresolvable type under OptIn is never silent (#1980), as the live outbox path's is not:
+  /// a missing record looks like a type nobody opted in. Documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>.
+  /// </summary>
+  [Test]
+  public async Task Rederive_AnUnknownTypeUnderOptIn_WarnsNamingTheTypeAsync() {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var logger = new CapturingLogger();
+
+    var message = _rebuildLogging(AuditMode.OptIn, logger).Rederive(stored);
+
+    await Assert.That(message).IsNull();
+    await Assert.That(logger.Warnings.Any(w => w.Contains("Gone.Renamed, Gone", StringComparison.Ordinal)
+        && w.Contains("was not audited", StringComparison.Ordinal))).IsTrue()
+      .Because("a record not rebuilt because its type could not be resolved must say so, and name the type");
+  }
+
+  /// <summary>Under OptOut the unresolvable type is audited, so there is no skip to report.</summary>
+  [Test]
+  public async Task Rederive_AnUnknownTypeUnderOptOut_DoesNotWarnAsync() {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var logger = new CapturingLogger();
+
+    var message = _rebuildLogging(AuditMode.OptOut, logger).Rederive(stored);
+
+    await Assert.That(message).IsNotNull();
+    await Assert.That(logger.Warnings).IsEmpty();
+  }
+
+  private static AuditLedgerRebuild _rebuildLogging(AuditMode mode, CapturingLogger logger) {
+    var options = new SystemEventOptions();
+    options.EnableEventAudit();
+    options.AuditMode = mode;
+    return new AuditLedgerRebuild(new Catalog(), options, new FakeTimeProvider(_now), logger);
+  }
+
+  private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger<AuditLedgerRebuild> {
+    private readonly List<string> _warnings = [];
+    public IReadOnlyList<string> Warnings { get { lock (_warnings) { return [.. _warnings]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) {
+        lock (_warnings) {
+          _warnings.Add(formatter(state, exception));
+        }
+      }
+    }
+  }
+
   [Test]
   public async Task Rederive_AnUnknownEphemeralType_IsNoRecordAsync() {
     var stored = _stored(typeof(RebuildOrderPlaced), flags: EventFlags.Ephemeral) with { EventType = "Gone.Renamed, Gone" };

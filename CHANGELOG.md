@@ -820,7 +820,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The live outbox audit path skips an unresolvable event type under OptIn, as the ledger rebuild does (#1980).** An
   event type the live path cannot resolve was audited under both modes, while the rebuild skips it under `OptIn`, so a
   rebuilt ledger could be missing records the live path wrote. Under `OptIn` it is now not audited, and every such skip
-  logs a warning naming the type, so a resolution failure is never silent. `OptOut` is unchanged: the type is audited.
+  logs a warning naming the type, so a resolution failure is never silent. The rebuild now warns the same way: a new
+  `AuditLedgerRebuild` constructor overload takes an `ILogger<AuditLedgerRebuild>`, which the built-in rebuild receptor
+  resolves from the container. `OptOut` is unchanged: the type is audited.
 
 - **Stream-integrity work runs on the maintainer, idle-gated (#2001).** Received checkpoints, manifest requests,
   manifest chunks, redelivery requests and bundle reconciles are recorded in `wh_integrity_deliveries` (migration 302)
