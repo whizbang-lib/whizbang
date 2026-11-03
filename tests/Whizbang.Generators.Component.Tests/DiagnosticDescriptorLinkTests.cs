@@ -44,6 +44,8 @@ public partial class DiagnosticDescriptorLinkTests {
       .Because("The EF Core generator's notices are declared too");
     await Assert.That(descriptors.Select(d => d.Id)).Contains("WHIZ306")
       .Because("The shared generator library declares descriptors too");
+    await Assert.That(descriptors.Select(d => d.Id)).Contains("WHIZ604")
+      .Because("The repository analyzers under tools/ declare descriptors too");
   }
 
   private sealed record Declared(string Id, string Where, List<string> Docs, int Tests);
