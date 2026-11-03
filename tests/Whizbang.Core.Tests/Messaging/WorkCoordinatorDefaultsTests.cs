@@ -477,6 +477,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(coordinator.RecordsInstanceTransitions).IsFalse()
+      .Because("a coordinator that keeps no instance rows has nothing to record, so the stage gate does not wait for a "
+        + "record that can never come (#1636)");
+  }
+
+  [Test]
   public async Task RequestStandbyAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

@@ -9,11 +9,6 @@ namespace Whizbang.Core.Archival;
 /// that holds its versions, and an append would number from nothing hot and reuse one, so every write path applies the
 /// policy before it stores.
 /// </summary>
-/// <remarks>
-/// A third policy, starting a new generation of the stream from its final snapshot, needs the final snapshot that
-/// finalization takes (#1734) and ships with it; it is not a value here yet, so a configuration that names it is refused
-/// at startup rather than read as one of these.
-/// </remarks>
 /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public enum AppendToArchivedPolicy {
@@ -31,4 +26,12 @@ public enum AppendToArchivedPolicy {
   /// letter is redriven by the dead-letter recovery worker.
   /// </summary>
   AutoRestore = 1,
+
+  /// <summary>
+  /// The append starts a new generation of the stream (#1734): it is stored at the tombstone's last version plus one,
+  /// the stream becomes active again with its archive as a prefix, and each perspective resumes after its parked cursor,
+  /// from the final snapshot taken there. When a perspective holds no snapshot at its parked cursor, the append is treated
+  /// as <see cref="AutoRestore"/>.
+  /// </summary>
+  NewGeneration = 2,
 }

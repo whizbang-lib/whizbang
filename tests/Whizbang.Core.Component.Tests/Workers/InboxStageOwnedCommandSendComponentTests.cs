@@ -111,8 +111,6 @@ public class InboxStageOwnedCommandSendComponentTests {
     };
 
     var inbox = new FakeInboxChannelWriter();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
 
@@ -122,7 +120,6 @@ public class InboxStageOwnedCommandSendComponentTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: new NullHandlerCommitChannel(),
       failureChannel: new NullFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

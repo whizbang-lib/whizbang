@@ -770,7 +770,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var result = await connection.QueryFirstOrDefaultAsync<CursorQueryResult>(
-      $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {prefix}wh_perspective_cursors WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
+      // #1734: the live cursor, else the one a whole-stream archive parked (a NewGeneration stream resumes after it).
+      $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {prefix}wh_perspective_resume_cursors(ARRAY[@StreamId]::uuid[], @PerspectiveName)",
       new { StreamId = streamId, PerspectiveName = perspectiveName },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -1016,6 +1017,10 @@ public partial class DapperWorkCoordinator(
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
+
+  /// <inheritdoc />
+  /// <remarks>This driver keeps instance rows, so a stage counts as recorded only once its write lands (#1636).</remarks>
+  public bool RecordsInstanceTransitions => true;
 
   /// <inheritdoc />
   public async Task<bool> RecordInstanceTransitionAsync(

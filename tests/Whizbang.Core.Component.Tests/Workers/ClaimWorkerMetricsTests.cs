@@ -115,13 +115,10 @@ public class ClaimWorkerMetricsTests {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new Instance(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 10, PollingMaxIntervalMilliseconds = 50 }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),

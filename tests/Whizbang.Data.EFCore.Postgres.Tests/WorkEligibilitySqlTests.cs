@@ -199,6 +199,14 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
     await Assert.That(partitions).IsEquivalentTo(_oddPartitions);
   }
 
+  /// <summary>
+  /// Flipped by 300 (#1636). The name is 229's, kept because 229's claim_work links to it and a shipped migration is
+  /// never edited; the rule it names is reversed. 300 drops 229's "the caller counts itself whatever its row says" for a
+  /// caller whose row records that it is not eligible yet: it gets nothing. 229 counted it so that, ranked as absent, it would not fall to a solo rank and
+  /// take every partition; refusing it outright has no such risk, and a starting instance's share is already its
+  /// peers' (they rank it out, and the assigner leaves it out). A data plane that started before its row recorded
+  /// Accept commands claims nothing until it does.
+  /// </summary>
   [Test]
   public async Task Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync() {
     var (self, peer) = _pair();
@@ -209,9 +217,56 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
 
     var (partitions, _) = await _claimAsync(conn, self, phase: null);
 
+    await Assert.That(partitions).IsEmpty()
+      .Because("its row says it is not eligible for work, so the claim gives it none; its peer covers every partition");
+  }
+
+  /// <summary>
+  /// The dependency 229 named and 300 keeps: a draining caller (recorded phase Stopping) still claims its share. Under a
+  /// published assignment its partitions stay its own until the assigner republishes, so refusing it would leave them
+  /// unclaimed for that window; claiming overlaps its peers instead, and stream leases keep the work single.
+  /// </summary>
+  [Test]
+  public async Task Claim_ADrainingCaller_StillClaimsItsShareAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, nameof(LifecyclePhase.Stopping));
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, _) = await _claimAsync(conn, self, phase: null);
+
     await Assert.That(partitions).IsEquivalentTo(_oddPartitions)
-      .Because("the caller is running this claim: ranked as absent it would fall to a solo rank and take every "
-        + "partition its peer covers");
+      .Because("a draining instance finishes its share rather than leaving it unclaimed until the next assignment");
+  }
+
+  /// <summary>An older build records no phase and no stage: eligible whenever live, as 229 kept it, so it still claims.</summary>
+  [Test]
+  public async Task Claim_ACallerThatRecordsNoPhase_StillClaimsItsShareAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, phase: null);
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, _) = await _claimAsync(conn, self, phase: null);
+
+    await Assert.That(partitions).IsEquivalentTo(_oddPartitions);
+  }
+
+  /// <summary>A refused caller is still asked to register when its row is stale, so the next claim finds it current.</summary>
+  [Test]
+  public async Task Claim_ARefusedCallerWhoseRowIsStale_IsStillAskedToRegisterAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, nameof(LifecyclePhase.Migrating), age: TimeSpan.FromMinutes(5));
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, notices) = await _claimAsync(conn, self, phase: null);
+
+    await Assert.That(partitions).IsEmpty();
+    await Assert.That(notices).Contains("whizbang.instance_registration_stale=true");
   }
 
   // --- the caller's own recorded phase ---------------------------------------------------------

@@ -31,7 +31,6 @@ public class LeaseRenewalWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new LeaseRenewalWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         options: Microsoft.Extensions.Options.Options.Create(new LeaseRenewalWorkerOptions()),
         logger: NullLogger<LeaseRenewalWorker>.Instance,
         pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -45,7 +44,6 @@ public class LeaseRenewalWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new LeaseRenewalWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         options: null!,
         logger: NullLogger<LeaseRenewalWorker>.Instance,
         pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -59,7 +57,6 @@ public class LeaseRenewalWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new LeaseRenewalWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         options: new NullValueOptions(),
         logger: NullLogger<LeaseRenewalWorker>.Instance,
         pinnedPool: NoOpPinnedConnectionPool.Instance,

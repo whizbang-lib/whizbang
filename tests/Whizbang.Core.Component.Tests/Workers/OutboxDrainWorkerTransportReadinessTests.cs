@@ -211,8 +211,6 @@ public class OutboxDrainWorkerTransportReadinessTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var drain = new DrainChannel();
     var completions = new CompletionChannel(coordinator);
     var failures = new FailureChannel();
@@ -225,7 +223,6 @@ public class OutboxDrainWorkerTransportReadinessTests {
       drainChannel: drain,
       completionChannel: completions,
       failureChannel: failures,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,

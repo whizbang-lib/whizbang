@@ -72,11 +72,8 @@ public class MaintenanceWorkerEpochClosureTests {
       services.AddSingleton(Options.Create(integrity));
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
   }

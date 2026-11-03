@@ -326,28 +326,6 @@ public class OutboxDrainWorkerGapTests {
     }
   }
 
-  /// <summary>
-  /// A schema gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is
-  /// the deterministic "the worker is parked at the barrier" signal. Since .NET 10,
-  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
-  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
-  /// scheduled, and cancelling before the thread pool dequeues the work item settles the task
-  /// Canceled with the delegate never invoked — satisfying <c>IsCompleted</c>, <c>!IsFaulted</c>
-  /// and "zero fetches" all at once.
-  /// </summary>
-  private sealed class GapBlockingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   // --- helpers ---
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -487,20 +465,13 @@ public class OutboxDrainWorkerGapTests {
       IReceptorRegistry? runtimeRegistry = null,
       IDeadLetterStore? deadLetterStore = null,
       IGenerationProvider? generationProvider = null,
-      DeadLetterMetrics? dlqMetrics = null,
-      ISchemaReadyGate? gate = null) {
-    if (gate is null) {
-      var readyGate = new SchemaReadyGate();
-      readyGate.MarkReady();
-      gate = readyGate;
-    }
+      DeadLetterMetrics? dlqMetrics = null) {
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new GapServiceInstanceProvider(),
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: _jsonOpts,
       logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,
@@ -601,43 +572,6 @@ public class OutboxDrainWorkerGapTests {
     var sawNoTransportWarning = logger.Messages.Any(m => m.Contains("no IMessagePublishStrategy registered"));
     await Assert.That(sawNoTransportWarning).IsTrue()
       .Because("the null-strategy branch must emit the LogNoTransportRegistered warning so operators can diagnose a silent drainer");
-  }
-
-  /// <summary>
-  /// Schema-gate cancellation branch: the gate never becomes ready; shutdown fires while
-  /// waiting. The OperationCanceledException from WaitForReadyAsync must be caught and the
-  /// worker must return before resolving the local service id or fetching anything.
-  /// </summary>
-  [Test]
-  public async Task OutboxDrainWorker_SchemaGateCanceled_ReturnsWithoutFetchingAsync() {
-    var coord = new GapWorkCoordinator();
-    var drainChannel = new GapDrainChannel();
-    var completion = new GapCompletionChannel();
-    var failure = new GapFailureChannel();
-    var publish = new GapPublishStrategy();
-    var sp = _sp(coord);
-    var neverReadyGate = new GapBlockingSchemaGate();  // never opens; announces the waiter
-
-    var worker = _worker(sp, drainChannel, completion, failure,
-      new OutboxDrainWorkerOptions { Enabled = true }, publish, gate: neverReadyGate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Park first, then cancel: without this the body may never be invoked at all, and "never
-    // fetched" is then true for the wrong reason.
-    await neverReadyGate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-    await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
-
-    var execTask = worker.ExecuteTask;
-    await Assert.That(execTask is not null).IsTrue();
-    // Graceful shutdown: the worker either catches the OCE and returns (RanToCompletion) or,
-    // when StopAsync's token is already canceled before ExecuteAsync's body runs, the async
-    // state machine surfaces the cancellation (Canceled). Both are clean; only a fault is a bug.
-    await Assert.That(execTask!.IsCompleted).IsTrue();
-    await Assert.That(execTask.IsFaulted).IsFalse()
-      .Because("cancellation during the schema-ready wait must shut down gracefully, not fault the worker");
-    await Assert.That(coord.FetchCalls).IsEqualTo(0);
   }
 
   /// <summary>
@@ -1414,57 +1348,52 @@ public class OutboxDrainWorkerGapTests {
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
     var failure = new GapFailureChannel();
-    var gate = new SchemaReadyGate();
     var options = Options.Create(new OutboxDrainWorkerOptions());
     var logger = NullLogger<OutboxDrainWorker>.Instance;
 
     var ex1 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: null!, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: null!, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex1!.ParamName).IsEqualTo("scopeFactory");
 
     var ex2 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: null!, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: null!, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex2!.ParamName).IsEqualTo("instanceProvider");
 
     var ex3 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: null!, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: null!, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex3!.ParamName).IsEqualTo("drainChannel");
 
     var ex4 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: null!, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: null!, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex4!.ParamName).IsEqualTo("completionChannel");
 
     var ex5 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: null!, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: null!, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex5!.ParamName).IsEqualTo("failureChannel");
 
-    var ex6 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: null!, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex6!.ParamName).IsEqualTo("schemaReadyGate");
 
     var ex7 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: null!, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: new FixedWidthGovernor(1), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: null!, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: new FixedWidthGovernor(1), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex7!.ParamName).IsEqualTo("options");
 
     var ex8 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: null!, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: null!, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex8!.ParamName).IsEqualTo("jsonOptions");
 
     var ex9 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: null!, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: null!, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions())))
       .Throws<ArgumentNullException>();
     await Assert.That(ex9!.ParamName).IsEqualTo("logger");
 
     var ex10 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: null!))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value), leaseRenewalOptions: null!))
       .Throws<ArgumentNullException>();
     await Assert.That(ex10!.ParamName).IsEqualTo("leaseRenewalOptions");
   }

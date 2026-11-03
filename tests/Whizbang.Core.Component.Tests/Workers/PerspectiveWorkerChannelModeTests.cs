@@ -76,7 +76,6 @@ public class PerspectiveWorkerChannelModeTests {
         PollingIntervalMilliseconds = 1_000_000,
         MaxStreamsPerBatch = 10
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
@@ -147,7 +146,6 @@ public class PerspectiveWorkerChannelModeTests {
       instanceProvider: instanceProvider,
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new BatchedCompletionStrategy(),
       eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),

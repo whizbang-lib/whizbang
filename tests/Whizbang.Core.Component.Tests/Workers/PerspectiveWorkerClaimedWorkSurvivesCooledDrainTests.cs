@@ -194,7 +194,6 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           DrainLoopMaxIterations = 1,
           MaxConcurrentDrainConsumers = 1
         }),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new EventTypeProvider(),

@@ -30,7 +30,10 @@ public enum DestructionReason {
   /// domain's carry-forward event survives as the new origin and the detail below the close point is
   /// truncated / archived. Unlike the others this destroys <em>Sourced</em> detail, gated on consumption.
   /// </summary>
-  PeriodClose = 4
+  PeriodClose = 4,
+
+  /// <summary>A sealed stream's grace (<c>Whizbang:StreamLifecycle:FinalizeGrace</c>) has passed (#1734).</summary>
+  FinalizeGraceElapsed = 5
 }
 
 /// <summary>
@@ -105,6 +108,12 @@ public sealed record DestructionContext {
   public Guid? StreamId { get; init; }
 
   /// <summary>
+  /// The last version a stream-granularity destruction removes (a prefix truncate's cut); <see langword="null"/> when it
+  /// removes the whole stream or a cross-stream event batch.
+  /// </summary>
+  public long? ThroughVersion { get; init; }
+
+  /// <summary>
   /// The FULL batch of events being destroyed this invocation — the hook runs ONCE for the whole batch, not
   /// once per event. Each target carries its own event id, stream, and event type. May span many streams.
   /// </summary>
@@ -119,9 +128,10 @@ public sealed record DestructionContext {
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public sealed record DestructionResult {
-  /// <summary>The disposition to run when proceeding. Ignored when <see cref="Cancel"/> or
-  /// <see cref="DeferUntil"/> is set.</summary>
-  public Disposition Disposition { get; init; } = Disposition.Delete;
+  /// <summary>The disposition to run when proceeding; <see langword="null"/> runs the declared one
+  /// (<see cref="DestructionContext.DeclaredDefault"/>). Ignored when <see cref="Cancel"/> or <see cref="DeferUntil"/> is
+  /// set.</summary>
+  public Disposition? Disposition { get; init; }
 
   /// <summary>Keep the data — do not destroy it now. It stays ephemeral (unbounded cancel = leak risk,
   /// the developer's call; observable via metrics).</summary>
@@ -130,8 +140,14 @@ public sealed record DestructionResult {
   /// <summary>Reschedule the destruction to this instant (a new <c>expires_at</c>) instead of destroying now.</summary>
   public DateTimeOffset? DeferUntil { get; init; }
 
-  /// <summary>Proceed with the given disposition (default <see cref="Disposition.Delete"/>).</summary>
-  public static DestructionResult Proceed(Disposition disposition = Disposition.Delete) =>
+  /// <summary>
+  /// Proceed with <paramref name="disposition"/>, or, when it is <see langword="null"/>, with the declared disposition
+  /// (<see cref="DestructionContext.DeclaredDefault"/>), so a hook that only observes never changes what runs.
+  /// </summary>
+  /// <param name="disposition">The disposition to run instead of the declared one; null keeps the declared one.</param>
+  /// <returns>The decision.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs:AHookThatProceedsWithoutNamingADisposition_KeepsTheDeclaredOne_NeverDeletesAnArchiveAsync</tests>
+  public static DestructionResult Proceed(Disposition? disposition = null) =>
     new() { Disposition = disposition };
 
   /// <summary>Keep the data — cancel this destruction.</summary>

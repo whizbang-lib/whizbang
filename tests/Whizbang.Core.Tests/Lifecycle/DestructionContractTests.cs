@@ -80,9 +80,11 @@ public class DestructionContractTests {
   }
 
   [Test]
-  public async Task DestructionResult_Proceed_DefaultsToDeleteAsync() {
+  public async Task DestructionResult_Proceed_WithoutADisposition_NamesNone_SoTheDeclaredOneRunsAsync() {
+    // #1735: Proceed() used to mean Delete, which would turn a declared Archive into a discard once dispositions are
+    // routed; with no disposition named, the destruction runs the one its caller declared.
     var result = DestructionResult.Proceed();
-    await Assert.That(result.Disposition).IsEqualTo(Disposition.Delete);
+    await Assert.That(result.Disposition).IsNull();
   }
 
   [Test]

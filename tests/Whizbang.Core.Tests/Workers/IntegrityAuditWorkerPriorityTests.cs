@@ -94,7 +94,6 @@ public class IntegrityAuditWorkerPriorityTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityAuditWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(options),
       NullLogger<IntegrityAuditWorker>.Instance);
   }

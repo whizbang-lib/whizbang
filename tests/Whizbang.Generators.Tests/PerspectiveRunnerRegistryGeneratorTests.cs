@@ -59,6 +59,49 @@ namespace TestNamespace {
     await Assert.That(registrySource).DoesNotContain("\"Projection\" =>");
   }
 
+  /// <summary>
+  /// The generated registration hosts the perspective worker the way the core pipeline does (#1636): to start at Accept
+  /// commands, through the stage wrapper, never with the host. A plain hosted-service registration here would start a
+  /// second, ungated copy beside the core one, because the two would not deduplicate.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_HostsThePerspectiveWorkerAtAcceptCommandsAsync() {
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderEvent : IEvent {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).Contains(
+      "global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker(services, "
+      + "global::Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => ");
+    await Assert.That(registrySource).DoesNotContain("services.AddHostedService(sp => ")
+      .Because("the perspective worker is hosted through the stage wrapper only");
+    await Assert.That(registrySource).Contains(
+      "global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<global::Whizbang.Core.Workers.WhizbangShutdownService>(services);")
+      .Because("deregistration runs only for an instance that got as far as a ready schema (#1991)");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonNestedPerspective_UsesSimpleNameAsync() {

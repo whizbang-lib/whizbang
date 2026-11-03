@@ -44,6 +44,14 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   private object? _continuationState;
 
   /// <summary>
+  /// Takes the continuation's place once the source completes. The completing side and the awaiting side each make one
+  /// atomic exchange on <see cref="_continuation"/>, so exactly one of them runs the continuation, once. Plain fields
+  /// written on one side and read on the other let both read before either write was visible: the wake-up was lost and
+  /// the awaiter waited forever, or the continuation ran without its state.
+  /// </summary>
+  private static readonly Action<object?> _completedSentinel = static _ => { };
+
+  /// <summary>
   /// Fires when a consumer registers a continuation (begins awaiting this source).
   /// Useful for monitoring pool utilization and signal-based test synchronization.
   /// </summary>
@@ -137,24 +145,30 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   }
 
   /// <summary>
-  /// Registers a continuation callback (required by IValueTaskSource).
+  /// Registers a continuation callback (required by IValueTaskSource). Registered while the source is pending, the
+  /// continuation runs when it completes; registered after, it runs now. Either way it runs once, on the thread pool.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_CompletionRacingRegistration_ResumesTheAwaiterExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Pooling/PooledValueTaskSourceContractTests.cs:OnCompleted_CalledTwice_RejectsTheSecondRegistrationAsync</tests>
   public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) {
     _validateToken(token);
+    ArgumentNullException.ThrowIfNull(continuation);
 
-    if (_continuation != null) {
+    // The state is written before the continuation is published; the exchange is a full fence, so a completer that
+    // takes the continuation also sees its state. A second registration is refused, and the first one's state restored.
+    var priorState = _continuationState;
+    _continuationState = state;
+    var previous = Interlocked.CompareExchange(ref _continuation, continuation, null);
+    if (previous is not null && !ReferenceEquals(previous, _completedSentinel)) {
+      _continuationState = priorState;
       throw new InvalidOperationException("OnCompleted already called");
     }
 
-    ArgumentNullException.ThrowIfNull(continuation);
-    _continuation = continuation;
-    _continuationState = state;
-
     OnContinuationRegistered?.Invoke();
 
-    // If already completed, invoke immediately
-    if (_status != ValueTaskSourceStatus.Pending) {
-      _invokeContinuation();
+    // Completed before the continuation could be published: the completer found nothing to run, so this side runs it.
+    if (ReferenceEquals(previous, _completedSentinel)) {
+      _invokeContinuation(continuation, state);
     }
   }
 
@@ -165,25 +179,21 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   }
 
   private void _signalCompletion() {
-    if (_continuation != null) {
-      _invokeContinuation();
+    // The result and status are written before this exchange, which is a full fence: an awaiter that finds the
+    // sentinel, or runs the continuation taken here, reads the completed result.
+    // Only a second completion racing the first (refused when it is not concurrent) can take the sentinel itself back,
+    // and running the sentinel does nothing.
+    var continuation = Interlocked.Exchange(ref _continuation, _completedSentinel);
+    if (continuation is not null) {
+      _invokeContinuation(continuation, _continuationState);
     }
   }
 
-  private void _invokeContinuation() {
-    var continuation = _continuation;
-    var state = _continuationState;
-
-    if (continuation != null) {
-      // Clear continuation to prevent double invocation
-      _continuation = null;
-      _continuationState = null;
-
-      // Invoke continuation on thread pool to avoid stack overflow
-      ThreadPool.QueueUserWorkItem(static s => {
-        var tuple = ((Action<object?>, object?))s!;
-        tuple.Item1(tuple.Item2);
-      }, (continuation, state));
-    }
+  private static void _invokeContinuation(Action<object?> continuation, object? state) {
+    // Invoke continuation on thread pool to avoid stack overflow
+    ThreadPool.QueueUserWorkItem(static s => {
+      var tuple = ((Action<object?>, object?))s!;
+      tuple.Item1(tuple.Item2);
+    }, (continuation, state));
   }
 }

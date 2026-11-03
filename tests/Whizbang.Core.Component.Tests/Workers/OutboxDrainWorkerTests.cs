@@ -260,8 +260,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new BulkCapablePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -274,7 +272,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -347,8 +344,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new BulkCapablePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -361,7 +356,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -452,7 +446,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -547,7 +540,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -636,8 +628,6 @@ public class OutboxDrainWorkerTests {
 
     var drainChannel = new FakeOutboxDrainChannel();
     var publish = new CountingPublishStrategy(expected: streamCount);
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -650,7 +640,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -749,8 +738,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new BulkCapablePublishStrategy();
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -764,7 +751,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -848,8 +834,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new BulkMixedResultStrategy([bad]);
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -863,7 +847,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -911,8 +894,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new BulkThrowingPublishStrategy();
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -926,7 +907,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -978,8 +958,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 2 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -992,7 +970,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -1039,8 +1016,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 2 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1053,7 +1028,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1107,8 +1081,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 250 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1121,7 +1093,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1165,8 +1136,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 50 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1179,7 +1148,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1252,8 +1220,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1266,7 +1232,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1361,8 +1326,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
@@ -1377,7 +1340,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1426,8 +1388,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1440,7 +1400,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1491,8 +1450,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var invoker = new CapturingReceptorInvoker {
       OnInvoke = (stage, _) => {
@@ -1514,7 +1471,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1578,8 +1534,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
@@ -1594,7 +1548,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1641,8 +1594,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
@@ -1657,7 +1608,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1715,8 +1665,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FailingPublishStrategy();
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1729,7 +1677,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1786,8 +1733,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new ThrowingPublishStrategy();
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1800,7 +1745,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1858,8 +1802,6 @@ public class OutboxDrainWorkerTests {
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
@@ -1874,7 +1816,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -1923,8 +1864,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sink = new List<string>();
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
@@ -1940,7 +1879,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
@@ -1994,8 +1932,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sink = new List<string>();
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
@@ -2011,7 +1947,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
@@ -2059,8 +1994,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -2073,7 +2006,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -2114,8 +2046,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sink = new List<string>();
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
@@ -2131,7 +2061,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
@@ -2178,8 +2107,6 @@ public class OutboxDrainWorkerTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var publish = new FakePublishStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sink = new List<string>();
     using var loggerFactory = LoggerFactory.Create(b => {
@@ -2198,7 +2125,6 @@ public class OutboxDrainWorkerTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),

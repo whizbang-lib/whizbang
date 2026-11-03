@@ -259,7 +259,7 @@ public static class ServiceCollectionExtensions {
     // gracefully no-ops when IMessageTypeCatalog isn't registered (matches the prior null-
     // catalog log line).
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
@@ -420,7 +420,7 @@ public static class ServiceCollectionExtensions {
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
     // the populator run to host startup via an IHostedService that uses the REAL provider.
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
@@ -494,6 +494,11 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that distills staged event metadata into routes and traces (#1726).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));
+    // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
+    services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
+      new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, global::Whizbang.Core.Lifecycle.StreamDispositionStep>(
+      global::Whizbang.Core.Lifecycle.StreamDispositionStep.FromServices));
     // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
     // then refuses the stream's appends.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>

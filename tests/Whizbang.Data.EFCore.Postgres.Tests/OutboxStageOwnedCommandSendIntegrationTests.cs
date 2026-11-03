@@ -101,7 +101,6 @@ public class OutboxStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: jsonOptions,
       logger: NullLogger<OutboxDrainWorker>.Instance,

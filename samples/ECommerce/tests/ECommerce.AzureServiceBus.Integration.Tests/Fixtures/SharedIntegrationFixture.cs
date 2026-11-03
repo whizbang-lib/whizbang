@@ -26,10 +26,12 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Workers;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
@@ -334,15 +336,14 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
@@ -467,21 +468,20 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
@@ -642,8 +642,8 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
     void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-    var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
-    var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
+    var inventoryHostedServices = _inventoryHost!.Services.GetHostedWorkers().ToList();
+    var bffHostedServices = _bffHost!.Services.GetHostedWorkers().ToList();
 
     WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
     WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());

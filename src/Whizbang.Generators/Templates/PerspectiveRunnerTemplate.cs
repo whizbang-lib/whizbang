@@ -269,8 +269,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Rebuilds a stream archived through a prefix without reading the archive (#1931): restores the stream's newest
   /// snapshot and replays the hot events after it, through the rewind's replay. Null when there is no snapshot store, no
-  /// snapshot, or one this build cannot read, so the rebuild skips the stream. The newest snapshot is always live: an
-  /// archive refuses a prefix that reaches the newest snapshot any perspective holds for the stream.
+  /// snapshot, or one this build cannot read, so the rebuild skips the stream. The newest snapshot is live after a prefix
+  /// archive (which refuses to reach it) and, after a NewGeneration append (#1734), when it sits at the archive's last
+  /// version; one strictly inside the archive is not, and the stream is skipped.
   /// </summary>
   public async Task<IReadOnlyList<PerspectiveCursorCompletion>?> RunRebuildFromLatestSnapshotAsync(
       Guid streamId,
@@ -280,8 +281,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return null;
     }
     // #1963: the newest snapshot with its collectives mark, so the replay folds exactly the collectives past it.
+    // #1734: only a live snapshot (no archived event after it) can start a rebuild that reads no archived data.
     var latest = await _snapshotStore.GetLatestSnapshotFloorAsync(streamId, perspectiveName, cancellationToken);
-    if (latest is null) {
+    if (latest is null || !latest.IsLive) {
       return null;
     }
     var snapshotModel = FromSnapshotJson(latest.SnapshotData);

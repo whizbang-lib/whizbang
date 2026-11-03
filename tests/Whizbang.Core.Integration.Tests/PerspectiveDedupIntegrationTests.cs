@@ -679,7 +679,6 @@ public class PerspectiveDedupIntegrationTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider ?? NullEventTypeProvider.Instance,

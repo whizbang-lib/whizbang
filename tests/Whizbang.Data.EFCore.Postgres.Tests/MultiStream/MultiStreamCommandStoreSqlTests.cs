@@ -217,6 +217,27 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
       .Because("ranked with its migrating peer, b would leave the even partitions to an instance that cannot claim them");
   }
 
+  /// <summary>
+  /// 300 (#1636): a caller whose own row records that it is not eligible yet claims nothing, as claim_work refuses it;
+  /// its peers already rank it out, so nothing is left unclaimed.
+  /// </summary>
+  [Test]
+  public async Task ClaimAsync_ACallerNotYetReady_ClaimsNothingAsync() {
+    var (a, b) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, a);
+    await _heartbeatAsync(conn, b);
+    await _execAsync(conn, $"UPDATE wh_service_instances SET lifecycle_phase = 'Migrating' WHERE instance_id = '{a}'");
+    var streams = Enumerable.Range(0, 40).Select(_ => Guid.CreateVersion7()).ToArray();
+    var store = _store();
+    _ = await store.RecordRunAsync(_run(streams), CancellationToken.None);
+
+    var byA = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, null), CancellationToken.None);
+
+    await Assert.That(byA).IsEmpty()
+      .Because("its row says it is not eligible for work, so it claims none; b ranks it out and covers every stream");
+  }
+
   [Test]
   public async Task ClaimAsync_AStaleCachedAssignment_FallsBackToRankingAsync() {
     var (a, b) = _twoInstancesInIdOrder();

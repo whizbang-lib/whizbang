@@ -20,6 +20,7 @@ using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -161,7 +162,7 @@ public class DataOnlyRoleE2ETests {
       }
     });
     // A message through the running service: published, stored, claimed and applied to a perspective row.
-    var perspectives = second.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
+    var perspectives = second.Services.GetHostedWorkers().OfType<PerspectiveWorker>().Single();
     var streamId = (Guid)TrackedGuid.New();
     var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     perspectives.OnPerspectiveEventProcessed += e => {

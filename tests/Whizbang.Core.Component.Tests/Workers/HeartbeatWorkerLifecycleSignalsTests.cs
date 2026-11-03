@@ -97,27 +97,6 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
-  /// <summary>
-  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
-  /// deterministic "the worker is parked at the barrier" signal. Since .NET 10
-  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
-  /// <c>Task.Run(action, stoppingToken)</c>, so StartAsync returning proves only that the body was
-  /// scheduled; a token canceled before the work item is dequeued settles the task Canceled and
-  /// the delegate never runs at all.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   private static HeartbeatWorker _createWith(ISignalBus bus, ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new HeartbeatCoordinator());
@@ -127,7 +106,6 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -180,47 +158,15 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       .Because("a failed goodbye must not turn an ordinary stop into a faulted hosted service");
   }
 
-  [Test]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate at startup. A pod stopped while still waiting has
-    // nothing to report and no schema to write to, so the exit must be silent rather than an error
-    // on every fast restart.
-    var gate = new BlockingGate();   // never opens, and says when the worker arrives
-    var bus = new CapturingBus();
-    var worker = _createWith(bus, gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await worker.StopAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    int joinCount;
-    lock (bus.Published) { joinCount = bus.Published.Count(t => t == typeof(InstanceJoinedSignal)); }
-    await Assert.That(joinCount).IsEqualTo(0)
-      .Because("a pod that never recorded a heartbeat has no row in wh_service_instances to "
-             + "announce — announcing a join here tells peers to route work at an instance that "
-             + "cannot write to the schema it is still waiting for");
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the parked worker must unpark on stop rather than hanging shutdown");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("stopping mid-migration is an ordinary fast restart, not a crash to report");
-  }
-
   private static (HeartbeatWorker Worker, HeartbeatCoordinator Coord, CapturingBus Bus) _create() {
     var coord = new HeartbeatCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
     var bus = new CapturingBus();
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
       // long interval — first heartbeat only
       logger: NullLogger<HeartbeatWorker>.Instance,

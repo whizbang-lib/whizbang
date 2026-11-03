@@ -37,7 +37,6 @@ public class NotifyDebounceStatsCollectorBranchCoverageTests {
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
 
     var cycleObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

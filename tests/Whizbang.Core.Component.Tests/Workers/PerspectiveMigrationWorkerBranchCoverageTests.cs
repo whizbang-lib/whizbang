@@ -75,8 +75,7 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
     var statusUpdates = new List<string>();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: new CapturingLogger(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: new CapturingLogger()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("FirstPerspective", "perspective:FirstPerspective"),
         new PendingMigrationRebuild("SecondPerspective", "perspective:SecondPerspective"),
@@ -107,8 +106,7 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
     var statuses = new List<(int Status, string Description)>();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: logger,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: logger) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("SilentPerspective", "perspective:SilentPerspective"),
       ]),
@@ -142,8 +140,7 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
     var statuses = new List<(string Key, int Status, string Description)>();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: new CapturingLogger(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: new CapturingLogger()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("HealthyPerspective", "perspective:HealthyPerspective"),
         new PendingMigrationRebuild("BrokenPerspective", "perspective:BrokenPerspective"),

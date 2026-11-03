@@ -54,15 +54,12 @@ internal sealed class InboxDispatchUnitHarness {
     InstanceId = instance.InstanceId;
     Cache = cache;
     var sp = (services ?? new ServiceCollection()).BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     Worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
       inboxChannelWriter: Inbox,
       handlerCommitChannel: Commits,
       failureChannel: Failures,
-      schemaReadyGate: gate,
       options: Options.Create(options ?? new InboxDispatchWorkerOptions { MaxInboxAttempts = 10 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: new RecordingLogger(Logs),

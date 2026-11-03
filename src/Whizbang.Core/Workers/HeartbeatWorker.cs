@@ -40,7 +40,6 @@ namespace Whizbang.Core.Workers;
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<HeartbeatWorkerOptions> options,
   ILogger<HeartbeatWorker> logger,
   IWhizbangLifecycleState lifecycleState,
@@ -53,7 +52,6 @@ public partial class HeartbeatWorker(
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool;
@@ -179,12 +177,6 @@ public partial class HeartbeatWorker(
     if (!_options.Enabled) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 

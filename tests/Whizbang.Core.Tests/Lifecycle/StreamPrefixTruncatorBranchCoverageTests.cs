@@ -61,7 +61,7 @@ public class StreamPrefixTruncatorBranchCoverageTests {
     var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("gate_blocked", 0));
     var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new RecordingHook(log), _noServices, archiveStore: null);
 
-    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, Disposition.Archive);
 
     await Assert.That(result.Status).IsEqualTo("gate_blocked")
       .Because("the coordinator's outcome is returned to the caller unchanged");
@@ -91,7 +91,7 @@ public class StreamPrefixTruncatorBranchCoverageTests {
     var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("truncated", 3));
     var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new SuspendingAfterHook(log), _noServices, archiveStore: null);
 
-    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, Disposition.Archive);
 
     await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(string.Join(",", log)).IsEqualTo("before,close,after-started,after-finished")

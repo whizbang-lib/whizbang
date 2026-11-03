@@ -36,7 +36,7 @@ public class ScheduleWorkerTests {
 
   private static (ScheduleWorker Worker, IScheduleClaimer? Claimer) _create(
       TemporalOptions? options = null, ISignalBus? bus = null, IScheduleClaimer? claimer = null, TimeProvider? clock = null,
-      ISchemaReadyGate? gate = null, Microsoft.Extensions.Logging.ILogger<ScheduleWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<ScheduleWorker>? logger = null) {
     var services = new ServiceCollection();
     if (claimer is not null) {
       services.AddSingleton(claimer);
@@ -46,7 +46,6 @@ public class ScheduleWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options ?? new TemporalOptions()),
       logger: logger ?? NullLogger<ScheduleWorker>.Instance,
-      schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       loggerFactory: NullLoggerFactory.Instance,
       signalBus: bus ?? NullSignalBus.Instance,
       timeProvider: clock);
@@ -94,23 +93,6 @@ public class ScheduleWorkerTests {
       Task.FromResult<DateTimeOffset?>(null);
   }
 
-  /// <summary>Schema gate that stays closed until <see cref="Open"/> — models a host still migrating.</summary>
-  private sealed class ManualSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes once the worker has actually reached the gate and started waiting.</summary>
-    public Task WaitEntered => _waitEntered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void Open() => _ready.TrySetResult();
-    public void MarkReady() => Open();
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
-  }
-
   // ==================== ExecuteAsync — the BackgroundService drain loop ====================
 
   [Test]
@@ -135,43 +117,6 @@ public class ScheduleWorkerTests {
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
       .Because("the parked delay absorbs the shutdown rather than surfacing it as a fault");
-  }
-
-  [Test]
-  public async Task Execute_SchemaGateClosed_DoesNotClaimUntilReadyAsync() {
-    var claimer = new SignallingClaimer();
-    var gate = new ManualSchemaGate();
-    var (worker, _) = _create(claimer: claimer, gate: gate);
-
-    await worker.StartAsync(CancellationToken.None);
-    await gate.WaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
-    await Assert.That(claimer.Calls).IsEqualTo(0)
-      .Because("claiming before the schema exists would hit missing tables — the gate must hold the loop");
-
-    gate.Open();
-    await claimer.FirstClaim.WaitAsync(TimeSpan.FromSeconds(10));   // gate released → loop drains
-
-    await Assert.That(claimer.Calls).IsGreaterThanOrEqualTo(1);
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  [Timeout(30000)]
-  public async Task Execute_SchemaGateNeverOpens_CancellationExitsWithoutClaimingAsync(
-      CancellationToken ct) {
-    var claimer = new SignallingClaimer();
-    var gate = new ManualSchemaGate();
-    var (worker, _) = _create(claimer: claimer, gate: gate);
-
-    await worker.StartAsync(CancellationToken.None);
-    // Observed at the gate first: otherwise "never claimed" is satisfied by a worker that never ran.
-    await gate.WaitEntered.WaitAsync(ct);
-    await worker.StopAsync(CancellationToken.None);   // cancels while still waiting on the gate
-
-    await Assert.That(claimer.Calls).IsEqualTo(0)
-      .Because("shutdown while gated must return cleanly, not claim and not hang");
-    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("a host stopped mid-migration is an ordinary shutdown, not a worker crash");
   }
 
   [Test]

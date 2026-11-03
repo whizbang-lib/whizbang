@@ -129,34 +129,9 @@ public class ClaimWorkerCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  /// <summary>
-  /// A never-ready schema gate that publishes when a waiter arrives.
-  /// </summary>
-  /// <remarks>
-  /// Distinguishes "the worker is parked on the closed gate" from "the thread pool has not
-  /// dequeued ExecuteAsync yet". Only the first makes zero claims and zero heartbeats evidence
-  /// that the early return fired, rather than evidence that nothing ran.
-  /// </remarks>
-  private sealed class SignallingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
-  }
-
   private static (ClaimWorker Worker, RecordingCoordinator Coord) _build(
       RecordingCoordinator coord,
       ClaimWorkerOptions options,
-      ISchemaReadyGate? schemaGate = null,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
       ClaimChurnFeedback? churnFeedback = null,
@@ -170,7 +145,6 @@ public class ClaimWorkerCoverageTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstance(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate ?? SchemaReadyGate.AlreadyReady(),
       options: Options.Create(options),
       logger: logger ?? NullLogger<ClaimWorker>.Instance,
       outboxChannel: outboxChannel ?? new WorkChannelWriter(),
@@ -296,59 +270,6 @@ public class ClaimWorkerCoverageTests {
   // ============================================================
   // ExecuteAsync: canceled schema-ready wait (line 344)
   // ============================================================
-
-  /// <summary>
-  /// A canceled schema-ready wait must stop the worker outright, before the loop ever gets near
-  /// claim_work. If this catch were dropped (or widened into a catch-all that logs and falls
-  /// through), a shutdown landing while migrations are still pending would either fault the worker
-  /// or let it race into the claim loop against a database nobody ever confirmed was ready.
-  /// </summary>
-  [Test]
-  [Timeout(30000)]
-  public async Task SchemaGateWaitCanceled_StopsTheWorkerBeforeAnyClaimAsync(CancellationToken testToken) {
-    var gate = new SignallingSchemaGate(); // Never marked ready — the wait blocks until canceled.
-    var coord = new RecordingCoordinator();
-    var (worker, _) = _build(coord, new ClaimWorkerOptions {
-      PollingIntervalMilliseconds = 20,
-      PollingMaxIntervalMilliseconds = 60,
-    }, schemaGate: gate);
-
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
-    await worker.StartAsync(cts.Token);
-
-    // Wait until the worker is provably parked on the gate before canceling. StartAsync only
-    // queues ExecuteAsync via Task.Run(_, stoppingToken); Task.Run never runs the delegate when
-    // the token is already canceled at dequeue time and the task settles Canceled instead — which
-    // satisfies IsCompleted, leaves IsFaulted false, and leaves both call counts at zero. Every
-    // assertion below was therefore equally true of a worker that never started, so canceling
-    // straight after StartAsync tested the thread pool rather than the catch.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await cts.CancelAsync();
-
-    // ExecuteTask completing on its own is the signal that the early return fired, rather than the
-    // loop trying to run against a schema nobody confirmed was ready.
-    // SuppressThrowing because the task may end RanToCompletion (the catch swallowed the
-    // cancellation) or Canceled (the token was already canceled when ExecuteAsync first ran),
-    // depending on how quickly the thread pool picks it up. Both are graceful exits; rethrowing
-    // one of them makes this test fail only under a loaded suite, which is what it did.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("a host shutting down mid-migration must not leave the claim loop parked on the gate");
-
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("canceling the schema-ready wait is an ordinary shutdown path, not an error — it "
-             + "must not fault the worker");
-    await Assert.That(coord.CallCount).IsEqualTo(0)
-      .Because("the gate never opened, so claim_work must never have been issued against an "
-             + "unmigrated schema");
-    await Assert.That(coord.HeartbeatCallCount).IsEqualTo(0)
-      .Because("the early return happens before the startup heartbeat registration runs too");
-
-    await worker.StopAsync(CancellationToken.None);
-    worker.Dispose();
-  }
 
   // ============================================================
   // ExecuteAsync: canceled startup heartbeat (line 356)

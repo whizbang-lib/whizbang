@@ -28,11 +28,9 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public sealed partial class IntegrityCheckpointWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
   ILogger<IntegrityCheckpointWorker> logger) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityCheckpointWorker> _logger = ArgumentGuard.NotNull(logger);
 
@@ -44,12 +42,6 @@ public sealed partial class IntegrityCheckpointWorker(
       return;
     }
     LogStarted(_logger, _options.CheckpointIntervalSeconds);
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {

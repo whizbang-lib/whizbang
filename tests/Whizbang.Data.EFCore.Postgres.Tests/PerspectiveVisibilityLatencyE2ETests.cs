@@ -172,7 +172,6 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       scopeFactory: scopeFactory,
       instanceProvider: instanceProvider,
       notificationListener: listener,
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions()),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -192,7 +191,6 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
-      schemaReadyGate: gate,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       // The registry registration above also registers the real event-type provider; the worker used to

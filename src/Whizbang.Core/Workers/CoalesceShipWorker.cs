@@ -50,16 +50,15 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ContinuousArrivalsPastMaxDelay_FoldsAnywayAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_PendingLargerThanMaxBatch_FoldsInChunksAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_NoEnabledBindings_ParksWithoutTouchingTheCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_WithNoClockGiven_ParksOnTheSystemClockAndStopsCleanlyAsync</tests>
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IServiceInstanceProvider instanceProvider,
   ILogger<CoalesceShipWorker> logger,
   ICompositeFactory compositeFactory,
   CoalesceGroupResolver? coalesceResolver = null,
   TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   private readonly ILogger<CoalesceShipWorker> _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -76,12 +75,6 @@ public sealed partial class CoalesceShipWorker(
       try {
         await Task.Delay(Timeout.InfiniteTimeSpan, _timeProvider, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) {
       return;
     }
 

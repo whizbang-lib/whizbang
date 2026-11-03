@@ -22,6 +22,34 @@ public class StartupStageGateTests {
   private static StartupStageSnapshot _at(StartupStage stage, bool skipped = false) =>
     new(stage, "message", skipped, DateTimeOffset.UnixEpoch);
 
+  /// <summary>
+  /// The gap the data plane's start point leaves open (#1636): the reporter tells its observers of Accept commands after
+  /// it has tried to write the row, and says whether the write landed. When it did not (the database did not answer
+  /// within the write's budget, so the stage is held and written again on the next accepted heartbeat), the row still
+  /// records the stage before, so the instance is not eligible for work, yet the gate opens and the data plane starts.
+  /// Before 300 a started claim worker then claimed: claim_work counted its caller whatever its row said (229). An
+  /// eligible stage is reached only once the row records it; the reporter tells the observers again with
+  /// recorded = true when the held write lands, and a host with no row to record on reports every stage as recorded.
+  /// </summary>
+  [Test]
+  public async Task AnEligibleStage_WhoseRowWriteFailed_IsNotReachedUntilTheRowRecordsItAsync() {
+    var gate = new StartupStageGate(SchemaReadyGate.AlreadyReady());
+    var accepting = gate.WaitForAsync(StartupStage.AcceptingCommands, CancellationToken.None);
+
+    await gate.OnStageChangedAsync(_at(StartupStage.AcceptingCommands), recorded: false, CancellationToken.None);
+
+    await Assert.That(gate.HasReached(StartupStage.AcceptingCommands)).IsFalse()
+      .Because("the row still records the stage before Accept commands, so the instance is not eligible for work, and "
+        + "a data-plane worker started now claims a share its peers are also given");
+    await Assert.That(accepting.IsCompleted).IsFalse();
+
+    await gate.OnStageChangedAsync(_at(StartupStage.AcceptingCommands), recorded: true, CancellationToken.None);
+
+    await Assert.That(gate.HasReached(StartupStage.AcceptingCommands)).IsTrue()
+      .Because("the held write landed, so the row says the instance is eligible");
+    await accepting.WaitAsync(CancellationToken.None);
+  }
+
   [Test]
   public async Task BeforeAnyStage_NothingIsReached_AndAWaitIsPendingAsync() {
     var gate = new StartupStageGate(new SchemaReadyGate());

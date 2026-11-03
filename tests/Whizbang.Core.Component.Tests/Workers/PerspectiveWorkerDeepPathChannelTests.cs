@@ -54,7 +54,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: new FakeInstanceProvider(),
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -134,7 +133,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions {
         EnableWorkerBatchSpans = true,
         // Verbosity must be non-Off: IsEnabled(component) gates the perspective span on
@@ -237,7 +235,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -344,7 +341,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -440,7 +436,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         instanceProvider: instanceProvider,
         scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -534,7 +529,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         instanceProvider: instanceProvider,
         scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -627,7 +621,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -688,7 +681,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: new FakeInstanceProvider(),
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -755,7 +747,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 50,
         NotifyHealthyPollingIntervalMilliseconds = 30_000
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -861,7 +852,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // ever being delivered.
         MaxConcurrentDrainConsumers = 1,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -969,7 +959,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // batch: the signal has only the abandoned wait to land on.
         MaxConcurrentDrainConsumers = 1,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -1063,7 +1052,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 1_000_000,
         NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -1147,7 +1135,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // deterministically (sibling loops would otherwise keep idling forever).
         MaxConcurrentDrainConsumers = 1
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: NullEventTypeProvider.Instance,

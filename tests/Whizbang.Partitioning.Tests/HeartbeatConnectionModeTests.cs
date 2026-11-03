@@ -64,12 +64,9 @@ public class HeartbeatConnectionModeTests {
       services.AddSingleton(source);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new ServiceInstanceProvider(Guid.CreateVersion7(), "svc", "host", processId: 1),
-      schemaReadyGate: gate,
       options: Options.Create(new HeartbeatWorkerOptions()),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: new Lifecycle(),

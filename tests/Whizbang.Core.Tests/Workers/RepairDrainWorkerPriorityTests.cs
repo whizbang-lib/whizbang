@@ -82,7 +82,6 @@ public class RepairDrainWorkerPriorityTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance);
     return (worker, coordinator, transport);

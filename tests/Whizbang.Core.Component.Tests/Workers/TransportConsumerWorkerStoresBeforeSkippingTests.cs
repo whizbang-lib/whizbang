@@ -259,7 +259,6 @@ namespace Whizbang.Core.Tests.Workers {
           metrics: metrics,
           logger: NullLogger<TransportConsumerWorker>.Instance,
           serviceInstanceProvider: new ServiceInstanceProvider(Guid.Parse("0198f5d2-0000-7000-8000-000000000002"), THIS_SERVICE, "host", 1),
-          schemaReadyGate: SchemaReadyGate.AlreadyReady(),
           routingOptions: Options.Create(routing),
           workChannelWriter: new WorkChannelWriter(),
           claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

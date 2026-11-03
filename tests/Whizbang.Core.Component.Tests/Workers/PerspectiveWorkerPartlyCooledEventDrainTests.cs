@@ -154,7 +154,6 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(options),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new EventTypeProvider(),

@@ -27,12 +27,10 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<StreamIntegrityOptions> options,
     ILogger<RepairDrainWorker> logger,
     TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<RepairDrainWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -43,11 +41,6 @@ public sealed partial class RepairDrainWorker(
     if (!_options.RepairDrainEnabled || _options.RepairDrainRatePerSecond <= 0) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.InfiniteTimeSpan, _time, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
     LogStarted(_logger, _options.RepairDrainRatePerSecond);

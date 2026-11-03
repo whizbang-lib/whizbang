@@ -34,7 +34,8 @@ public sealed partial class ScheduledStreamCloseReceptor(
       return;
     }
     var result = await truncator
-      .TruncateAsync(message.StreamId, message.ThroughVersion, message.Archive, cancellationToken)
+      .TruncateAsync(message.StreamId, message.ThroughVersion,
+        message.Archive ? Whizbang.Core.Lifecycle.Disposition.Archive : Whizbang.Core.Lifecycle.Disposition.Delete, cancellationToken)
       .ConfigureAwait(false);
     LogScheduledClose(logger, message.StreamId, message.ThroughVersion, message.Archive, result.Status, result.EventsTruncated);
   }

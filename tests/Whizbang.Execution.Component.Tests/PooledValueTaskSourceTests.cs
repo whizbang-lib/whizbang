@@ -465,4 +465,95 @@ public class PooledValueTaskSourceTests {
     await Assert.That(resultReceived).IsTrue();
     await Assert.That(result).IsEqualTo(42);
   }
+
+  // ============================================================================
+  // CONCURRENCY: completion racing the awaiter's registration
+  // ============================================================================
+
+  /// <summary>
+  /// The completing thread and the awaiting thread hand off through the source: one writes the result and looks for a
+  /// continuation, the other registers a continuation and looks for the result. Whatever order they land in, the
+  /// awaiter must be resumed, and only once. A source whose two sides each write one field and read the other with no
+  /// fence between can lose the wake-up (each side reads the other's field before its own write is visible, so neither
+  /// runs the continuation and the awaiter waits forever), which is how a serial executor's caller hung on an arm64
+  /// runner. A bounded race rather than a scripted one: the reordering happens in the processor, where no hook can
+  /// place it, so many aligned races are run and every one must resume exactly once. A correct source passes every
+  /// time; the wait on each resumption is bounded only so a lost one fails here instead of hanging the run.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task PooledValueTaskSource_CompletionRacingRegistration_ResumesTheAwaiterExactlyOnceAsync(
+      CancellationToken cancellationToken) {
+    const int lanes = 4;
+    const int racesPerLane = 50_000;
+
+    var results = await Task.WhenAll(Enumerable.Range(0, lanes).Select(_ => Task.Factory.StartNew(
+      () => _raceLane(racesPerLane, cancellationToken),
+      cancellationToken,
+      TaskCreationOptions.LongRunning,
+      TaskScheduler.Default)));
+
+    var withoutState = Volatile.Read(ref _resumedWithoutItsState);
+    await Assert.That(withoutState).IsEqualTo(0)
+      .Because("a continuation must run with the state it was registered with; a real awaiter's state is its state "
+             + "machine, and resuming it with nothing is an unhandled exception on a pool thread");
+    var lost = results.Sum(r => r.Lost);
+    var resumedTwice = results.Sum(r => r.ResumedTwice);
+    await Assert.That(lost).IsEqualTo(0)
+      .Because("an awaiter whose completion raced its registration must still be resumed; a lost wake-up is a caller "
+             + "that waits forever");
+    await Assert.That(resumedTwice).IsEqualTo(0)
+      .Because("a continuation run twice resumes one async state machine twice");
+  }
+
+  private static int _resumedWithoutItsState;
+
+  private sealed class RaceAwaiter : IDisposable {
+    public readonly ManualResetEventSlim Resumed = new();
+    public int Runs;
+
+    public void Dispose() => Resumed.Dispose();
+  }
+
+  private static (int Lost, int ResumedTwice) _raceLane(int races, CancellationToken cancellationToken) {
+    using var aligned = new Barrier(2);
+    var awaiters = new RaceAwaiter[races];
+    PooledValueTaskSource<int>? current = null;
+    var completer = new Thread(() => {
+      for (var i = 0; i < races; i++) {
+        aligned.SignalAndWait(cancellationToken);
+        Volatile.Read(ref current)!.SetResult(i);
+      }
+    }) { IsBackground = true };
+    completer.Start();
+
+    var lost = 0;
+    for (var i = 0; i < races; i++) {
+      var source = new PooledValueTaskSource<int>();
+      var awaiter = new RaceAwaiter();
+      awaiters[i] = awaiter;
+      Volatile.Write(ref current, source);
+      aligned.SignalAndWait(cancellationToken);
+      // Registered whatever the status reads: registering after completion is legal and must run the continuation.
+      source.OnCompleted(static state => {
+        if (state is not RaceAwaiter a) {
+          // The continuation ran without the state it was registered with: the completer read the continuation before
+          // the awaiter's state was visible. A real awaiter's state is its state machine, so this is a crash there.
+          Interlocked.Increment(ref _resumedWithoutItsState);
+          return;
+        }
+        Interlocked.Increment(ref a.Runs);
+        a.Resumed.Set();
+      }, awaiter, source.Token, ValueTaskSourceOnCompletedFlags.None);
+      if (!awaiter.Resumed.Wait(TimeSpan.FromSeconds(5), cancellationToken)) {
+        lost++;
+      }
+    }
+    completer.Join();
+    var resumedTwice = awaiters.Count(a => Volatile.Read(ref a.Runs) > 1);
+    foreach (var a in awaiters) {
+      a.Dispose();
+    }
+    return (lost, resumedTwice);
+  }
 }

@@ -343,7 +343,8 @@ public class SchemaInitializationTests : EFCoreTestBase {
         BEGIN
           SELECT pg_get_functiondef(p.oid) INTO v_def FROM pg_proc p
           WHERE p.proname = 'wh_append_event' AND p.pronamespace = 'public'::regnamespace;
-          EXECUTE replace(v_def, 'stream_id = p_stream_id), 0) + 1', 'stream_id = p_stream_id), -1) + 1');
+          -- The new-stream floor of the numbering, which 280 (#1734) writes after its new-generation branch.
+          EXECUTE regexp_replace(v_def, 'END,\s*0\) \+ 1', 'END, -1) + 1');
         END $$;
         DELETE FROM wh_schema_migrations WHERE file_name LIKE '267\_%';
         """, connection)) {

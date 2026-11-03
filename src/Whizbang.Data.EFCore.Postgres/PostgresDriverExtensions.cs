@@ -16,6 +16,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.Startup;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
@@ -229,7 +230,8 @@ public static class PostgresDriverExtensions {
         // occurrences, and the scheduler registers that cron on the temporal engine (standing the
         // audit worker's every-Nth-cycle counter down). Same rationale as above.
         selector.Services.AddHostedService<ScheduledIntegritySweepReceptorRegistrar>();
-        selector.Services.AddHostedService<IntegritySweepScheduler>();
+        // Hosted to start at Accept commands (#1636): it registers a schedule in the temporal engine's tables.
+        selector.Services.AddWhizbangWorker<IntegritySweepScheduler>();
 
         // TURNKEY: stream-integrity B2/B3 — runtime-register IntegrityCheckpointReceptor so received
         // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
@@ -239,11 +241,9 @@ public static class PostgresDriverExtensions {
         // audit's request/response exchange works out of the box. Same rationale as above.
         selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
 
-        // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
-        // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
-        // initializer's registration order in the IHostedService chain doesn't matter — even
-        // if a worker's StartAsync runs first, it blocks on the gate until the initializer
-        // calls MarkReady() at the end of migrations.
+        // TURNKEY: Auto-initialize database schema. Workers are hosted with the point they start at
+        // (#1636), the schema-ready gate the initializer opens at the end of migrations or a later
+        // stage, so the initializer's registration order in the IHostedService chain doesn't matter.
         // The driver's share of the shared schema initializer: every DbContext registered for initialization.
         selector.Services.TryAddEnumerable(ServiceDescriptor.Singleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>(sp =>
             new DbContextSchemaInitializationRunner(sp, sp.GetRequiredService<ILogger<DbContextSchemaInitializationRunner>>())));
@@ -332,6 +332,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#distillation</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
           MetadataDistillationStep.FromServices));
+        // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
+          new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, global::Whizbang.Core.Lifecycle.StreamDispositionStep>(
+          global::Whizbang.Core.Lifecycle.StreamDispositionStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>
@@ -413,7 +418,8 @@ public static class PostgresDriverExtensions {
           return new PostgresNotifyDebounceStatsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<NotifyDebounceMetrics>();
-        selector.Services.AddHostedService<NotifyDebounceStatsCollector>();
+        // Hosted to start when the schema-ready gate opens (#1636): it reads wh_notify_state, which the migration creates.
+        selector.Services.AddWhizbangWorkerAtSchemaReady<NotifyDebounceStatsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
         // dispatch worker can move failed inbox rows into wh_dead_letters and the

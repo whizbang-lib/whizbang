@@ -37,11 +37,6 @@ public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
-  // Startup barrier. Optional ONLY so existing test fixtures construct unchanged; DI always
-  // supplies it, and without it the startup work below would run against a database that may
-  // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
-  // to close.
-  ISchemaReadyGate schemaReadyGate,
   IOptionsMonitor<TracingOptions> tracingOptions,
   IPerspectiveCompletionStrategy completionStrategy,
   IEventTypeProvider eventTypeProvider,
@@ -106,7 +101,7 @@ public partial class PerspectiveWorker(
   // When a run of transient database failures escalates to one Error, and its recovery line (#1986); null takes the
   // defaults.
   DatabaseFailureEscalationOptions? databaseFailureEscalation = null
-) : BackgroundService {
+) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
@@ -138,6 +133,14 @@ public partial class PerspectiveWorker(
   /// stops before the scan ran.
   /// </summary>
   public Task StartupScanComplete => _startupScanTcs.Task;
+
+  /// <summary>
+  /// The host stopped before Accept commands, so this worker never started (#1636): <see cref="StartupScanComplete"/>
+  /// is settled as canceled, so the read-model barrier waiting on it observes an outcome rather than hanging.
+  /// </summary>
+  /// <param name="stoppingToken">The host's stopping token.</param>
+  void Whizbang.Core.Startup.IStartAbandonedObserver.OnStartAbandoned(CancellationToken stoppingToken)
+    => _startupScanTcs.TrySetCanceled(stoppingToken);
   private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = ArgumentGuard.NotNull(options).Value;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor =
@@ -560,17 +563,9 @@ public partial class PerspectiveWorker(
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
     // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
-    // reconcile, rewind repair, the drain loop. None of it may begin before migrations have
-    // completed. A comment here used to claim the gate "has already been awaited"; it had not
-    // been, and on a cold database the startup repair silently no-op'd inside its catch-alls.
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        _startupScanTcs.TrySetCanceled(stoppingToken);
-        return;
-      }
-    }
+    // reconcile, rewind repair, the drain loop. The host starts this worker at Accept commands
+    // (#1636), so none of it begins before migrations have completed and the instance's row
+    // says it is eligible for work.
 
     // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
     // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.

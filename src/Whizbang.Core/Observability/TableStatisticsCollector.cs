@@ -20,7 +20,6 @@ namespace Whizbang.Core.Observability;
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <param name="scopeFactory">Resolves the provider for each cycle.</param>
 /// <param name="metrics">The meter the readings are reported on.</param>
-/// <param name="schemaReadyGate">Holds the first cycle until the schema exists; null starts at once.</param>
 /// <param name="logger">Optional logger.</param>
 /// <param name="options">The interval between cycles; an unset interval is thirty seconds.</param>
 /// <param name="timeProvider">The clock the interval is measured on; null is the system clock.</param>
@@ -29,7 +28,6 @@ namespace Whizbang.Core.Observability;
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
-  Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
   ILogger<TableStatisticsCollector> logger,
   Microsoft.Extensions.Options.IOptions<TableStatisticsOptions> options,
   TimeProvider? timeProvider = null
@@ -76,13 +74,6 @@ public sealed partial class TableStatisticsCollector(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
     // statistics tables before migrations have created them).
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {

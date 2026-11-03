@@ -33,6 +33,7 @@ using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
 using Whizbang.Testing.Lifecycle;
+using Whizbang.Testing.Workers;
 
 namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 
@@ -390,7 +391,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -545,7 +546,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -897,13 +898,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       worker.OnPerspectiveEventProcessed += handler;
     }
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var inventoryWorker = _inventoryHost!.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(inventoryWorker);
     }
     if (hostFilter is null or "bff") {
-      var bffWorker = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var bffWorker = _bffHost!.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(bffWorker);
     }
     var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);

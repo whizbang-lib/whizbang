@@ -65,7 +65,6 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IStartupAssessor _assessor;
   private readonly IHostApplicationLifetime _hostLifetime;
   private readonly StartupPipelineRunner? _pipelineRunner;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly StandbyWatcherOptions _options;
   private readonly ILogger<StandbyWatcher> _logger;
   private readonly TimeProvider _time;
@@ -79,7 +78,6 @@ public sealed partial class StandbyWatcher : BackgroundService {
   /// <param name="lifecycle">The lifecycle advanced to standby and back.</param>
   /// <param name="hostLifetime">Stopped when a migration commits beneath this instance.</param>
   /// <param name="instanceProvider">This instance's identity; the watcher is inert without it.</param>
-  /// <param name="schemaReadyGate">Waited on before the first read, since the ledger may not exist yet.</param>
   /// <param name="versionProvider">This binary's version, ranked against a requester's.</param>
   /// <param name="assessor">Re-assesses this instance's verdict.</param>
   /// <param name="logger">Logger.</param>
@@ -93,7 +91,6 @@ public sealed partial class StandbyWatcher : BackgroundService {
       IWhizbangLifecycleState lifecycle,
       IHostApplicationLifetime hostLifetime,
       IServiceInstanceProvider instanceProvider,
-      ISchemaReadyGate schemaReadyGate,
       ILibraryVersionProvider versionProvider,
       IStartupAssessor assessor,
       ILogger<StandbyWatcher> logger,
@@ -111,7 +108,6 @@ public sealed partial class StandbyWatcher : BackgroundService {
     _versionProvider = versionProvider;
     _assessor = assessor;
     _pipelineRunner = pipelineRunner;
-    _schemaReadyGate = schemaReadyGate;
     _options = options ?? new StandbyWatcherOptions();
     _logger = logger;
     _time = timeProvider;
@@ -121,13 +117,6 @@ public sealed partial class StandbyWatcher : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_instanceProvider is null) {
       return;   // no identity — no handshake to participate in
-    }
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        return;
-      }
     }
 
     while (!stoppingToken.IsCancellationRequested) {

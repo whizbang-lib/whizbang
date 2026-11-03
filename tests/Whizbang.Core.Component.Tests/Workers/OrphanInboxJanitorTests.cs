@@ -48,7 +48,7 @@ public class OrphanInboxJanitorTests {
     await Assert.That(() => new OrphanInboxJanitor(
   services: null!,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
+  logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -58,7 +58,7 @@ public class OrphanInboxJanitorTests {
     await Assert.That(() => new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: null!,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
+  logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -74,7 +74,6 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
   logger: logger);
 
     await _runToCompletionAsync(janitor);
@@ -104,7 +103,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
+  logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -123,7 +122,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
+  logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -149,7 +148,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
+  logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -169,7 +168,6 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
   logger: logger);
 
     await _runToCompletionAsync(janitor);
@@ -204,7 +202,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
+  logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -217,43 +215,19 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
-    var gate = new SchemaReadyGate();   // NOT ready — the sweep cannot even begin
     var coordinator = new RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0)
       .Because("host startup must not block on — or be coupled to — the orphan purge");
 
-    gate.MarkReady();
     await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1)
       .Because("once migrations complete the sweep must actually run");
-    await janitor.StopAsync(CancellationToken.None);
-  }
-
-  /// <summary>
-  /// The purge is a DELETE against wh_inbox — it must never run before migrations complete.
-  /// </summary>
-  [Test]
-  public async Task Sweep_DoesNotPurgeWhileTheGateIsClosedAsync() {
-    var gate = new SchemaReadyGate();
-    var coordinator = new RecordingCoordinator();
-    await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
-
-    await janitor.StartAsync(CancellationToken.None);
-    await Task.Delay(300);
-
-    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0)
-      .Because("a purge issued against a possibly-unmigrated schema is the second half of the defect");
-
-    gate.MarkReady();
-    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
     await janitor.StopAsync(CancellationToken.None);
   }
 

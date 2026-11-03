@@ -31,8 +31,7 @@ public class TransportDeadLetterDrainWorkerBranchCoverageTests {
         sp.GetRequiredService<IServiceScopeFactory>(),
         null!,
         null!,
-        NullLogger<TransportDeadLetterDrainWorker>.Instance,
-        SchemaReadyGate.AlreadyReady()))
+        NullLogger<TransportDeadLetterDrainWorker>.Instance))
       .Throws<ArgumentNullException>()
       .WithParameterName("options");
   }
@@ -44,8 +43,7 @@ public class TransportDeadLetterDrainWorkerBranchCoverageTests {
         sp.GetRequiredService<IServiceScopeFactory>(),
         new NullValueOptions(),
         null!,
-        NullLogger<TransportDeadLetterDrainWorker>.Instance,
-        SchemaReadyGate.AlreadyReady()))
+        NullLogger<TransportDeadLetterDrainWorker>.Instance))
       .Throws<ArgumentNullException>()
       .WithParameterName("options");
   }

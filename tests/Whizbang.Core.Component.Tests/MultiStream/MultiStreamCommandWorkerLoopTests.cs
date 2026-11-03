@@ -31,7 +31,7 @@ public class MultiStreamCommandWorkerLoopTests {
     new(run, stream, _commandType, MultiStreamJson.Serialize(new LoopProbeCommand(run, [stream])), null, 1);
 
   private static MultiStreamCommandWorker _worker(
-      LoopStore store, MultiStreamCommandOptions? options = null, ISchemaReadyGate? gate = null, LoopHandler? handler = null,
+      LoopStore store, MultiStreamCommandOptions? options = null, LoopHandler? handler = null,
       bool withHandler = true) {
     var services = new ServiceCollection();
     if (withHandler) {
@@ -48,8 +48,7 @@ public class MultiStreamCommandWorkerLoopTests {
       new LoopInstance(),
       Options.Create(options),
       NullLogger<MultiStreamCommandWorker>.Instance,
-      new NoAssignment(),
-      gate ?? SchemaReadyGate.AlreadyReady());
+      new NoAssignment());
   }
 
   private static (Task<int> Pass, Action Unsubscribe) _nextPass(MultiStreamCommandWorker worker, Func<int, bool>? when = null) {
@@ -141,28 +140,6 @@ public class MultiStreamCommandWorkerLoopTests {
   }
 
   [Test]
-  public async Task Loop_WaitsForTheSchemaBeforeItsFirstPassAsync() {
-    var store = new LoopStore();
-    var gate = new LoopGate();
-    var worker = _worker(store, gate: gate);
-    var (first, _) = _nextPass(worker);
-
-    await worker.StartAsync(CancellationToken.None);
-    try {
-      await gate.Waiting.WaitAsync(_deadline);
-      await Assert.That(store.ClaimCount).IsEqualTo(0)
-        .Because("the worker is parked on the schema gate, so nothing has been claimed");
-
-      gate.Open();
-
-      await Assert.That(await first.WaitAsync(_deadline)).IsEqualTo(0);
-      await Assert.That(store.ClaimCount).IsGreaterThanOrEqualTo(1);
-    } finally {
-      await worker.StopAsync(CancellationToken.None);
-    }
-  }
-
-  [Test]
   public async Task Loop_StoppingMidStream_EndsTheLoopWithoutRecordingTheUnfinishedStreamAsync() {
     var store = new LoopStore();
     var handler = new LoopHandler { BlockUntilCanceled = true };
@@ -239,24 +216,6 @@ public class MultiStreamCommandWorkerLoopTests {
     public void MarkStale() => OnAssignmentChanged?.Invoke(null);
     public ValueTask<PartitionAssignmentVersion?> ForClaimAsync(Guid instanceId, CancellationToken cancellationToken) =>
       ValueTask.FromResult<PartitionAssignmentVersion?>(null);
-  }
-
-  private sealed class LoopGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _open = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Waiting => _waiting.Task;
-
-    public bool IsReady => _open.Task.IsCompleted;
-
-    public void Open() => _open.TrySetResult();
-
-    public void MarkReady() => Open();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waiting.TrySetResult();
-      return _open.Task.WaitAsync(cancellationToken);
-    }
   }
 
   private sealed class LoopStore : IMultiStreamCommandStore {

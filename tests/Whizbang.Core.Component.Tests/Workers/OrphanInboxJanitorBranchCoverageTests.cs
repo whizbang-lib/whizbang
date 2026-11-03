@@ -44,7 +44,6 @@ public class OrphanInboxJanitorBranchCoverageTests {
     var janitor = new OrphanInboxJanitor(
       services: sp,
       receptorSnapshot: new HandledReceptorTypeSnapshot([typeof(HandledMsg)]),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: null!);
     await janitor.StartAsync(CancellationToken.None);
     // The sweep is one-shot: its own completion is the signal the body ran to its end.

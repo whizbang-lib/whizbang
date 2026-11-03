@@ -129,14 +129,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
@@ -195,14 +192,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
@@ -254,14 +248,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
@@ -327,14 +318,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
@@ -394,14 +382,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
@@ -449,14 +434,11 @@ public class ClaimWorkerReemissionBackoffTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
