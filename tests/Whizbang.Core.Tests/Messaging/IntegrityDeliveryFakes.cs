@@ -33,6 +33,9 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
 
   public Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
       Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) {
+    if (EnqueueFailure is { } failure) {
+      return Task.FromException<IntegrityDeliveryEnqueueResult>(failure);
+    }
     if (!Supported) {
       return Task.FromResult(IntegrityDeliveryEnqueueResult.Unsupported);
     }
@@ -78,6 +81,18 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
 
   public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
     BacklogFailure is { } failure ? ValueTask.FromException<ServiceBacklog?>(failure) : ValueTask.FromResult(Backlog);
+
+  /// <summary>Every origin adoption the reconcile asked for.</summary>
+  public List<(Guid Origin, string? Name, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> Sequences)> Adoptions { get; } = [];
+
+  public Exception? EnqueueFailure { get; set; }
+
+  public Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+      Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      CancellationToken cancellationToken = default) {
+    Adoptions.Add((originServiceId, originServiceName, eventIds, commitSequences));
+    return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
+  }
 
   public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;

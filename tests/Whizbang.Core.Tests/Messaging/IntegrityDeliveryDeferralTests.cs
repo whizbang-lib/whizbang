@@ -255,3 +255,22 @@ public class IntegrityDeliveryRegistryTests {
     await Assert.That(() => new IntegrityDeliveryRegistry().Register("t", null!)).Throws<ArgumentNullException>();
   }
 }
+
+/// <summary>A recorded delivery that reads back as null is a fault the drain counts, never a silent success.</summary>
+/// <code-under-test>src/Whizbang.Core/Messaging/IntegrityDeferringReceptor.cs</code-under-test>
+public class IntegrityDeferringReceptorPayloadTests {
+  [Test]
+  public async Task APayloadThatReadsBackAsNull_IsAFaultAsync() {
+    var deliveries = new IntegrityDeliveryRegistry();
+    await using var provider = new ServiceCollection().AddSingleton(deliveries).BuildServiceProvider();
+    var registry = new RecordingReceptorRegistry();
+    var inner = new RecordingReceptor<RequestRedeliveryCommand>();
+    registry.RegisterIntegrityReceptor(inner, provider, provider.GetRequiredService<IServiceScopeFactory>());
+    var type = ((IntegrityDeferringReceptor<RequestRedeliveryCommand>)registry.Registered[0].Receptor).DeliveryType;
+    _ = deliveries.TryGetHandler(type, out var handler);
+
+    await Assert.That(async () => await handler!("null", provider, CancellationToken.None))
+      .Throws<System.Text.Json.JsonException>();
+    await Assert.That(inner.Handled).IsEmpty();
+  }
+}
