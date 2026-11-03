@@ -17,8 +17,14 @@ namespace Whizbang.Sagas.Tests;
 /// detection must consult the event store directly. Without this, the
 /// saga would never complete despite all items genuinely being done.
 /// </summary>
+/// <remarks>
+/// Each stub reader registers sagas elsewhere in the process before it derives the stream id it expects, as a
+/// parallel test or a second host can, so a test here passes only when the reconciler and the stub derive under the
+/// same explicit namespace rather than the process-wide one (see <see cref="ProcessWideSagaNamespace"/>).
+/// </remarks>
 [Category("Unit")]
 [Category("Saga")]
+[NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
 public class SagaItemCompletionReconcilerTests {
 
   private static readonly Guid _sagaId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -71,7 +77,8 @@ public class SagaItemCompletionReconcilerTests {
     };
     var agg = new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1);
 
-    var reader = new StubReader(_sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    using var processWide = new ProcessWideSagaNamespace();
+    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "c", SagaItemTerminalOutcome.Completed },
     });
 
@@ -96,7 +103,8 @@ public class SagaItemCompletionReconcilerTests {
     };
     var agg = new SagaItemAggregate(Total: 2, Completed: 1, Failed: 0, InProgress: 1);
 
-    var reader = new StubReader(_sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    using var processWide = new ProcessWideSagaNamespace();
+    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "b", SagaItemTerminalOutcome.Failed },
     });
 
@@ -121,7 +129,8 @@ public class SagaItemCompletionReconcilerTests {
     };
     var agg = new SagaItemAggregate(Total: 2, Completed: 1, Failed: 0, InProgress: 1);
 
-    var reader = new StubReader(_sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    using var processWide = new ProcessWideSagaNamespace();
+    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "b", SagaItemTerminalOutcome.NotTerminal },
     });
 
@@ -141,8 +150,10 @@ public class SagaItemCompletionReconcilerTests {
       throw new InvalidOperationException("Reconciler should not have touched the event store on this code path.");
   }
 
-  private sealed class StubReader(Guid expectedSagaId, IDictionary<string, SagaItemTerminalOutcome> outcomesByItemId) : ISagaItemTerminalReader {
+  private sealed class StubReader(ProcessWideSagaNamespace processWide, Guid expectedSagaId, IDictionary<string, SagaItemTerminalOutcome> outcomesByItemId) : ISagaItemTerminalReader {
     public Task<SagaItemTerminalOutcome> CheckAsync(Guid perItemStreamId, CancellationToken cancellationToken) {
+      // Another registration lands between the reconciler's derivation and this one.
+      processWide.RegisterElsewhere();
       foreach (var (itemId, outcome) in outcomesByItemId) {
         if (SagaItemStreams.Of(expectedSagaId, itemId) == perItemStreamId) {
           return Task.FromResult(outcome);

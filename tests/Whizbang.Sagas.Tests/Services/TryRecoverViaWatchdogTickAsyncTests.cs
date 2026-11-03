@@ -621,7 +621,9 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// failure for work that succeeded.
   /// </remarks>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ItemAlreadyTerminalInTheStore_IsNotFailedAgainAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var (svc, emitter) = _buildService(
       itemRepository: new FakeItemRepository(
         agg: new SagaItemAggregate(Total: 3, Completed: 1, Failed: 0, InProgress: 2),
@@ -631,6 +633,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       }),
       projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(1, 0), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed)
@@ -807,7 +810,9 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// terminal is left alone, and one the service re-dispatches stays in progress.
   /// </remarks>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ExpectedItemsKnown_FailsEachItemThatNeverGotARowAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var expected = Enumerable.Range(0, 350).Select(i => $"i{i:D3}").ToList();
     var emitter = new RecordingEmitter();
     var redriven = new List<string>();
@@ -825,6 +830,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       },
     };
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(336, 1), CancellationToken.None);
 
     var failed = emitter.Published.OfType<TestItemFailedEvent>().ToList();
@@ -845,7 +851,9 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// counted as failed: its projection row is merely behind.
   /// </summary>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ItemsWithNoRowAndARowBehindTheStore_CountsWhatTheStoreRecordsAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var rows = new List<SagaItemModel>(_rows(2, 0)) { _item("done-in-store", SagaItemState.Running), _item("failed-in-store", SagaItemState.Running) };
     var (svc, emitter) = _buildService(
       itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 4, Completed: 2, Failed: 0, InProgress: 2), rows),
@@ -855,6 +863,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       }),
       projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 6 });
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Recovered);
