@@ -18,6 +18,7 @@ This directory contains focused documentation topics to help Claude Code underst
   - **Critical:** Test-first is mandatory, 100% coverage goal
 
 - **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
+- [catalog-existence-checks.md](catalog-existence-checks.md): when `to_regclass` and other name lookups read a stale answer inside a transaction, the rule for new checks, and the per-site audit (#2038)
 - [schema-initialization-connections.md](schema-initialization-connections.md) — two traps that each shipped once: statements that need a commit between them, and why there is almost never a connection string to open a second connection from
 - [load-under-bulk-import.md](load-under-bulk-import.md) — where a bulk load's database CPU went, measured: the claim poll priced by the backlog, maintenance running at the peak, the stamper sorting on every wake, DDL at startup under load, idle polling; the rule each became, and how to measure without being misled by cumulative counters
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
