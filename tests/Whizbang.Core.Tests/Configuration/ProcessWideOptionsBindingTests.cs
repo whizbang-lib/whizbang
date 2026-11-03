@@ -56,6 +56,7 @@ public sealed class ProcessWideOptionsBindingTests {
       ["Whizbang:EventStore:Metadata:FullFor:0"] = "MyApp.Payments",
       ["Whizbang:EventStore:Metadata:FullFor:1"] = "MyApp.Orders.OrderPlaced",
       ["Whizbang:EventStore:Metadata:StagingDays"] = "5",
+      ["Whizbang:EventStore:Metadata:ConvertHistory"] = "false",
     });
 
     var options = provider.GetRequiredService<IOptions<EventStoreMetadataOptions>>().Value;
@@ -63,6 +64,7 @@ public sealed class ProcessWideOptionsBindingTests {
     await Assert.That(options.WriteForm).IsEqualTo(EventStoreMetadataWriteForm.Slim);
     await Assert.That(options.FullFor).IsEquivalentTo(["MyApp.Payments", "MyApp.Orders.OrderPlaced"]);
     await Assert.That(options.StagingDays).IsEqualTo(5);
+    await Assert.That(options.ConvertHistory).IsFalse();
   }
 
   [Test]
@@ -75,6 +77,8 @@ public sealed class ProcessWideOptionsBindingTests {
       .Because("the default form keeps the slim row and stages the full form for routes and traces (#1493 decision)");
     await Assert.That(options.FullFor).IsEmpty();
     await Assert.That(options.StagingDays).IsNull().Because("unset leaves the database default of two days");
+    await Assert.That(options.ConvertHistory).IsTrue()
+      .Because("rows written full before slim metadata are converted unless a host opts out (#1727)");
   }
 
   [Test]

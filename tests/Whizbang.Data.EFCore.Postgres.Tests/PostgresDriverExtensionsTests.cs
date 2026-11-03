@@ -251,6 +251,25 @@ public class PostgresDriverExtensionsTests {
   }
 
   /// <summary>
+  /// The driver registers the step that converts historical full metadata to the slim form (#1727), once however often
+  /// the driver is selected.
+  /// </summary>
+  [Test]
+  public async Task Postgres_RegistersTheMetadataHistoryConversionStep_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Data.Postgres.MetadataHistoryConversionStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
   /// A host that has logging gets the prune step's report in its own log: the registration hands the
   /// step the host's logger and falls back to a null one only where the host has none.
   /// </summary>

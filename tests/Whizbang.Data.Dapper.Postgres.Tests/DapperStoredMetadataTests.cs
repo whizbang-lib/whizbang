@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -15,6 +16,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 
@@ -66,6 +68,49 @@ public class DapperStoredMetadataTests : PostgresTestBase {
     var stagedHopService = await conn.ExecuteScalarAsync<string>(
       "SELECT metadata -> 'hops' -> 0 -> 'si' ->> 'sn' FROM wh_event_metadata_staging WHERE event_id = @id AND route_id = @routeId", new { id, routeId });
     await Assert.That(stagedHopService).IsEqualTo("orders").Because("the staged form keeps the full hop");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgres_RegistersTheHistoryConversionStep_ThatConvertsTheStoresOwnFormAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo { ServiceName = "orders", InstanceId = (Guid)TrackedGuid.New(), HostName = "host", ProcessId = 7 },
+      Timestamp = _sent,
+      Topic = "orders.events",
+      CallerMemberName = "PlaceAsync",
+      CallerFilePath = "/src/Orders/PlaceOrderReceptor.cs",
+      CallerLineNumber = 12,
+    };
+    var envelope = new MessageEnvelope<DapperMixedStreamProbeNoted> {
+      MessageId = MessageId.From(TrackedGuid.New()),
+      Payload = new DapperMixedStreamProbeNoted { StreamId = stream },
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+    var id = envelope.MessageId.Value;
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    // A row as the store wrote it before slim metadata: the full form, and no route id.
+    _ = await conn.ExecuteAsync("INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('metadata_write_form', 'Full', 'string')");
+    await _eventStore().AppendAsync(stream, envelope);
+    _ = await conn.ExecuteAsync("DELETE FROM wh_settings WHERE setting_key = 'metadata_write_form'");
+    _ = await conn.ExecuteAsync("UPDATE wh_event_body SET metadata = metadata - 'rid' WHERE event_id = @id", new { id });
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    services.AddLogging();
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+
+    var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<MetadataHistoryConversionStep>().ToList();
+    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
+
+    await Assert.That(steps).Count().IsEqualTo(1).Because("history is converted by the maintenance cycle, under the maintainer duty, on either driver");
+    using var row = JsonDocument.Parse(await conn.ExecuteScalarAsync<string>("SELECT metadata::text FROM wh_event_body WHERE event_id = @id", new { id }) ?? "{}");
+    await Assert.That(row.RootElement.GetProperty("hops").EnumerateArray().Single().TryGetProperty("si", out _)).IsFalse()
+      .Because("the store's own hop list (hops) is reduced to the slim hop");
+    await Assert.That(row.RootElement.GetProperty("message_id").GetString()).IsEqualTo(id.ToString())
+      .Because("the store reads its own keys back, so they are kept");
+    await Assert.That(row.RootElement.GetProperty("rid").GetGuid())
+      .IsEqualTo(RouteNormalizer.RouteId(TypeNameFormatter.Format(typeof(DapperMixedStreamProbeNoted)), envelope.Hops));
   }
 
   private DapperPostgresEventStore _eventStore() {

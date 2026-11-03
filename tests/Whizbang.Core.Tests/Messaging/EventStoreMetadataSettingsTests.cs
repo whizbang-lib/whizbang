@@ -79,6 +79,20 @@ public class EventStoreMetadataSettingsTests {
   }
 
   [Test]
+  public async Task ConvertHistory_IsPublishedEveryTime_InBothDirectionsAsync() {
+    var on = _byKey(EventStoreMetadataSettings.SettingsFor(new EventStoreMetadataOptions(), []));
+    var off = _byKey(EventStoreMetadataSettings.SettingsFor(new EventStoreMetadataOptions { ConvertHistory = false }, []));
+
+    await Assert.That(on[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].Value).IsEqualTo("true")
+      .Because("the default is published too, so a conversion switched off and back on resumes");
+    await Assert.That(off[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].Value).IsEqualTo("false")
+      .Because("switching it off must reach the maintenance step on the next tick");
+    await Assert.That(on[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].ValueType).IsEqualTo("boolean");
+    await Assert.That(on[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].Source).IsEqualTo("Whizbang:EventStore:Metadata:ConvertHistory");
+    await Assert.That(EventStoreMetadataSettings.CONVERT_HISTORY_KEY).IsEqualTo("metadata_convert_history");
+  }
+
+  [Test]
   public async Task SettingsFor_RefusesNullArgumentsAsync() {
     await Assert.That(() => EventStoreMetadataSettings.SettingsFor(null!, [])).Throws<ArgumentNullException>();
     await Assert.That(() => EventStoreMetadataSettings.SettingsFor(new EventStoreMetadataOptions(), null!)).Throws<ArgumentNullException>();
