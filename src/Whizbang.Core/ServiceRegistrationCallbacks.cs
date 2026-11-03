@@ -227,6 +227,7 @@ public static class ServiceRegistrationCallbacks {
         // catalog just registered above, so it is only wired when a catalog exists to feed it.
         services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
         services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
+        services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
       }
     }
   }

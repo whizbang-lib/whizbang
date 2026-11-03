@@ -49,7 +49,7 @@ public readonly record struct AuditRebuildResult(int Selected, int Rederived);
 public sealed partial class AuditLedgerRebuild {
   private readonly SystemEventOptions _options;
   private readonly TimeProvider _time;
-  private readonly Dictionary<string, Type> _types;
+  private readonly AuditTypeResolver _types;
   private readonly ILogger _logger;
 
   /// <summary>Creates a rebuild that resolves stored type names against <paramref name="catalog"/>.</summary>
@@ -75,7 +75,8 @@ public sealed partial class AuditLedgerRebuild {
     _options = ArgumentGuard.NotNull(options);
     _time = timeProvider ?? TimeProvider.System;
     _logger = logger ?? (ILogger)NullLogger.Instance;
-    _types = EventTypeMatchingHelper.BuildTypeLookup([.. catalog.GetAll().Select(e => e.Type)]);
+    // The resolver the live outbox path uses, so the two agree on which types resolve (#2040).
+    _types = new AuditTypeResolver(catalog);
   }
 
   /// <summary>
@@ -87,7 +88,7 @@ public sealed partial class AuditLedgerRebuild {
   public OutboxMessage? Rederive(RedeliveryEvent storedEvent) {
     ArgumentNullException.ThrowIfNull(storedEvent);
     var isEphemeral = (storedEvent.Flags & (int)EventFlags.Ephemeral) != 0;
-    EventTypeMatchingHelper.TryResolveType(_types, storedEvent.EventType, out var eventType);
+    _ = _types.TryResolve(storedEvent.EventType, out var eventType);
     if (!_isAudited(eventType, isEphemeral, storedEvent.EventType)) {
       return null;
     }

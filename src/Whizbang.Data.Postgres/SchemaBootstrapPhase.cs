@@ -310,14 +310,8 @@ public static class SchemaBootstrapPhase {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync</tests>
     private static async Task<RecordedClosure> _recordedClosureAsync(
         NpgsqlConnection connection, string schema, BootstrapClosure closure, CancellationToken cancellationToken) {
-      await using (var exists = new NpgsqlCommand(
-          "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
-          + "WHERE n.nspname = $1 AND c.relname = 'wh_bootstrap_closure')",
-          connection)) {
-        exists.Parameters.AddWithValue(schema);
-        if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
-          return RecordedClosure.None;
-        }
+      if (!await CatalogPresence.RelationExistsAsync(connection, schema, "wh_bootstrap_closure", cancellationToken).ConfigureAwait(false)) {
+        return RecordedClosure.None;
       }
       var table = $"{_quoteIdentifier(schema)}.wh_bootstrap_closure";
       await using var recorded = new NpgsqlCommand(

@@ -33,6 +33,8 @@ public record ScopedWorkCoordinatorDependencies {
   public Tags.CoalesceGroupResolver? CoalesceResolver { get; init; }
   /// <summary>The registered audit decision hook, consulted for every audit record this strategy builds.</summary>
   public SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; init; }
+  /// <summary>Resolves an audited event's type through the message-type catalog, as the audit ledger rebuild does.</summary>
+  public SystemEvents.AuditTypeResolver? AuditEventTypes { get; init; }
 }
 
 /// <summary>
@@ -75,7 +77,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver, dependencies?.AuditEventTypes);
 
   private bool _disposed;
 

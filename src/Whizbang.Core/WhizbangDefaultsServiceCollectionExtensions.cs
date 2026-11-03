@@ -107,10 +107,12 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
     services.TryAddSingleton<Workers.IInstanceConnectionModeSource>(Workers.NullInstanceConnectionModeSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
-    // Both resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
+    // The resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
     services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+    // The live audit path and the audit ledger rebuild resolve event types through the same catalog (#2040).
+    services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
     // The payload limit reads the options, the catalog and every registered hook once, at first use.
     services.TryAddSingleton(Messaging.MessagePayloadLimits.Create);
     services.AddMetrics();

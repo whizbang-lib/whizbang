@@ -2488,51 +2488,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var body = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
-    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var grace = BuildSchemaQualifiedName(schema, "wh_ephemeral_type_grace");
-    var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
-    var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
-    var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
-    var hold = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // The exact predicate of Task 8's DELETE (wh_perform_maintenance, migration 310), as a SELECT: ephemeral (flags&8),
-    // not held, aged past its grace window, past its AfterTtl expiry, consumed (no unprocessed work item), and
-    // snapshot-covered (no consuming perspective lacks a covering snapshot). These are the bodies THIS cycle will reap.
-#pragma warning disable S2077
-    cmd.CommandText =
-      "SELECT es.event_id, es.stream_id, es.event_type " +
-      $"FROM {body} eb " +
-      $"JOIN {store} es ON es.event_id = eb.event_id " +
-      $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
-      "WHERE (es.flags & 8) = 8 " +
-      // E2-3: skip bodies a hook already held (Cancel/Defer) — don't re-offer them until the hold lapses.
-      $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.event_id = eb.event_id AND h.hold_until > NOW()) " +
-      "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
-      $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
-      "  * INTERVAL '1 second') " +
-      // #2018: the reap's TTL floor. An AfterTtl body is kept until past its own expiry, so it is not offered before then:
-      // a body offered and kept was reported destroyed while it survived. No key (Sourced / WhenConsumed) passes.
-      "AND (eb.metadata ->> 'ephemeral_expires_at' IS NULL " +
-      "  OR (eb.metadata ->> 'ephemeral_expires_at')::timestamptz < NOW()) " +
-      $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
-      $"AND NOT EXISTS (SELECT 1 FROM {assoc} ma WHERE ma.normalized_message_type = es.event_type " +
-      "  AND ma.association_type = 'perspective' " +
-      $"  AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
-      // 209: by version, matching the migration. This query answers "which bodies will this cycle reap",
-      // so any drift from the DELETE it mirrors reports bodies that survive or hides bodies that go.
-      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version))";
-#pragma warning restore S2077
-    var list = new List<EphemeralDestructionTarget>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new EphemeralDestructionTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
-    }
-    return list;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    // The exact predicate of the reap's DELETE, as a SELECT, shared with the Dapper coordinator (#2039).
+    return await Whizbang.Data.Postgres.EphemeralDestructionSql.CollectAboutToReapAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2544,21 +2505,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
-    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // Upsert a hold for every event id to the same instant; a later decision (re-defer) overwrites it.
-#pragma warning disable S2077 // Schema-qualified table name from validated schema constant; values are parameters
-    cmd.CommandText =
-      $"INSERT INTO {holdTable} (event_id, hold_until) " +
-      "SELECT unnest(@ids), @until ON CONFLICT (event_id) DO UPDATE SET hold_until = EXCLUDED.hold_until";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
-    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = holdUntil.UtcDateTime });
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await Whizbang.Data.Postgres.EphemeralDestructionSql.HoldAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), eventIds, holdUntil, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2572,50 +2523,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
-    var bodyTable = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
-    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // Upsert +1 attempt per event. TTL-HALVING backoff (E2-5 inc 2): for an event that carries a TTL expiry
-    // (ephemeral_expires_at), the retry is scheduled at the MIDPOINT to that expiry — NOW() + (expiry-NOW())/2 —
-    // so retries decay across the remaining TTL window (60d → +30d → +15d → …), giving a failing compaction/
-    // archive hook the whole window to recover. An event with no TTL (WhenConsumed) falls back to the fixed
-    // @until backoff. Past the cap → hold_until '-infinity' so Task 8's `hold_until > NOW()` gate FORCE-deletes.
-    // Return the batch's highest attempt count so the worker can log retry-vs-forced.
-#pragma warning disable S2077 // Schema-qualified table names from validated schema constant; values are parameters
-    // @pol (OnDestroyFailure): 2=ForceDeleteImmediately ('-infinity' now), 1=RetryThenKeep (past cap => keep,
-    // 'infinity'), 0=RetryThenForcedDelete (past cap => force, '-infinity'). Under the cap all policies use the
-    // TTL-halving/fallback retry_until.
-    cmd.CommandText =
-      "WITH src AS ( " +
-      "  SELECT id AS event_id, " +
-      "    CASE WHEN @pol = 2 THEN '-infinity'::timestamptz " +
-      "         WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
-      "         THEN NOW() + ((eb.metadata ->> 'ephemeral_expires_at')::timestamptz - NOW()) / 2 " +
-      "         ELSE @until END AS retry_until " +
-      "  FROM unnest(@ids) AS id " +
-      $"  LEFT JOIN {bodyTable} eb ON eb.event_id = id), " +
-      "upserted AS ( " +
-      $"  INSERT INTO {holdTable} (event_id, hold_until, failure_count) " +
-      "  SELECT event_id, retry_until, 1 FROM src " +
-      "  ON CONFLICT (event_id) DO UPDATE SET " +
-      $"    failure_count = {holdTable}.failure_count + 1, " +
-      "    hold_until = CASE " +
-      "      WHEN @pol = 2 THEN '-infinity'::timestamptz " +
-      $"      WHEN {holdTable}.failure_count + 1 > @max " +
-      "        THEN (CASE WHEN @pol = 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END) " +
-      "      ELSE EXCLUDED.hold_until END " +
-      "  RETURNING failure_count) " +
-      "SELECT COALESCE(MAX(failure_count), 0) FROM upserted";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
-    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = retryHoldUntil.UtcDateTime });
-    cmd.Parameters.Add(new NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxRetries });
-    cmd.Parameters.Add(new NpgsqlParameter("pol", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)onFailure });
-    return (int)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await Whizbang.Data.Postgres.EphemeralDestructionSql.RecordFailureAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), eventIds, retryHoldUntil, maxRetries, onFailure,
+      cancellationToken).ConfigureAwait(false);
   }
 
   // Issues a guarded UPDATE on wh_service_instances. No-op when the
@@ -5997,24 +5910,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var connection = __scope.Connection;
 
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
-    command.CommandText = $"SELECT * FROM \"{schema}\".wh_perform_maintenance(@reap_ids)";
-    var reapIds = command.CreateParameter();
-    reapIds.ParameterName = "reap_ids";
-    reapIds.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid;
-    reapIds.Value = ephemeralReapEventIds is null ? DBNull.Value : AsArray(ephemeralReapEventIds);
-    command.Parameters.Add(reapIds);
-
-    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-    var results = new List<MaintenanceResult>();
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new MaintenanceResult(
-        reader.GetString(0),
-        reader.GetInt64(1),
-        reader.GetDouble(2),
-        reader.GetString(3)
-      ));
-    }
-    return results;
+    // Always qualified, the default schema included: the function is called by its schema's name, never through
+    // search_path. Shared with the Dapper coordinator (#2039).
+    return await Whizbang.Data.Postgres.EphemeralDestructionSql.PerformMaintenanceAsync(
+      command, Whizbang.Data.Postgres.PgIdentifier.Quote(schema) + ".", ephemeralReapEventIds, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
