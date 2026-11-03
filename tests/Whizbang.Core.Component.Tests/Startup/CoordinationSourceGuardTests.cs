@@ -73,9 +73,6 @@ public partial class CoordinationSourceGuardTests {
     ["wh_instance_liveness"] = "THE liveness rule",
     ["wh_direct_alive_lock_holders"] = "the lock half of the rule",
     ["register_instance_heartbeat"] = "a write throttle on the beat itself; it judges no peer",
-    ["_advisory_lock_held_elsewhere"] = PENDING_DUTIES + " (sees a legacy duty lock)",
-    ["wh_end_lapsed_bridge"] = PENDING_DUTIES + " (ends a lapsed legacy-lock bridge)",
-    ["wh_vote_role"] = PENDING_DUTIES + " (the vote refuses while a legacy lock is held)",
     ["_role_backend_active"] = "whether a role holder's own long statement is still running: a lease extension, not a liveness verdict",
     ["wh_mark_role_duty_backend"] = "marks the backend running a role's statement: a lease extension, not a liveness verdict",
     ["stamp_pending_commit_sequences"] = "the visibility fence reads in-flight transaction ids; it judges no instance",
@@ -109,6 +106,9 @@ public partial class CoordinationSourceGuardTests {
 
   [GeneratedRegex(@"CREATE OR REPLACE FUNCTION\s+__SCHEMA__\.(\w+)\s*\(.*?\$\$(.*?)\$\$", RegexOptions.Singleline)]
   private static partial Regex _sqlFunction();
+
+  [GeneratedRegex(@"DROP FUNCTION IF EXISTS\s+__SCHEMA__\.(\w+)\s*\(|drop_all_overloads\('(\w+)'\)")]
+  private static partial Regex _sqlFunctionDrop();
 
   [GeneratedRegex(@"--[^\n]*")]
   private static partial Regex _sqlComment();
@@ -167,6 +167,10 @@ public partial class CoordinationSourceGuardTests {
     await Assert.That(_advisory().IsMatch(csharp["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"])).IsTrue();
     await Assert.That(_liveness().IsMatch(sql["wh_instance_liveness"])).IsTrue();
     await Assert.That(_liveness().IsMatch("SELECT 1 FROM t WHERE last_heartbeat_at > now() - interval '1 minute'")).IsTrue();
+    await Assert.That(sql.ContainsKey("_advisory_lock_held_elsewhere")).IsFalse()
+      .Because("a function dropped after its last definition (#2044) is not run by any database, so it is not scanned");
+    await Assert.That(sql.ContainsKey("wh_role_assignment_status")).IsTrue()
+      .Because("a drop followed by a new definition (drop_all_overloads, then CREATE) leaves the new definition");
     await Assert.That(_liveness().IsMatch(sql["claim_work"])).IsFalse()
       .Because("claim_work ranks its peers through the rule (317); a comment that mentions pg_stat_activity is not code");
   }
@@ -199,13 +203,24 @@ public partial class CoordinationSourceGuardTests {
         f => _csComment().Replace(File.ReadAllText(f), string.Empty),
         StringComparer.Ordinal);
 
-  /// <summary>Each SQL function's last definition in the migration corpus, by name, with comments removed.</summary>
+  /// <summary>
+  /// Each SQL function's last definition in the migration corpus, by name, with comments removed. A function whose
+  /// last word is a drop is not in the result: a database does not run it.
+  /// </summary>
   private static Dictionary<string, string> _latestSqlFunctions() {
     var latest = new Dictionary<string, string>(StringComparer.Ordinal);
     var migrations = Path.Combine(_repoRoot, "src", "Whizbang.Data.Postgres", "Migrations");
     foreach (var file in Directory.EnumerateFiles(migrations, "*.sql").Order(StringComparer.Ordinal)) {
-      foreach (Match match in _sqlFunction().Matches(File.ReadAllText(file))) {
-        latest[match.Groups[1].Value] = _sqlComment().Replace(match.Groups[2].Value, string.Empty);
+      var sql = _sqlComment().Replace(File.ReadAllText(file), string.Empty);
+      var definitions = _sqlFunction().Matches(sql).Select(m => (m.Index, Name: m.Groups[1].Value, Body: (string?)m.Groups[2].Value));
+      var drops = _sqlFunctionDrop().Matches(sql)
+        .Select(m => (m.Index, Name: m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value, Body: (string?)null));
+      foreach (var (_, name, body) in definitions.Concat(drops).OrderBy(e => e.Index)) {
+        if (body is null) {
+          _ = latest.Remove(name);
+        } else {
+          latest[name] = body;
+        }
       }
     }
     return latest;

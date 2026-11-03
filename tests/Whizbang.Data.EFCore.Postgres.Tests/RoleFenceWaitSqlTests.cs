@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/198_LapsedBridgeLooksBeforeItLocks.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/321_EveryDutyIsARoleAssignment.sql</code-under-test>
 [Category("Shard3")]
 public class RoleFenceWaitSqlTests : EFCoreTestBase {
   private const string ROLE = "commit-stamper";
@@ -116,8 +117,11 @@ public class RoleFenceWaitSqlTests : EFCoreTestBase {
     await using var bridged = await dataSource.OpenConnectionAsync();
     var ended = await _scalarAsync(bridged, $"SELECT wh_end_lapsed_bridge('{ROLE}', 4242)");
 
-    await Assert.That(ended).IsEqualTo(pid)
-      .Because("looking before locking must not hide a bridge that has lapsed: that one is still ended, under the locks");
+    await Assert.That(ended).IsNull()
+      .Because("#2044: a duty is never held by a session, so no session is ended to free one (the name is kept because "
+        + "migration 198 links to it)");
+    await Assert.That(await _scalarAsync(conn, "SELECT pg_backend_pid()")).IsEqualTo(pid)
+      .Because("the session that held the old lock is still alive");
   }
 
   // ------------------------------------------------------------------
