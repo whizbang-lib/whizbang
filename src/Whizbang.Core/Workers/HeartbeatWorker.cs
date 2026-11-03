@@ -44,6 +44,7 @@ public partial class HeartbeatWorker(
   ILogger<HeartbeatWorker> logger,
   IWhizbangLifecycleState lifecycleState,
   ILibraryVersionProvider libraryVersion,
+  Whizbang.Core.Versioning.IApplicationVersionProvider applicationVersion,
   IPinnedConnectionPool pinnedPool,
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
@@ -63,6 +64,8 @@ public partial class HeartbeatWorker(
   // is hand-built. The worker pipeline registers defaults for both.
   private readonly IWhizbangLifecycleState _lifecycleState = ArgumentGuard.NotNull(lifecycleState);
   private readonly ILibraryVersionProvider _libraryVersion = ArgumentGuard.NotNull(libraryVersion);
+  // #2027: both versions are recorded on the instance row; either one can be part of a rollout.
+  private readonly Whizbang.Core.Versioning.IApplicationVersionProvider _applicationVersion = ArgumentGuard.NotNull(applicationVersion);
   private readonly InstanceLivenessMetrics? _metrics = metrics;
   private int _joinedAnnounced;
 
@@ -316,7 +319,9 @@ public partial class HeartbeatWorker(
     // otherwise write the phase before it over the one the transition just recorded.
     LifecyclePhase: _lifecycleState.AnnouncedPhase.ToString(),
     LibraryVersion: _libraryVersion.LibraryVersion,
-    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options));
+    // #2027: the window the one liveness rule judges this instance by, derived from its own cadence.
+    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options),
+    ApplicationVersion: _applicationVersion.ApplicationVersion.Recorded);
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {
