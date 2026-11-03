@@ -173,7 +173,7 @@ public class StartupStandDownTests {
       .Because("no reporter, no coordinator and no version provider: nothing is recorded or kept, and nothing throws");
   }
 
-  private static readonly IServiceInstanceProvider _instance = new FixedInstance();
+  private static readonly FixedInstance _instance = new();
 
   private static StartupStandDown _create(BeatingCoordinator coordinator, IStartupStageReporter stages, TimeProvider clock) {
     var services = new ServiceCollection();

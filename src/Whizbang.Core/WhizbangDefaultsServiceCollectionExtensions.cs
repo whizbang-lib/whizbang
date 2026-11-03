@@ -96,6 +96,13 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Perspectives.IPerspectiveSnapshotStore>(Perspectives.NullPerspectiveSnapshotStore.Instance);
     services.TryAddSingleton<Perspectives.IPerspectiveStreamLocker>(Perspectives.NullPerspectiveStreamLocker.Instance);
     services.TryAddSingleton<Startup.IStartupAssessor>(Startup.NullStartupAssessor.Instance);
+    // #1992: the one Assess verdict, read once over whichever assessor the driver registered (resolved at first use, so
+    // a driver registering after this call still wins). The Assess step and the schema initializer both read it here.
+    services.TryAddSingleton(sp => new Startup.StartupAssessmentSource(
+      sp.GetRequiredService<Startup.IStartupAssessor>(),
+      sp.GetService<Startup.IStartupStageReporter>() ?? Startup.NullStartupStageReporter.Instance,
+      sp.GetService<TimeProvider>() ?? TimeProvider.System,
+      sp.GetRequiredService<ILogger<Startup.StartupAssessmentSource>>()));
     services.TryAddSingleton<Startup.IDutyElector>(Startup.NullDutyElector.Instance);
     services.TryAddSingleton<Startup.IPendingDutyWorkStore>(Startup.NullPendingDutyWorkStore.Instance);
     services.TryAddSingleton<Signals.ISignalBus>(Signals.NullSignalBus.Instance);

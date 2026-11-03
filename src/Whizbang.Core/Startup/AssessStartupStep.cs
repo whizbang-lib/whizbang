@@ -13,7 +13,11 @@ namespace Whizbang.Core.Startup;
 public enum StartupVerdict {
   /// <summary>Fresh database, or this version has work to do and no live conflict — contend to migrate.</summary>
   Migrate,
-  /// <summary>The schema is at (or below) this version with nothing pending — proceed to serve.</summary>
+  /// <summary>
+  /// Nothing newer than this binary is recorded, but the schema could not be shown current: an upgrade with
+  /// migrations pending, or a check that could not answer. Startup runs as it always has: the election, the
+  /// migration pass under the schema lock, Converge and Coordinate.
+  /// </summary>
   Serve,
   /// <summary>
   /// The ledger records a version newer than this binary — never apply anything; release
@@ -21,6 +25,12 @@ public enum StartupVerdict {
   /// for an unparseable version: every wrong answer at that point is worse than stopping.
   /// </summary>
   StandDown,
+  /// <summary>
+  /// The schema is already current for this binary (#1992): the same checks the migration's lock-free fast path makes
+  /// found nothing to apply and no stored form left to convert. The election and the migration are skipped, and no
+  /// schema lock is taken; Converge and Coordinate still run. The normal restart and scale-out verdict.
+  /// </summary>
+  Current,
 }
 
 /// <summary>What <c>Assess</c> decided, and why.</summary>

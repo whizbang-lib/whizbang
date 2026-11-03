@@ -129,7 +129,7 @@ public class SchemaInitializationRunnersTests {
     var order = new List<string>();
     var coordinator = new BeatingCoordinator();
     var stages = new StageLog();
-    var service = _create(gate, new StartupAssessment(StartupVerdict.StandDown,
+    var service = _standingDown(gate, new StartupAssessment(StartupVerdict.StandDown,
       "the ledger records version 2.0.0, newer than this binary's 1.0.0"), coordinator, stages,
       new RecordingRunner("runner", order, gate));
 
@@ -150,6 +150,23 @@ public class SchemaInitializationRunnersTests {
   }
 
   [Test]
+  public async Task StandDown_WithNoInstanceIdentity_StillAppliesNothingAsync() {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IStartupAssessor>(new FixedAssessor(new StartupAssessment(StartupVerdict.StandDown, "newer schema")));
+    var service = _bound(services.BuildServiceProvider(), gate, new RecordingRunner("runner", order, gate));
+
+    await service.StartAsync(CancellationToken.None);
+
+    await Assert.That(order).IsEmpty();
+    await Assert.That(gate.IsReady).IsFalse();
+    await Assert.That(service.StandDownTask is null).IsTrue()
+      .Because("with no identity there is no row to keep, and the stand-down still holds the data plane");
+  }
+
+  [Test]
   [Arguments(StartupVerdict.Migrate)]
   [Arguments(StartupVerdict.Serve)]
   [Arguments(StartupVerdict.Current)]
@@ -163,7 +180,7 @@ public class SchemaInitializationRunnersTests {
     var provider = services.BuildServiceProvider();
     var source = provider.GetRequiredService<StartupAssessmentSource>();
     var runner = new VerdictReadingRunner(source, order);
-    var service = _create(provider, gate, runner);
+    var service = _bound(provider, gate, runner);
 
     var starting = service.StartAsync(CancellationToken.None);
     await assessor.Asked.Task;
@@ -185,7 +202,7 @@ public class SchemaInitializationRunnersTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IStartupAssessor>(new ThrowingAssessor(new InvalidOperationException("permission denied")));
-    var service = _create(services.BuildServiceProvider(), gate, new RecordingRunner("runner", order, gate));
+    var service = _bound(services.BuildServiceProvider(), gate, new RecordingRunner("runner", order, gate));
 
     await Assert.That(async () => await service.StartAsync(CancellationToken.None))
       .ThrowsExactly<StartupAssessmentException>()
@@ -194,7 +211,7 @@ public class SchemaInitializationRunnersTests {
     await Assert.That(gate.IsReady).IsFalse();
   }
 
-  private static WhizbangDatabaseInitializerService _create(
+  private static WhizbangDatabaseInitializerService _standingDown(
       ISchemaReadyGate gate, StartupAssessment assessment, BeatingCoordinator coordinator, StageLog stages,
       params ISchemaInitializationRunner[] runners) {
     var services = new ServiceCollection();
@@ -203,10 +220,10 @@ public class SchemaInitializationRunnersTests {
     services.AddSingleton<IStartupStageReporter>(stages);
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(new FixedInstance());
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    return _create(services.BuildServiceProvider(), gate, runners);
+    return _bound(services.BuildServiceProvider(), gate, runners);
   }
 
-  private static WhizbangDatabaseInitializerService _create(
+  private static WhizbangDatabaseInitializerService _bound(
       IServiceProvider provider, ISchemaReadyGate gate, params ISchemaInitializationRunner[] runners) =>
     new(
       provider,

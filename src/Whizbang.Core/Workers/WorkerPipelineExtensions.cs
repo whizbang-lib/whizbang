@@ -233,7 +233,8 @@ public static class WorkerPipelineExtensions {
     // fail-closed readiness IS not-ready-while-alive.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.AssessStartupStep>(sp =>
       new Whizbang.Core.Startup.AssessStartupStep(
-        sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
+        // #1992: the step reports the one verdict the schema initializer acts on, read through the shared source.
+        sp.GetRequiredService<Whizbang.Core.Startup.StartupAssessmentSource>(),
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.AssessStartupStep>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>(sp =>
       new Whizbang.Core.Startup.MigrateStartupStep(sp.GetRequiredService<ISchemaReadyGate>())));

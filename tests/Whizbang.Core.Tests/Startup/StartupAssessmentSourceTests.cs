@@ -167,6 +167,15 @@ public class StartupAssessmentSourceTests {
   }
 
   [Test]
+  public async Task TheRefusal_CarriesItsStandardShapesAsync() {
+    var cause = new InvalidOperationException("x");
+
+    await Assert.That(new StartupAssessmentException().Message).Contains("never migrates blind");
+    await Assert.That(new StartupAssessmentException("custom").Message).IsEqualTo("custom");
+    await Assert.That(new StartupAssessmentException("custom", cause).InnerException).IsSameReferenceAs(cause);
+  }
+
+  [Test]
   public async Task TheDefaults_RegisterOneSourceOverTheRegisteredAssessor_AndTheAssessStepReadsThroughItAsync() {
     var assessor = new CountingAssessor(_ => Task.FromResult(_serve));
     var services = new ServiceCollection();
