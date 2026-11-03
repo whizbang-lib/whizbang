@@ -92,6 +92,9 @@ public partial class MigrationTransactionBoundaryGuardTests {
     ["wh_perform_maintenance"] =
       "310 (#1999): perform_maintenance's body copied whole from 295, so its inbox purges are the ones 162 redirected: "
       + "processed_at, lease_expiry and instance_id are read from wh_inbox_state (alias ist), and wh_inbox is only the row deleted",
+    ["wh_integrity_record_bundle_answer"] =
+      "320 (#2033): judges a bundle at commit with the same child lookup as 253, so it reads error from wh_inbox_state "
+      + "(alias ist); wh_inbox supplies only message_id, stream_id, scope and message_type, none of which moved",
   };
 
   /// <summary>
