@@ -31,6 +31,13 @@
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- A project CI runs as [Category=ShardN] slices sets WhizbangShardedTests=true, and WHIZ605 (Whizbang.TestAnalyzers)
+       then rejects a test class that does not carry exactly one Shard category (ai-docs/test-sharding.md). The
+       property reaches the analyzer as build_property.WhizbangShardedTests. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangShardedTests" />
+  </ItemGroup>
+
   <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings
        are errors here exactly as they are in src/. Test code gets no downgraded rule list: a rule
        either holds for the whole repository or is turned off for the whole repository, with the

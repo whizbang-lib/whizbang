@@ -64,6 +64,9 @@
     <WhizbangTestType>Integration</WhizbangTestType>
     <!-- Tags for filtering: Postgres, Docker, Data -->
     <WhizbangTestTags>Postgres;Docker;Data</WhizbangTestTags>
+    <!-- CI runs this project as [Category=ShardN] slices (ci.yml, ai-docs/test-sharding.md), so every test class
+         must carry exactly one Shard category, or Benchmark and none: WHIZ605 makes anything else a build error. -->
+    <WhizbangShardedTests>true</WhizbangShardedTests>
     <!-- Suppress trimming warnings for test project using EF Core InMemory -->
     <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
 
