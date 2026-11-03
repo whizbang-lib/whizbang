@@ -312,6 +312,16 @@ See [ai-docs/testing-tunit.md](ai-docs/testing-tunit.md) and [ai-docs/tdd-strict
 
 See [src/Whizbang.Generators/ai-docs/](src/Whizbang.Generators/ai-docs/) for detailed guidelines.
 
+### Diagnostic IDs
+
+Every build diagnostic in the repository, shipped or repository-internal (generators, analyzers, the test and
+repository analyzers, the MSBuild checks in `Directory.Build.targets`), has an ID of the form `WHIZ` and three
+digits, unique across all of them. [`diagnostic-ids.txt`](diagnostic-ids.txt) lists every ID with the project that
+defines it and what it means: take the next free number in your area's block from it and add the row in the same
+pull request. A retired ID is never reused. `.github/scripts/Test-DiagnosticIds.ps1`, run by "Test · Pipeline
+scripts", fails an ID that is unlisted, listed but undefined, listed under the wrong project, given two meanings,
+or outside the `WHIZ` form (a frozen set of legacy IDs that shipped before it excepted).
+
 ### Package Versions and Lock Files
 
 - Package versions live in `Directory.Packages.props` (central package management); a project's

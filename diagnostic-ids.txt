@@ -1,0 +1,177 @@
+# Every build diagnostic ID in this repository: the shipped generators and analyzers, the repository-internal
+# analyzers (src/Whizbang.TestAnalyzers, tools/Whizbang.RepoAnalyzers) and the MSBuild checks in
+# Directory.Build.targets. One ID space, one form: WHIZ and three digits, each ID unique.
+#
+# A new diagnostic takes the lowest free WHIZ number in its block here, and its row is added in the same change.
+# .github/scripts/Test-DiagnosticIds.ps1 (run by "Test · Pipeline scripts") fails when an ID is defined but not
+# listed, listed but not defined, listed under a project that does not define it, or outside the WHIZ form.
+#
+# Columns: id | status | owner | meaning
+#   status  active   defined and reported today
+#           retired  never to be reused; must also be in DiagnosticDescriptors.RETIRED_IDS
+#           legacy   shipped in a package before the single WHIZ form; consumers may suppress it by name, so it
+#                    keeps its ID. A frozen set that only shrinks; a new ID is never legacy.
+#   owner   the project under src/ or tools/ that defines it (comma-separated when two do, by design), or the
+#           root MSBuild file
+#   meaning one line; the descriptor title for an analyzer or generator diagnostic
+#
+# Blocks: WHIZ600-699 is the repository-internal block (MSBuild checks, test analyzers, repository analyzers); every
+# other number belongs to the shipped packages. The repository-internal checks were WHZ0001 to WHZ0005 until they
+# were renumbered into WHIZ600-604 (CHANGELOG.md).
+
+EFCORE000 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EF Core Configuration Generator Executed
+EFCORE001 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Association Generator
+EFCORE100 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EF Core Registration Metadata Generated
+EFCORE102 | legacy | Whizbang.Data.EFCore.Postgres.Generators | DbContext Schema Extension Generated
+EFCORE103 | legacy | Whizbang.Data.EFCore.Postgres.Generators | DbContext Partial Class Generated
+EFCORE104 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EFCore Generator Running
+EFCORE105 | legacy | Whizbang.Data.EFCore.Postgres.Generators | Perspective Model Discovered
+EFCORE106 | legacy | Whizbang.Data.EFCore.Postgres.Generators | GenerateRegistrationMetadata Running
+EFCORE107 | legacy | Whizbang.Data.EFCore.Postgres.Generators | Vector Configuration Registry Generated
+EFCORE108 | legacy | Whizbang.Data.EFCore.Postgres.Generators | Turnkey Extension Generated
+EFCORE109 | legacy | Whizbang.Data.EFCore.Postgres.Generators | DbContext Has No Matching Perspectives
+EFCORE206 | legacy | Whizbang.Data.EFCore.Postgres.Generators | Perspective Tables Schema Generated
+EFCORE994 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EFCore Generator Error
+EFCORE995 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EFCore Generator Error
+EFCORE996 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EFCore Generator Error
+EFCORE997 | legacy | Whizbang.Data.EFCore.Postgres.Generators | EFCore Generator Error
+EFCORE999 | legacy | Whizbang.Data.EFCore.Postgres.Generators | Failed to Load Snippets
+WHIZ001 | active | Whizbang.Generators | Receptor Discovered
+WHIZ002 | active | Whizbang.Generators | No Message Handlers Found
+WHIZ003 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ004 | active | Whizbang.Generators | Command Stream ID Discovered
+WHIZ005 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ006 | active | Whizbang.Generators | Multiple Stream ID Attributes
+WHIZ007 | active | Whizbang.Generators | Perspective Discovered
+WHIZ008 | active | Whizbang.Generators | Perspective Model Size Warning
+WHIZ009 | active | Whizbang.Generators | Missing StreamId Attribute
+WHIZ010 | active | Whizbang.Generators | StreamId Discovered
+WHIZ011 | active | Whizbang.Generators | JSON Serializable Type Discovered
+WHIZ012 | active | Whizbang.Generators | Perspective Invoker Routing Generated
+WHIZ013 | active | Whizbang.Generators | GenerateStreamId requires a settable StreamId
+WHIZ014 | active | Whizbang.Generators | Receptor May Not Be Constructible by Dependency Injection
+WHIZ015 | active | Whizbang.Generators | Generic message types are not supported
+WHIZ016 | active | Whizbang.Generators | Stream ID Override Has Nothing to Override
+WHIZ017 | active | Whizbang.Generators | Stream ID Generation Opt-Out Cannot Hold Across Assemblies
+WHIZ020 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ021 | active | Whizbang.Generators | WhizbangId Must Be Partial
+WHIZ022 | active | Whizbang.Generators | Topic Filter Discovered
+WHIZ023 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ024 | active | Whizbang.Generators | Duplicate WhizbangId Type Name
+WHIZ025 | active | Whizbang.Generators | TopicFilter On Non-Command
+WHIZ026 | active | Whizbang.Generators | No Topic Filters Found
+WHIZ027 | active | Whizbang.Generators | Perspective Runner Generated
+WHIZ028 | active | Whizbang.Generators | Perspective Runner Registry Generated
+WHIZ030 | active | Whizbang.Generators | Perspective Event Missing StreamId
+WHIZ031 | active | Whizbang.Generators | Multiple StreamId Attributes
+WHIZ032 | active | Whizbang.Generators | Perspective Name Collision
+WHIZ033 | active | Whizbang.Generators | Perspective Model Missing StreamId
+WHIZ040 | active | Whizbang.Generators | User Service Discovered
+WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
+WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ050 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ051 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ052 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ053 | active | Whizbang.Generators | Failed to Load Documentation Map
+WHIZ054 | active | Whizbang.Generators | Failed to Load Tests Map
+WHIZ055 | active | Whizbang.Generators | Guid.NewGuid() Usage
+WHIZ056 | active | Whizbang.Generators | Guid.CreateVersion7() Usage
+WHIZ057 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ058 | active | Whizbang.Generators | Guid Call Intercepted
+WHIZ059 | active | Whizbang.Generators | Guid Interception Suppressed
+WHIZ060 | active | Whizbang.Generators | Property uses non-serializable type 'object'
+WHIZ061 | active | Whizbang.Generators | Property uses non-serializable type 'dynamic'
+WHIZ062 | active | Whizbang.Generators | Property uses non-serializable interface type
+WHIZ063 | active | Whizbang.Generators | Nested type contains non-serializable property
+WHIZ070 | active | Whizbang.Data.EFCore.Postgres.Generators, Whizbang.Generators | Vector field requires Pgvector.EntityFrameworkCore package
+WHIZ071 | active | Whizbang.Data.EFCore.Postgres.Generators | Vector field requires Pgvector package
+WHIZ072 | active | Whizbang.Generators | Polymorphic Base Type Discovered
+WHIZ080 | active | Whizbang.Generators | Multiple Handlers for RPC Message
+WHIZ090 | active | Whizbang.Generators | MessageTag Parameter Naming
+WHIZ099 | active | Whizbang.Generators | MessageJsonContextGenerator Running
+WHIZ100 | active | Whizbang.Generators | Apply method must be synchronous
+WHIZ101 | active | Whizbang.Generators | Apply method cannot use async/await
+WHIZ102 | active | Whizbang.Generators | Apply method cannot call database I/O
+WHIZ103 | active | Whizbang.Generators | Apply method cannot call HTTP/network operations
+WHIZ104 | active | Whizbang.Generators | Apply method should use event timestamps instead of reading the clock
+WHIZ105 | active | Whizbang.Generators | Perspective injects non-pure service
+WHIZ106 | active | Whizbang.Generators | Collective apply must not query other perspectives at apply time
+WHIZ107 | active | Whizbang.Generators | Apply never receives a null model
+WHIZ108 | active | Whizbang.Generators | An overwrite-only perspective's Apply must not read its current model
+WHIZ109 | active | Whizbang.Generators | Apply handles an event no perspective interface lists
+WHIZ110 | active | Whizbang.Generators | Message Missing [PinnedId]
+WHIZ111 | active | Whizbang.Generators | Perspective Missing [PinnedId]
+WHIZ112 | active | Whizbang.Generators | Invalid [PinnedId] GUID
+WHIZ113 | active | Whizbang.Generators | Method looks like a misspelled Apply
+WHIZ114 | active | Whizbang.Generators | Two Apply methods handle the same event
+WHIZ115 | active | Whizbang.Generators | Apply returns a shape its interface does not declare
+WHIZ116 | active | Whizbang.Generators | Collective Apply does not match the shape the framework binds
+WHIZ117 | active | Whizbang.Generators | Event is listed only by an interface that declares no Apply for it
+WHIZ120 | active | Whizbang.Generators | Pinned Type Renamed Without Ledger Acknowledgment
+WHIZ121 | active | Whizbang.Generators | Pinned-Type Ledger Entry Has No Living Type
+WHIZ122 | active | Whizbang.Generators | Pinned-Type Ledger Could Not Be Parsed
+WHIZ130 | active | Whizbang.Generators | Perspective mixes ephemeral and Sourced Apply methods
+WHIZ131 | active | Whizbang.Generators | Rebuild or rewind of an ephemeral-only perspective
+WHIZ132 | active | Whizbang.Generators | Receptor turns an ephemeral message into a Sourced event
+WHIZ134 | active | Whizbang.Generators | Ambiguous ephemeral composition
+WHIZ135 | active | Whizbang.Generators | Event type is both ephemeral and superseding
+WHIZ136 | active | Whizbang.Generators | Superseding event type has more than one key
+WHIZ137 | active | Whizbang.Generators | Destruction value has not shipped
+WHIZ140 | active | Whizbang.Generators | Perspective shares stream event types with a group but joins none
+WHIZ141 | active | Whizbang.Generators | Stream group has no announcing member with a row evictor
+WHIZ142 | active | Whizbang.Generators | Bridge on a sole stream-group membership
+WHIZ150 | active | Whizbang.Generators | Minted composite constructed outside the mint
+WHIZ151 | active | Whizbang.Generators | Command type has more than one inbox receptor
+WHIZ160 | active | Whizbang.Generators | Type Name Composed By Hand
+WHIZ161 | active | Whizbang.Generators | Type Name Dissected By Hand
+WHIZ162 | active | Whizbang.Generators | Type Names Compared Without The Matching Helper
+WHIZ163 | active | Whizbang.Generators | Type-Name Key Assigned From A Hand-Built String
+WHIZ170 | active | Whizbang.Generators | [InheritScope] on a perspective class has no effect
+WHIZ171 | active | Whizbang.Generators | [InheritScope] with all-None flags gives rows no scope
+WHIZ180 | active | Whizbang.Generators | Audit settings of an unreachable event type are not registered
+WHIZ200 | active | Whizbang.Generators | An array of records stores the perspective model as one opaque document
+WHIZ300 | active | Whizbang.Generators | Perspective interfaces must use the same model type
+WHIZ302 | active | Whizbang.Generators | Filtered perspective field has no index
+WHIZ303 | active | Whizbang.Generators | Declared index cannot be built for this field's type
+WHIZ304 | active | Whizbang.Generators | Declared index cannot be reached for this model's storage
+WHIZ305 | active | Whizbang.Generators | Declared index capability does not apply to this field's type
+WHIZ306 | active | Whizbang.Generators.Shared | Fields reachable by request-time sorting have no index
+WHIZ307 | active | Whizbang.Generators.Shared | Whole-document match has no index
+WHIZ308 | active | Whizbang.Generators.Shared | Whole-document match has no index by default
+WHIZ309 | active | Whizbang.Generators | Collective predicate filters an unindexed field
+WHIZ400 | active | Whizbang.Data.EFCore.Postgres.Generators | Invalid type argument for ILensQuery
+WHIZ401 | active | Whizbang.Data.EFCore.Postgres.Generators | Multi-model ILensQuery references unknown perspective model
+WHIZ402 | active | Whizbang.Data.EFCore.Postgres.Generators | Multi-model ILensQuery auto-detected
+WHIZ500 | active | Whizbang.Generators | Hand-constructed service omits an injectable dependency
+WHIZ501 | active | Whizbang.Generators | Optional injected dependency
+WHIZ600 | active | Directory.Build.targets | A test project declares no WhizbangTestTags
+WHIZ601 | active | Directory.Build.targets | A test project declares no WhizbangTestType
+WHIZ602 | active | Directory.Build.targets | A test project declares a WhizbangTestType no runner knows
+WHIZ603 | active | Whizbang.TestAnalyzers | IsNotNull() on a Nullable<T> subject cannot fail
+WHIZ604 | active | Whizbang.RepoAnalyzers | A JsonDocument is created and dropped without being disposed
+WHIZ605 | active | Whizbang.TestAnalyzers | A test class in a sharded project must carry exactly one Shard category
+WHIZ701 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Discovery
+WHIZ702 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Migration Files Discovery
+WHIZ703 | active | Whizbang.Data.EFCore.Postgres.Generators | No DbContext Found
+WHIZ801 | active | Whizbang.Generators | VectorField Invalid Type
+WHIZ802 | active | Whizbang.Generators | VectorField Invalid Dimensions
+WHIZ803 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ804 | active | Whizbang.Generators | Table storage value out of range
+WHIZ805 | active | Whizbang.Generators | Split Mode No Physical Fields
+WHIZ807 | active | Whizbang.Generators | Physical Fields Discovered
+WHIZ808 | active | Whizbang.Generators | Split class model cannot be copied
+WHIZ810 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains Dictionary property
+WHIZ811 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains polymorphic type
+WHIZ812 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model declares a JSON converter that is never consulted
+WHIZ820 | active | Whizbang.Data.EFCore.Postgres.Generators | Table name exceeds database limit
+WHIZ821 | active | Whizbang.Data.EFCore.Postgres.Generators | Column name exceeds database limit
+WHIZ822 | active | Whizbang.Data.EFCore.Postgres.Generators | Index name exceeds database limit
+WHIZ823 | active | Whizbang.Generators.Shared | Perspective table name exceeds the database limit
+WHIZ824 | active | Whizbang.Generators.Shared | Invalid perspective table name
+WHIZ825 | active | Whizbang.Generators.Shared | Two perspective models share one table name
+WHIZ830 | active | Whizbang.Data.EFCore.Postgres.Generators | Stored-form migration cannot be generated
+WHIZ831 | active | Whizbang.Data.EFCore.Postgres.Generators | Stored-form migration never runs
+WHIZ832 | active | Whizbang.Data.EFCore.Postgres.Generators | Stored-form declaration inside a collection element
+WHIZ833 | active | Whizbang.Data.EFCore.Postgres.Generators | Stored-form migrations share an order
+WHIZ900 | active | Whizbang.Generators | Perspective Sync in Inline Receptor
+WSAGA004 | legacy | Whizbang.Sagas.Generators | [Saga] type must be partial

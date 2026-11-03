@@ -22,13 +22,21 @@
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 
-  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): assertions that cannot fail are build
-       errors here, starting with WHZ0004 (IsNotNull() on a Nullable<T> subject passes on null under the pinned
-       TUnit; ai-docs/testing-tunit.md). Loaded as an analyzer only, so nothing reaches a test's references or
+  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): test code that cannot verify anything is a
+       build error here: WHIZ603 (IsNotNull() on a Nullable<T> subject passes on null under the pinned TUnit;
+       ai-docs/testing-tunit.md) and, in a sharded project, WHIZ605 (a test class CI would run in no slice or two;
+       ai-docs/test-sharding.md). Loaded as an analyzer only, so nothing reaches a test's references or
        its lock file. Its own test project references it directly, as an assembly and as an analyzer. -->
   <ItemGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.TestAnalyzers.Tests'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)../src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- A project CI runs as [Category=ShardN] slices sets WhizbangShardedTests=true, and WHIZ605 (Whizbang.TestAnalyzers)
+       then rejects a test class that does not carry exactly one Shard category (ai-docs/test-sharding.md). The
+       property reaches the analyzer as build_property.WhizbangShardedTests. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangShardedTests" />
   </ItemGroup>
 
   <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings

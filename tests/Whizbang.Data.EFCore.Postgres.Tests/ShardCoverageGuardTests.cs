@@ -20,8 +20,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// two runners.
 /// </para>
 /// <para>
-/// This is the only thing standing between "add a test class" and "quietly stop testing it", so it
-/// asserts the whole assembly rather than sampling.
+/// WHIZ605 (<c>Whizbang.TestAnalyzers</c>, enabled here by <c>WhizbangShardedTests</c>) enforces the same rule
+/// at build time, so a missing or doubled shard fails the compile before any CI run. This test stays as the
+/// second line of defense: it reads the compiled assembly, so it also sees classes a source generator emitted,
+/// which the analyzer does not analyze, and it fails if the analyzer is ever unloaded or the property dropped.
+/// It asserts the whole assembly rather than sampling.
 /// </para>
 /// </remarks>
 [Category("Shard1")]
