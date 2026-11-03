@@ -13,7 +13,7 @@ namespace Whizbang.Testing.Workers;
 /// so a lookup by type over <c>GetServices&lt;IHostedService&gt;()</c> finds the wrapper and never the worker. These
 /// look through the wrapper, and are the one way a test or a fixture finds a hosted worker.
 /// </summary>
-/// <docs>testing/multi-service-harness</docs>
+/// <docs>operations/startup/startup-status#finding-a-hosted-worker</docs>
 /// <tests>tests/Whizbang.Testing.Tests/Workers/HostedWorkersTests.cs</tests>
 public static class HostedWorkers {
   /// <summary>
