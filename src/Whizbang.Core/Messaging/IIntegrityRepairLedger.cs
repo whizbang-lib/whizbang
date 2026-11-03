@@ -22,10 +22,15 @@ namespace Whizbang.Core.Messaging;
 /// redelivery can repair. False for an identity mismatch (equal counts, different folds) and a local surplus:
 /// those are recorded for reporting and are never claimed by the paced repair drain. The kind cannot be
 /// derived from the four digest halves, which are hashes rather than counts, so the comparison states it.</param>
-/// <docs>resilience/stream-integrity#drain-claims-deficits-only</docs>
+/// <param name="DeficitEvents">How many more events the origin holds than the consumer (zero or less for a mismatch or
+/// a surplus); null when the comparison did not count. A durable ledger resets a bucket's repair ladder when this grows
+/// past the size it recorded, and keeps the ladder when only the origin's digest moved (#2030).</param>
+/// <docs>resilience/stream-integrity#what-resets-the-repair-ladder</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PacedRepairDrainSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:Report_TheDeficitGrew_ResetsTheLadder_AndLiftsTheMarkAsync</tests>
 public readonly record struct IntegrityReportObservation(
-  IntegrityRepairLedger.DivergenceKey Key, long OriginLo, long OriginHi, long LocalLo, long LocalHi, bool IsDeficit);
+  IntegrityRepairLedger.DivergenceKey Key, long OriginLo, long OriginHi, long LocalLo, long LocalHi, bool IsDeficit,
+  long? DeficitEvents = null);
 
 /// <summary>
 /// One repair-eligible ledger row claimed by the paced drain: the bucket's identity plus the

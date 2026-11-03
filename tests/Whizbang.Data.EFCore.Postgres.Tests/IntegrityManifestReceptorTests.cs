@@ -1129,7 +1129,9 @@ public class IntegrityManifestReceptorTests {
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions {
-        RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000,
+        RepairMode = IntegrityRepairMode.AutoRepairCapped,
+        PublishReportEvents = false,
+        BulkBackfillThresholdEvents = 1000,
         RepairAnswerTimeoutMinutes = 77,
       }, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -1171,6 +1173,28 @@ public class IntegrityManifestReceptorTests {
     });
 
     await Assert.That(coordinator.PendingMarks).IsEmpty();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ABulkBackfillThatCouldNotBeAddressed_MarksNothingPendingAsync() {
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 },
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
+      tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.BigType", 41, 42, 2500)], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    });
+
+    await Assert.That(transport.Published).IsEmpty().Because("no checkpoint taught the origin's request topic");
+    await Assert.That(coordinator.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
   }
 
   private sealed class RefusingLedger : IIntegrityRepairLedger {

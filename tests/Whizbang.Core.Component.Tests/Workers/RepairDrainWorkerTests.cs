@@ -68,7 +68,7 @@ public class RepairDrainWorkerTests {
       .Where(r => r.EventTypes!.Contains("Contracts.TypeA"))
       .ToList();
     var shared = typeA.Single(r => r.StreamIds!.Count == 2);
-    await Assert.That(shared.StreamIds!).IsEquivalentTo([s1, s2])
+    await Assert.That(shared.StreamIds).IsEquivalentTo([s1, s2])
       .Because("rows that disagreed over the same window share one request");
     await Assert.That(shared.FromCommitSequence).IsEqualTo(99L)
       .Because("the group's window, exclusive floor — exactly the burst path's conversion");
@@ -239,23 +239,30 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_PreStampRows_WidenTheAskToWholeHistoryAsync() {
+  public async Task DrainTick_PreStampRows_AskForWholeHistory_WithoutWideningTheirWindowedNeighborsAsync() {
+    // Before #2034 a pre-stamp row widened its whole group, windowed rows included, to whole history.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
+    var windowed = TrackedGuid.New().Value;
+    var preStamp = TrackedGuid.New().Value;
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, null, null),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", windowed, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", preStamp, null, null),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
-    var request = _deserializeRedelivery(transport.Published.Single().Envelope);
-    await Assert.That(request.FromCommitSequence).IsNull()
-      .Because("a pre-stamp row in the group means the compared range is unknown — whole history, the legacy semantics");
-    await Assert.That(request.ToCommitSequence).IsNull();
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    var whole = requests.Single(r => r.StreamIds!.Contains(preStamp));
+    await Assert.That(whole.FromCommitSequence).IsNull()
+      .Because("a pre-stamp row's compared range is unknown — whole history, the legacy semantics");
+    await Assert.That(whole.ToCommitSequence).IsNull();
+    var bounded = requests.Single(r => r.StreamIds!.Contains(windowed));
+    await Assert.That(bounded.FromCommitSequence).IsEqualTo(99L).Because("its neighbor's unknown range does not widen it");
+    await Assert.That(bounded.ToCommitSequence).IsEqualTo(499L);
   }
 
 

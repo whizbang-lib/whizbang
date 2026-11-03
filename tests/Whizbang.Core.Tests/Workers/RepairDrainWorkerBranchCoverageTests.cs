@@ -220,7 +220,7 @@ public class RepairDrainWorkerBranchCoverageTests {
     await using var ownedServices = sp;
     coordinator.Eligible.AddRange([
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 200, 600),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);

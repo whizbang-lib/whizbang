@@ -393,7 +393,7 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(fx.Transport.Published.Count).IsEqualTo(1).Because("precondition: the first window was confirmed and repaired");
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 30, to: 30, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
 
-    await Assert.That(fx.Ledger.TryBeginRepair(key, DateTimeOffset.UtcNow, TimeSpan.FromHours(1), 8)).IsTrue()
+    await Assert.That(await fx.Ledger.TryBeginRepairAsync(key, DateTimeOffset.UtcNow, TimeSpan.FromHours(1), 8)).IsTrue()
       .Because("the type lane healed, so its entry is forgotten and a later gap starts a fresh ladder");
   }
 

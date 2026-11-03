@@ -9,6 +9,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -95,11 +96,11 @@ public class RedeliveryReconcileCommitTimeTests {
 
     await Assert.That(result.Deferred).IsTrue().Because("adoption and digest moves still wait for the maintainer");
     await Assert.That(result.MarkedUnhealable).IsEqualTo(2);
-    var record = coordinator.BundleAnswers.Single();
-    await Assert.That(record.Origin).IsEqualTo(origin);
-    await Assert.That(record.EventIds).IsEquivalentTo(bundle.InnerEventIds);
-    await Assert.That(record.Sequences).IsEquivalentTo(new long?[] { 1, 2 });
-    await Assert.That(record.Now).IsEqualTo(_now);
+    var (recordedOrigin, recordedIds, recordedSequences, recordedAt) = coordinator.BundleAnswers.Single();
+    await Assert.That(recordedOrigin).IsEqualTo(origin);
+    await Assert.That(recordedIds).IsEquivalentTo(bundle.InnerEventIds);
+    await Assert.That(recordedSequences).IsEquivalentTo(new long?[] { 1, 2 });
+    await Assert.That(recordedAt).IsEqualTo(_now);
     await Assert.That(probe.Total(probe.Metrics.RepairsUnhealable)).IsEqualTo(2);
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(2)
       .Because("each newly marked bucket is reported once, with the reason it was marked");
@@ -122,7 +123,7 @@ public class RedeliveryReconcileCommitTimeTests {
     await RedeliveryReconciler.HandleDeferredAsync(coordinator.Pending.Single().Payload, services, CancellationToken.None);
 
     await Assert.That(coordinator.Adoptions.Count).IsEqualTo(1);
-    await Assert.That(ledger.TryBeginRepair(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsTrue()
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsTrue()
       .Because("the bundle stored an event, so repair worked; the bucket must not be marked as one it cannot change");
   }
 
@@ -141,7 +142,7 @@ public class RedeliveryReconcileCommitTimeTests {
 
     await RedeliveryReconciler.HandleDeferredAsync(coordinator.Pending.Single().Payload, services, CancellationToken.None);
 
-    await Assert.That(ledger.TryBeginRepair(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsFalse()
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsFalse()
       .Because("every event was already here at commit and the reconcile adopted none: asking again changes nothing");
   }
 
@@ -159,7 +160,7 @@ public class RedeliveryReconcileCommitTimeTests {
 
     await RedeliveryReconciler.HandleDeferredAsync(payload, services, CancellationToken.None);
 
-    await Assert.That(ledger.TryBeginRepair(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsFalse()
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3)).IsFalse()
       .Because("a reconcile recorded by an earlier version carries no commit answer, and keeps the earlier rule");
   }
 

@@ -823,8 +823,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
     // #1842: the batch that also records each key's divergence kind (251), which decides whether the
-    // paced repair drain may claim the row. Arguments bind in the order they are added.
-    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences", cmd => {
+    // paced repair drain may claim the row, and (#2030, 320) its deficit size, so a grown deficit resets the ladder.
+    // Arguments bind in the order they are added.
+    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences_with_deficits", cmd => {
       cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
@@ -849,6 +850,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_is_deficits", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Boolean) {
         Value = observations.Select(o => o.IsDeficit).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_deficit_events", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = observations.Select(o => o.DeficitEvents).ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
@@ -904,9 +908,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// The count stops at <paramref name="backlogCap"/> (a LIMITed subquery), so the read costs at most
   /// the bound however large the ledger is. Rows on the synthetic bulk lane (stream zero) are left out,
   /// exactly as the drain's claim leaves them out, and so are rows that are not deficits (#1842) and buckets
-  /// marked unhealable (249): the drain never claims a mismatch, a surplus, a row of unknown kind or an
-  /// unhealable bucket, so none of them is a queued repair. The count carries the claim's predicate, so it is
-  /// answered from the claimable-rows index (251). A key is tracked when the ledger holds it as a deficit: a
+  /// marked unhealable (249), answered or exhausted (320): the drain never claims a mismatch, a surplus, a row of
+  /// unknown kind, an unhealable, answered or exhausted bucket, so none of them is a queued repair. The count carries
+  /// the claim's predicate, so it is answered from the claimable-rows index (320). A key is tracked when the ledger holds it as a deficit: a
   /// deficit found where the ledger holds a mismatch or a surplus is new to the drain, while an unhealable
   /// deficit stays tracked, so buckets repair cannot change never take the per-comparison allowance on every
   /// audit. Best-effort: a probe that cannot reach the ledger is logged and answers null, and the comparison
@@ -924,6 +928,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
                WHERE is_deficit
                  AND stream_id <> '00000000-0000-0000-0000-000000000000'::uuid
                  AND unhealable_at IS NULL
+                 AND answered_at IS NULL
+                 AND exhausted_at IS NULL
                LIMIT @p_limit) b),
             ARRAY(
               SELECT EXISTS (
@@ -1079,6 +1085,103 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
+  /// out their backoff only, as before.</remarks>
+  public async Task<int> IntegrityMarkAnswerPendingAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+      DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return 0;
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_mark_answer_pending");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_window_from", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)windowFrom ?? DBNull.Value });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_window_until", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)windowUntil ?? DBNull.Value });
+      cmd.Parameters.AddWithValue(P_NOW, now);
+      cmd.Parameters.AddWithValue("p_timeout_secs", _wholeSeconds(timeout));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_window_from,@p_window_until,@p_now,@p_timeout_secs)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the buckets wait out their backoff instead of their answer.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_answer_pending failed for origin {OriginServiceId}; the requested buckets wait out their backoff only.",
+        originServiceId);
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the reconcile then judges the bundle as it did before, and its buckets wait
+  /// out their answer timeout. The returned keys speak the caller's form, an absent tenant as null.</remarks>
+  public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    ArgumentNullException.ThrowIfNull(commitSequences);
+    if (eventIds.Count != commitSequences.Count) {
+      throw new ArgumentException(
+        $"{eventIds.Count} event ids but {commitSequences.Count} commit sequences; they pair by position.", nameof(commitSequences));
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_record_bundle_answer");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = eventIds.ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = commitSequences.ToArray()
+      });
+      cmd.Parameters.AddWithValue(P_NOW, now);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now)";
+#pragma warning restore S2077
+      int present = 0, absent = 0, refused = 0, adoptable = 0;
+      var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();
+      var markedUnchanged = new List<IntegrityRepairLedger.DivergenceKey>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        present += reader.GetInt32(3);
+        absent += reader.GetInt32(4);
+        refused += reader.GetInt32(5);
+        adoptable += reader.GetInt32(6);
+        if (await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false)) {
+          continue;
+        }
+        var tenant = reader.GetString(1);
+        var key = new IntegrityRepairLedger.DivergenceKey(
+          originServiceId, tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetGuid(0));
+        (reader.GetString(7) == "refused_truncated" ? markedRefused : markedUnchanged).Add(key);
+      }
+      return new IntegrityBundleAnswer(
+        eventIds.Distinct().Count(), present, absent, refused, adoptable, markedRefused, markedUnchanged);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the reconcile judges the bundle as before.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_record_bundle_answer failed for origin {OriginServiceId}; the reconcile judges the bundle without the commit's view.",
+        originServiceId);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
       Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
       CancellationToken cancellationToken = default) {
@@ -1209,12 +1312,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var fn = BuildSchemaQualifiedName(schema, "wh_integrity_ledger_summary");
+      var fn = BuildSchemaQualifiedName(schema, "wh_integrity_ledger_gauges");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant.
-      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs FROM {fn}(@max)";
+      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs, answer_pending_buckets, answered_buckets, deliveries_pending, oldest_delivery_secs FROM {fn}(@max)";
 #pragma warning restore S2077
       cmd.Parameters.AddWithValue("max", maxRepairAttempts);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1225,6 +1328,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         UnhealedBuckets = reader.GetInt64(0),
         RepairExhausted = reader.GetInt64(1),
         OldestUnhealedAgeSeconds = reader.GetDouble(2),
+        AnswerPendingBuckets = reader.GetInt64(3),
+        AnsweredBuckets = reader.GetInt64(4),
+        IntegrityDeliveriesPending = reader.GetInt64(5),
+        OldestIntegrityDeliveryAgeSeconds = reader.GetDouble(6),
       };
       await reader.DisposeAsync().ConfigureAwait(false);
       // Per-origin verified watermarks for the sealed_through gauge — a handful of rows read in

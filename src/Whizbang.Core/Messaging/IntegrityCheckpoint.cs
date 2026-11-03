@@ -501,12 +501,26 @@ public sealed class StreamIntegrityOptions {
   public int RepairRequestBackoffSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Repair attempts per divergent bucket before the requester stops asking (default 8). The
-  /// divergence still re-reports at the cooldown cadence — past the cap it needs operator eyes,
-  /// not an infinite request loop. A changed signature (progress or fresh damage) resets the
-  /// budget.
+  /// Repair attempts per divergent bucket before the requester stops asking (default 8). Past the cap the bucket is
+  /// no longer requested at all and counts in <c>repair_exhausted_buckets</c>: it needs operator eyes, not a request
+  /// loop (#2029). The divergence still re-reports at the cooldown cadence. A change repair can act on resets the
+  /// budget: this store's digest of the bucket moved, or its deficit grew (#2030). New events on the origin's side
+  /// alone do not.
   /// </summary>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
   public int MaxRepairAttemptsPerBucket { get; set; } = 8;
+
+  /// <summary>
+  /// How long a requested bucket waits for its answer before it may be asked for again, in minutes (default 180).
+  /// A request is answered by a redelivery bundle; the bucket is not requested while the answer is on the way, and a
+  /// bundle that lands for it stops the asking until the next comparison decides (#2029). The answer can wait in the
+  /// origin's integrity queue (up to <c>Whizbang:Housekeeping:MaxDeferral</c>, one hour by default, before a forced
+  /// pass) and then in this service's inbox, so the default covers that with room to spare, and stays well inside the
+  /// daily audit so a request that was lost is asked for again the same day. Must be at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairAnswerTimeout_DefaultsToThreeHoursAsync</tests>
+  public int RepairAnswerTimeoutMinutes { get; set; } = 180;
 
   /// <summary>
   /// Run the paced repair drain (default true): a continuous worker that dispatches repair

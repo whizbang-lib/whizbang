@@ -9,6 +9,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
@@ -152,6 +153,54 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     await Assert.That(answer!.AllPresent).IsTrue();
     await Assert.That(answer.Adoptable).IsEqualTo(1).Because("the bundle can give the stored event its origin");
     await Assert.That(answer.MarkedUnchanged).IsEmpty().Because("adopting the origin changes the bucket; the reconcile decides");
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_AnEventTheStoreRefusedToRestore_MarksItsBucketAtCommit_WithTheReasonAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await using var conn = await _openAsync();
+    var key = _key(origin, stream, await _normalizedTypeAsync(conn));
+    // Versions 1 and 2 were truncated here; the survivor is all the stream holds.
+    _ = await _storeEventAsync(conn, stream, version: 3, origin, originSequence: 3);
+    await _reportAsync(coordinator, key, deficit: 1, at: _t0);
+    var truncated = TrackedGuid.New().Value;
+    await _rememberAsync(conn, truncated);
+    await _storeAsync(_message(truncated, stream, origin, 1));
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [truncated], [1], _t0.AddMinutes(1));
+
+    await Assert.That(answer!.RefusedTruncated).IsEqualTo(1);
+    await Assert.That(answer.MarkedRefusedTruncated).IsEquivalentTo([key])
+      .Because("restoring the event could bring back what the truncation removed on purpose; asking again cannot help");
+    await Assert.That(answer.MarkedUnchanged).IsEmpty();
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_ABucketWithATenant_IsKeyedWithItAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await using var conn = await _openAsync();
+    var key = new IntegrityRepairLedger.DivergenceKey(origin, "tenant-a", await _normalizedTypeAsync(conn), stream);
+    var stored = await _storeEventAsync(conn, stream, version: 1, origin, originSequence: 4, tenant: "tenant-a");
+    await _reportAsync(coordinator, key, deficit: 1, at: _t0);
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [stored], [4], _t0.AddMinutes(1));
+
+    await Assert.That(answer!.MarkedUnchanged).IsEquivalentTo([key]);
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_AnEventNeitherStoreNorInboxHolds_CountsAsAbsentAsync() {
+    var answer = await _coordinator().IntegrityRecordBundleAnswerAsync(
+      TrackedGuid.New().Value, [TrackedGuid.New().Value], [1], _t0);
+
+    await Assert.That(answer!.Children).IsEqualTo(1);
+    await Assert.That(answer.Absent).IsEqualTo(1);
+    await Assert.That(answer.AllPresent).IsFalse();
+    await Assert.That(answer.MarkedUnchanged).IsEmpty();
   }
 
   // ===== #2029: a real cap =====
@@ -350,12 +399,9 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
   private static async Task _reportAsync(
       EFCoreWorkCoordinator<WorkCoordinationDbContext> coordinator, IntegrityRepairLedger.DivergenceKey key, long deficit,
       DateTimeOffset at, long originLo = 11, long originHi = 21, long localLo = 0, long localHi = 0) {
-    var flags = await coordinator.IntegrityTryBeginReportBatchAsync(
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       key.OriginServiceId, [new IntegrityReportObservation(key, originLo, originHi, localLo, localHi, IsDeficit: true, DeficitEvents: deficit)],
-      at, _cooldown);
-    if (flags is null) {
-      throw new InvalidOperationException("the report batch failed");
-    }
+      at, _cooldown) ?? throw new InvalidOperationException("the report batch failed");
   }
 
   private static Task<IReadOnlyList<IntegrityRepairDrainItem>> _claimAsync(
@@ -393,14 +439,16 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     await _coordinator().StoreInboxMessagesAsync(messages, partitionCount: 100);
 
   /// <summary>An event stored as the emit chain stores a received one; a null origin is history from before origins were recorded.</summary>
-  private static async Task<Guid> _storeEventAsync(NpgsqlConnection conn, Guid stream, int version, Guid? origin, long? originSequence) {
+  private static async Task<Guid> _storeEventAsync(
+      NpgsqlConnection conn, Guid stream, int version, Guid? origin, long? originSequence, string? tenant = null) {
     var eventId = TrackedGuid.New().Value;
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, commit_sequence, flags, created_at,
-         origin_service_id, origin_commit_sequence)
-      VALUES ($1, $2, $2, 'Upstream', normalize_event_type($3), $4, nextval('wh_commit_seq'), 0, NOW(), $5, $6)
+         origin_service_id, origin_commit_sequence, scope)
+      VALUES ($1, $2, $2, 'Upstream', normalize_event_type($3), $4, nextval('wh_commit_seq'), 0, NOW(), $5, $6,
+              CASE WHEN $7::text IS NULL THEN NULL ELSE jsonb_build_object('t', $7::text) END)
       """;
     cmd.Parameters.Add(new NpgsqlParameter { Value = eventId });
     cmd.Parameters.Add(new NpgsqlParameter { Value = stream });
@@ -408,8 +456,17 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     cmd.Parameters.Add(new NpgsqlParameter { Value = version });
     cmd.Parameters.Add(new NpgsqlParameter { Value = (object?)origin ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid });
     cmd.Parameters.Add(new NpgsqlParameter { Value = (object?)originSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Bigint });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = (object?)tenant ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Text });
     await cmd.ExecuteNonQueryAsync();
     return eventId;
+  }
+
+  /// <summary>The deduplication entry a first arrival leaves behind.</summary>
+  private static async Task _rememberAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "INSERT INTO wh_message_deduplication (message_id, first_seen_at, observation_count) VALUES ($1, NOW(), 1)";
+    cmd.Parameters.Add(new NpgsqlParameter { Value = messageId });
+    await cmd.ExecuteNonQueryAsync();
   }
 
   private static Task<string> _normalizedTypeAsync(NpgsqlConnection conn) =>

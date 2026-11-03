@@ -21,12 +21,14 @@ namespace Whizbang.Core.Workers;
 /// budget at each tick. Discovery (audits, checkpoints) records deficits and their compared
 /// windows; this worker CLAIMS eligible rows (past backoff, under the attempt cap,
 /// least-recently-attempted first, only origins with a learned request topic) and sends one
-/// directed, range-bounded <see cref="RequestRedeliveryCommand"/> per (origin, tenant, type)
-/// group. Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
+/// directed, range-bounded <see cref="RequestRedeliveryCommand"/> per (origin, tenant, type, window)
+/// group, then records each sent bucket's answer as pending so it is not claimed again while the answer is on its
+/// way (#2029). Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
 /// maintainer duty, and only once the housekeeping idle gate admits integrity work (forced through after
 /// <c>Whizbang:Housekeeping:MaxDeferral</c>); tokens keep accruing, up to the burst cap, while it waits (#2001).
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
+/// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
@@ -70,11 +72,11 @@ public sealed partial class RepairDrainWorker(
   /// <summary>
   /// One pacing tick: refill tokens at the configured rate (burst cap 2×), then — if at least
   /// one whole token is available — claim up to min(⌊tokens⌋, batch size) eligible ledger rows
-  /// and dispatch them grouped per (origin, tenant, type). Each claimed ROW costs one token
+  /// and dispatch them grouped per (origin, tenant, type, window). Each claimed ROW costs one token
   /// (grouping only ever sends fewer wire requests than rows paid for). Internal for
   /// deterministic tests; the loop above supplies real elapsed time.
   /// </summary>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One pacing tick refills the token bucket and then, only if a whole token is available and every collaborator is wired, claims ledger rows and dispatches them grouped per origin, tenant and type. The early exits are the pacing.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One pacing tick refills the token bucket and then, only if a whole token is available and every collaborator is wired, claims ledger rows, dispatches them grouped per origin, tenant, type and window, and records the sent buckets as awaiting their answer. The early exits are the pacing.")]
   internal async Task DrainTickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
     if (_options.RepairMode != IntegrityRepairMode.AutoRepairCapped) {
       // ReportOnly is the operator's explicit opt-DOWN from auto-repair, and the drain is a
@@ -130,19 +132,18 @@ public sealed partial class RepairDrainWorker(
 
     var metrics = services.GetService<StreamIntegrityMetrics>();
     var byOrigin = origins.ToDictionary(o => o.OriginServiceId, o => (o.OriginServiceName, o.RequestTopic));
-    foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.TenantScope, c.EventType))) {
+    var sent = new Dictionary<Guid, List<IntegrityRepairLedger.DivergenceKey>>();
+    // #2034: grouped by window too, so no stream is re-shipped over a wider range than its own divergence. Rows a
+    // comparison stamped together share their window, so this costs few extra requests.
+    foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.TenantScope, c.EventType, c.WindowFrom, c.WindowUntil))) {
       if (!byOrigin.TryGetValue(group.Key.OriginServiceId, out var origin)) {
         continue;   // learned set changed mid-pass; the attempt re-offers after backoff.
       }
       var items = group.ToList();
-      // Any pre-stamp row (null window) widens the ask to whole history — the legacy semantics,
-      // correct just coarser. Otherwise the group's union range, converted exactly as the burst
-      // path converted the manifest window: exclusive floor, inclusive ceiling.
-      var anyUnwindowed = items.Exists(i => i.WindowFrom is null || i.WindowUntil is null);
+      // A pre-stamp row (null window) asks for whole history, the legacy semantics, correct just coarser. Otherwise
+      // the window converts exactly as the burst path converted the manifest window: exclusive floor, inclusive ceiling.
       long? fromSeq = null, toSeq = null;
-      if (!anyUnwindowed) {
-        var from = items.Min(i => i.WindowFrom!.Value);
-        var until = items.Max(i => i.WindowUntil!.Value);
+      if (group.Key.WindowFrom is long from && group.Key.WindowUntil is long until) {
         fromSeq = from > 0 ? from - 1 : null;
         toSeq = until - 1;
       }
@@ -168,10 +169,20 @@ public sealed partial class RepairDrainWorker(
         LogGroupDispatchFailed(_logger, group.Key.EventType, origin.OriginServiceName, ex);
         continue;
       }
+      if (!sent.TryGetValue(group.Key.OriginServiceId, out var keys)) {
+        sent[group.Key.OriginServiceId] = keys = [];
+      }
+      keys.AddRange(items.Select(i => new IntegrityRepairLedger.DivergenceKey(i.OriginServiceId, i.TenantScope, i.EventType, i.StreamId)));
       metrics?.RepairsRequested.Add(items.Count,
         new KeyValuePair<string, object?>("source", "drain"),
         new KeyValuePair<string, object?>("origin", origin.OriginServiceName));
       LogDispatched(_logger, items.Count, group.Key.EventType, origin.OriginServiceName);
+    }
+    // #2029: a request that left has an answer on the way; until it lands or times out the bucket is not claimed.
+    var answerTimeout = TimeSpan.FromMinutes(_options.RepairAnswerTimeoutMinutes);
+    foreach (var (originId, keys) in sent) {
+      await coordinator.IntegrityMarkAnswerPendingAsync(originId, keys, null, null, now, answerTimeout, cancellationToken)
+        .ConfigureAwait(false);
     }
   }
 

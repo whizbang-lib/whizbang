@@ -107,7 +107,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
   [Test]
   public async Task GetIntegrityLedgerSummary_LedgerUnavailableAndNoLogger_ReturnsTheEmptySnapshotAsync() {
     await using var dbContext = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_ledger_summary");
+    await _dropFunctionAsync("wh_integrity_ledger_gauges");
 
     var snapshot = await _coordinator(dbContext, logger: null).GetIntegrityLedgerSummaryAsync(5);
 

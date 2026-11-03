@@ -1917,7 +1917,9 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Atomically claims up to <paramref name="limit"/> repair-eligible ledger rows for the paced
-  /// drain: past their exponential backoff, under <paramref name="maxAttempts"/>, restricted to
+  /// drain: past their exponential backoff, under <paramref name="maxAttempts"/> (a bucket that spent them is never
+  /// claimed again until a reset, #2029), never with an answer pending or answered and awaiting the next
+  /// comparison, restricted to
   /// <paramref name="originIds"/> (origins whose request topic is learned — nothing else could be
   /// sent), least-recently-attempted first, never the synthetic bulk lane. A claim stamps the
   /// attempt exactly like a burst-path grant, and concurrent drainers skip each other's locked
@@ -1928,6 +1930,52 @@ public interface IWorkCoordinator {
     IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
     int limit, CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
+
+  /// <summary>
+  /// Records that repair requests for <paramref name="keys"/> left, so neither the paced drain nor the burst grant
+  /// asks again for <paramref name="timeout"/> or until a bundle answers (#2029). A key on the type lane (an empty
+  /// stream id: a bulk or checkpoint request for the whole type) also covers the per-stream rows of its type whose
+  /// stamped window lies inside [<paramref name="windowFrom"/>, <paramref name="windowUntil"/>], or every per-stream
+  /// row of the type when either bound is null (#2034). Best-effort: 0 = nothing marked or unsupported, and an
+  /// unmarked bucket waits out its backoff only.
+  /// </summary>
+  /// <param name="originServiceId">The origin the requests went to.</param>
+  /// <param name="keys">The requested buckets.</param>
+  /// <param name="windowFrom">The type-lane request's first origin commit sequence, in the ledger's window units.</param>
+  /// <param name="windowUntil">The type-lane request's last origin commit sequence, in the ledger's window units.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="timeout">How long the answer may take before the bucket may be asked for again.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows marked.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:Claim_ABucketWithItsAnswerPending_IsNotClaimed_UntilTheAnswerTimeoutPassesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:MarkAnswerPending_OnTheTypeLane_CoversThePerStreamRowsInsideItsWindowAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The keys, the type-lane window's two bounds, the clock and the timeout are one record of a request that left; the window bounds only mean something together.")]
+  Task<int> IntegrityMarkAnswerPendingAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+    DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
+  /// Records a committed redelivery bundle's answer when its children commit (#2029, #2033): the buckets it covered,
+  /// and their type lane, stop waiting for it and are not asked for again until the next comparison; the buckets of a
+  /// bundle that changed nothing (every event already stored and none adoptable), and any bucket with an event the
+  /// store refused to restore, are marked as ones repair cannot change. Presence is judged here, at commit, because
+  /// the deferred reconcile runs after the bundle's own children are stored and would count them as present.
+  /// </summary>
+  /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="eventIds">The bundle's event ids.</param>
+  /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>What the bundle answered; null = unsupported or failed, and the reconcile judges the bundle as before.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordBundleAnswer_ABundleWhoseEventsWereAllStoredAlready_MarksTheBucketAtCommitAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordBundleAnswer_ChildrenTheBundleJustBrought_AreAbsentAtCommit_ThoughAReconcileAfterTheyAreStoredFindsThemPresentAsync</tests>
+  Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityBundleAnswer?>(null);
 
   /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
   /// <docs>resilience/stream-integrity</docs>

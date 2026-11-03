@@ -238,7 +238,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task GetIntegrityLedgerSummary_WithTheLedgerUnavailable_ReturnsTheEmptySnapshotAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_ledger_summary");
+    await _dropFunctionAsync("wh_integrity_ledger_gauges");
 
     var snapshot = await _build(ctx).GetIntegrityLedgerSummaryAsync(maxRepairAttempts: 5);
 
