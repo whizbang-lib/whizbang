@@ -1309,22 +1309,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for up to `Whizbang:Housekeeping:MaxDeferral` after a restart under load: the reading of a fully healed service. The
   refresh now runs at the start of every maintenance tick on every instance, ahead of the duty check and the idle gate.
 
-- **The generated JSON context compiles for a positional record deriving from a base record with properties (#2016).**
-  For example `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036: the generator
-  used the record's constructor only when it took every writable property, and otherwise called a parameterless
-  constructor the record does not have. The constructor now takes the positional parameters and the inherited members
-  are set by initializer, for messages, nested property types and polymorphic derived types alike.
-
 - **The destruction hook is offered only the ephemeral bodies the reap deletes (#2018).** The about-to-reap query had no
   TTL gate, so an `AfterTtl` body that was consumed, aged and covered but not yet expired was offered to the hook and
   reported destroyed while the reap kept it. The query now applies the reap's TTL floor, so offered, deleted and
   reported destroyed agree.
-
-- **A schema initialization releases a waiting call only after it has finished (#2019).** The first call completed the
-  attempt a second call waits on before it logged its completion, so the second call could return while the first was
-  still running; a registry test that read the first call's task right after the second returned failed once for it.
-  The completion is now logged before the attempt completes, and the test reads that report instead of racing the
-  first call's task.
 
 - **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
   reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
