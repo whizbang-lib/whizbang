@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wh_stream_policy_candidates`, `wh_stream_disposition_readiness`, `wh_seal_stream_if_unchanged`,
   `wh_set_stream_truncated_through`; `wh_due_stream_dispositions` returns the stream type). **Upgrade note:** a type
   that sets `Action` now has its sealed streams disposed of by that action instead of always archived.
+- **`[StreamEndOfLife]` declares a stream type's end-of-life policy in code (#1740).** Put it on the event type that
+  opens the stream (`IdleTtl`, `MaxAge`, `KeepTailVersions`, `TenantByteCap`, `Action`); the message-type catalog
+  generator registers it without reflection, inherited, events only. Configuration under
+  `Whizbang:StreamLifecycle:Types:<StreamType>` wins key by key; a declared value that cannot be used fails the start
+  naming the type.
 - **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
   `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
   `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees

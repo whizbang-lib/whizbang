@@ -19,11 +19,15 @@ public static class StreamEndOfLifeDeclarations {
   /// <summary>Registers a declaration. Called by generated code; registering a stream type again keeps the first.</summary>
   /// <param name="declaration">The declaration.</param>
   [EditorBrowsable(EditorBrowsableState.Never)]
-  public static void Register(StreamEndOfLifeDeclaration declaration) => throw new NotImplementedException(declaration?.StreamType);
+  public static void Register(StreamEndOfLifeDeclaration declaration) {
+    ArgumentNullException.ThrowIfNull(declaration);
+    _declarations.TryAdd(declaration.StreamType, declaration);
+  }
 
   /// <summary>Every registered declaration, ordered by stream type.</summary>
   /// <returns>The declarations.</returns>
-  public static IReadOnlyList<StreamEndOfLifeDeclaration> All() => [.. _declarations.Values.Take(0)];
+  public static IReadOnlyList<StreamEndOfLifeDeclaration> All() =>
+    [.. _declarations.Values.OrderBy(d => d.StreamType, StringComparer.Ordinal)];
 }
 
 /// <summary>One event type's <see cref="Attributes.StreamEndOfLifeAttribute"/>, as the generator registers it.</summary>

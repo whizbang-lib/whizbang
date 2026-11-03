@@ -64,21 +64,23 @@ internal static class ArchiveOptionsBinder {
         : throw new InvalidOperationException($"{ENABLED_KEY} is '{enabled}'; it must be true or false.");
     }
     foreach (var type in configuration.GetSection(TYPES_SECTION).GetChildren()) {
-      options.Types[type.Key] = _type(type);
+      options.Types[type.Key] = _type(type, options.Types.TryGetValue(type.Key, out var declared) ? declared : new StreamTypeLifecycleOptions());
     }
   }
 
-  // One stream type's settings; each key names itself in its refusal.
-  private static StreamTypeLifecycleOptions _type(IConfigurationSection type) {
+  // One stream type's settings over what its [StreamEndOfLife] declared: a key set here wins; each key names itself in
+  // its refusal.
+  private static StreamTypeLifecycleOptions _type(IConfigurationSection type, StreamTypeLifecycleOptions options) {
     var prefix = $"{TYPES_SECTION}:{type.Key}:";
-    var options = new StreamTypeLifecycleOptions();
     if (type[nameof(StreamTypeLifecycleOptions.AppendToArchived)] is { } appendToArchived) {
       options.AppendToArchived = _policy(prefix + nameof(StreamTypeLifecycleOptions.AppendToArchived), appendToArchived);
     }
-    options.IdleTtl = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.IdleTtl), type[nameof(StreamTypeLifecycleOptions.IdleTtl)]);
-    options.MaxAge = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.MaxAge), type[nameof(StreamTypeLifecycleOptions.MaxAge)]);
-    options.KeepTailVersions = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.KeepTailVersions), type[nameof(StreamTypeLifecycleOptions.KeepTailVersions)]);
-    options.TenantByteCap = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.TenantByteCap), type[nameof(StreamTypeLifecycleOptions.TenantByteCap)]);
+    options.IdleTtl = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.IdleTtl), type[nameof(StreamTypeLifecycleOptions.IdleTtl)]) ?? options.IdleTtl;
+    options.MaxAge = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.MaxAge), type[nameof(StreamTypeLifecycleOptions.MaxAge)]) ?? options.MaxAge;
+    options.KeepTailVersions = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.KeepTailVersions), type[nameof(StreamTypeLifecycleOptions.KeepTailVersions)])
+      ?? options.KeepTailVersions;
+    options.TenantByteCap = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.TenantByteCap), type[nameof(StreamTypeLifecycleOptions.TenantByteCap)])
+      ?? options.TenantByteCap;
     if (type[nameof(StreamTypeLifecycleOptions.Action)] is { } action) {
       options.Action = _action(prefix + nameof(StreamTypeLifecycleOptions.Action), action);
     }
@@ -143,8 +145,25 @@ internal static class ArchiveOptionsBinder {
   /// <param name="declarations">The declarations (<see cref="StreamEndOfLifeDeclarations.All"/>).</param>
   /// <param name="options">The options to fill.</param>
   /// <exception cref="InvalidOperationException">A declared value cannot be used; the message names the type.</exception>
-  internal static void Apply(IEnumerable<StreamEndOfLifeDeclaration> declarations, StreamLifecycleOptions options) =>
-    throw new NotImplementedException($"{declarations} {options.Types.Count}");
+  internal static void Apply(IEnumerable<StreamEndOfLifeDeclaration> declarations, StreamLifecycleOptions options) {
+    foreach (var declaration in declarations) {
+      var key = $"[StreamEndOfLife] on {declaration.StreamType}: ";
+      options.Types[declaration.StreamType] = new StreamTypeLifecycleOptions {
+        IdleTtl = _positiveSpan(key + nameof(StreamTypeLifecycleOptions.IdleTtl), declaration.IdleTtl),
+        MaxAge = _positiveSpan(key + nameof(StreamTypeLifecycleOptions.MaxAge), declaration.MaxAge),
+        KeepTailVersions = _declaredCount(key + nameof(StreamTypeLifecycleOptions.KeepTailVersions), declaration.KeepTailVersions),
+        TenantByteCap = _declaredCount(key + nameof(StreamTypeLifecycleOptions.TenantByteCap), declaration.TenantByteCap),
+        Action = declaration.Action,
+      };
+    }
+  }
+
+  // An attribute cannot hold a null number, so 0 is "no trigger"; a negative count is refused.
+  private static long? _declaredCount(string key, long value) => value switch {
+    0 => null,
+    > 0 => value,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a whole number of 1 or more, or 0 for none."),
+  };
 
   private static AppendToArchivedPolicy _policy(string key, string value) {
     // Names only: a number would bind a policy by position.
@@ -193,6 +212,8 @@ internal static class ArchiveOptionsBinder {
 
   private sealed class StreamLifecycleOptionsSetup(IConfiguration? configuration) : IConfigureOptions<StreamLifecycleOptions> {
     public void Configure(StreamLifecycleOptions options) {
+      // The [StreamEndOfLife] declarations first, so configuration wins key by key (#1740).
+      Apply(StreamEndOfLifeDeclarations.All(), options);
       if (configuration is not null) {
         Bind(configuration, options);
       }

@@ -398,7 +398,7 @@ public class MessageTypeCatalogGeneratorTests {
       public record RushOrderPlaced : OrderPlaced;
 
       public static class Ledgers {
-        [StreamEndOfLife]
+        [StreamEndOfLife(IdleTtl = null)]
         public record LedgerOpened : IEvent;
       }
 
@@ -419,8 +419,8 @@ public class MessageTypeCatalogGeneratorTests {
       .Because("the attribute is inherited, so the streams a derived event opens carry the same policy");
     await Assert.That(generated).Contains($"{register}\"MyApp.Ledgers+LedgerOpened\", null, null, 0L, 0L, (global::Whizbang.Core.Archival.StreamLifecycleAction)0));")
       .Because("the key is the ledger's stream type, the CLR name with '+' for a nested type");
-    await Assert.That(generated.Contains("\"MyApp.PlaceOrder\"")).IsFalse().Because("a command never opens a stream");
-    await Assert.That(generated.Contains("\"MyApp.CartStarted\"")).IsFalse();
+    await Assert.That(generated.Contains($"{register}\"MyApp.PlaceOrder\"")).IsFalse().Because("a command never opens a stream");
+    await Assert.That(generated.Contains($"{register}\"MyApp.CartStarted\"")).IsFalse();
   }
 
   [Test]
