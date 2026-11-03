@@ -150,6 +150,67 @@ public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
     await Assert.That(archive.Reads).IsEqualTo(0).Because("the default never reads the archive");
   }
 
+  // #1734: after a NewGeneration append, the snapshot at the archive's last version is the base the live tail continues
+  // from. A default rebuild starts from it and replays only the live tail; a newest snapshot strictly inside the archive
+  // would leave archived events unfolded, so that stream is skipped.
+  [Test]
+  public async Task Rebuild_ByDefault_AfterANewGeneration_StartsFromTheSnapshotAtTheArchiveBoundary_AndReplaysOnlyTheLiveTailAsync() {
+    var archive = new CountingArchive(_archive());
+    await using var sp = _services(readThrough: true, archive: archive, withSnapshots: true);
+    var (stream, ids) = await _newGenerationAsync(sp, snapshotAtBoundary: true);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [stream], CancellationToken.None);
+
+    await Assert.That(ids.Count).IsEqualTo(3);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(0);
+    await Assert.That(await _rowAsync(stream)).IsEqualTo((1005m, (string?)null))
+      .Because("the rebuild starts from the boundary snapshot (1000) and folds the live tail alone (the credit of 5)");
+    await Assert.That(archive.Reads).IsEqualTo(0).Because("the default never reads the archive");
+  }
+
+  [Test]
+  public async Task Rebuild_ByDefault_AfterANewGeneration_SkipsAStreamWhoseNewestSnapshotIsStrictlyInsideTheArchiveAsync() {
+    await using var sp = _services(readThrough: true, withSnapshots: true);
+    var (stream, _) = await _newGenerationAsync(sp, snapshotAtBoundary: false);
+
+    var result = await _rebuilder(sp).RebuildStreamsAsync(PERSPECTIVE, [stream], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsSkipped).IsEqualTo(1)
+      .Because("the archived events after that snapshot would be left unfolded, and the default never reads the archive");
+    await Assert.That(await _rowExistsAsync(stream)).IsFalse().Because("the row is left as it was");
+  }
+
+  // A stream of three events with a snapshot at version 1, and at version 3 (the stream's last) when asked; archived whole
+  // under NewGeneration, then a credit of 5 starts its new generation at version 4.
+  private async Task<(Guid Stream, List<Guid> Ids)> _newGenerationAsync(ServiceProvider sp, bool snapshotAtBoundary) {
+    var stream = Guid.CreateVersion7();
+    await _appendAsync(sp, stream, [
+      new RebuildCreditedEvent { StreamId = stream, Amount = 10m },
+      new RebuildDebitedEvent { StreamId = stream, Amount = 3m },
+      new RebuildBalanceSetEvent { StreamId = stream, Balance = 50m },
+    ]);
+    await using var ctx = CreateDbContext();
+    var ids = await ctx.Database.SqlQueryRaw<Guid>(
+      "SELECT event_id AS \"Value\" FROM wh_event_store WHERE stream_id = {0} ORDER BY version", stream).ToListAsync();
+    await _snapshotAsync(stream, ids[0], new RebuildBalanceModel { Id = stream, Balance = 7m });
+    if (snapshotAtBoundary) {
+      await _snapshotAsync(stream, ids[2], new RebuildBalanceModel { Id = stream, Balance = 1000m });
+    }
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var policy = new NpgsqlCommand(
+        "SELECT wh_sync_stream_type_policies(ARRAY[(SELECT stream_type FROM wh_stream_lifecycle WHERE stream_id = @s)], ARRAY['NewGeneration'])",
+        conn);
+      policy.Parameters.AddWithValue("s", stream);
+      _ = await policy.ExecuteNonQueryAsync();
+    }
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(stream))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    await _appendAsync(sp, stream, [new RebuildCreditedEvent { StreamId = stream, Amount = 5m }]);
+    return (stream, ids);
+  }
+
   [Test]
   [Arguments(RebuildArchivedData.Skip)]
   [Arguments(RebuildArchivedData.IncludeWhileLive)]

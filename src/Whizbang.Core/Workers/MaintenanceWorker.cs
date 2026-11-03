@@ -870,9 +870,10 @@ public sealed partial class MaintenanceWorker(
     try {
       // Loaded before the delete: the Post stages run after the data is gone
       var envelopes = await Whizbang.Core.Lifecycle.DestructionStageReceptors.LoadAsync(sp, targets, stageTypes, ct).ConfigureAwait(false);
+      var context = _destructionContext(targets);
       var result = hook is null
         ? Whizbang.Core.Lifecycle.DestructionResult.Proceed()
-        : await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+        : await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
       LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
       if (result.Cancel || result.DeferUntil.HasValue) {
         // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
@@ -885,9 +886,10 @@ public sealed partial class MaintenanceWorker(
         await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
         return DestructionBatch.None;
       }
-      // Proceed: the Pre stages run, then the reap deletes the batch and PostDestruction fires for it. A
-      // throwing Pre Inline receptor takes the failure path below, as a throwing hook does
-      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+      // #1735: the disposition runs, or the batch is held when the reaper cannot carry it out
+      if (!await _runDispositionAsync(coordinator, sp, context, result, envelopes, ct).ConfigureAwait(false)) {
+        return DestructionBatch.None;
+      }
       return new DestructionBatch(targets, envelopes);
     } catch (OperationCanceledException) {
       throw;
@@ -916,6 +918,53 @@ public sealed partial class MaintenanceWorker(
       return DestructionBatch.None;
     }
   }
+
+  // #1735: the disposition the hook returned, or the declared one (Delete: every Destruction value that names another
+  // disposition is refused at compile time by WHIZ137). One the reaper cannot carry out holds the batch and returns false;
+  // otherwise the Pre stages run, then the compaction handler for Compact, and the reap may proceed. A throwing Pre Inline
+  // receptor or compaction handler propagates to the caller's failure path, as a throwing hook does.
+  private async Task<bool> _runDispositionAsync(IWorkCoordinator coordinator, IServiceProvider sp,
+      Whizbang.Core.Lifecycle.DestructionContext context, Whizbang.Core.Lifecycle.DestructionResult result,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> envelopes, CancellationToken ct) {
+    var disposition = result.Disposition ?? context.DeclaredDefault;
+    var compactor = disposition == Whizbang.Core.Lifecycle.Disposition.Compact
+      ? sp.GetService<Whizbang.Core.Lifecycle.ICompactionHandler>()
+      : null;
+    if (disposition != Whizbang.Core.Lifecycle.Disposition.Delete && compactor is null) {
+      await _holdUnavailableDispositionAsync(coordinator, sp, context.Targets, disposition, ct).ConfigureAwait(false);
+      return false;
+    }
+    await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+    if (compactor is not null) {
+      await compactor.CompactAsync(context, ct).ConfigureAwait(false);
+    }
+    return true;
+  }
+
+  // #1735: a disposition the reaper cannot carry out keeps the batch: Compact with no ICompactionHandler registered,
+  // Archive (the archive store moves a stream's prefix or whole stream, never event bodies across streams), CryptoShred
+  // (not shipped). Held for the retry backoff on the host's clock, so a handler registered later picks it up, and logged
+  // each time with the reason.
+  private async Task _holdUnavailableDispositionAsync(IWorkCoordinator coordinator, IServiceProvider sp,
+      IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, Whizbang.Core.Lifecycle.Disposition disposition,
+      CancellationToken ct) {
+    var eventIds = new List<Guid>(targets.Count);
+    foreach (var t in targets) {
+      eventIds.Add(t.EventId);
+    }
+    var until = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().AddSeconds(_options.DestructionRetryBackoffSeconds);
+    await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
+    var reason = disposition switch {
+      Whizbang.Core.Lifecycle.Disposition.Compact => "it needs an ICompactionHandler registered, and none is",
+      Whizbang.Core.Lifecycle.Disposition.Archive => "the reaper cannot archive event bodies; archive a stream through IArchiveStore or a prefix truncate",
+      _ => "it has not shipped",
+    };
+    LogDispositionUnavailable(_logger, targets.Count, disposition, reason, until);
+  }
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "Ephemeral reap of {Count} event(s) held until {Until}: their disposition is {Disposition}, which the reaper cannot carry out: {Reason}")]
+  private static partial void LogDispositionUnavailable(ILogger logger, int count, Whizbang.Core.Lifecycle.Disposition disposition, string reason, DateTimeOffset until);
 
   // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,
   // after the reap committed. Failure is logged, never fatal.

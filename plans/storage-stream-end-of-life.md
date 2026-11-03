@@ -174,8 +174,35 @@ Original slice text:
 
 ### S5. P1: final snapshot and scheduled disposition
 
-**Status (2026-10-24):** open. No disposition step and no `Whizbang:StreamLifecycle` options. Depends on S3 and
-S4.
+**Status (2026-11-01):** implemented on `feat/1734-storage` (#1734, bundled with #1735 and #1933), migration
+`280_FinalSnapshotAndScheduledDisposition.sql` (281 to 284, also reserved, are unused). Owner decisions of 2026-11-01:
+the default disposition of a sealed stream is to archive it whole, with no enable flag; NewGeneration ships here. As
+built:
+
+- **Scheduling** is done by the step, not by the seal: `wh_schedule_stream_dispositions` sets `disposition_due_at` to the
+  later of `sealed_at` and the step's clock, plus `FinalizeGrace`, for up to `SweepBatchSize` `Sealed` streams with none
+  (partial index `idx_stream_lifecycle_unscheduled`). Counting from the later of the two gives streams sealed before the
+  release, and sealed streams someone restored, a full grace; the seal paths (finalizer, terminal events on three write
+  paths) stay untouched.
+- **The step** (`StreamDispositionStep`, Core, registered by both drivers with `PostgresStreamDispositionLedger`) reads
+  the due streams with their readiness (`wh_due_stream_dispositions`: blocked, held, done, ready), defers blocked and held
+  ones for `DestructionRetryBackoffSeconds`, takes the **final snapshot** at each perspective cursor through the runner's
+  `BootstrapSnapshotAsync` (at disposition time, once consumption is complete, not at the seal), runs the PreDestruction
+  hook (cancel and throw defer for the backoff, defer moves the due time), then the disposition (default Archive whole;
+  Delete purges; Compact runs `ICompactionHandler` then purges; CryptoShred defers).
+- **NewGeneration** (`AppendToArchivedPolicy.NewGeneration`): an append to a stream archived whole is stored at the
+  tombstone's last version plus one and the stream becomes Active with its archive as a prefix, when every parked cursor
+  has a snapshot at its event; otherwise it acts as AutoRestore. Decided once in `_wh_archived_stream_refusals`, started by
+  `_wh_start_new_generations`, numbered from the ledger only for a stream with nothing hot in a write that held an
+  archived stream. Parked cursors stay; `wh_perspective_resume_cursors` (both coordinators) resumes a perspective after its
+  parked cursor until it has a live one. A whole-stream archive written straight through `IArchiveStore` takes no final
+  snapshot (the store sits below the runners), so a NewGeneration append to it falls back to AutoRestore.
+
+Docs: `stream-end-of-life.md#scheduled-disposition`, `#the-final-snapshot`, `archive-store.md#new-generation`, the
+configuration reference (docs branch `docs/1734`).
+
+Original slice text:
+
 
 - **Change.** On seal, request a final snapshot for each consuming snapshotting perspective
   (`IPerspectiveSnapshotStore`, `src/Whizbang.Core/Perspectives/IPerspectiveSnapshotStore.cs:16`) and
@@ -190,9 +217,18 @@ S4.
 
 ### S6. Wire `Disposition`
 
-**Status (2026-10-24):** open. No code routes on `DestructionResult.Disposition`; `Destruction.OnCompaction` and
-`Archived` are still documented as planned and inert (`src/Whizbang.Core/Attributes/Destruction.cs:10`). The
-ephemeral events page this slice was to promote is already published. Depends on S7 for `Archive`.
+**Status (2026-11-01):** implemented on `feat/1734-storage` (#1735, bundled with #1734). Owner decisions of 2026-11-01:
+the ephemeral reaper refuses `Archive` (held for the retry backoff and logged), WHIZ137 flags `Destruction.Archived` as
+well as `OnCompaction`, and an event-level archive is #1975; `DestructionResult.Disposition` is nullable and
+`Proceed()` runs the declared disposition. As built: `IStreamPrefixTruncator.TruncateAsync(streamId, throughVersion,
+Disposition)` replaces the `archive` flag (the stored `ScheduledStreamClose` keeps its flag, mapped to Archive or
+Delete); the full-history guard runs on the disposition that will run; `ICompactionHandler` is the developer's Compact
+(truncate: handler then discard, `compaction_unavailable` without one; reaper: handler then reap, held without one);
+CryptoShred is refused everywhere (`crypto_shred_unavailable`). `DestructionContext.ThroughVersion` tells a stream hook the
+cut. Docs: `stream-end-of-life.md#dispositions`, `operations/diagnostics/whiz137.md`, `ephemeral-events.md`.
+
+Original slice text:
+
 
 - **Change.** The reaper (`MaintenanceWorker.cs:805`) and the stream disposition step route on
   `DestructionResult.Disposition`: `Delete` as today, `Archive` through `IArchiveStore` (S7) before
@@ -296,7 +332,8 @@ duty) deletes them with confirm-then-clear and backoff retries. Access tier (#18
   restore completes the request and makes its dead letters due for the recovery worker (policy `AfterRestore`); a
   failure holds them for review with the error.
 
-Left for later: NewGeneration (#1734, S5); the Dapper driver has no dead-letter recovery service, so on Dapper an
+NewGeneration shipped with #1734 (S5, see there). #1933 (bundled with #1734): `GetLastSequenceAsync` and
+`HasStreamEventsBeforeAsync` read the ledger in the one statement each runs (`ArchivedStreamHistorySql`, both drivers). Left for later: the Dapper driver has no dead-letter recovery service, so on Dapper an
 `AwaitingRestore` dead letter becomes due but nothing redrives it until that service exists. Docs:
 `archive-store.md#read-through`, `#appending-to-an-archived-stream`, `#restore-requests`, `rewind.md`, `rebuild.md`
 (docs branch `docs/1738`).

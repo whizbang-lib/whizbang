@@ -71,6 +71,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
+  `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
+  `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees
+  it, at most `Whizbang:StreamLifecycle:SweepBatchSize` (default 500) per cycle. A due stream that a perspective still
+  owes events, or that an active destruction hold covers, is deferred for the destruction retry backoff; a ready one
+  gets a final snapshot at every perspective's cursor, then the PreDestruction hook decides (a veto defers), then the
+  disposition runs: by default the whole stream is archived through `IArchiveStore`. Migration 280.
+  **Upgrade note:** every sealed stream is archived a grace after this release starts; set `FinalizeGrace` to keep them
+  hot longer, or return `DestructionResult.Defer` from a hook.
+- **`AppendToArchived` `NewGeneration` (#1734).** An append to a stream archived whole, of a type declaring it, continues
+  at the tombstone's last version plus one: the stream becomes active with its archive as a prefix and each perspective
+  resumes after its parked cursor. Without a snapshot at every parked cursor the append acts as `AutoRestore`.
+- **Destructions route on their disposition (#1735, WS-3 S6).** The prefix truncate, the ephemeral reaper and the
+  scheduled disposition run `Delete`, `Archive` (stream granularity only), `Compact` (through a developer's new
+  `ICompactionHandler`, kept and logged without one) or refuse `CryptoShred`. **Breaking:**
+  `IStreamPrefixTruncator.TruncateAsync` takes a `Disposition` in place of its `archive` flag, and
+  `DestructionResult.Proceed()` with no argument now runs the declared disposition instead of `Delete`
+  (`DestructionResult.Disposition` is nullable). New analyzer **WHIZ137** fails the build on `Destruction.OnCompaction`
+  and `Destruction.Archived`, which have no handler for event bodies.
+- **The version questions read the archive (#1933).** `GetLastSequenceAsync` answers a stream archived whole with its
+  tombstone's last version, and `HasStreamEventsBeforeAsync` counts archived (or deleted-archive) history, on both
+  drivers, in the one statement each always ran.
 - **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
   (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
   last append, last version, approximate bytes, state `Active`/`Sealed`/`Archived`, and the seal, disposition and

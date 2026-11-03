@@ -111,7 +111,7 @@ public class DapperArchiveStoreTests : PostgresTestBase {
 
     entries.AddWhizbangWorkers();
     await using var pipeline = entries.BuildServiceProvider();
-    var result = await pipeline.GetRequiredService<IStreamPrefixTruncator>().TruncateAsync(stream, 2, archive: true);
+    var result = await pipeline.GetRequiredService<IStreamPrefixTruncator>().TruncateAsync(stream, 2, Disposition.Archive);
 
     await Assert.That(result.Status).IsEqualTo("truncated")
       .Because("the archive path reaches the store through the driver's registration, so it works on this engine too");

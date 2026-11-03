@@ -233,11 +233,9 @@ public partial class DapperPostgresEventStore(
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
   /// </summary>
-  /// <tests>No tests found</tests>
-  protected override string GetLastSequenceSql() => @"
-    SELECT COALESCE(MAX(version), -1)
-    FROM wh_event_store
-    WHERE stream_id = @StreamId";
+  /// <remarks>#1933: a stream archived whole answers the last version its tombstone records, in the same statement.</remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
+  protected override string GetLastSequenceSql() => Whizbang.Data.Postgres.ArchivedStreamHistorySql.LastSequence(string.Empty);
 
   /// <summary>
   /// Perspective row retention, the resurrection-on-wake history probe: does this stream hold any
@@ -246,12 +244,13 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
   public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
     var exists = await Executor.ExecuteScalarAsync<bool?>(
       connection,
-      "SELECT EXISTS (SELECT 1 FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId)",
+      Whizbang.Data.Postgres.ArchivedStreamHistorySql.HasEventsBefore(string.Empty),
       new { StreamId = streamId, BeforeEventId = beforeEventId },
       cancellationToken: cancellationToken);
     return exists == true;
@@ -266,6 +265,7 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
   public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypes);
     if (eventTypes.Count == 0) {
@@ -273,18 +273,12 @@ public partial class DapperPostgresEventStore(
     }
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var storedTypes = await Executor.QueryAsync<string>(
+    var storedTypes = await Executor.QueryAsync<string?>(
       connection,
-      "SELECT DISTINCT event_type FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId",
+      Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBefore(string.Empty),
       new { StreamId = streamId, BeforeEventId = beforeEventId },
       cancellationToken: cancellationToken);
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    foreach (var stored in storedTypes) {
-      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
-        return true;
-      }
-    }
-    return false;
+    return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
   }
 
   // --- Private helper methods ---
