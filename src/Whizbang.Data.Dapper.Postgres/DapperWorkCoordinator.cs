@@ -827,25 +827,9 @@ public partial class DapperWorkCoordinator(
     => SyncRetentionSettingsAsync([Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeSetting(debugMode)], cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    var connection = __scope.Connection;
-    var prefix = await _prefixAsync(connection, cancellationToken);
-    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
-    command.CommandText = $"SELECT * FROM {prefix}perform_maintenance()";
-
-    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-    var results = new List<MaintenanceResult>();
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new MaintenanceResult(
-        reader.GetString(0),
-        reader.GetInt64(1),
-        reader.GetDouble(2),
-        reader.GetString(3)
-      ));
-    }
-    return results;
-  }
+  /// <remarks>The unrestricted reap: <c>wh_perform_maintenance(NULL)</c>, which is what <c>perform_maintenance()</c> runs.</remarks>
+  public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) =>
+    PerformMaintenanceAsync(null, cancellationToken);
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<PurgedOrphanInboxRow>> PurgeOrphanInboxAsync(
