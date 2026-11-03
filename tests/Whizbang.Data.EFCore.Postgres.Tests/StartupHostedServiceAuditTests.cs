@@ -54,7 +54,8 @@ public sealed class StartupHostedServiceAuditTests {
   private static readonly HashSet<string> _afterTheSchemaReadyGate = new(StringComparer.Ordinal) {
     "BackupTickCoordinator", "ClaimWorker", "CoalesceShipWorker", "DeadLetterRecoveryWorker",
     "EventTypeBytesSampler", "FailureFlushWorker", "HeartbeatWorker", "InboxDispatchWorker", "InboxDrainWorker",
-    "InboxHandlerWorker", "IntegrityAuditWorker", "IntegrityCheckpointWorker", "IntegritySweepScheduler",
+    "InboxHandlerWorker", "IntegrityAuditWorker", "IntegrityCheckpointWorker", "IntegrityDeliveryWorker",
+    "IntegritySweepScheduler",
     "LeaseRenewalWorker", "LifecyclePhaseWorker", "MaintenanceWorker", "MessageTypeRegistryReconciliationHostedService",
     "MultiStreamCommandWorker", "NotifyDebounceStatsCollector", "OrphanInboxJanitor", "OutboxCompletionFlushWorker",
     "OutboxDrainWorker", "OutboxPublishWorker", "PerspectiveCompletionFlushWorker", "PerspectiveMigrationWorker",
