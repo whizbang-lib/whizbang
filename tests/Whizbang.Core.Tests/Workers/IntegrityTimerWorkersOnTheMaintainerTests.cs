@@ -157,7 +157,7 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
       services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
       services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider());
     });
-    host.Tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    host.Tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-svc", host.Clock.GetUtcNow(), "origin.requests");
     var drain = new RepairDrainWorker(
       host.Services.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new StreamIntegrityOptions {
@@ -211,7 +211,8 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
   private static IntegrityCheckpointWorker _checkpoint(Host host, ILogger<IntegrityCheckpointWorker>? logger = null) => new(
     host.Services.GetRequiredService<IServiceScopeFactory>(),
     Options.Create(new StreamIntegrityOptions { CheckpointIntervalSeconds = 60 }),
-    logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
+    logger ?? NullLogger<IntegrityCheckpointWorker>.Instance,
+    host.Clock);
 
   [Test]
   public async Task Checkpoints_OnAnInstanceThatDoesNotHoldTheMaintainerDuty_AreNotPublishedAsync() {
@@ -246,7 +247,9 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     // A received checkpoint waits in the integrity delivery queue while the idle gate defers the drain, so on a busy
     // consumer a live origin's checkpoints arrive late by as long as the deferral. The liveness check widens its bound
     // by that time rather than reporting a live origin as silent.
-    var now = DateTimeOffset.UtcNow;
+    // One clock for the whole scene: the drain deferred fifteen minutes ago, the origin last checkpointed ten minutes ago,
+    // and the checkpoint worker reads "now" from the same clock, so nothing depends on how fast the test runs.
+    var now = _origin;
     var deliveryClock = new FakeTimeProvider(now - TimeSpan.FromMinutes(15));
     IntegrityDeliveryWorker? drain = null;
     await using var host = await _hostAsync(maintainer: true, services =>
