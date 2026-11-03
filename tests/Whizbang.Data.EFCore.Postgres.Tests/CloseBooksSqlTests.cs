@@ -269,6 +269,36 @@ public class CloseBooksSqlTests : EFCoreTestBase {
     return (T)(await c.ExecuteScalarAsync())!;
   }
 
+  [Test]
+  public async Task CloseBooks_ThroughTheCloser_AStreamWhoseLedgerEmptiedMeanwhile_HasNothingToCloseAsync() {
+    var emptied = await _ledgerAsync(deposits: 1);
+    // Between the closer's read and the close, every event leaves the ledger (flag 8, ephemeral), as a reap of a
+    // stream reclassified ephemeral would leave it: the SQL finds no ledger version and refuses.
+    var racing = new RacingRows(new EFCoreDirectAppendRowBuilder(JsonContextRegistry.CreateCombinedOptions(), null),
+      () => _executeAsync("UPDATE wh_event_store SET flags = COALESCE(flags, 0) | 8 WHERE stream_id = @s", emptied));
+    var closer = new PostgresBookCloser(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, null, racing, new FakeTimeProvider(_t0));
+
+    var result = await closer.CloseBooksAsync(emptied, new BooksProbeClosed(), new BooksProbeOpened());
+
+    await Assert.That(result.Status).IsEqualTo(BookCloseStatus.NothingToClose)
+      .Because("the SQL's nothing_to_close maps to NothingToClose, and nothing is written");
+    await Assert.That(result.SuccessorStreamId).IsNull();
+    await Assert.That(await _scalarAsync<bool>("SELECT sealed_at IS NULL FROM wh_stream_lifecycle WHERE stream_id = @s", emptied)).IsTrue();
+  }
+
+  [Test]
+  public async Task TheCloserAndTheRowBuilder_RefuseANullDependency_AndTheCloserDefaultsToTheSystemClockAsync() {
+    var rows = new EFCoreDirectAppendRowBuilder(JsonContextRegistry.CreateCombinedOptions(), null);
+    Func<CancellationToken, ValueTask<NpgsqlConnection>> open = NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync;
+
+    await Assert.That(() => new PostgresBookCloser(null!, null, rows)).Throws<ArgumentNullException>().WithParameterName("open");
+    await Assert.That(() => new PostgresBookCloser(open, null, null!)).Throws<ArgumentNullException>().WithParameterName("rows");
+    await Assert.That(() => new EFCoreDirectAppendRowBuilder(null!, null)).Throws<ArgumentNullException>().WithParameterName("jsonOptions");
+    var ledger = await _ledgerAsync(deposits: 1);
+    var closed = await new PostgresBookCloser(open, null, rows).CloseBooksAsync(ledger, new BooksProbeClosed(), new BooksProbeOpened());
+    await Assert.That(closed.Status).IsEqualTo(BookCloseStatus.Closed).Because("a closer built without a clock stamps with the system clock");
+  }
+
   private async Task _executeAsync(string sql, Guid stream) => _ = await _scalarAsync<object>(sql, stream);
 
   // Appends to the stream the first time a row is built, between the closer's read of the newest version and its call.
