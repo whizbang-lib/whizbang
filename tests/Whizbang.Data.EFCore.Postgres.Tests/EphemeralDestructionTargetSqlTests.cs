@@ -82,6 +82,64 @@ public class EphemeralDestructionTargetSqlTests : EFCoreTestBase {
       .Because("A recent (within-grace) body is not yet reapable, so it is not a destruction target this cycle.");
   }
 
+  /// <summary>Stamps an AfterTtl expiry on a body, relative to the database clock the reap reads.</summary>
+  private static async Task _expireInAsync(NpgsqlConnection connection, Guid eventId, string interval) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText =
+      "UPDATE wh_event_body SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ephemeral_expires_at}', " +
+      $"to_jsonb((NOW() + INTERVAL '{interval}')::text)) WHERE event_id = @id";
+    cmd.Parameters.AddWithValue("id", eventId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<bool> _bodyExistsAsync(NpgsqlConnection connection, Guid eventId) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM wh_event_body WHERE event_id = @id)";
+    cmd.Parameters.AddWithValue("id", eventId);
+    return (bool)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>
+  /// The destruction hook is offered exactly what the reap deletes (#2018). An AfterTtl body that is consumed, aged past
+  /// grace and covered, but whose TTL has not expired, is kept by the reap; it was offered anyway, so the hook ran over
+  /// a body that survived and the after-destruction notification reported it destroyed. Its expired twin is offered and
+  /// deleted, so "offered" and "deleted" agree on both.
+  /// </summary>
+  [Test]
+  public async Task GetEphemeralBodiesAboutToReap_AnAfterTtlBodyNotYetExpired_IsNotOffered_AndOfferedMatchesDeletedAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var unexpired = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await _commitEphemeralAsync(connection, unexpired, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), "Whizbang.Tests.ReapTargetTtlLive");
+    await _ageAsync(connection, unexpired, 10);
+    await _expireInAsync(connection, unexpired, "1 day");
+
+    var expired = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await _commitEphemeralAsync(connection, expired, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), "Whizbang.Tests.ReapTargetTtlGone");
+    await _ageAsync(connection, expired, 10);
+    await _expireInAsync(connection, expired, "-1 minute");
+
+    var offered = (await coordinator.GetEphemeralBodiesAboutToReapAsync()).Select(t => t.EventId).ToHashSet();
+
+    await using (var reap = connection.CreateCommand()) {
+      reap.CommandText = "SELECT * FROM perform_maintenance()";
+      await using var reader = await reap.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        // Drain every task row so the whole cycle runs.
+      }
+    }
+
+    await Assert.That(offered.Contains(unexpired)).IsFalse()
+      .Because("a body whose TTL has not expired is kept by the reap, so the hook must not be offered it");
+    await Assert.That(await _bodyExistsAsync(connection, unexpired)).IsTrue()
+      .Because("precondition: the reap keeps an unexpired AfterTtl body");
+    await Assert.That(offered.Contains(expired)).IsTrue();
+    await Assert.That(await _bodyExistsAsync(connection, expired)).IsFalse()
+      .Because("the expired body was offered and the reap deleted it: offered and deleted agree");
+  }
+
   [Test]
   public async Task GetEphemeralBodiesAboutToReap_UnprocessedWorkItem_IsExcludedAsync() {
     await using var dbContext = CreateDbContext();
