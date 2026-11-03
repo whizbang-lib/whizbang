@@ -12,7 +12,7 @@ namespace Whizbang.Core.Archival;
 /// the worker pipeline; it does no database work and is inert when nothing is configured.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchivedStreamRowsConfiguratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Archival/ArchivedStreamRowsConfiguratorTests.cs</tests>
 public sealed class ArchivedStreamRowsConfigurator(IOptions<ArchivedStreamRowsOptions> options) : IHostedService {
   private readonly IOptions<ArchivedStreamRowsOptions> _options = options ?? throw new ArgumentNullException(nameof(options));
 
