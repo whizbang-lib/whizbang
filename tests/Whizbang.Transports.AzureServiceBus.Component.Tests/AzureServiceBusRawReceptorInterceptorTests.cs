@@ -59,9 +59,9 @@ public class AzureServiceBusRawReceptorInterceptorTests {
       new FixedInterceptor(InterceptorResult.Deny(action, "Missing required permission: orders:approve")), expectCompleted: false);
 
     await Assert.That(receptor.Handled).IsEmpty();
-    var deadLettered = receiver.DeadLettered.Single();
-    await Assert.That(deadLettered.Reason).IsEqualTo(reason);
-    await Assert.That(deadLettered.Description).Contains("orders:approve");
+    var (_, deadLetterReason, description) = receiver.DeadLettered.Single();
+    await Assert.That(deadLetterReason).IsEqualTo(reason);
+    await Assert.That(description).Contains("orders:approve");
     await Assert.That(receiver.Abandoned).IsEmpty().Because("a dead-lettered denial is not redelivered");
     await Assert.That(receiver.Completed).IsEmpty();
   }

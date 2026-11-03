@@ -18,7 +18,7 @@ public enum DeniedAction {
   /// <summary>
   /// Refuse loudly. A local dispatch throws <see cref="Exceptions.ReceptorInvocationDeniedException"/> (an
   /// <see cref="UnauthorizedAccessException"/>) to its caller; inbox delivery moves the message straight to the
-  /// dead-letter store (reason <c>ReceptorDenied</c>) without a retry. Default — loud and auditable.
+  /// dead-letter store (reason <c>ReceptorDenied</c>) without a retry. The default: loud and auditable.
   /// </summary>
   DeadLetter,
   /// <summary>

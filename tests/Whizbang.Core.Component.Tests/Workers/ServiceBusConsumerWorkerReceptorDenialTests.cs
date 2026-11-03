@@ -56,11 +56,11 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
 
     await h.DeliverAsync();
 
-    var move = h.DeadLetters.Moves.Single();
-    await Assert.That(move.SourceId).IsEqualTo(h.MessageId);
-    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(move.Reason).IsEqualTo(reason);
-    await Assert.That(move.ErrorText).Contains("orders:approve");
+    var (sourceTable, sourceId, movedReason, errorText) = h.DeadLetters.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(h.MessageId);
+    await Assert.That(sourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(movedReason).IsEqualTo(reason);
+    await Assert.That(errorText).Contains("orders:approve");
     await Assert.That(h.Strategy.Completions).IsEmpty().Because("the row is moved, never completed");
     await Assert.That(h.Strategy.Failures).IsEmpty().Because("a dead-lettered denial never enters a retry loop");
     await Assert.That(h.Invoker.Invocations).IsEqualTo(0).Because("no receptor runs for a denied message");
@@ -148,7 +148,6 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
         scopeFactory: h._sp.GetRequiredService<IServiceScopeFactory>(),
         logger: NullLogger<ServiceBusConsumerWorker>.Instance,
         orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         envelopeSerializer: new EnvelopeSerializer(),
         receptorRegistry: new PermissiveReceptorRegistryQuery(),
