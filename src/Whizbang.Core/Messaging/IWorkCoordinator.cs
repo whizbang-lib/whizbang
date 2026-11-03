@@ -1986,6 +1986,59 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 
   /// <summary>
+  /// Records a stream-integrity delivery for the maintainer's drain (#2001). Recorded once: a delivery whose
+  /// <paramref name="deliveryId"/> is already recorded is left as it is.
+  /// </summary>
+  /// <param name="deliveryId">The delivery's identity, derived from its type and payload (<c>IntegrityDeliveryId</c>).</param>
+  /// <param name="deliveryType">Which registered handler runs it.</param>
+  /// <param name="payload">The delivery as JSON.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Whether it was recorded now or already; <see cref="IntegrityDeliveryEnqueueResult.Unsupported"/> when the
+  /// store cannot record deliveries, and the caller handles the delivery inline, as before.</returns>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Enqueue_TheSameDeliveryTwice_RecordsItOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryCoordinatorDefaultsTests.cs:ACoordinatorWithoutTheQueue_ReportsUnsupported_AndIsInertAsync</tests>
+  Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
+    Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) =>
+    Task.FromResult(IntegrityDeliveryEnqueueResult.Unsupported);
+
+  /// <summary>
+  /// Leases up to <paramref name="maxDeliveries"/> due integrity deliveries in arrival order, skipping rows another
+  /// drain holds, and makes each one not due again for <paramref name="lease"/>, so a drain that overlaps this one
+  /// while the maintainer duty fails over does not take them too.
+  /// </summary>
+  /// <param name="maxDeliveries">The most to lease.</param>
+  /// <param name="lease">How long the leased deliveries stay invisible to another drain.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The leased deliveries, oldest first; empty when none is due or the store has no queue.</returns>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Lease_ReturnsDueDeliveriesInArrivalOrder_AndPushesThemOutByTheLeaseAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Lease_SkipsADeliveryAnotherDrainHoldsLockedAsync</tests>
+  Task<IReadOnlyList<IntegrityDelivery>> LeaseIntegrityDeliveriesAsync(
+    int maxDeliveries, TimeSpan lease, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityDelivery>>([]);
+
+  /// <summary>Deletes an integrity delivery the drain handled, or dropped.</summary>
+  /// <param name="deliveryId">The delivery.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Complete_DeletesTheDeliveryAsync</tests>
+  Task CompleteIntegrityDeliveryAsync(Guid deliveryId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Records a failed attempt of an integrity delivery: counts it, keeps <paramref name="error"/>, and holds the
+  /// delivery back for <paramref name="backoff"/>.
+  /// </summary>
+  /// <param name="deliveryId">The delivery.</param>
+  /// <param name="error">What failed, for an operator.</param>
+  /// <param name="backoff">How long before it is due again.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Fail_CountsTheAttempt_KeepsTheError_AndHoldsItForTheBackoffAsync</tests>
+  Task FailIntegrityDeliveryAsync(
+    Guid deliveryId, string error, TimeSpan backoff, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>

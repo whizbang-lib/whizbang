@@ -1121,6 +1121,84 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
+      Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(deliveryType);
+    ArgumentNullException.ThrowIfNull(payload);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_delivery_enqueue");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT {fn}(@p_delivery_id, @p_delivery_type, @p_payload)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_delivery_id", deliveryId);
+    cmd.Parameters.AddWithValue("p_delivery_type", deliveryType);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_payload", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = payload });
+    var recorded = (bool)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    return recorded ? IntegrityDeliveryEnqueueResult.Recorded : IntegrityDeliveryEnqueueResult.AlreadyRecorded;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<IntegrityDelivery>> LeaseIntegrityDeliveriesAsync(
+      int maxDeliveries, TimeSpan lease, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_delivery_lease");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT delivery_id, delivery_type, payload::text, attempts, queued_at FROM {fn}(@p_max, @p_lease_seconds)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_max", maxDeliveries);
+    cmd.Parameters.AddWithValue("p_lease_seconds", _wholeSeconds(lease));
+    var leased = new List<IntegrityDelivery>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      leased.Add(new IntegrityDelivery(
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+        reader.GetFieldValue<DateTimeOffset>(4)));
+    }
+    return leased;
+  }
+
+  /// <inheritdoc />
+  public async Task CompleteIntegrityDeliveryAsync(Guid deliveryId, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_delivery_complete");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT {fn}(@p_delivery_id)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_delivery_id", deliveryId);
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task FailIntegrityDeliveryAsync(
+      Guid deliveryId, string error, TimeSpan backoff, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(error);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_delivery_fail");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT {fn}(@p_delivery_id, @p_error, @p_backoff_seconds)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_delivery_id", deliveryId);
+    cmd.Parameters.AddWithValue("p_error", error);
+    cmd.Parameters.AddWithValue("p_backoff_seconds", _wholeSeconds(backoff));
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  // Whole seconds, rounded up, so a sub-second lease or backoff is never truncated to "due now".
+  private static int _wholeSeconds(TimeSpan span) => (int)Math.Ceiling(Math.Max(0, span.TotalSeconds));
+
+  /// <inheritdoc />
   /// <remarks>
   /// Degrades to the empty reading rather than throwing: a metrics refresh that cannot reach the
   /// ledger must never take down the caller. It is logged, because a gauge silently pinned at zero
