@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// The paced repair drain's tick, deterministically: token pacing gates the claim budget,
-/// claimed rows dispatch grouped per (origin, tenant, type, window), pre-stamp rows ask for whole history, and unlearned origins are never claimed —
+/// claimed rows dispatch grouped per (origin, tenant, type, window), pre-stamp rows ask for whole history, and unlearned origins are never claimed:
 /// no attempt budget burns on a request that could not leave the process.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
@@ -39,6 +39,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 [NotInParallel(Order = 106)]
 public class RepairDrainWorkerTests {
+  // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   [Test]
   public async Task DrainTick_DispatchesGroupedPerTypeAndWindow_NeverWideningAStreamPastItsOwnWindowAsync() {
@@ -71,7 +74,7 @@ public class RepairDrainWorkerTests {
     await Assert.That(shared.StreamIds).IsEquivalentTo([s1, s2])
       .Because("rows that disagreed over the same window share one request");
     await Assert.That(shared.FromCommitSequence).IsEqualTo(99L)
-      .Because("the group's window, exclusive floor — exactly the burst path's conversion");
+      .Because("the group's window, exclusive floor, exactly the burst path's conversion");
     await Assert.That(shared.ToCommitSequence).IsEqualTo(499L)
       .Because("inclusive ceiling of the group's own window, not the widest in the type");
     var own = typeA.Single(r => r.StreamIds!.Count == 1);
@@ -120,7 +123,7 @@ public class RepairDrainWorkerTests {
     transport.FailFirst = 1;
     coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
 
-    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
 
     await Assert.That(coordinator.PendingMarks).IsEmpty();
   }
@@ -258,7 +261,7 @@ public class RepairDrainWorkerTests {
     var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
     var whole = requests.Single(r => r.StreamIds!.Contains(preStamp));
     await Assert.That(whole.FromCommitSequence).IsNull()
-      .Because("a pre-stamp row's compared range is unknown — whole history, the legacy semantics");
+      .Because("a pre-stamp row's compared range is unknown: whole history, the legacy semantics");
     await Assert.That(whole.ToCommitSequence).IsNull();
     var bounded = requests.Single(r => r.StreamIds!.Contains(windowed));
     await Assert.That(bounded.FromCommitSequence).IsEqualTo(99L).Because("its neighbor's unknown range does not widen it");

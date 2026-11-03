@@ -34,6 +34,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard4")]
 public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBase {
+  // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private static readonly Guid _originId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
@@ -197,7 +200,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
     // The request already left: failing the caller now would not unsend it. Unmarked, the bucket waits out its
     // backoff instead of its answer, which is today's behavior.
     var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
-      _originId, [_key()], null, null, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      _originId, [_key()], null, null, _fixedNow, TimeSpan.FromMinutes(5));
 
     await Assert.That(marked).IsEqualTo(0);
     await _assertDegradedLoudlyAsync();
@@ -208,7 +211,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
     await using var ctx = CreateDbContext();
 
     var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
-      _originId, [], null, null, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      _originId, [], null, null, _fixedNow, TimeSpan.FromMinutes(5));
 
     await Assert.That(marked).IsEqualTo(0);
   }
@@ -219,7 +222,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
     await _dropFunctionAsync("wh_integrity_record_bundle_answer");
 
     var answer = await _build(ctx).IntegrityRecordBundleAnswerAsync(
-      _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [3], DateTimeOffset.UtcNow);
+      _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [3], _fixedNow);
 
     await Assert.That(answer).IsNull()
       .Because("null leaves the reconcile to judge the bundle as it did before, never a bundle judged on no evidence");
@@ -231,7 +234,7 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
     await using var ctx = CreateDbContext();
 
     await Assert.That(async () => await _build(ctx).IntegrityRecordBundleAnswerAsync(
-        _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [], DateTimeOffset.UtcNow))
+        _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [], _fixedNow))
       .Throws<ArgumentException>();
   }
 

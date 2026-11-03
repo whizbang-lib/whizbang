@@ -36,6 +36,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("IntegrityManifestGates")]   // the receptors' per-process gates are shared state
 [Category("Shard3")]
 public class IntegrityManifestReceptorTests {
+  // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   [Test]
   public async Task RequestReceptor_SendsChunkedTargetedManifestsAsync() {
@@ -1134,7 +1137,7 @@ public class IntegrityManifestReceptorTests {
         BulkBackfillThresholdEvents = 1000,
         RepairAnswerTimeoutMinutes = 77,
       }, tracker: tracker);
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -1162,7 +1165,7 @@ public class IntegrityManifestReceptorTests {
     var sp = _provider(coordinator, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
       tracker: tracker, ledger: new RefusingLedger());
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
