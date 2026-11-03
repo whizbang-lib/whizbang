@@ -385,6 +385,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Func<System.Data.Common.DbDataReader, Task<T>> read, CancellationToken cancellationToken) {
     var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(
       EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null));
+    T result;
     await _context.Database.OpenConnectionAsync(cancellationToken);
     try {
       await using var command = _context.Database.GetDbConnection().CreateCommand();
@@ -397,10 +398,11 @@ public sealed class EFCoreEventStore<TDbContext>(
         command.Parameters.Add(new NpgsqlParameter("BeforeEventId", NpgsqlDbType.Uuid) { Value = before });
       }
       await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-      return await read(reader);
+      result = await read(reader);
     } finally {
       await _context.Database.CloseConnectionAsync();
     }
+    return result;
   }
 
   /// <summary>
