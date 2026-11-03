@@ -809,6 +809,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The process-wide saga per-item stream namespace is first-registration-wins (#2021).** The first `AddWhizbangSagas`
+  call in a process sets `SagaItemStreams.AppDefaultNamespace`, which `SagaItemStreams.Of` without a namespace reads. A
+  later registration with a different namespace no longer overwrites it: its host logs a warning at start naming both
+  namespaces. A later registration with the same namespace is silent. The set is atomic, so hosts built in parallel
+  settle on one namespace. No API is removed, and a host's own saga services still derive under their own options
+  through `ISagaItemStreamIdDeriver`. **Upgrade note:** a process that relied on a later registration replacing the
+  namespace now keeps the first one; inject `ISagaItemStreamIdDeriver` to derive under a host's own namespace.
+
+- **The live outbox audit path skips an unresolvable event type under OptIn, as the ledger rebuild does (#1980).** An
+  event type the live path cannot resolve was audited under both modes, while the rebuild skips it under `OptIn`, so a
+  rebuilt ledger could be missing records the live path wrote. Under `OptIn` it is now not audited, and every such skip
+  logs a warning naming the type, so a resolution failure is never silent. `OptOut` is unchanged: the type is audited.
+
 - **Stream-integrity work runs on the maintainer, idle-gated (#2001).** Received checkpoints, manifest requests,
   manifest chunks, redelivery requests and bundle reconciles are recorded in `wh_integrity_deliveries` (migration 302)
   and drained one at a time by `IntegrityDeliveryWorker` on the maintainer duty's holder, with retry backoff and an
@@ -1293,6 +1306,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maintainer's sweep, so every other instance reported 0 unhealed for as long as it ran, and every instance reported 0
   for up to `Whizbang:Housekeeping:MaxDeferral` after a restart under load: the reading of a fully healed service. The
   refresh now runs at the start of every maintenance tick on every instance, ahead of the duty check and the idle gate.
+
+- **The generated JSON context compiles for a positional record deriving from a base record with properties (#2016).**
+  For example `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036: the generator
+  used the record's constructor only when it took every writable property, and otherwise called a parameterless
+  constructor the record does not have. The constructor now takes the positional parameters and the inherited members
+  are set by initializer, for messages, nested property types and polymorphic derived types alike.
+
+- **The destruction hook is offered only the ephemeral bodies the reap deletes (#2018).** The about-to-reap query had no
+  TTL gate, so an `AfterTtl` body that was consumed, aged and covered but not yet expired was offered to the hook and
+  reported destroyed while the reap kept it. The query now applies the reap's TTL floor, so offered, deleted and
+  reported destroyed agree.
+
+- **A schema initialization releases a waiting call only after it has finished (#2019).** The first call completed the
+  attempt a second call waits on before it logged its completion, so the second call could return while the first was
+  still running; a registry test that read the first call's task right after the second returned failed once for it.
+  The completion is now logged before the attempt completes, and the test reads that report instead of racing the
+  first call's task.
+
 - **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
   reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
