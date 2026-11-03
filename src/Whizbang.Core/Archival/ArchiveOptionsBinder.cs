@@ -42,6 +42,23 @@ internal static class ArchiveOptionsBinder {
       : throw new InvalidOperationException($"{READ_THROUGH_KEY} is '{value}'; it must be true or false.");
   }
 
+  /// <summary>Binds <c>Whizbang:Perspectives:ArchivedStreamRows:&lt;Perspective&gt;</c> (#1739).</summary>
+  /// <param name="configuration">The host's configuration.</param>
+  /// <param name="options">The options to fill.</param>
+  /// <exception cref="InvalidOperationException">A perspective's value names no policy, is a section rather than a value, or
+  /// the perspective's name holds <c>=</c> or a line break, which the stored policies cannot carry.</exception>
+  internal static void Bind(IConfiguration configuration, ArchivedStreamRowsOptions options) {
+    foreach (var perspective in configuration.GetSection(ArchivedStreamRowsOptions.SECTION).GetChildren()) {
+      var key = $"{ArchivedStreamRowsOptions.SECTION}:{perspective.Key}";
+      if (perspective.Key.AsSpan().IndexOfAny('=', '\n', '\r') >= 0) {
+        throw new InvalidOperationException($"{key} cannot name a perspective: the stored policies are one name=policy per line.");
+      }
+      var value = perspective.Value
+        ?? throw new InvalidOperationException($"{key} is a section; it must be a policy: Keep, Drop, Archive.");
+      options.Perspectives[perspective.Key] = _rowPolicy(key, value);
+    }
+  }
+
   /// <summary>Binds <c>Whizbang:StreamLifecycle</c>.</summary>
   /// <param name="configuration">The host's configuration.</param>
   /// <param name="options">The options to fill.</param>
@@ -110,23 +127,6 @@ internal static class ArchiveOptionsBinder {
       ? " Closing the books is planned (#1741) and has not shipped."
       : string.Empty;
     throw new InvalidOperationException($"{key} is '{value}', which names no end-of-life action.{planned} Use one of: Archive, Compact, Purge.");
-  }
-
-  /// <summary>Binds <c>Whizbang:Perspectives:ArchivedStreamRows:&lt;Perspective&gt;</c> (#1739).</summary>
-  /// <param name="configuration">The host's configuration.</param>
-  /// <param name="options">The options to fill.</param>
-  /// <exception cref="InvalidOperationException">A perspective's value names no policy, is a section rather than a value, or
-  /// the perspective's name holds <c>=</c> or a line break, which the stored policies cannot carry.</exception>
-  internal static void Bind(IConfiguration configuration, ArchivedStreamRowsOptions options) {
-    foreach (var perspective in configuration.GetSection(ArchivedStreamRowsOptions.SECTION).GetChildren()) {
-      var key = $"{ArchivedStreamRowsOptions.SECTION}:{perspective.Key}";
-      if (perspective.Key.AsSpan().IndexOfAny('=', '\n', '\r') >= 0) {
-        throw new InvalidOperationException($"{key} cannot name a perspective: the stored policies are one name=policy per line.");
-      }
-      var value = perspective.Value
-        ?? throw new InvalidOperationException($"{key} is a section; it must be a policy: Keep, Drop, Archive.");
-      options.Perspectives[perspective.Key] = _rowPolicy(key, value);
-    }
   }
 
   private static ArchivedStreamRowPolicy _rowPolicy(string key, string value) {
