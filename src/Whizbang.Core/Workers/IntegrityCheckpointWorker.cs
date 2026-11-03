@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -23,6 +24,13 @@ namespace Whizbang.Core.Workers;
 /// pipeline. Checkpoints publish even when the window is EMPTY: a missing checkpoint is the
 /// consumer's liveness alarm, so silence must always be abnormal. ON by default; disable with
 /// <see cref="StreamIntegrityOptions.CheckpointsEnabled"/>.
+/// <para>
+/// Runs on the instance holding the maintainer duty (#2001), like the rest of integrity work, but is deliberately NOT
+/// idle-gated: it never asks the housekeeping coordinator for the integrity slot. A consumer reads a missing checkpoint
+/// as its liveness alarm, so a checkpoint deferred because its origin is busy would make every busy service look
+/// dead to its consumers. Publishing one is a watermark advance and a publish, cheap enough to keep its cadence under
+/// any load.
+/// </para>
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
@@ -72,6 +80,11 @@ public sealed partial class IntegrityCheckpointWorker(
   public async Task RunCheckpointOnceAsync(CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
+    // #2001: on the maintainer only (every instance when role assignment does not manage that duty; the watermark CAS
+    // still picks one winner per window). Never idle-gated: see the type's remarks.
+    if (!MaintainerDuty.IsThisInstancesTurn(scope.ServiceProvider)) {
+      return;
+    }
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
@@ -138,8 +151,14 @@ public sealed partial class IntegrityCheckpointWorker(
     // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
     var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
     if (tracker is not null) {
+      var now = DateTimeOffset.UtcNow;
       var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
-      foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, DateTimeOffset.UtcNow)) {
+      // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a
+      // live origin's checkpoint is late by as long as the deferral. Widen the bound by it rather than raise the alarm.
+      if (scope.ServiceProvider.GetService<IntegrityDeliveryWorker>()?.DeferredSince is { } deferredSince) {
+        staleAfter += now - deferredSince;
+      }
+      foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, now)) {
         LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
       }
     }

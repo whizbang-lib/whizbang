@@ -10,6 +10,7 @@ using Whizbang.Core.Commands.System;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -28,6 +29,9 @@ namespace Whizbang.Core.Workers;
 /// identity digests of this consumer's subscribed types. The manifests come back targeted;
 /// comparison happens in the manifest receptor.</item>
 /// </list>
+/// Runs on the instance holding the maintainer duty, and only once the housekeeping idle gate admits integrity work
+/// (forced through after <c>Whizbang:Housekeeping:MaxDeferral</c>): the audit's recomputes and requests compete with
+/// live traffic for the same store (#2001). A cycle it could not run is retried on the startup window.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
@@ -136,6 +140,16 @@ public sealed partial class IntegrityAuditWorker(
     var dispatcher = services.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
       return false;
+    }
+    // #2001: fleet-wide integrity work runs on the maintainer, and only when the idle gate admits it. A cycle that did
+    // not run audited nothing, so it reports so and is retried on the startup window, not a full interval later.
+    if (!MaintainerDuty.IsThisInstancesTurn(services)) {
+      return true;
+    }
+    using var admission = await IntegrityAdmission.TryAdmitAsync(
+      services, coordinator, nameof(IntegrityAuditWorker), _logger, cancellationToken).ConfigureAwait(false);
+    if (!admission.Granted) {
+      return true;
     }
     var settle = TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes);
     var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
