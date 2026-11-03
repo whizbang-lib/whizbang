@@ -37,7 +37,7 @@ public class SagaServiceCollectionExtensionsTests {
 
     await Assert.That(SagaItemStreams.AppDefaultNamespace)
       .IsEqualTo(SagaItemStreams.DefaultNamespace)
-      .Because("Calling AddWhizbangSagas without a configure callback must not alter the namespace — fresh consumers get Whizbang's default unchanged.");
+      .Because("Calling AddWhizbangSagas without a configure callback must not alter the namespace: fresh consumers get Whizbang's default unchanged.");
   }
 
   [Test]
@@ -50,7 +50,7 @@ public class SagaServiceCollectionExtensionsTests {
     services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
     await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(custom)
-      .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the consumer migration story — one line at startup, no per-saga attribute pollution.");
+      .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the consumer migration story: one line at startup, no per-saga attribute pollution.");
   }
 
   [Test]
