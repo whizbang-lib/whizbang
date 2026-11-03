@@ -80,6 +80,7 @@ public sealed class StartupHostedServiceAuditTests {
     ["InboxHandlerWorker"] = ACCEPT_COMMANDS,
     ["IntegrityAuditWorker"] = ACCEPT_COMMANDS,
     ["IntegrityCheckpointWorker"] = ACCEPT_COMMANDS,
+    ["IntegrityDeliveryWorker"] = ACCEPT_COMMANDS,
     ["IntegritySweepScheduler"] = ACCEPT_COMMANDS,
     ["LeaseRenewalWorker"] = ACCEPT_COMMANDS,
     ["MaintenanceWorker"] = ACCEPT_COMMANDS,

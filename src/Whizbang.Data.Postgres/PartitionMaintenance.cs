@@ -84,9 +84,7 @@ internal static partial class PartitionMaintenance {
   // Only the holder of the maintainer duty, where role assignment manages it. Elsewhere every instance may, and
   // wh_partition_maintain's per-table advisory lock lets one through.
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(StartupDuties.MAINTAINER);
+    MaintainerDuty.IsThisInstancesTurn(services);
 
   /// <summary>Converts (once) and maintains each table of <paramref name="plan"/>.</summary>
   /// <param name="connection">An open connection with the right to change the tables.</param>

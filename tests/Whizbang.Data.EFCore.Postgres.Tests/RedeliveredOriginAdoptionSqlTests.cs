@@ -226,6 +226,68 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       .IsEqualTo(0L).Because("an empty local bucket would advertise the type as this service's own");
   }
 
+  /// <summary>
+  /// #2000: every bundle the catch-up after an upgrade delivers runs this function, and the digest table holds a row
+  /// per (lane, tenant, type, stream), so on a real store it is millions of rows, half of them in the local lane.
+  /// Removing the local buckets a bundle emptied must reach them by key; reading the whole local lane per bundle pegged
+  /// a production database server's CPU. Sequential scans are priced out so the planner takes the best index it has,
+  /// and the rows read from the digest table are counted for this transaction alone: a key lookup reads the handful
+  /// of buckets the bundle changed, a lane-wide read reads every bystander.
+  /// </summary>
+  [Test]
+  public async Task Adopt_EmptyingALocalBucket_ReadsOnlyTheBucketsItChanges_NotTheWholeLocalLaneAsync() {
+    const int bystanders = 500;
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var received = await _storeAsync(conn, stream, 1);
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = """
+        INSERT INTO wh_stream_digests (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
+        SELECT $1, $2, $3, gen_random_uuid(), g, g, 1 FROM generate_series(1, $4) g
+        """;
+      seed.Parameters.Add(new NpgsqlParameter { Value = _zeroLane });
+      seed.Parameters.Add(new NpgsqlParameter { Value = TENANT });
+      seed.Parameters.Add(new NpgsqlParameter { Value = EVENT_TYPE });
+      seed.Parameters.Add(new NpgsqlParameter { Value = bystanders });
+      await seed.ExecuteNonQueryAsync();
+    }
+    // A real store's statistics know the local lane is half the table; stale ones would tell the planner it is
+    // three rows and hide the lane-wide read this test exists to catch.
+    await using (var analyze = conn.CreateCommand()) {
+      analyze.CommandText = "ANALYZE wh_stream_digests";
+      await analyze.ExecuteNonQueryAsync();
+    }
+
+    await using var tx = await conn.BeginTransactionAsync();
+    await using (var off = conn.CreateCommand()) {
+      off.CommandText = "SET LOCAL enable_seqscan = off";
+      await off.ExecuteNonQueryAsync();
+    }
+    await using (var adopt = conn.CreateCommand()) {
+      adopt.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundle_by_first_hop($1, NULL, $2, $3)";
+      adopt.Parameters.Add(new NpgsqlParameter { Value = origin });
+      adopt.Parameters.Add(new NpgsqlParameter { Value = new[] { received } });
+      adopt.Parameters.Add(new NpgsqlParameter { Value = new long[] { 7 } });
+      await adopt.ExecuteScalarAsync();
+    }
+    var rowsRead = await _scalarAsync<long>(conn, """
+      SELECT COALESCE(sum(seq_tup_read + COALESCE(idx_tup_fetch, 0)), 0)::bigint
+      FROM pg_stat_xact_user_tables WHERE relname = 'wh_stream_digests'
+      """);
+    await tx.CommitAsync();
+
+    await Assert.That(rowsRead).IsLessThan(bystanders / 10)
+      .Because("a bundle must reach the buckets it changes by key, not read every bucket of the local lane");
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_stream_digests WHERE origin_service_id = $1 AND stream_id = $2", _zeroLane, stream))
+      .IsEqualTo(0L).Because("the emptied local bucket is still removed");
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_stream_digests WHERE origin_service_id = $1 AND scope_tenant = $2 AND event_type = $3 AND stream_id <> $4",
+      _zeroLane, TENANT, EVENT_TYPE, stream))
+      .IsGreaterThanOrEqualTo((long)bystanders).Because("no other local bucket is removed");
+  }
+
   [Test]
   public async Task Adopt_AnEventWithTheOriginButNoSequence_TakesOnlyTheSequenceAsync() {
     await using var conn = await _openAsync();

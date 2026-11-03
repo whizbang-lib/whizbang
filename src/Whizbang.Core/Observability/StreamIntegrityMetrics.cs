@@ -137,6 +137,24 @@ public sealed class StreamIntegrityMetrics {
   /// </summary>
   public PassiveCounter<long> RepairsDeferred { get; }
 
+  /// <summary>Integrity deliveries recorded for the maintainer's drain (#2001); a copy already recorded is not counted
+  /// again. Tagged by type.</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public PassiveCounter<long> IntegrityDeliveriesQueued { get; }
+
+  /// <summary>Integrity deliveries the maintainer's drain handled. Tagged by type.</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public PassiveCounter<long> IntegrityDeliveriesProcessed { get; }
+
+  /// <summary>Failed attempts at an integrity delivery, each retried after a backoff. Tagged by type.</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public PassiveCounter<long> IntegrityDeliveriesFailed { get; }
+
+  /// <summary>Integrity deliveries dropped: attempts spent, or no handler registered for the type. Tagged by type and
+  /// reason (<c>attempts_exhausted</c> | <c>no_handler</c>). Each drop is also logged as a warning naming the type.</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public PassiveCounter<long> IntegrityDeliveriesDropped { get; }
+
   private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
@@ -229,6 +247,19 @@ public sealed class StreamIntegrityMetrics {
     RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
+
+    IntegrityDeliveriesQueued = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.deliveries_queued",
+      description: "Integrity deliveries recorded for the maintainer's drain; tagged by type");
+    IntegrityDeliveriesProcessed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.deliveries_processed",
+      description: "Integrity deliveries the maintainer's drain handled; tagged by type");
+    IntegrityDeliveriesFailed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.deliveries_failed",
+      description: "Failed attempts at an integrity delivery, retried after a backoff; tagged by type");
+    IntegrityDeliveriesDropped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.deliveries_dropped",
+      description: "Integrity deliveries dropped (attempts spent, or no handler); tagged by type + reason");
 
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.sealed_through",

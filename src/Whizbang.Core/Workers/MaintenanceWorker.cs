@@ -72,9 +72,7 @@ public sealed partial class MaintenanceWorker(
   /// which case only on its holder (#1377).
   /// </summary>
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<Startup.DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(Startup.StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(Startup.StartupDuties.MAINTAINER);
+    Startup.MaintainerDuty.IsThisInstancesTurn(services);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
   private static partial void LogSkippedNotMaintainer(ILogger logger);

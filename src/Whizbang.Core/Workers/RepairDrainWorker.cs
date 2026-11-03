@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -21,7 +22,9 @@ namespace Whizbang.Core.Workers;
 /// windows; this worker CLAIMS eligible rows (past backoff, under the attempt cap,
 /// least-recently-attempted first, only origins with a learned request topic) and sends one
 /// directed, range-bounded <see cref="RequestRedeliveryCommand"/> per (origin, tenant, type)
-/// group. Inert without a drain-capable coordinator, a transport, or learned origins.
+/// group. Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
+/// maintainer duty, and only once the housekeeping idle gate admits integrity work (forced through after
+/// <c>Whizbang:Housekeeping:MaxDeferral</c>); tokens keep accruing, up to the burst cap, while it waits (#2001).
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
@@ -86,6 +89,9 @@ public sealed partial class RepairDrainWorker(
 
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
+    if (!MaintainerDuty.IsThisInstancesTurn(services)) {
+      return;   // #2001: another instance holds the maintainer duty and drains the ledger.
+    }
     var coordinator = services.GetService<IWorkCoordinator>();
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
@@ -103,6 +109,12 @@ public sealed partial class RepairDrainWorker(
     // budget is ever burned on a request that could not leave the process.
     var origins = tracker.GetOrigins().Where(o => !string.IsNullOrEmpty(o.RequestTopic)).ToList();
     if (origins.Count == 0) {
+      return;
+    }
+    // #2001: asked only once there is something to send, so an idle drain does not measure the backlog every second.
+    using var admission = await IntegrityAdmission.TryAdmitAsync(
+      services, coordinator, nameof(RepairDrainWorker), _logger, cancellationToken).ConfigureAwait(false);
+    if (!admission.Granted) {
       return;
     }
 

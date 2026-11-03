@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
 /// from another service. So the
 /// command reaches it whether dispatched in-process (operator-initiated) or arriving over the inbox from
-/// a damaged consumer. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
+/// a damaged consumer. Registered deferred (<see cref="IntegrityDeliveryRegistration"/>, #2001): every stage records the message for the maintainer's integrity delivery drain. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// <see cref="AuditRebuildRequestReceptor"/> joins the same three stages for the same reasons: an operator dispatches
 /// <see cref="Whizbang.Core.Commands.System.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
 /// there (#1724).
@@ -40,10 +40,8 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
-    var receptor = new RedeliveryRequestReceptor(scopeFactory, receptorLogger);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PreOutboxInline);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PostInboxInline);
+    // Deferred at every stage: building a redelivery runs on the maintainer's integrity delivery drain (#2001).
+    registry.RegisterIntegrityReceptor(new RedeliveryRequestReceptor(scopeFactory, receptorLogger), services, scopeFactory);
     var auditRebuild = new AuditRebuildRequestReceptor(scopeFactory, auditRebuildLogger);
     registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
     registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);

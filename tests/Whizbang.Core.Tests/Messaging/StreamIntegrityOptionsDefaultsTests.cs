@@ -47,4 +47,24 @@ public class StreamIntegrityOptionsDefaultsTests {
     await Assert.That(options.MaxDrillDownTypesPerAudit).IsEqualTo(10);
     await Assert.That(options.FullSweepEveryNthAudit).IsEqualTo(7);
   }
+  /// <summary>
+  /// #2001: integrity deliveries wait in a queue for the maintainer's drain. These defaults decide how quickly a
+  /// received checkpoint or redelivery request is acted on, how long one pass may hold the integrity slot, and when a
+  /// delivery that keeps failing is given up.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-delivery-options</docs>
+  [Test]
+  public async Task Defaults_TheIntegrityDeliveryDrainIsPromptBoundedAndGivesUpAsync() {
+    var options = new StreamIntegrityOptions();
+
+    await Assert.That(options.IntegrityDeliveryIntervalSeconds).IsEqualTo(15)
+      .Because("a queued checkpoint must be read well inside the checkpoint interval, or liveness reads late");
+    await Assert.That(options.IntegrityDeliveryBatchSize).IsEqualTo(50);
+    await Assert.That(options.MaxIntegrityDeliveriesPerPass).IsEqualTo(500)
+      .Because("one pass holds the integrity slot, which cleanup waits behind; the bound keeps a backlog from holding it indefinitely");
+    await Assert.That(options.IntegrityDeliveryLeaseSeconds).IsEqualTo(300)
+      .Because("a leased delivery is hidden from a second holder during a duty failover for at most this long");
+    await Assert.That(options.MaxIntegrityDeliveryAttempts).IsEqualTo(5);
+    await Assert.That(options.IntegrityDeliveryRetryBackoffSeconds).IsEqualTo(30);
+  }
 }
