@@ -744,6 +744,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Stream-integrity work runs on the maintainer, idle-gated (#2001).** Received checkpoints, manifest requests,
+  manifest chunks, redelivery requests and bundle reconciles are recorded in `wh_integrity_deliveries` (migration 302)
+  and drained one at a time by `IntegrityDeliveryWorker` on the maintainer duty's holder, with retry backoff and an
+  attempt limit. The audit and the paced repair drain also run only on the maintainer. All three wait for the service
+  to be settled, each with its own deferral budget, and are forced through after `Whizbang:Housekeeping:MaxDeferral`.
+  Checkpoint publishing runs on the maintainer but is never gated, because consumers read a missing checkpoint as their
+  liveness alarm. Without role assignment managing the maintainer duty every instance does this work, as before; a
+  coordinator that cannot record deliveries handles them inline. New options under `Whizbang:StreamIntegrity`:
+  `IntegrityDeliveryIntervalSeconds` (15), `IntegrityDeliveryBatchSize` (50), `MaxIntegrityDeliveriesPerPass` (500),
+  `IntegrityDeliveryLeaseSeconds` (300), `MaxIntegrityDeliveryAttempts` (5), `IntegrityDeliveryRetryBackoffSeconds` (30).
 - **Every worker is hosted with the point it starts at, and none holds a gate of its own (part of #1636).**
   `AddWhizbangWorker<TWorker>(stage)` (Accept commands unless another stage is named) and
   `AddWhizbangWorkerAtSchemaReady<TWorker>()` host a worker that the host starts at that point and stops normally on
@@ -1185,6 +1195,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
+  reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
+  during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
+  CPU at its ceiling. Migration 301 adds an index on `stream_id`, which every stream-keyed digest read and delete now
+  uses, and the reconcile names the bundle's streams so the index drives it.
 - **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
   waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
   worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,
