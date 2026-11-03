@@ -163,7 +163,7 @@ public class RepairDrainWorkerBranchCoverageTests {
     await using var ownedServices = sp;
     coordinator.Eligible.AddRange([
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 0, 300),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 50, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 0, 300),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -171,9 +171,9 @@ public class RepairDrainWorkerBranchCoverageTests {
     await Assert.That(transport.Published).Count().IsEqualTo(1);
     var request = _deserializeRedelivery(transport.Published[0]);
     await Assert.That(request.FromCommitSequence).IsNull()
-      .Because("a union window starting at the first commit asks from the beginning");
-    await Assert.That(request.ToCommitSequence).IsEqualTo(499L)
-      .Because("the ceiling is still the inclusive conversion of the union window");
+      .Because("a window starting at the first commit asks from the beginning");
+    await Assert.That(request.ToCommitSequence).IsEqualTo(299L)
+      .Because("the ceiling is still the inclusive conversion of the group's window");
   }
 
   [Test]

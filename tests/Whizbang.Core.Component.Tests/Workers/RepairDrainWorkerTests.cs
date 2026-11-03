@@ -26,8 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// The paced repair drain's tick, deterministically: token pacing gates the claim budget,
-/// claimed rows dispatch grouped per (origin, tenant, type) with the union of their stamped
-/// windows, pre-stamp rows widen to whole history, and unlearned origins are never claimed —
+/// claimed rows dispatch grouped per (origin, tenant, type, window), pre-stamp rows ask for whole history, and unlearned origins are never claimed —
 /// no attempt budget burns on a request that could not leave the process.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
@@ -42,7 +41,8 @@ namespace Whizbang.Core.Tests.Workers;
 public class RepairDrainWorkerTests {
 
   [Test]
-  public async Task DrainTick_DispatchesGroupedPerType_WithTheUnionWindowAsync() {
+  public async Task DrainTick_DispatchesGroupedPerTypeAndWindow_NeverWideningAStreamPastItsOwnWindowAsync() {
+    // #2034: the union of a group's windows re-shipped every stream over the widest range any row of the group had.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -51,25 +51,78 @@ public class RepairDrainWorkerTests {
     var s1 = TrackedGuid.New().Value;
     var s2 = TrackedGuid.New().Value;
     var s3 = TrackedGuid.New().Value;
+    var s4 = TrackedGuid.New().Value;
     coordinator.Eligible.AddRange([
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s1, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s2, 200, 600),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", s3, 300, 700),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s2, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s3, 200, 600),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", s4, 300, 700),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
-    await Assert.That(transport.Published.Count).IsEqualTo(2)
-      .Because("three rows in two (origin, tenant, type) groups → two directed requests");
+    await Assert.That(transport.Published.Count).IsEqualTo(3)
+      .Because("four rows in three (origin, tenant, type, window) groups → three directed requests");
     var typeA = transport.Published
       .Select(p => _deserializeRedelivery(p.Envelope))
-      .Single(r => r.EventTypes!.Contains("Contracts.TypeA"));
-    await Assert.That(typeA.StreamIds!.Count).IsEqualTo(2)
-      .Because("one request carries the whole group's stream set");
-    await Assert.That(typeA.FromCommitSequence).IsEqualTo(99L)
-      .Because("the group's union window, exclusive floor — exactly the burst path's conversion");
-    await Assert.That(typeA.ToCommitSequence).IsEqualTo(599L)
-      .Because("inclusive ceiling of the union window");
+      .Where(r => r.EventTypes!.Contains("Contracts.TypeA"))
+      .ToList();
+    var shared = typeA.Single(r => r.StreamIds!.Count == 2);
+    await Assert.That(shared.StreamIds!).IsEquivalentTo([s1, s2])
+      .Because("rows that disagreed over the same window share one request");
+    await Assert.That(shared.FromCommitSequence).IsEqualTo(99L)
+      .Because("the group's window, exclusive floor — exactly the burst path's conversion");
+    await Assert.That(shared.ToCommitSequence).IsEqualTo(499L)
+      .Because("inclusive ceiling of the group's own window, not the widest in the type");
+    var own = typeA.Single(r => r.StreamIds!.Count == 1);
+    await Assert.That(own.FromCommitSequence).IsEqualTo(199L);
+    await Assert.That(own.ToCommitSequence).IsEqualTo(599L);
+  }
+
+  [Test]
+  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_ButNotAGroupWhoseSendFailedAsync() {
+    // #2029: a bucket whose request left is not claimed again while its answer is on the way. A group whose send
+    // failed never asked, so it waits out its backoff only.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      RepairAnswerTimeoutMinutes = 45,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    var failed = TrackedGuid.New().Value;
+    var sent = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", failed, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", sent, 300, 700),
+    ]);
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
+    await worker.DrainTickAsync(1.0, now, CancellationToken.None);
+
+    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(1);
+    var mark = coordinator.PendingMarks[0];
+    await Assert.That(mark.Keys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
+    await Assert.That(mark.Keys[0].TenantScope).IsEqualTo("tenant-a");
+    await Assert.That(mark.Keys[0].EventType).IsEqualTo("Contracts.TypeB");
+    await Assert.That(mark.Origin).IsEqualTo(origin);
+    await Assert.That(mark.Now).IsEqualTo(now);
+    await Assert.That(mark.Timeout).IsEqualTo(TimeSpan.FromMinutes(45));
+  }
+
+  [Test]
+  public async Task DrainTick_NothingSent_MarksNothingPendingAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+
+    await Assert.That(coordinator.PendingMarks).IsEmpty();
   }
 
   [Test]
@@ -353,6 +406,15 @@ public class RepairDrainWorkerTests {
         Eligible.Remove(item);
       }
       return Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>(take);
+    }
+
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> PendingMarks { get; } = [];
+
+    public Task<int> IntegrityMarkAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+        DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+      PendingMarks.Add((originServiceId, keys, now, timeout));
+      return Task.FromResult(keys.Count);
     }
   }
 

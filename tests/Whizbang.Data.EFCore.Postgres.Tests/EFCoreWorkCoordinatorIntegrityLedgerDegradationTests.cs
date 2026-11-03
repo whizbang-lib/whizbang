@@ -190,6 +190,52 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   }
 
   [Test]
+  public async Task IntegrityMarkAnswerPending_WithTheLedgerUnavailable_MarksNothing_AndDoesNotThrowAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_mark_answer_pending");
+
+    // The request already left: failing the caller now would not unsend it. Unmarked, the bucket waits out its
+    // backoff instead of its answer, which is today's behavior.
+    var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
+      _originId, [_key()], null, null, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(marked).IsEqualTo(0);
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityMarkAnswerPending_NoKeys_IsANoOpAsync() {
+    await using var ctx = CreateDbContext();
+
+    var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
+      _originId, [], null, null, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(marked).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task IntegrityRecordBundleAnswer_WithTheLedgerUnavailable_ReturnsNullAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_record_bundle_answer");
+
+    var answer = await _build(ctx).IntegrityRecordBundleAnswerAsync(
+      _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [3], DateTimeOffset.UtcNow);
+
+    await Assert.That(answer).IsNull()
+      .Because("null leaves the reconcile to judge the bundle as it did before, never a bundle judged on no evidence");
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityRecordBundleAnswer_MismatchedArrays_AreRefusedAsync() {
+    await using var ctx = CreateDbContext();
+
+    await Assert.That(async () => await _build(ctx).IntegrityRecordBundleAnswerAsync(
+        _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [], DateTimeOffset.UtcNow))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
   public async Task GetIntegrityLedgerSummary_WithTheLedgerUnavailable_ReturnsTheEmptySnapshotAsync() {
     await using var ctx = CreateDbContext();
     await _dropFunctionAsync("wh_integrity_ledger_summary");

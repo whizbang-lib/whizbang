@@ -342,7 +342,59 @@ public class IntegrityCheckpointReceptorTests {
     public required CaptureDispatcher Dispatcher { get; init; }
     public required CaptureTransport Transport { get; init; }
     public required IntegrityCheckpointReceptor Receptor { get; init; }
+    public required Whizbang.Core.Messaging.IntegrityRepairLedger Ledger { get; init; }
     public Guid OriginId { get; } = TrackedGuid.New().Value;
+  }
+
+  [Test]
+  public async Task AConfirmedGapsRepairRequest_MarksTheTypeLaneAnswerPending_OverTheWindowItAskedForAsync() {
+    // #2034: the checkpoint's whole-window request answers the per-stream drain rows inside that window too.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairAnswerTimeoutMinutes = 33 });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    var mark = fx.Coordinator.PendingMarks.Single();
+    await Assert.That(mark.Origin).IsEqualTo(fx.OriginId);
+    await Assert.That(mark.Keys.Single()).IsEqualTo(
+      new Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey(fx.OriginId, "tenant-a", _verifiedType, Guid.Empty));
+    await Assert.That(mark.WindowFrom).IsEqualTo(11L)
+      .Because("the request's exclusive floor 10 is the ledger window's first sequence 11, as the drain converts it");
+    await Assert.That(mark.WindowUntil).IsEqualTo(21L);
+    await Assert.That(mark.Timeout).IsEqualTo(TimeSpan.FromMinutes(33));
+  }
+
+  [Test]
+  public async Task AConfirmedGapWithoutTheOriginsAddress_MarksNothingPendingAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Transport.Published).IsEmpty();
+    await Assert.That(fx.Coordinator.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
+  }
+
+  [Test]
+  public async Task AGapThatHealsAfterARepair_ForgetsItsTypeLaneLedgerEntryAsync() {
+    // #2034: the checkpoint path's ledger row was never healed, so a later gap of the same type inherited its spent
+    // attempts and backoff.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    var secondWindowCounts = 0;
+    fx.Coordinator.Counts = w => w.From == 20 && ++secondWindowCounts > 1
+      ? [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 4 }]
+      : [];
+    var key = new Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey(fx.OriginId, "tenant-a", _verifiedType, Guid.Empty);
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 30, count: 4, requestTopic: "origin.requests"));
+    await Assert.That(fx.Transport.Published.Count).IsEqualTo(1).Because("precondition: the first window was confirmed and repaired");
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 30, to: 30, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Ledger.TryBeginRepair(key, DateTimeOffset.UtcNow, TimeSpan.FromHours(1), 8)).IsTrue()
+      .Because("the type lane healed, so its entry is forgotten and a later gap starts a fresh ladder");
   }
 
   [Test]
@@ -388,7 +440,8 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
-    services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
+    var ledger = new Whizbang.Core.Messaging.IntegrityRepairLedger();
+    services.AddSingleton(ledger);
     // A fresh policy per fixture: its window state is the subject under test, and the receptor's
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
@@ -405,6 +458,7 @@ public class IntegrityCheckpointReceptorTests {
       Coordinator = coordinator,
       Dispatcher = dispatcher,
       Transport = transport,
+      Ledger = ledger,
       Receptor = new IntegrityCheckpointReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), logger ?? NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
@@ -517,6 +571,15 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private sealed class VerifyCoordinator : IWorkCoordinator {
+    public List<(Guid Origin, IReadOnlyList<Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey> Keys, long? WindowFrom, long? WindowUntil, TimeSpan Timeout)> PendingMarks { get; } = [];
+
+    public Task<int> IntegrityMarkAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom,
+        long? windowUntil, DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+      PendingMarks.Add((originServiceId, keys, windowFrom, windowUntil, timeout));
+      return Task.FromResult(keys.Count);
+    }
+
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
     public ServiceBacklog? Backlog { get; set; }
