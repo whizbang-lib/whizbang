@@ -89,7 +89,7 @@ public class EventStoreMetadataSettingsTests {
       .Because("switching it off must reach the maintenance step on the next tick");
     await Assert.That(on[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].ValueType).IsEqualTo("boolean");
     await Assert.That(on[EventStoreMetadataSettings.CONVERT_HISTORY_KEY].Source).IsEqualTo("Whizbang:EventStore:Metadata:ConvertHistory");
-    await Assert.That(EventStoreMetadataSettings.CONVERT_HISTORY_KEY).IsEqualTo("metadata_convert_history");
+    await Assert.That(on.ContainsKey("metadata_convert_history")).IsTrue().Because("the SQL reads the setting by this name");
   }
 
   [Test]

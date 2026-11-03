@@ -332,6 +332,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#distillation</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
           MetadataDistillationStep.FromServices));
+        // TURNKEY: the maintenance step that converts rows written with full metadata before slim stored metadata to the
+        // slim form plus their route id (#1727), under the maintainer duty.
+        // <docs>data/event-store#history-conversion</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
+          MetadataHistoryConversionStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
