@@ -425,7 +425,15 @@ configuration only (the attribute and registration builder are an open question 
 
 ### S12. B6: close the books
 
-**Status (2026-10-24):** open. `src/` has no `IBookCloser`. Depends on S4 and S11.
+**Status (2026-11-03):** implemented on top of `feat/1740-storage` (#1741), migration `315_CloseTheBooks.sql`. Owner
+decisions of 2026-11-02: a successor stream (not the same stream); the opening event derives from `OpeningBalance`
+(`SuccessorStreamId`, `PredecessorStreamId`, `PredecessorFinalVersion`, all set by the framework); the framework picks the
+successor id (`TrackedGuid`) and returns it; close, seal and open in one SQL function (`wh_close_books`, calling
+`wh_append_event` twice and `wh_finalize_stream`); `CloseBooks` as a policy action needs an `IBookClosingHandler` (start
+refused without one). As built: the closer reads the newest Sourced version and the SQL re-checks it under the append
+lock (`StreamChanged` otherwise); each driver stores both events as its direct append does (`IDirectAppendRowBuilder`);
+closing by policy runs no gate or hook (it destroys nothing); `CloseBooks` maps to the Archive disposition for the sealed
+predecessor. Docs: new `v1.0.0/fundamentals/events/closing-the-books.md`; the proposal page records the decision.
 
 - **Change.** `IBookCloser.CloseBooksAsync(streamId, closingSummary, openingBalance)`: (1) append the
   closing summary as a durable event, (2) seal (S4), (3) open a successor stream whose first event is

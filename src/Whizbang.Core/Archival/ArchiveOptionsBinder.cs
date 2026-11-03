@@ -17,7 +17,8 @@ namespace Whizbang.Core.Archival;
 /// reading the configuration can check. <c>FinalizeGrace</c> must be a time span of zero or more and
 /// <c>SweepBatchSize</c> a whole number of one or more (#1734). <c>Enabled</c> is a boolean; a type's <c>IdleTtl</c> and
 /// <c>MaxAge</c> are time spans above zero, its <c>KeepTailVersions</c> and <c>TenantByteCap</c> whole numbers of one or
-/// more, and its <c>Action</c> a name, <c>CloseBooks</c> refused until closing the books ships (#1740).
+/// more, and its <c>Action</c> a name (#1740). A <c>CloseBooks</c> action with no <see cref="Lifecycle.IBookClosingHandler"/>
+/// registered fails the start (#1741).
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
@@ -118,15 +119,12 @@ internal static class ArchiveOptionsBinder {
   };
 
   private static StreamLifecycleAction _action(string key, string value) {
-    // Names only, as for a policy; CloseBooks is a planned action, refused by name so a host learns it has not shipped.
+    // Names only, as for a policy.
     if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
         && Enum.TryParse<StreamLifecycleAction>(value, ignoreCase: true, out var action) && Enum.IsDefined(action)) {
       return action;
     }
-    var planned = string.Equals(value, "CloseBooks", StringComparison.OrdinalIgnoreCase)
-      ? " Closing the books is planned (#1741) and has not shipped."
-      : string.Empty;
-    throw new InvalidOperationException($"{key} is '{value}', which names no end-of-life action.{planned} Use one of: Archive, Compact, Purge.");
+    throw new InvalidOperationException($"{key} is '{value}', which names no end-of-life action. Use one of: Archive, Compact, Purge, CloseBooks.");
   }
 
   private static ArchivedStreamRowPolicy _rowPolicy(string key, string value) {
@@ -191,6 +189,8 @@ internal static class ArchiveOptionsBinder {
       sp => new StreamLifecycleOptionsSetup(sp.GetService<IConfiguration>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ArchivedStreamRowsOptions>, ArchivedStreamRowsOptionsSetup>(
       sp => new ArchivedStreamRowsOptionsSetup(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<StreamLifecycleOptions>, CloseBooksNeedsAHandler>(
+      sp => new CloseBooksNeedsAHandler(sp)));
     return services;
   }
 
@@ -217,6 +217,19 @@ internal static class ArchiveOptionsBinder {
       if (configuration is not null) {
         Bind(configuration, options);
       }
+    }
+  }
+
+  // #1741: only the domain can write a closing summary and an opening balance, so a type whose action closes the books
+  // with no handler registered could never run; it fails the start instead, naming the types.
+  private sealed class CloseBooksNeedsAHandler(IServiceProvider services) : IValidateOptions<StreamLifecycleOptions> {
+    public ValidateOptionsResult Validate(string? name, StreamLifecycleOptions options) {
+      var closing = options.Types.Where(t => t.Value.Action == StreamLifecycleAction.CloseBooks).Select(t => t.Key).Order(StringComparer.Ordinal).ToList();
+      return closing.Count == 0 || services.GetService<Lifecycle.IBookClosingHandler>() is not null
+        ? ValidateOptionsResult.Success
+        : ValidateOptionsResult.Fail(
+          $"{TYPES_SECTION}:<StreamType>:Action is CloseBooks for {string.Join(", ", closing)}, but no {nameof(Lifecycle.IBookClosingHandler)} " +
+          "is registered; register one, which supplies the closing summary and the opening balance (#1741).");
     }
   }
 }

@@ -41,7 +41,10 @@ public enum StreamLifecycleAction {
 /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public static class StreamLifecycleActionExtensions {
-  /// <summary>The disposition the action runs: Archive, Compact, or Delete for Purge.</summary>
+  /// <summary>
+  /// The disposition the action runs: Archive, Compact, or Delete for Purge. CloseBooks runs Archive: it is the
+  /// disposition of the sealed predecessor a closed book leaves (#1741).
+  /// </summary>
   /// <param name="action">The action.</param>
   /// <returns>The disposition.</returns>
   public static Disposition ToDisposition(this StreamLifecycleAction action) => action switch {

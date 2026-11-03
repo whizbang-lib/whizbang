@@ -5,6 +5,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core;
 using Whizbang.Core.Lifecycle;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Postgres;
 
@@ -26,17 +27,77 @@ public sealed class PostgresBookCloser(
     string? schema,
     IDirectAppendRowBuilder rows,
     TimeProvider? timeProvider = null) : IBookCloser {
+  // An ephemeral event (8) or a compaction origin (16) is not on the ledger; a stream of only those has nothing to close.
+  private const int FLAGS_OFF_THE_LEDGER = 24;
+
   private readonly Func<CancellationToken, ValueTask<NpgsqlConnection>> _open = open ?? throw new ArgumentNullException(nameof(open));
   private readonly IDirectAppendRowBuilder _rows = rows ?? throw new ArgumentNullException(nameof(rows));
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly string _prefix = schema is null ? string.Empty : SqlText.Identifier(schema) + ".";
 
   /// <inheritdoc />
-  public Task<BookCloseResult> CloseBooksAsync<TClosing, TOpening>(
+  public async Task<BookCloseResult> CloseBooksAsync<TClosing, TOpening>(
       Guid streamId, TClosing closingSummary, TOpening openingBalance, CancellationToken cancellationToken = default)
       where TClosing : IEvent
-      where TOpening : OpeningBalance =>
-    throw new NotImplementedException($"{_open}{_rows}{_timeProvider}{_prefix}{streamId}{closingSummary}{openingBalance}");
+      where TOpening : OpeningBalance {
+    ArgumentNullException.ThrowIfNull(closingSummary);
+    ArgumentNullException.ThrowIfNull(openingBalance);
+    if (streamId == Guid.Empty) {
+      return new BookCloseResult(BookCloseStatus.NothingToClose);
+    }
+    await using var connection = await _open(cancellationToken).ConfigureAwait(false);
+    if (await _newestAsync(connection, streamId, cancellationToken).ConfigureAwait(false) is not { } expected) {
+      return new BookCloseResult(BookCloseStatus.NothingToClose);
+    }
+
+    var successor = TrackedGuid.New().Value;
+    var finalVersion = expected + 1;
+    // The link is the framework's: whatever the caller set is replaced. A record's clone keeps its runtime type.
+    var linked = (TOpening)((OpeningBalance)openingBalance with { SuccessorStreamId = successor, PredecessorStreamId = streamId, PredecessorFinalVersion = finalVersion });
+    var closing = await _rows.BuildAsync(closingSummary, cancellationToken).ConfigureAwait(false);
+    var opening = await _rows.BuildAsync(linked, cancellationToken).ConfigureAwait(false);
+
+    await using var command = new NpgsqlCommand(
+      $"SELECT close_status FROM {_prefix}wh_close_books($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
+      connection);
+    command.Parameters.AddWithValue(streamId);
+    command.Parameters.AddWithValue(expected);
+    _addRow(command, closing);
+    command.Parameters.AddWithValue(successor);
+    _addRow(command, opening);
+    command.Parameters.AddWithValue($"Books closed; continued by stream {successor}");
+    command.Parameters.AddWithValue(_timeProvider.GetUtcNow());
+    var status = (string)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    return status switch {
+      "closed" => new BookCloseResult(BookCloseStatus.Closed, successor, finalVersion),
+      "already_sealed" => new BookCloseResult(BookCloseStatus.AlreadySealed),
+      "archived" => new BookCloseResult(BookCloseStatus.Archived),
+      "stream_changed" => new BookCloseResult(BookCloseStatus.StreamChanged),
+      _ => new BookCloseResult(BookCloseStatus.NothingToClose),
+    };
+  }
+
+  // The newest Sourced version of the stream, as wh_close_books checks it, or, for a stream archived whole (nothing hot),
+  // the version its tombstone records, so wh_close_books answers archived; null when it has none.
+  private async Task<long?> _newestAsync(NpgsqlConnection connection, Guid streamId, CancellationToken ct) {
+    await using var read = new NpgsqlCommand(
+      $"SELECT COALESCE((SELECT MAX(version)::bigint FROM {_prefix}wh_event_store WHERE stream_id = $1 AND COALESCE(flags, 0) & {FLAGS_OFF_THE_LEDGER} = 0), " +
+      $"(SELECT l.last_version FROM {_prefix}wh_stream_lifecycle l WHERE l.stream_id = $1 AND l.state = 'Archived'))",
+      connection);
+    read.Parameters.AddWithValue(streamId);
+    var newest = await read.ExecuteScalarAsync(ct).ConfigureAwait(false);
+    return newest is long version ? version : null;
+  }
+
+  private static void _addRow(NpgsqlCommand command, DirectAppendRow row) {
+    command.Parameters.AddWithValue(row.EventId);
+    command.Parameters.AddWithValue(row.AggregateType);
+    command.Parameters.AddWithValue(row.EventType);
+    command.Parameters.Add(DirectAppendRow.Jsonb(row.EventData));
+    command.Parameters.Add(DirectAppendRow.Jsonb(row.Metadata));
+    command.Parameters.Add(DirectAppendRow.Jsonb(row.Scope));
+    command.Parameters.AddWithValue(row.Flags);
+  }
 }
 
 /// <summary>How a driver stores an event on its direct append path (#1741), so another path can store it the same way.</summary>

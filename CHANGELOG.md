@@ -91,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **Close the books (#1741, WS-3 S12).** `IBookCloser.CloseBooksAsync(streamId, closingSummary, openingBalance)`
+  appends the closing summary, seals the stream and opens a successor stream (its id chosen by the framework and
+  returned) whose first event, derived from the new `OpeningBalance` record, carries `SuccessorStreamId`,
+  `PredecessorStreamId` and `PredecessorFinalVersion`, all in one transaction (migration 315, `wh_close_books`). Both
+  Postgres drivers register it. The end-of-life `Action` `CloseBooks` closes a picked stream's books through a
+  developer's `IBookClosingHandler`; declaring it without one fails the start.
 - **End-of-life policies per stream type (#1740, WS-3 S11).** With `Whizbang:StreamLifecycle:Enabled` (default
   `false`), the `stream-disposition` step also ends streams nobody sealed, per type under
   `Whizbang:StreamLifecycle:Types:<StreamType>`: `IdleTtl` (nothing appended for the span, counted from the end of the

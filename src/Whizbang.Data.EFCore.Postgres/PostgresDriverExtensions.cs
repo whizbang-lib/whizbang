@@ -351,6 +351,17 @@ public static class PostgresDriverExtensions {
             defaultSchema(sp),
             sp.GetService<TimeProvider>(),
             sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+        // TURNKEY: closing the books (#1741), over the same data source and the host's clock, storing its events exactly
+        // as this driver's direct append does.
+        // <docs>fundamentals/events/closing-the-books</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IBookCloser>(sp =>
+          new PostgresBookCloser(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            new EFCoreDirectAppendRowBuilder(
+              global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+              sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()),
+            sp.GetService<TimeProvider>()));
         // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
         // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
         selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>

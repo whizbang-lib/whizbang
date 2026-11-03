@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -30,7 +29,7 @@ public sealed record DapperBooksOpened : OpeningBalance {
 public class DapperCloseBooksTests : PostgresTestBase {
   [Test]
   public async Task AddWhizbangPostgres_RegistersTheCloser_WhichClosesTheBooks_AndTheSuccessorReadsBackLinkedAsync() {
-    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, Generated.WhizbangJsonContext.CreateOptions(), false, (string?)null, null);
     services.AddLogging();
     await using var provider = services.BuildServiceProvider();
     await using var scope = provider.CreateAsyncScope();

@@ -183,17 +183,7 @@ public static class ServiceCollectionExtensions {
     // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
     // both by the container and by the decoration path that has to rebuild the inner store when
     // wrapping it. Naming the constructor here keeps that path free of reflection.
-    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
-      sp.GetRequiredService<IDbConnectionFactory>(),
-      sp.GetRequiredService<IDbExecutor>(),
-      sp.GetRequiredService<JsonSerializerOptions>(),
-      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
-      sp.GetRequiredService<JsonbSizeValidator>(),
-      sp.GetRequiredService<IPolicyEngine>(),
-      sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
-      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
+    services.AddScoped<IEventStore>(_newEventStore);
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -347,17 +337,7 @@ public static class ServiceCollectionExtensions {
     // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
     // both by the container and by the decoration path that has to rebuild the inner store when
     // wrapping it. Naming the constructor here keeps that path free of reflection.
-    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
-      sp.GetRequiredService<IDbConnectionFactory>(),
-      sp.GetRequiredService<IDbExecutor>(),
-      sp.GetRequiredService<JsonSerializerOptions>(),
-      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
-      sp.GetRequiredService<JsonbSizeValidator>(),
-      sp.GetRequiredService<IPolicyEngine>(),
-      sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
-      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
+    services.AddScoped<IEventStore>(_newEventStore);
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -454,6 +434,21 @@ public static class ServiceCollectionExtensions {
     services.AddWhizbangSchemaInitialization();
   }
 
+  // The event store, by its constructor (a type-based registration is activated reflectively). The book closer (#1741)
+  // builds one of its own to store its events as the direct append does.
+  private static DapperPostgresEventStore _newEventStore(IServiceProvider sp) =>
+    new(
+      sp.GetRequiredService<IDbConnectionFactory>(),
+      sp.GetRequiredService<IDbExecutor>(),
+      sp.GetRequiredService<JsonSerializerOptions>(),
+      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
+      sp.GetRequiredService<JsonbSizeValidator>(),
+      sp.GetRequiredService<IPolicyEngine>(),
+      sp.GetService<IPerspectiveInvoker>(),
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>());
+
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
@@ -509,6 +504,13 @@ public static class ServiceCollectionExtensions {
         ct => OpenConnectionAsync(connectionString, ct),
         timeProvider: sp.GetService<TimeProvider>(),
         logger: sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+    // Closing the books (#1741), storing its events exactly as this driver's direct append does.
+    services.TryAddScoped<global::Whizbang.Core.Lifecycle.IBookCloser>(sp =>
+      new PostgresBookCloser(
+        ct => OpenConnectionAsync(connectionString, ct),
+        schema: null,
+        _newEventStore(sp),
+        sp.GetService<TimeProvider>()));
     services.TryAddSingleton<IFanoutChildRefiler>(sp =>
       new PostgresFanoutChildRefiler(
         ct => OpenConnectionAsync(connectionString, ct),

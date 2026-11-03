@@ -292,9 +292,19 @@ public partial class DapperPostgresEventStore(
   /// <returns>The row.</returns>
   /// <docs>fundamentals/events/closing-the-books</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCloseBooksTests.cs</tests>
-  public ValueTask<Whizbang.Data.Postgres.DirectAppendRow> BuildAsync<TMessage>(TMessage payload, CancellationToken cancellationToken = default)
-      where TMessage : notnull =>
-    throw new NotImplementedException($"{payload}");
+  public async ValueTask<Whizbang.Data.Postgres.DirectAppendRow> BuildAsync<TMessage>(TMessage payload, CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    var envelope = _createMinimalEnvelope(payload);
+    var jsonb = await _prepareJsonbAsync(envelope);
+    return new Whizbang.Data.Postgres.DirectAppendRow(
+      envelope.MessageId.Value,
+      TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
+      TypeNameFormatter.Format(typeof(TMessage)),
+      jsonb.DataJson,
+      jsonb.MetadataJson,
+      jsonb.ScopeJson,
+      Whizbang.Data.Postgres.DirectAppendKind.Of(payload, _ephemeralModeResolver));
+  }
 
   // --- Private helper methods ---
 

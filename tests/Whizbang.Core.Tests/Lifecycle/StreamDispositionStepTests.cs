@@ -699,7 +699,8 @@ public class StreamDispositionStepTests {
 
     await Assert.That(handler.Asked).IsEquivalentTo([new BookClosingContext(_stream, POLICY_TYPE, reason, 12)])
       .Because("the handler is told the stream, its type, which trigger picked it and the version it was picked at");
-    await Assert.That(closer.Calls).IsEquivalentTo([(_stream, typeof(ProbeClosed), typeof(ProbeOpened))]);
+    await Assert.That(closer.Calls.Select(c => (c.Stream, c.Closing.Name, c.Opening.Name)))
+      .IsEquivalentTo([(_stream, nameof(ProbeClosed), nameof(ProbeOpened))]);
     await Assert.That(h.Log).DoesNotContain("before")
       .Because("closing the books destroys nothing: the predecessor is sealed whole, and its own disposition runs the gates and the hook later");
     await Assert.That(truncator!.Calls).IsEmpty().Because("a version cap whose action closes the books closes them instead of cutting the prefix");

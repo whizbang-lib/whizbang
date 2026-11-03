@@ -141,14 +141,48 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
   // The end-of-life policies: the streams a trigger picks, whole or by their prefix.
   private async Task _applyPoliciesAsync(Run run, IReadOnlyList<StreamEndOfLifePolicy> policies, CancellationToken ct) {
     var candidates = await run.Ledger.GetPolicyCandidatesAsync(policies, run.Now, run.Lifecycle.SweepBatchSize, ct).ConfigureAwait(false);
-    var whole = candidates.Where(c => c.Trigger != StreamEndOfLifeTrigger.VersionCap).Select(c => c.StreamId).ToList();
+    // Readiness gates a destruction; closing the books destroys nothing, so a stream whose type closes them is not asked.
+    var whole = candidates
+      .Where(c => c.Trigger != StreamEndOfLifeTrigger.VersionCap && run.Lifecycle.ActionFor(c.StreamType) != StreamLifecycleAction.CloseBooks)
+      .Select(c => c.StreamId)
+      .ToList();
     var readiness = whole.Count == 0 ? _noReadiness : await run.Ledger.GetReadinessAsync(whole, ct).ConfigureAwait(false);
     foreach (var candidate in candidates) {
-      await _guardedAsync(run, candidate.StreamId, () => candidate.Trigger == StreamEndOfLifeTrigger.VersionCap
-        ? _cutPrefixAsync(run, candidate, ct)
-        : _endWholeAsync(run, candidate, readiness.GetValueOrDefault(candidate.StreamId, StreamDispositionReadiness.Blocked), ct), ct)
-        .ConfigureAwait(false);
+      await _guardedAsync(run, candidate.StreamId, () => _endOfLifeAsync(run, candidate, readiness, ct), ct).ConfigureAwait(false);
     }
+  }
+
+  // One picked stream: its books closed when its type says so (#1741), else its prefix cut or the whole stream ended.
+  private Task _endOfLifeAsync(Run run, StreamPolicyCandidate candidate, IReadOnlyDictionary<Guid, StreamDispositionReadiness> readiness, CancellationToken ct) {
+    if (run.Lifecycle.ActionFor(candidate.StreamType) == StreamLifecycleAction.CloseBooks) {
+      return _closeBooksAsync(run, candidate, ct);
+    }
+    return candidate.Trigger == StreamEndOfLifeTrigger.VersionCap
+      ? _cutPrefixAsync(run, candidate, ct)
+      : _endWholeAsync(run, candidate, readiness.GetValueOrDefault(candidate.StreamId, StreamDispositionReadiness.Blocked), ct);
+  }
+
+  // Closing the books by policy (#1741): the developer's handler supplies the closing summary and the opening balance, and
+  // the closer appends the summary, seals the stream and opens its successor in one transaction. A handler not ready
+  // defers the stream; a close the closer refuses (appended meanwhile, sealed, archived) is logged, and the next cycle
+  // decides afresh.
+  private async Task _closeBooksAsync(Run run, StreamPolicyCandidate candidate, CancellationToken ct) {
+    var handler = run.Services.GetService<IBookClosingHandler>();
+    var closer = run.Services.GetService<IBookCloser>();
+    if (handler is null || closer is null) {
+      LogCannotCloseBooks(_logger, candidate.StreamId, handler is null ? nameof(IBookClosingHandler) : nameof(IBookCloser), run.RetryAt);
+      await run.Ledger.SetDueAsync(candidate.StreamId, run.RetryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    var books = await handler.PrepareAsync(
+      new BookClosingContext(candidate.StreamId, candidate.StreamType, _reasonOf(candidate.Trigger), candidate.LastVersion), ct).ConfigureAwait(false);
+    if (books is null) {
+      LogBooksNotPrepared(_logger, candidate.StreamId, run.RetryAt);
+      await run.Ledger.SetDueAsync(candidate.StreamId, run.RetryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    var result = await books.CloseWithAsync(closer, candidate.StreamId, ct).ConfigureAwait(false);
+    LogBooksClosed(_logger, candidate.StreamId, result.Status, result.SuccessorStreamId);
   }
 
   // A stream a whole-stream trigger picked: the trigger's reason, the type's action, and the seal guard.
@@ -250,6 +284,7 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
   private static DestructionReason _reasonOf(StreamEndOfLifeTrigger trigger) => trigger switch {
     StreamEndOfLifeTrigger.MaxAge => DestructionReason.MaxAgeReached,
     StreamEndOfLifeTrigger.TenantByteCap => DestructionReason.TenantByteCapExceeded,
+    StreamEndOfLifeTrigger.VersionCap => DestructionReason.VersionCapExceeded,
     _ => DestructionReason.IdleTtlElapsed,
   };
 
@@ -326,6 +361,15 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
 
   [LoggerMessage(Level = LogLevel.Warning, Message = "PostDestruction hook threw for stream {StreamId}; its disposition already ran")]
   static partial void LogPostHookThrew(ILogger logger, Guid streamId, Exception exception);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {StreamId} is due to close its books, but no {Missing} is registered; deferred until {RetryAt}")]
+  static partial void LogCannotCloseBooks(ILogger logger, Guid streamId, string missing, DateTimeOffset retryAt);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "The IBookClosingHandler is not ready to close the books of stream {StreamId}; deferred until {RetryAt}")]
+  static partial void LogBooksNotPrepared(ILogger logger, Guid streamId, DateTimeOffset retryAt);
+
+  [LoggerMessage(Level = LogLevel.Information, Message = "Closing the books of stream {StreamId}: {Status}, successor {SuccessorStreamId}")]
+  static partial void LogBooksClosed(ILogger logger, Guid streamId, BookCloseStatus status, Guid? successorStreamId);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Stream {StreamId} picked by its {Trigger} trigger was appended to since; it is left open")]
   static partial void LogAppendedSincePicked(ILogger logger, Guid streamId, StreamEndOfLifeTrigger trigger);
