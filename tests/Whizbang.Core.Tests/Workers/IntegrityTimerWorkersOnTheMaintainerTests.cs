@@ -161,7 +161,9 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     var drain = new RepairDrainWorker(
       host.Services.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(),
       Options.Create(new StreamIntegrityOptions {
-        RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainRatePerSecond = 10, RepairTopic = "drainer.replies",
+        RepairMode = IntegrityRepairMode.AutoRepairCapped,
+        RepairDrainRatePerSecond = 10,
+        RepairTopic = "drainer.replies",
       }),
       NullLogger<RepairDrainWorker>.Instance);
     return (host, drain);

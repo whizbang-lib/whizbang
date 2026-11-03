@@ -128,7 +128,7 @@ public class IntegrityDeliveryWorkerTests {
 
     var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
 
-    await Assert.That(fx.Handled.Select(h => h.Payload).ToList()).IsEquivalentTo(["first", "second", "third"]);
+    await Assert.That(fx.Handled.ConvertAll(h => h.Payload)).IsEquivalentTo(["first", "second", "third"]);
     await Assert.That(fx.Handled[0].Payload).IsEqualTo("first");
     await Assert.That(fx.Handled[2].Payload).IsEqualTo("third");
     await Assert.That(fx.Handled.All(h => h.InsideTheDrain)).IsTrue()
@@ -320,7 +320,7 @@ public class IntegrityDeliveryWorkerTests {
   [Test]
   public async Task EveryOutcome_IsCountedAsync() {
     using var probe = new IntegrityMetricsProbe();
-    await using var fx = await _buildAsync(metrics: probe.Metrics, configure: o => o.MaxIntegrityDeliveryAttempts = 2);
+    await using var fx = await _buildAsync(configure: o => o.MaxIntegrityDeliveryAttempts = 2, metrics: probe.Metrics);
     fx.Coordinator.Seed(_id(1), TYPE, "ok");
     fx.Coordinator.Seed(_id(2), TYPE, "fails");
     fx.Coordinator.Seed(_id(3), TYPE, "exhausted", attempts: 1);

@@ -68,7 +68,7 @@ public class IntegrityDeliveryDeferralTests {
   public async Task Registration_WrapsTheReceptorAtAllThreeStagesAsync() {
     await using var fx = _build();
 
-    await Assert.That(fx.Registry.Registered.Select(r => r.Stage).ToList()).IsEquivalentTo(_stages.ToList());
+    await Assert.That(fx.Registry.Registered.ConvertAll(r => r.Stage)).IsEquivalentTo(_stages.ToList());
     await Assert.That(fx.Registry.Registered.All(r => r.Receptor is IntegrityDeferringReceptor<RequestRedeliveryCommand>))
       .IsTrue().Because("every stage defers, so no path runs integrity work inline on whichever instance received it");
     await Assert.That(fx.Registry.Registered.All(r =>
