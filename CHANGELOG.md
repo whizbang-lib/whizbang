@@ -1277,6 +1277,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A positional record whose base record has its own members compiles in the generated JSON context (#2016).** An
+  event such as `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036 because the
+  generator fell back to a parameterless constructor the record does not have. The constructor now receives the
+  leading writable properties in order and the rest are set in an object initializer. A constructor is used only when
+  its parameters are those leading properties in order; before, one matched by name alone could receive its arguments
+  in the wrong positions.
+
+- **The initialization-registry test for a second concurrent call is deterministic (#2019).** It asserted the first
+  call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
+  explicit signal, and a new test reproduces the window on purpose.
+
 - **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
   reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
