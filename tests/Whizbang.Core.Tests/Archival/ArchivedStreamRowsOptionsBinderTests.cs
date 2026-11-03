@@ -52,6 +52,7 @@ public class ArchivedStreamRowsOptionsBinderTests {
   [Arguments("1")]
   [Arguments("-1")]
   [Arguments("")]
+  [Arguments("Drop, Archive")]
   public async Task Bind_AValueThatNamesNoPolicy_IsRefusedNamingTheKeyAsync(string value) {
     var options = new ArchivedStreamRowsOptions();
 

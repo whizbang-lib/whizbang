@@ -106,9 +106,19 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task ANestedPerspective_IsNamedInItsClrFormAsync() {
     var runner = _runner(_source("[ArchivedStreamRows(ArchivedStreamRowPolicy.Archive)]", "InnerPerspective", outer: "Outer"),
-      "InnerPerspectiveRunner.g.cs");
+      "OuterInnerPerspectiveRunner.g.cs");
 
     await Assert.That(runner).Contains("private const string _archivedStreamRowsName = \"TestNamespace.Outer+InnerPerspective\";");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ADeclarationWithoutAPolicy_RegistersNothingAsync() {
+    // [ArchivedStreamRows] with no argument does not compile; the generator must not invent a policy for it.
+    var runner = _runner(_source("[ArchivedStreamRows]"));
+
+    await Assert.That(runner).DoesNotContain(REGISTER);
+    await Assert.That(runner).Contains(PROBE);
   }
 
   [Test]

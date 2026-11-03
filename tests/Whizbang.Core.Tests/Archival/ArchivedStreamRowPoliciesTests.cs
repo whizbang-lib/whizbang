@@ -79,6 +79,8 @@ public class ArchivedStreamRowPoliciesTests {
       await Assert.That(ArchivedStreamRowPolicies.Resolve(undeclared)).IsEqualTo(ArchivedStreamRowPolicy.Archive)
         .Because("configuration can set a policy on a perspective that declares none");
       await Assert.That(ArchivedStreamRowPolicies.RemovesRows(undeclared)).IsTrue();
+      await Assert.That(ArchivedStreamRowPolicies.Resolve(_name("NotOverridden"))).IsEqualTo(ArchivedStreamRowPolicy.Keep)
+        .Because("an override set that does not name a perspective leaves it to its declaration");
 
       ArchivedStreamRowPolicies.ApplyRuntimeConfiguration(null);
 
