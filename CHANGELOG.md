@@ -1267,6 +1267,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with "Reconciler queried unknown per-item stream". They now derive through an explicit namespace, a test helper
   registers sagas between the derivations to prove it, and every test that registers sagas or asserts on the
   process-wide value runs under one `[NotInParallel]` key and restores it. Tests only; no library behavior changes.
+
+- **The perspective worker's injected-clock tests no longer lose a clock advance (#2020).** Their fake clock reported a
+  wait as armed before it registered the timer, so a test that advanced the clock in that gap lost the advance and
+  waited out its timeout (seen once on the blocking startup rewind scan test in a merge-queue run). The clock now
+  reports a wait only once an advance would end it, and two fixture-contract tests advance from inside the report to
+  hold it there. Test-only; no library behavior changed.
 - **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
   worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
   stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not

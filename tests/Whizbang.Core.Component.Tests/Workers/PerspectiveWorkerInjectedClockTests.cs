@@ -331,7 +331,8 @@ public class PerspectiveWorkerInjectedClockTests {
 
   /// <summary>
   /// A fake clock that reports every wait armed on it, by due time, and counts the ones that elapsed. A wait the
-  /// worker takes on any other clock never shows up here.
+  /// worker takes on any other clock never shows up here. A wait is reported only once the fake clock holds its timer,
+  /// so an advance made the moment the report lands always ends it.
   /// </summary>
   private sealed class ArmingClock : FakeTimeProvider {
     private readonly Lock _lock = new();
@@ -366,13 +367,15 @@ public class PerspectiveWorkerInjectedClockTests {
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var due = new DueBox<TimeSpan>(dueTime);
-      if (dueTime != Timeout.InfiniteTimeSpan) {
-        _onArmed(dueTime);
-      }
       var inner = base.CreateTimer(s => {
         _onFired(due.Value);
         callback(s);
       }, state, dueTime, period);
+      // Reported only now that the fake clock holds the timer: a test that advances the moment it hears of the wait
+      // must find the timer there to fire, or its advance is lost and the wait never ends (#2020).
+      if (dueTime != Timeout.InfiniteTimeSpan) {
+        _onArmed(dueTime);
+      }
       return new ArmingTimer(inner, due, this);
     }
 
@@ -397,10 +400,12 @@ public class PerspectiveWorkerInjectedClockTests {
     private sealed class ArmingTimer(ITimer inner, DueBox<TimeSpan> due, ArmingClock clock) : ITimer {
       public bool Change(TimeSpan dueTime, TimeSpan period) {
         due.Value = dueTime;
-        if (dueTime != Timeout.InfiniteTimeSpan) {
+        var changed = inner.Change(dueTime, period);
+        // After the change, for the same reason as at creation: the wait is reported once an advance would end it.
+        if (changed && dueTime != Timeout.InfiniteTimeSpan) {
           clock._onArmed(dueTime);
         }
-        return inner.Change(dueTime, period);
+        return changed;
       }
 
       public void Dispose() => inner.Dispose();
