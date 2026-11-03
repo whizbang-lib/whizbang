@@ -147,7 +147,8 @@ public static partial class RedeliveryReconciler {
       }
     }
     return await _reconcileCoreAsync(
-      coordinator, origin, originServiceName, eventIds, sequences, services, logger, now, cancellationToken).ConfigureAwait(false);
+      coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences), services, logger, now, cancellationToken)
+      .ConfigureAwait(false);
   }
 
   /// <summary>
@@ -161,7 +162,7 @@ public static partial class RedeliveryReconciler {
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:TheDrain_ReconcilesWithExactlyWhatTheInlineReconcilePassesAsync</tests>
   internal static async Task HandleDeferredAsync(string payload, IServiceProvider services, CancellationToken cancellationToken) {
-    var (origin, originServiceName, eventIds, sequences) = _readDeferred(payload);
+    var bundle = _readDeferred(payload);
     var coordinator = services.GetService<IWorkCoordinator>();
     if (coordinator is null) {
       return;
@@ -169,8 +170,7 @@ public static partial class RedeliveryReconciler {
     var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RedeliveryReconciler))
       ?? NullLogger.Instance;
     var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
-    _ = await _reconcileCoreAsync(
-      coordinator, origin, originServiceName, eventIds, sequences, services, logger, now, cancellationToken).ConfigureAwait(false);
+    _ = await _reconcileCoreAsync(coordinator, bundle, services, logger, now, cancellationToken).ConfigureAwait(false);
   }
 
   // The deferred form, written by hand so Core needs no serializer context for it.
@@ -199,14 +199,18 @@ public static partial class RedeliveryReconciler {
     return buffer.ToArray();
   }
 
-  private static (Guid Origin, string? Name, Guid[] EventIds, long?[] Sequences) _readDeferred(string payload) {
+  /// <summary>What one bundle asks the store to adopt: its origin, the origin's service name, and its events with their
+  /// origin sequences, paired by position.</summary>
+  private readonly record struct BundleAdoption(Guid Origin, string? OriginServiceName, Guid[] EventIds, long?[] Sequences);
+
+  private static BundleAdoption _readDeferred(string payload) {
     using var document = JsonDocument.Parse(payload);
     var root = document.RootElement;
     if (root.ValueKind != JsonValueKind.Object) {
       throw new JsonException($"A deferred redelivery reconcile is a JSON object, not {root.ValueKind}.");
     }
     var name = root.GetProperty("originServiceName");
-    return (
+    return new BundleAdoption(
       root.GetProperty("originServiceId").GetGuid(),
       name.ValueKind == JsonValueKind.Null ? null : name.GetString(),
       [.. root.GetProperty("eventIds").EnumerateArray().Select(e => e.GetGuid())],
@@ -216,8 +220,9 @@ public static partial class RedeliveryReconciler {
 
   /// <summary>The reconcile itself, shared by the inline path and the maintainer's drain.</summary>
   private static async Task<RedeliveryReconciliation> _reconcileCoreAsync(
-      IWorkCoordinator coordinator, Guid origin, string? originServiceName, Guid[] eventIds, long?[] sequences,
-      IServiceProvider services, ILogger logger, DateTimeOffset now, CancellationToken cancellationToken) {
+      IWorkCoordinator coordinator, BundleAdoption bundle, IServiceProvider services, ILogger logger, DateTimeOffset now,
+      CancellationToken cancellationToken) {
+    var (origin, originServiceName, eventIds, sequences) = bundle;
     var childCount = eventIds.Length;
     try {
       var buckets = await coordinator.AdoptRedeliveredOriginAsync(
