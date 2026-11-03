@@ -87,7 +87,7 @@ projects are silently skipped:
 1. `scripts/Run-Tests.ps1`: an entry in `$WhizbangTestTypes` (its modes, whether `-Mode All` runs it,
    or what runs it instead), and each new mode in the `-Mode` and `-LogMode` `ValidateSet`.
 2. `Directory.Build.targets`: `<WhizbangKnownTestTypes>`. A project declaring any other type, or a
-   test project declaring none, fails its build (WHZ0002, WHZ0003).
+   test project declaring none, fails its build (WHIZ601, WHIZ602).
 3. `scripts/Test-SolutionTestProjects.ps1`: `$KnownTestTypes`.
 4. `.github/scripts/Get-TestSlice.ps1`: a suite slice of that type, or an entry in `$UnslicedTypes`
    with the reason (plus the slice upload in `reusable-build.yml`).

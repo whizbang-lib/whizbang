@@ -287,7 +287,7 @@ await Assert.That(value).IsLessThan(100);
 await Assert.That(value).IsBetween(10, 100);
 ```
 
-### IsNotNull on a nullable value type (WHZ0004)
+### IsNotNull on a nullable value type (WHIZ603)
 
 In the TUnit this repository pins (1.12.125), `IsNotNull()` on a `Nullable<T>` subject (`int?`,
 `TimeSpan?`, `DateTimeOffset?`, `Guid?`) **passes when the value is null**. The overload maps the
@@ -295,11 +295,11 @@ subject through `.Value`; on null that throws, the mapping records the exception
 and the null check reads only the default, which is never null. Every such assertion verified nothing.
 
 The build rejects it: `Whizbang.TestAnalyzers` (loaded by every test project through
-`tests/Directory.Build.props` and `samples/Directory.Build.props`) reports **WHZ0004** as an error on
+`tests/Directory.Build.props` and `samples/Directory.Build.props`) reports **WHIZ603** as an error on
 the call. Assert something a null subject fails instead:
 
 ```csharp
-// ❌ Passes on null: verifies nothing (WHZ0004)
+// ❌ Passes on null: verifies nothing (WHIZ603)
 await Assert.That(sample.OldestAge).IsNotNull();
 
 // ✅ Fails on null

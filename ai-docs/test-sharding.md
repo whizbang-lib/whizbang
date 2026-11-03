@@ -35,9 +35,39 @@ Both are driven from `ci.yml` via a `strategy.matrix`, calling the same reusable
    (see [Keeping shards balanced](#keeping-shards-balanced)); test counts mislead badly here, because a
    2,259-case matrix that needs no database finishes in under a minute while a 16-test class that
    provisions one per test takes 90 seconds.
-3. **Add the coverage guard** (see below). This is not optional.
+3. **Opt the project in to the build rule and add the coverage guard** (see below). Neither is optional.
 4. Add the matrix entries to `ci.yml`. `.github/scripts/tests/Measure-TestShards.Tests.ps1` fails if a
    shard category has no matrix leg, or a leg has no classes.
+
+## The build rejects a class without exactly one shard (WHIZ605)
+
+A sharded project sets `<WhizbangShardedTests>true</WhizbangShardedTests>` in its `.csproj`. Then
+`Whizbang.TestAnalyzers` (loaded by every test project through `tests/Directory.Build.props`, which passes the
+property to the compiler with `CompilerVisibleProperty`) reports **WHIZ605** as a build error on every test class
+that does not carry exactly one `Shard*` category, or `Benchmark` and no shard:
+
+```csharp
+// ❌ WHIZ605: runs in no slice
+[Category("Integration")]
+public class OrderStoreTests { [Test] public async Task SavesAsync() { ... } }
+
+// ❌ WHIZ605: runs in two slices
+[Category("Shard1")][Category("Shard3")]
+public class OrderStoreTests { ... }
+
+// ✅
+[Category("Integration")][Category("Shard2")]
+public class OrderStoreTests { ... }
+```
+
+It counts the way the runtime guard below does: a test class is a non-abstract class with a TUnit `[Test]` method,
+declared or inherited, and its categories are the TUnit `[Category]` attributes on it and its base classes, so a
+shard on a shared base class counts for every class derived from it. Only `Whizbang.Data.EFCore.Postgres.Tests`
+sets the property today; a project that runs unsliced (Dapper's leg passes an empty filter) does not.
+
+The rule reads a category from the attribute's constructor argument. A `CategoryAttribute` subclass that hands a
+fixed value to its base constructor shows no argument there, so it counts as no category and the class is reported;
+pass the value through the subclass's constructor instead.
 
 ## The guard is the whole safety story
 
@@ -47,7 +77,9 @@ reports it. A class with two shard categories runs twice, wasting a runner.
 
 Every sharded project therefore carries a guard test asserting the whole assembly:
 `ShardCoverageGuardTests.EveryTestClass_DeclaresExactlyOneShardCategoryAsync`. Copy it when
-sharding a new project.
+sharding a new project. WHIZ605 fails the build first, on the line that needs the fix; the guard stays as the
+second line of defense, because it reads the compiled assembly and so also sees classes a source generator
+emitted, which the analyzer does not analyze.
 
 This is not theoretical. When the EFCore project was first tagged, the guard immediately caught 11
 classes the tagging script had missed (it tagged only the first class per file), and later a further
