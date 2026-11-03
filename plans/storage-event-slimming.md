@@ -369,7 +369,18 @@ beside them). The related defect #1601 (unbounded default trace store) is done i
 
 ### S10. A3c: history
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S9 and S9b.
+**Status (2026-11-02):** built in #1727, migration 298, on `feat/1727-storage`: `wh_convert_event_metadata_history` and
+the `metadata-history-conversion` maintenance step on both drivers (batches of 1,000 rows, at most 20 per cycle),
+`ConvertHistory` published as `metadata_convert_history` every tick. Choices beyond the text below: the conversion walks
+`wh_event_body` by event id from a single-row cursor (`wh_metadata_history_conversion`) instead of searching for rows
+without `rid`, so each batch reads a bounded slice and the pass is linear; it writes routes and traces directly rather
+than staging and distilling (no extra staged copy and delete, and no staged row older than `StagingDays` that retention
+could remove before distillation), with first and last seen at the event's stored time and a trace only inside the
+trace window; it is skipped under `Full` as well as debug mode and `ConvertHistory = false`; it never waits (`SKIP
+LOCKED` on the cursor and on each row, the cursor stopping before a held row); once it reads to the end it is complete,
+and deleting the cursor row starts it over (restored archives, a type removed from the full list). Measured on copies
+of a 10,000-event history: see the event-store docs page (`data/event-store#what-history-conversion-costs`).
+Earlier status (2026-10-24): open. Nothing is built. Depends on S9 and S9b.
 
 Existing rows written full before S9 are converted once by a batched maintenance task:
 

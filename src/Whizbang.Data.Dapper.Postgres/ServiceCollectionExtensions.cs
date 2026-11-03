@@ -494,6 +494,9 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that distills staged event metadata into routes and traces (#1726).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));
+    // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
+      MetadataHistoryConversionStep.FromServices));
     // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
       new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

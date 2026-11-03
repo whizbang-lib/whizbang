@@ -37,7 +37,8 @@ public enum EventStoreMetadataWriteForm {
 /// <para>
 /// The write paths are SQL (both emit chains and <c>wh_append_event</c>), so these options reach them through
 /// <c>wh_settings</c>: the maintenance cycle publishes them on every tick, ahead of its idle gate, as
-/// <c>metadata_write_form</c>, <c>metadata_full_for</c> and <c>metadata_staging_days</c>. A database with no row
+/// <c>metadata_write_form</c>, <c>metadata_full_for</c>, <c>metadata_staging_days</c> and
+/// <c>metadata_convert_history</c>. A database with no row
 /// behaves as the defaults here.
 /// </para>
 /// </remarks>
@@ -66,4 +67,13 @@ public sealed class EventStoreMetadataOptions {
   /// when set; the database default is 2. Unset leaves a value set in SQL alone.
   /// </summary>
   public int? StagingDays { get; set; }
+
+  /// <summary>
+  /// Whether maintenance converts rows written with full metadata before the slim form existed (rows without a route id)
+  /// to the slim form plus their route id, once, in bounded batches. Default <see langword="true"/>. It converts nothing
+  /// under <see cref="EventStoreMetadataWriteForm.Full"/> or debug mode, and never a row of a type kept full. Publishes
+  /// <c>metadata_convert_history</c>.
+  /// </summary>
+  /// <docs>data/event-store#history-conversion</docs>
+  public bool ConvertHistory { get; set; } = true;
 }

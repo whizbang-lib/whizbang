@@ -128,6 +128,7 @@ Whizbang:Ephemeral:PointerPrune:IntervalDays
 Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
 Whizbang:Ephemeral:RewindGraceSeconds
+Whizbang:EventStore:Metadata:ConvertHistory
 Whizbang:EventStore:Metadata:FullFor:*
 Whizbang:EventStore:Metadata:StagingDays
 Whizbang:EventStore:Metadata:WriteForm

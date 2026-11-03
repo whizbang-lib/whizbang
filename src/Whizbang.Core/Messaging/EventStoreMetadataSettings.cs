@@ -14,7 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// <para>
 /// <c>metadata_write_form</c> and <c>metadata_full_for</c> are published every time, in both directions: the write
 /// paths decide every event from them, so a stale value (a type no longer listed, a form switched back) would go on
-/// shaping rows after the configuration changed. <c>metadata_staging_days</c> follows the retention rule instead: unset
+/// shaping rows after the configuration changed. <c>metadata_convert_history</c> is published every time too, so a
+/// conversion switched off stops on the next tick and one switched back on resumes from its cursor. <c>metadata_staging_days</c> follows the retention rule instead: unset
 /// is not written, so a window set in SQL stands.
 /// </para>
 /// <para>
@@ -37,6 +38,12 @@ public static class EventStoreMetadataSettings {
   /// <summary>The <c>wh_settings</c> key holding the staging window in days.</summary>
   public const string STAGING_DAYS_KEY = "metadata_staging_days";
 
+  /// <summary>
+  /// The <c>wh_settings</c> key holding whether maintenance converts historical full metadata (<c>true</c> or
+  /// <c>false</c>).
+  /// </summary>
+  public const string CONVERT_HISTORY_KEY = "metadata_convert_history";
+
   private const string SECTION = EventStoreMetadataOptions.SECTION + ":";
 
   /// <summary>The settings to publish for <paramref name="options"/> and the attribute-declared full types.</summary>
@@ -48,6 +55,7 @@ public static class EventStoreMetadataSettings {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_JoinsConfigurationAndAttributes_SortedOnce_AndCutAtTheCommaAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:StagingDays_WhenSet_IsPublishedAsAnIntegerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:EachWriteForm_IsPublishedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:ConvertHistory_IsPublishedEveryTime_InBothDirectionsAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(EventStoreMetadataOptions options, IEnumerable<string> attributeFullTypes) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(attributeFullTypes);
@@ -56,6 +64,8 @@ public static class EventStoreMetadataSettings {
       new(WRITE_FORM_KEY, options.WriteForm.ToString(), "string", SECTION + nameof(EventStoreMetadataOptions.WriteForm)),
       new(FULL_FOR_KEY, FullForText([.. options.FullFor ?? [], .. attributeFullTypes]), "string",
         SECTION + nameof(EventStoreMetadataOptions.FullFor)),
+      new(CONVERT_HISTORY_KEY, options.ConvertHistory ? "true" : "false", "boolean",
+        SECTION + nameof(EventStoreMetadataOptions.ConvertHistory)),
     ];
     if (options.StagingDays is int days) {
       settings.Add(new RetentionSetting(STAGING_DAYS_KEY, days.ToString(CultureInfo.InvariantCulture), "integer",

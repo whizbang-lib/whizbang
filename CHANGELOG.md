@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wh_event_archive_rows` beside the archived events and a restore or a new generation puts it back. When the
   perspectives of one model disagree, the least destructive policy wins. Migration 299 (redefines `wh_archive_stream`,
   `wh_restore_archived_stream`, `wh_delete_stream_archive` and `_wh_start_new_generations`).
+- **Historical full metadata is converted to slim plus route id (#1727, WS-2 S10).** Rows written before slim stored
+  metadata keep every hop in the row and carry no route id. The `metadata-history-conversion` maintenance step (both
+  drivers, idle-gated, maintainer duty) calls `wh_convert_event_metadata_history` (migration 298) in batches of 1,000
+  rows, at most 20 a cycle: it walks `wh_event_body` by event id from a cursor (`wh_metadata_history_conversion`),
+  rewrites each row without a route id to the slim form plus its route id, and under `Linked` counts its route and
+  traces the events still inside the trace window. Rows of types kept full and rows it cannot read are left; it never
+  waits on a locked row or a second instance; it is skipped under debug mode, the `Full` form and
+  `Whizbang:EventStore:Metadata:ConvertHistory = false` (default `true`, published as `metadata_convert_history`). Once
+  it reads to the end it is complete; deleting the cursor row starts it over. Measured on a copied 30,000-event history:
+  490 bytes of metadata a row instead of 1,476, 4.2 to 5.8 KB of WAL a row converted (about what storing one new
+  event costs) and 0.24 s a batch. **Upgrade note:** the rewrite leaves a dead tuple per converted row; the space is reused
+  after vacuum, and a table rewrite (`TableRewriteStrategy`) returns it to the operating system.
 - **Event bodies compress with lz4 (#1728, WS-2 S11).** Migration 290 sets `lz4` on both `wh_event_body` columns
   (each only when it is not lz4 already; a server built without lz4 keeps pglz and logs a warning). Measured on copies
   of the table, lz4 at the default target was 1.1% smaller, 26% faster to write and 11% faster to read in full than
