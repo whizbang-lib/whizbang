@@ -213,4 +213,18 @@ public class StreamPrefixTruncatorDispositionTests {
     await Assert.That(store.Written).IsEmpty();
     await Assert.That(logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains("CryptoShred", StringComparison.Ordinal))).IsTrue();
   }
+  [Test]
+  public async Task AReasonGiven_IsTheReasonTheHookSees_AndWithoutOne_ATruncateIsAPeriodCloseAsync() {
+    var given = new DecidingHook(DestructionResult.Proceed());
+    var unnamed = new DecidingHook(DestructionResult.Proceed());
+
+    var result = await _truncator(new CountingCoordinator(), given, store: new RecordingStore())
+      .TruncateAsync(_stream, 9, Disposition.Archive, DestructionReason.VersionCapExceeded);
+    _ = await _truncator(new CountingCoordinator(), unnamed, store: new RecordingStore()).TruncateAsync(_stream, 9, Disposition.Archive);
+
+    await Assert.That(result.Status).IsEqualTo("truncated");
+    await Assert.That(given.Seen!.Reason).IsEqualTo(DestructionReason.VersionCapExceeded)
+      .Because("an end-of-life policy's version cap tells the hook why the prefix goes");
+    await Assert.That(unnamed.Seen!.Reason).IsEqualTo(DestructionReason.PeriodClose);
+  }
 }

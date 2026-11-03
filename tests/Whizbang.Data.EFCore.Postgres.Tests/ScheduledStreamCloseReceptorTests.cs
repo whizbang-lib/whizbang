@@ -36,6 +36,9 @@ public class ScheduledStreamCloseReceptorTests {
       LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
       return Task.FromResult(new StreamTruncateResult("truncated", 5));
     }
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition,
+        Whizbang.Core.Lifecycle.DestructionReason reason, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("this caller truncates for a period close");
   }
 
   /// <summary>Captures what the receptor logged, so a "did nothing" path can be told apart from

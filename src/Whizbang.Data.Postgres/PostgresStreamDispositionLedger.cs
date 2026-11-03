@@ -69,4 +69,21 @@ public sealed class PostgresStreamDispositionLedger(PostgresArchiveConnection da
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.TimestampTz, Value = due is { } at ? at : DBNull.Value });
     _ = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<StreamPolicyCandidate>> GetPolicyCandidatesAsync(
+      IReadOnlyList<Whizbang.Core.Archival.StreamEndOfLifePolicy> policies, DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
+  public Task<IReadOnlyDictionary<Guid, StreamDispositionReadiness>> GetReadinessAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
+  public Task<bool> SealIfUnchangedAsync(Guid streamId, long lastVersion, string reason, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
+  public Task SetTruncatedThroughAsync(Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
 }

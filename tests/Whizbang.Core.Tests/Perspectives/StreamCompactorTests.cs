@@ -66,6 +66,9 @@ public class StreamCompactorTests {
       LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
       return Task.FromResult(result);
     }
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition,
+        Whizbang.Core.Lifecycle.DestructionReason reason, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("this caller truncates for a period close");
   }
 
   private sealed class FakeCoordinator(long? version) : IWorkCoordinator {

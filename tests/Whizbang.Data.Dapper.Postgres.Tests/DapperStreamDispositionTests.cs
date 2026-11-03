@@ -80,6 +80,40 @@ public class DapperStreamDispositionTests : PostgresTestBase {
       .Because("with no live cursor the perspective resumes after the event its parked cursor names");
   }
 
+  [Test]
+  public async Task AddWhizbangPostgres_AnEnabledAgePolicyThatPurges_PurgesTheStreamOnceItIsOld_AndNotBeforeAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await _eventStore().AppendAsync(stream, new DapperMixedStreamProbeNoted { StreamId = stream });
+    var first = new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.Zero);
+    string type;
+    await using (var conn = await _openAsync()) {
+      _ = await conn.ExecuteAsync("UPDATE wh_stream_lifecycle SET first_appended_at = @first WHERE stream_id = @stream", new { first, stream });
+      type = await conn.ExecuteScalarAsync<string>("SELECT stream_type FROM wh_stream_lifecycle WHERE stream_id = @stream", new { stream }) ?? "";
+    }
+    var clock = new MovableClock(first.AddDays(30).AddSeconds(-1));
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    services.AddSingleton<TimeProvider>(clock);
+    services.AddLogging();
+    services.Configure<StreamLifecycleOptions>(o => {
+      o.Enabled = true;
+      o.Types[type] = new StreamTypeLifecycleOptions { MaxAge = TimeSpan.FromDays(30), Action = StreamLifecycleAction.Purge };
+    });
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+    var step = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<StreamDispositionStep>().Single();
+
+    await step.RunAsync(scope.ServiceProvider, CancellationToken.None);
+    await using var check = await _openAsync();
+    var rowsJustBefore = await check.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_event_store WHERE stream_id = @stream", new { stream });
+    clock.Now = first.AddDays(30);
+    await step.RunAsync(scope.ServiceProvider, CancellationToken.None);
+
+    await Assert.That(rowsJustBefore).IsEqualTo(1L);
+    await Assert.That(await check.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_event_store WHERE stream_id = @stream", new { stream })).IsEqualTo(0L)
+      .Because("the Dapper driver registers the ledger, the purger and the step, so an age policy that purges reaches the store");
+    await Assert.That(await check.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_stream_lifecycle WHERE stream_id = @stream", new { stream })).IsEqualTo(0L);
+  }
+
   private sealed class MovableClock(DateTimeOffset now) : TimeProvider {
     public DateTimeOffset Now { get; set; } = now;
     public override DateTimeOffset GetUtcNow() => Now;
