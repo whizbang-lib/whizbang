@@ -408,6 +408,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<RepairDrainWorker>();
+    // #2001: integrity deliveries recorded on every instance are drained on the maintainer. The registry's
+    // presence is what tells the deferring integrity receptors that something drains what they record.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityDeliveryRegistry>();
+    services.TryAddSingleton<IntegrityDeliveryWorker>();
     // #80-D: the audit worker doubles as the sweep runner (the scheduled occurrence's receptor
     // resolves it); the state object is how the driver's cron scheduler stands the counter down.
     services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
@@ -602,6 +606,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RepairDrainWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<IntegrityDeliveryWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());

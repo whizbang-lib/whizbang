@@ -533,6 +533,47 @@ public sealed class StreamIntegrityOptions {
   public int RepairDrainBatchSize { get; set; } = 50;
 
   /// <summary>
+  /// How often the maintainer's integrity delivery drain runs, in seconds (default 15). Integrity deliveries (received
+  /// checkpoints, manifest requests and chunks, redelivery requests, bundle reconciles) are recorded where they arrive
+  /// and handled by the instance holding the maintainer duty on this cadence, under the housekeeping idle gate (#2001).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int IntegrityDeliveryIntervalSeconds { get; set; } = 15;
+
+  /// <summary>Integrity deliveries leased per round trip of the drain (default 50).</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int IntegrityDeliveryBatchSize { get; set; } = 50;
+
+  /// <summary>
+  /// The most integrity deliveries one drain pass handles (default 500), so a pass admitted by the idle gate (or
+  /// forced through after <c>Whizbang:Housekeeping:MaxDeferral</c>) is bounded; the rest waits for the next pass.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int MaxIntegrityDeliveriesPerPass { get; set; } = 500;
+
+  /// <summary>
+  /// How long a leased integrity delivery stays invisible to another drain, in seconds (default 300). It covers a
+  /// maintainer-duty failover that briefly overlaps two drains; a delivery not completed or failed by then is due again.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int IntegrityDeliveryLeaseSeconds { get; set; } = 300;
+
+  /// <summary>
+  /// Attempts an integrity delivery gets before it is dropped with a warning naming its type and error (default 5).
+  /// Control-plane traffic is dropped at its bound rather than dead-lettered: the next checkpoint, audit or repair
+  /// cycle asks again.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int MaxIntegrityDeliveryAttempts { get; set; } = 5;
+
+  /// <summary>
+  /// The wait before retrying a failed integrity delivery, in seconds (default 30), doubled on each further attempt and
+  /// capped at one hour.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public int IntegrityDeliveryRetryBackoffSeconds { get; set; } = 30;
+
+  /// <summary>
   /// Advance the digest-epoch closure frontier on the maintenance cadence (default true).
   /// Epochs (migration 092) are what let manifest answers read immutable folds instead of
   /// re-aggregating live history; without closure the frontier never moves and every audit
