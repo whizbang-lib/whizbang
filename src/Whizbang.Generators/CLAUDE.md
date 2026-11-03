@@ -466,13 +466,16 @@ internal static class DiagnosticDescriptors {
 | WHIZ300-309 | Perspective model consistency and indexes |
 | WHIZ400-402 | Lens queries (EF Core) |
 | WHIZ500-501 | Dependency injection |
+| WHIZ600-605 | Repository-internal checks, never shipped: MSBuild test-project checks, test analyzers, repository analyzers |
 | WHIZ701-703 | EF Core generator notices |
 | WHIZ801-833 | Perspective storage: vector and physical fields, model shapes, identifier lengths, stored-form migrations |
 | WHIZ900 | Perspective sync in receptors |
 | WHIZS001-004 | Suppressions (`DiagnosticSuppressor`) of third-party unused-parameter rules on parameters the framework requires on convention-bound methods (#1378) |
 
-Take the next free number in your area's band (`git grep 'id: "WHIZ' -- src` lists every taken ID). Never reuse
-an ID in `DiagnosticDescriptors.RETIRED_IDS`. Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
+Take the next free number in your area's band from `diagnostic-ids.txt` at the repository root, which lists every
+ID (shipped, repository-internal and MSBuild checks) with its owner and meaning, and add the row in the same change;
+`.github/scripts/Test-DiagnosticIds.ps1` fails an ID that is not listed or not of the form WHIZ and three digits.
+Never reuse an ID in `DiagnosticDescriptors.RETIRED_IDS` (marked retired in the registry). Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
 and a `<tests>` link to a test that asserts it, and gets a page at that path on the docs site
 (`DiagnosticDescriptorLinkTests` fails a descriptor without the links).
 

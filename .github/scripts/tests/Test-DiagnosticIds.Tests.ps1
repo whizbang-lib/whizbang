@@ -213,7 +213,7 @@ Describe 'Find-DiagnosticIdRegistryProblem' {
   }
 
   It 'reports an id that does not match WHIZ and three digits' {
-    $r = Invoke-Check @(New-D 'WHZ0007') @(New-R 'WHZ0007')
+    $r = @(Invoke-Check @(New-D 'WHZ0007') @(New-R 'WHZ0007'))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'WHZ0007'
     $r[0] | Should -Match ([regex]::Escape('WHIZ'))
@@ -222,41 +222,41 @@ Describe 'Find-DiagnosticIdRegistryProblem' {
   It 'passes a frozen legacy id outside the pattern, and reports a legacy row that matches the pattern' {
     Invoke-Check @(New-D 'EFCORE104' 'src/Whizbang.Data.EFCore.Postgres.Generators/G.cs') @(New-R 'EFCORE104' 'legacy' 'Whizbang.Data.EFCore.Postgres.Generators') |
       Should -BeNullOrEmpty
-    $r = Invoke-Check @(New-D 'WHIZ001') @(New-R 'WHIZ001' 'legacy')
+    $r = @(Invoke-Check @(New-D 'WHIZ001') @(New-R 'WHIZ001' 'legacy'))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'legacy'
   }
 
   It 'reports an id defined in code but missing from the registry, naming where it is defined' {
-    $r = Invoke-Check @((New-D 'WHIZ001'), (New-D 'WHIZ605' 'src/Whizbang.TestAnalyzers/S.cs')) @(New-R 'WHIZ001')
+    $r = @(Invoke-Check @((New-D 'WHIZ001'), (New-D 'WHIZ605' 'src/Whizbang.TestAnalyzers/S.cs')) @(New-R 'WHIZ001'))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'WHIZ605'
     $r[0] | Should -Match ([regex]::Escape('src/Whizbang.TestAnalyzers/S.cs'))
   }
 
   It 'reports an active id in the registry that nothing defines' {
-    $r = Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), (New-R 'WHIZ999' -Line 7))
+    $r = @(Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), (New-R 'WHIZ999' -Line 7)))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'WHIZ999'
     $r[0] | Should -Match 'line 7'
   }
 
   It 'reports a registry owner that is not where the id is defined' {
-    $r = Invoke-Check @(New-D 'WHIZ604' 'tools/Whizbang.RepoAnalyzers/U.cs') @(New-R 'WHIZ604' -Owner 'Whizbang.TestAnalyzers')
+    $r = @(Invoke-Check @(New-D 'WHIZ604' 'tools/Whizbang.RepoAnalyzers/U.cs') @(New-R 'WHIZ604' -Owner 'Whizbang.TestAnalyzers'))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'Whizbang.RepoAnalyzers'
   }
 
   It 'passes a retired id nothing defines, and reports one that is defined again' {
     Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), (New-R 'WHIZ003' 'retired')) @('WHIZ003') | Should -BeNullOrEmpty
-    $r = Invoke-Check @((New-D 'WHIZ001'), (New-D 'WHIZ003')) @((New-R 'WHIZ001'), (New-R 'WHIZ003' 'retired')) @('WHIZ003')
+    $r = @(Invoke-Check @((New-D 'WHIZ001'), (New-D 'WHIZ003')) @((New-R 'WHIZ001'), (New-R 'WHIZ003' 'retired')) @('WHIZ003'))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'WHIZ003'
     $r[0] | Should -Match 'retired'
   }
 
   It 'reports a retired id the registry and RETIRED_IDS disagree on, in either direction' {
-    $r = Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), (New-R 'WHIZ003' 'retired')) @('WHIZ005')
+    $r = @(Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), (New-R 'WHIZ003' 'retired')) @('WHIZ005'))
     $r.Count | Should -Be 2
     ($r -join "`n") | Should -Match 'WHIZ003'
     ($r -join "`n") | Should -Match 'WHIZ005'
@@ -264,13 +264,13 @@ Describe 'Find-DiagnosticIdRegistryProblem' {
   }
 
   It 'reports an id listed twice in the registry' {
-    $r = Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001' -Line 3), (New-R 'WHIZ001' -Line 9))
+    $r = @(Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001' -Line 3), (New-R 'WHIZ001' -Line 9)))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'twice|more than once'
   }
 
   It 'reports a malformed registry row' {
-    $r = Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), [pscustomobject]@{ Id = $null; Status = $null; Owner = $null; Meaning = $null; Line = 4 })
+    $r = @(Invoke-Check @(New-D 'WHIZ001') @((New-R 'WHIZ001'), [pscustomobject]@{ Id = $null; Status = $null; Owner = $null; Meaning = $null; Line = 4 }))
     $r.Count | Should -Be 1
     $r[0] | Should -Match 'line 4'
   }
