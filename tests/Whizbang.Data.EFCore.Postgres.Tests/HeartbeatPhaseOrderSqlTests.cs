@@ -319,11 +319,9 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   public async Task APhaseTheDatabaseDoesNotKnow_IsTakenFromTheBeatAsync() {
     await _applyMigration244Async();
     var instance = Guid.CreateVersion7();
-    await using var dbContext = CreateDbContext();
-    var coordinator = _coordinator(dbContext);
     await _legacyBeatAsync(instance, LifecyclePhase.Running);
 
-    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LifecyclePhase: "Hibernating"));
+    await _legacyBeatAsync(instance, "Hibernating");
 
     await using var conn = await _openAsync();
     await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo("Hibernating")
@@ -341,7 +339,9 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   /// A beat as an older release sends it: 244's nine arguments, by SQL. The coordinator of this release passes the
   /// application version as well (#2027), which only the definitions from 316 on accept.
   /// </summary>
-  private async Task _legacyBeatAsync(Guid instance, LifecyclePhase phase) {
+  private Task _legacyBeatAsync(Guid instance, LifecyclePhase phase) => _legacyBeatAsync(instance, phase.ToString());
+
+  private async Task _legacyBeatAsync(Guid instance, string phase) {
     await using var conn = await _openAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT record_heartbeat(@id, @service, @host, @process, '{}'::jsonb, @phase, NULL, NULL, NULL)";
@@ -349,7 +349,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("service", SERVICE);
     cmd.Parameters.AddWithValue("host", HOST);
     cmd.Parameters.AddWithValue("process", PROCESS);
-    cmd.Parameters.AddWithValue(nameof(phase), phase.ToString());
+    cmd.Parameters.AddWithValue(nameof(phase), phase);
     if (await cmd.ExecuteScalarAsync() is not true) {
       throw new InvalidOperationException($"the beat of {instance} was refused");
     }
