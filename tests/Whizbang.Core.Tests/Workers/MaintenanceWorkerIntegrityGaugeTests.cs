@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -55,6 +56,11 @@ public class MaintenanceWorkerIntegrityGaugeTests {
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
+    /// <summary>The service-wide backlog the maintenance idle gate reads; busy keeps the sweep deferred.</summary>
+    public ServiceBacklog? Backlog { get; init; }
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
+      => ValueTask.FromResult(Backlog);
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -65,17 +71,21 @@ public class MaintenanceWorkerIntegrityGaugeTests {
   }
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
-      LedgerCoordinator coord, int maxAttempts = 8) {
+      LedgerCoordinator coord, int maxAttempts = 8, DutyHolderWorker? duty = null, HousekeepingCoordinator? housekeeping = null) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton(metrics);
     services.AddSingleton(Options.Create(new StreamIntegrityOptions { MaxRepairAttemptsPerBucket = maxAttempts }));
+    if (duty is not null) {
+      services.AddSingleton(duty);
+    }
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
-      NullLogger<MaintenanceWorker>.Instance);
+      NullLogger<MaintenanceWorker>.Instance,
+      housekeeping: housekeeping);
     return (worker, metrics);
   }
 
@@ -137,5 +147,41 @@ public class MaintenanceWorkerIntegrityGaugeTests {
       .Throws<OperationCanceledException>()
       .Because("shutdown has to travel through a best-effort step, or the cycle keeps reaping on "
              + "a host that asked to stop");
+  }
+  private static readonly LedgerGaugeSnapshot _unhealed = new() { UnhealedBuckets = 1_175, RepairExhausted = 4, OldestUnhealedAgeSeconds = 46_000 };
+
+  /// <summary>
+  /// #2024: every instance of a service exports these gauges, and every instance reads the same ledger. An instance that
+  /// does not hold the maintainer duty skips the sweep, but if it also skipped the read, its gauges reported the empty
+  /// reading, 0 unhealed, for as long as it ran: the same value as a fully healed service.
+  /// </summary>
+  [Test]
+  public async Task AnInstanceThatIsNotTheMaintainer_StillPublishesTheLedgerReadingAsync() {
+    var duty = await Whizbang.Core.Tests.Startup.MaintainerDutyHolders.ElectedAsync(grants: false);
+    var (worker, metrics) = _build(new LedgerCoordinator { Snapshot = _unhealed }, duty: duty);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(metrics.CurrentLedgerGaugesForTest.UnhealedBuckets).IsEqualTo(1_175)
+      .Because("reading the ledger is not the fleet-wide sweep the duty guards, and a 0 here reads as healed");
+  }
+
+  /// <summary>
+  /// #2024: after a restart under load the sweep is deferred until the service settles or MaxDeferral forces it, an
+  /// hour by default. The gauges rode the sweep, so for that hour every instance reported 0 unhealed: blind exactly
+  /// when a backlog of divergences most needs watching.
+  /// </summary>
+  [Test]
+  public async Task ATickTheIdleGateDefers_StillPublishesTheLedgerReadingAsync() {
+    var busy = new ServiceBacklog { UnprocessedInboxRows = 90_000, ActiveLeasedRows = 40 };
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
+    var (worker, metrics) = _build(new LedgerCoordinator { Snapshot = _unhealed, Backlog = busy }, housekeeping: housekeeping);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, busy).Granted).IsFalse()
+      .Because("setup: the service is busy, so the sweep itself is deferred");
+    await Assert.That(metrics.CurrentLedgerGaugesForTest.UnhealedBuckets).IsEqualTo(1_175)
+      .Because("the gauges must not wait for the service to be idle to say what is unhealed");
   }
 }
