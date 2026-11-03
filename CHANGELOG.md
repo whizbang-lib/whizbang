@@ -1254,6 +1254,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
   CPU at its ceiling. Migration 301 adds an index on `stream_id`, which every stream-keyed digest read and delete now
   uses, and the reconcile names the bundle's streams so the index drives it.
+
+- **Saga tests no longer race on the process-wide per-item stream namespace (#2017).** Every `AddWhizbangSagas` call
+  sets `SagaItemStreams.AppDefaultNamespace`, and the stranded-item reconciler tests and three watchdog tests derived
+  each item's stream id twice through it, so a parallel test registering sagas between the two derivations failed them
+  with "Reconciler queried unknown per-item stream". They now derive through an explicit namespace, a test helper
+  registers sagas between the derivations to prove it, and every test that registers sagas or asserts on the
+  process-wide value runs under one `[NotInParallel]` key and restores it. Tests only; no library behavior changes.
 - **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
   worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
   stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not
@@ -1304,6 +1311,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A host stopped before its schema is ready ends quietly (#1991).** The shutdown service that deregisters the
   instance is hosted to start when the schema-ready gate opens, so a host stopped during Preflight or Migrate does not
   run deregistration against instance tables that may not exist yet, and logs no warning for it.
+- **The ephemeral reaper deletes only the bodies its destruction hook and compaction handler saw (#1999).** The
+  maintenance worker read the bodies about to be reaped, ran the `IDestructionHook` (and, for `Disposition.Compact`, the
+  `ICompactionHandler`) over them, and then the reap selected the eligible bodies again in a separate statement, so a
+  body that became eligible in between (its grace window or TTL passed, its perspective work finished, a snapshot came
+  to cover it) was deleted without the hook or the handler seeing it. The worker now passes the batch it read to the
+  reap, which deletes only those bodies; a body that became eligible later is offered on the next cycle. The maintenance
+  tasks move to `wh_perform_maintenance(p_ephemeral_reap_event_ids)` (migration 310), and `perform_maintenance()` keeps
+  its name and arity as an unrestricted call of it. The cycle runs the same number of statements.
+  `IWorkCoordinator.PerformMaintenanceAsync(IReadOnlyCollection<Guid>?, CancellationToken)` is new, with a default that
+  runs the unrestricted call. **Contributor note:** a change to the maintenance tasks now edits `wh_perform_maintenance`.
 - **A retried collective apply resumes after its last committed batch, and a replay folds a collective only as far as
   the live sink applied it (#1969, #1970, #1981).** The collective sink applied a collective in batches, each in a
   transaction of its own, with its cursor in memory only, so every retry (a busy apply lock, a failure, a crash, a

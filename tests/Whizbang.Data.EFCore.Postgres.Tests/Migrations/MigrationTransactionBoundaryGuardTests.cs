@@ -89,6 +89,9 @@ public partial class MigrationTransactionBoundaryGuardTests {
     ["wh_reconcile_redelivered_bundle_by_first_hop"] =
       "253 (#1843, #1844): reads error from wh_inbox_state (alias ist) to find the children store_inbox_messages "
       + "refused to restore; wh_inbox supplies only stream_id, scope and message_type, none of which moved",
+    ["wh_perform_maintenance"] =
+      "310 (#1999): perform_maintenance's body copied whole from 295, so its inbox purges are the ones 162 redirected: "
+      + "processed_at, lease_expiry and instance_id are read from wh_inbox_state (alias ist), and wh_inbox is only the row deleted",
   };
 
   /// <summary>

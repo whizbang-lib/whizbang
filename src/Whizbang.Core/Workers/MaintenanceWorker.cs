@@ -273,7 +273,9 @@ public sealed partial class MaintenanceWorker(
     }
 
     await _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
-    var results = await coordinator.PerformMaintenanceAsync(ct);
+    var results = destruction.ReapOnly is null
+      ? await coordinator.PerformMaintenanceAsync(ct)
+      : await coordinator.PerformMaintenanceAsync(destruction.ReapOnly, ct);
     var sweptRows = 0L;
     foreach (var r in results) {
       sweptRows += Math.Max(0, r.RowsAffected);
@@ -840,11 +842,19 @@ public sealed partial class MaintenanceWorker(
   // are logged, never fatal (the retry policy lands in a later increment). Returns the targets so the
   // detached PostDestruction step can fire after the reap. The hook's Cancel/Defer decision is captured and
   // logged; ENFORCEMENT (holding the body / rescheduling) lands in the next increment via a SQL hold-gate.
-  /// <summary>The events about to be reaped this cycle, and those loaded for the destruction-stage receptors (#1381).</summary>
+  /// <summary>
+  /// The events about to be reaped this cycle, those loaded for the destruction-stage receptors (#1381), and the only
+  /// bodies the reap may delete (#1999): every body read for the hook, whatever it decided, or <c>null</c> when no batch
+  /// was read because nothing is registered to see one.
+  /// </summary>
   private sealed record DestructionBatch(
       IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> Targets,
-      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes) {
-    public static readonly DestructionBatch None = new([], []);
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes,
+      IReadOnlyCollection<Guid>? ReapOnly) {
+    public static readonly DestructionBatch None = new([], [], null);
+
+    /// <summary>A batch was read but nothing in it may be reaped this cycle (held, deferred, failed or empty).</summary>
+    public static DestructionBatch Seen(IReadOnlyCollection<Guid> reapOnly) => new([], [], reapOnly);
   }
 
   private async Task<DestructionBatch> _runPreDestructionHooksAsync(
@@ -856,8 +866,15 @@ public sealed partial class MaintenanceWorker(
       return DestructionBatch.None;
     }
     var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
+    // #1999: the reap deletes only what was read here, so a body that becomes eligible while the hook or the compaction
+    // handler runs waits for the next cycle's read instead of going unseen. Held bodies stay in the list: their hold keeps
+    // them, and a forced delete after a failing hook must still reach them.
+    var seen = new List<Guid>(targets.Count);
+    foreach (var t in targets) {
+      seen.Add(t.EventId);
+    }
     if (targets.Count == 0) {
-      return DestructionBatch.None;
+      return DestructionBatch.Seen(seen);
     }
     // Batched: fire the hook ONCE for the whole set of about-to-reap events, then HONOR its decision.
     try {
@@ -871,19 +888,15 @@ public sealed partial class MaintenanceWorker(
       if (result.Cancel || result.DeferUntil.HasValue) {
         // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
         // skips held bodies, so nothing is reaped this cycle and PostDestruction does NOT fire (return []).
-        var eventIds = new List<Guid>(targets.Count);
-        foreach (var t in targets) {
-          eventIds.Add(t.EventId);
-        }
         var until = result.DeferUntil ?? DateTimeOffset.MaxValue;
-        await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
-        return DestructionBatch.None;
+        await coordinator.HoldEphemeralDestructionAsync(seen, until, ct).ConfigureAwait(false);
+        return DestructionBatch.Seen(seen);
       }
       // #1735: the disposition runs, or the batch is held when the reaper cannot carry it out
       if (!await _runDispositionAsync(coordinator, sp, context, result, envelopes, ct).ConfigureAwait(false)) {
-        return DestructionBatch.None;
+        return DestructionBatch.Seen(seen);
       }
-      return new DestructionBatch(targets, envelopes);
+      return new DestructionBatch(targets, envelopes, seen);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -892,14 +905,10 @@ public sealed partial class MaintenanceWorker(
       // so a permanently-broken hook can never leak storage. RecordDestructionFailureAsync increments the
       // batch's attempt count and returns its highest; on engines without the hold infra it returns int.MaxValue
       // (⇒ forced delete ⇒ the prior fail-open behaviour). No PostDestruction fires on failure.
-      var eventIds = new List<Guid>(targets.Count);
-      foreach (var t in targets) {
-        eventIds.Add(t.EventId);
-      }
       var retryUntil = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
       var policy = _options.OnDestroyFailure;
       var attempt = await coordinator.RecordDestructionFailureAsync(
-        eventIds, retryUntil, _options.MaxDestructionRetries, policy, ct).ConfigureAwait(false);
+        seen, retryUntil, _options.MaxDestructionRetries, policy, ct).ConfigureAwait(false);
       var exhausted = attempt > _options.MaxDestructionRetries;
       var outcome = policy switch {
         Lifecycle.OnDestroyFailure.ForceDeleteImmediately => "FORCED DELETE (policy=ForceDeleteImmediately)",
@@ -908,7 +917,7 @@ public sealed partial class MaintenanceWorker(
         _ => "held for retry",
       };
       LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
-      return DestructionBatch.None;
+      return DestructionBatch.Seen(seen);
     }
   }
 

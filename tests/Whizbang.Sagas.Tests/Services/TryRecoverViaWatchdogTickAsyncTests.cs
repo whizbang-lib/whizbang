@@ -29,6 +29,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   private const string SAGA_NAME = "TestSaga";
   private static readonly Guid _sagaId = Guid.Parse("11111111-1111-1111-1111-111111111111");
   private static readonly Guid _entityId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+  private static readonly Guid _itemNamespace = Guid.Parse("8b4c3d2e-1f0a-4b9c-a8d7-e6f5a4b3c2d1");
 
   [Test]
   public async Task FirstReArm_NoSnapshot_UsesInitialBudgetAsync() {
@@ -621,16 +622,20 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// failure for work that succeeded.
   /// </remarks>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ItemAlreadyTerminalInTheStore_IsNotFailedAgainAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var (svc, emitter) = _buildService(
       itemRepository: new FakeItemRepository(
         agg: new SagaItemAggregate(Total: 3, Completed: 1, Failed: 0, InProgress: 2),
         items: [_item("a", SagaItemState.Completed), _item("finished", SagaItemState.Running), _item("lost", SagaItemState.Running)]),
       terminalReader: new KeyedTerminalReader(new Dictionary<Guid, SagaItemTerminalOutcome> {
-        [SagaItemStreams.Of(_sagaId, "finished")] = SagaItemTerminalOutcome.Completed,
+        [SagaItemStreams.Of(_itemNamespace, _sagaId, "finished")] = SagaItemTerminalOutcome.Completed,
       }),
-      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 },
+      options: _hostOptions());
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(1, 0), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed)
@@ -807,7 +812,9 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// terminal is left alone, and one the service re-dispatches stays in progress.
   /// </remarks>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ExpectedItemsKnown_FailsEachItemThatNeverGotARowAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var expected = Enumerable.Range(0, 350).Select(i => $"i{i:D3}").ToList();
     var emitter = new RecordingEmitter();
     var redriven = new List<string>();
@@ -815,9 +822,10 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       emitter,
       new FakeItemRepository(new SagaItemAggregate(Total: 337, Completed: 336, Failed: 1, InProgress: 0), _rows(336, 1)),
       new KeyedTerminalReader(new Dictionary<Guid, SagaItemTerminalOutcome> {
-        [SagaItemStreams.Of(_sagaId, "i337")] = SagaItemTerminalOutcome.Completed,
+        [SagaItemStreams.Of(_itemNamespace, _sagaId, "i337")] = SagaItemTerminalOutcome.Completed,
       }),
-      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 350 }) {
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 350 },
+      _hostOptions()) {
       ExpectedItems = [.. expected, "i349"],
       Redrive = item => {
         redriven.Add(item.ItemIdentifier);
@@ -825,6 +833,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       },
     };
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(336, 1), CancellationToken.None);
 
     var failed = emitter.Published.OfType<TestItemFailedEvent>().ToList();
@@ -845,16 +854,20 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   /// counted as failed: its projection row is merely behind.
   /// </summary>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task MaxConsecutiveStalls_ItemsWithNoRowAndARowBehindTheStore_CountsWhatTheStoreRecordsAsync() {
+    using var processWide = new ProcessWideSagaNamespace();
     var rows = new List<SagaItemModel>(_rows(2, 0)) { _item("done-in-store", SagaItemState.Running), _item("failed-in-store", SagaItemState.Running) };
     var (svc, emitter) = _buildService(
       itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 4, Completed: 2, Failed: 0, InProgress: 2), rows),
       terminalReader: new KeyedTerminalReader(new Dictionary<Guid, SagaItemTerminalOutcome> {
-        [SagaItemStreams.Of(_sagaId, "done-in-store")] = SagaItemTerminalOutcome.Completed,
-        [SagaItemStreams.Of(_sagaId, "failed-in-store")] = SagaItemTerminalOutcome.Failed,
+        [SagaItemStreams.Of(_itemNamespace, _sagaId, "done-in-store")] = SagaItemTerminalOutcome.Completed,
+        [SagaItemStreams.Of(_itemNamespace, _sagaId, "failed-in-store")] = SagaItemTerminalOutcome.Failed,
       }),
-      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 6 });
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 6 },
+      options: _hostOptions());
 
+    processWide.RegisterElsewhere();
     var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Recovered);
@@ -928,6 +941,14 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   }
 
   // ── Builder + test doubles ─────────────────────────────────────────────
+
+  /// <summary>
+  /// Options as a host's <c>AddWhizbangSagas</c> registers them, under a namespace of their own, so the service derives
+  /// per-item stream ids the way the test keys its reader rather than through the process-wide namespace, which any
+  /// registration elsewhere in the process can change mid-test (see <see cref="ProcessWideSagaNamespace"/>).
+  /// </summary>
+  private static SagaOptions _hostOptions() =>
+    new() { PerItemStreamNamespace = _itemNamespace, RegisteredWithHost = true };
 
   private static (TestSagaService, RecordingEmitter) _buildService(
       ISagaItemRepository itemRepository,
