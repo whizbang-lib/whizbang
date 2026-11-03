@@ -761,7 +761,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start point or decides its own start on the schema-ready gate. **Upgrade note:** the `ISchemaReadyGate` constructor
   parameter is removed from every worker that had one; a host that registers `ServiceBusConsumerWorker`,
   `PerspectiveMigrationWorker` or its own worker with `AddHostedService` should use `AddWhizbangWorker` instead, or it
-  starts with the host, before the schema is migrated.
+  starts with the host, before the schema is migrated. A worker the framework already hosts (the perspective worker
+  through `AddWhizbang()`, the transport consumer through `AddTransportConsumer()`) must not also be registered with
+  `AddHostedService`: that hosts a second, unstaged copy. The ECommerce samples and their test fixtures now host
+  every worker this way, and a source guard fails a plain `AddHostedService` in a sample or a second plain registration
+  of a staged framework worker. A test or fixture finds a hosted worker through the new
+  `Whizbang.Testing.Workers.HostedWorkers` (`GetHostedWorker<TWorker>()`, `GetHostedWorkers()`), which looks through the
+  stage wrapper: a lookup by type over `GetServices<IHostedService>()` finds the wrapper and never the worker.
 
 - **A transient database failure in a worker loop logs at Warning, and only a failure that persists logs an Error
   (#1986).** A worker loop that meets a transient database failure (a dropped connection, a timeout, a deadlock, a

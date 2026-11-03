@@ -24,6 +24,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -226,7 +227,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     });
 
     // Background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // RabbitMQ consumer with test-specific routing
     var consumerOptions = new TransportConsumerOptions();
@@ -243,7 +244,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
         ["SubscriberName"] = JsonElement.Parse("\"lifecycle-test\"")
       }));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,

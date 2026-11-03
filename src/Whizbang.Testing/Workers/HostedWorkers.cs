@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core.Startup;
 
@@ -21,7 +22,7 @@ public static class HostedWorkers {
   /// <param name="services">The host's service provider.</param>
   /// <returns>The hosted services, in registration order, with every stage wrapper replaced by the worker it hosts.</returns>
   public static IEnumerable<IHostedService> GetHostedWorkers(this IServiceProvider services) =>
-    throw new NotImplementedException();
+    services.GetServices<IHostedService>().Select(static hosted => hosted is GatedHostedService gated ? gated.Service : hosted);
 
   /// <summary>
   /// The first hosted service of type <typeparamref name="TWorker"/>, looking through the stage wrapper, or
@@ -31,5 +32,5 @@ public static class HostedWorkers {
   /// <param name="services">The host's service provider.</param>
   /// <returns>The hosted worker, or <see langword="null"/>.</returns>
   public static TWorker? GetHostedWorker<TWorker>(this IServiceProvider services) where TWorker : class =>
-    throw new NotImplementedException();
+    services.GetHostedWorkers().OfType<TWorker>().FirstOrDefault();
 }

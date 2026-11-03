@@ -12,6 +12,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -58,7 +59,7 @@ public class DapperTableStatisticsTests {
 
     await hosted.OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(cancellationToken);
 
-    var collectors = hosted.OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<TableStatisticsCollector>().ToList();
+    var collectors = provider.GetHostedWorkers().OfType<TableStatisticsCollector>().ToList();
     await Assert.That(collectors.Count).IsEqualTo(1)
       .Because("the Dapper driver registers the collector, once");
     var collector = collectors[0];

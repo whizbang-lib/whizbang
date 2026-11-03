@@ -4,7 +4,6 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -103,7 +102,7 @@ public class TransportConsumerWorkerDiWiringTests {
       services.AddHostedService<TransportConsumerWorker>();
 
       await using var sp = services.BuildServiceProvider();
-      var worker = sp.GetServices<IHostedService>().OfType<TransportConsumerWorker>().Single();
+      var worker = sp.GetHostedWorkers().OfType<TransportConsumerWorker>().Single();
 
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);

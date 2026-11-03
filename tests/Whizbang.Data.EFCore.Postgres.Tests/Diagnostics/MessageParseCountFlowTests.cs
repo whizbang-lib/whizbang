@@ -28,6 +28,7 @@ using Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 using Whizbang.Testing.Containers;
 using Whizbang.Testing.Lifecycle;
 using Whizbang.Testing.MultiService;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Diagnostics;
 
@@ -123,7 +124,7 @@ public class MessageParseCountFlowTests {
 
     using (var host = _buildHost(wire, drain, holdCompletions: true)) {
       await _startAsync(host, cancellationToken);
-      var perspectives = host.Services.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<PerspectiveWorker>().Single();
+      var perspectives = host.Services.GetHostedWorkers().OfType<PerspectiveWorker>().Single();
       var done = _awaitFlow(host, streamId);
       var firstSession = drain.AwaitNextSessionAsync(perspectives, cue: false);
 
@@ -174,7 +175,7 @@ public class MessageParseCountFlowTests {
 
   /// <summary>Completes when both perspectives have applied the stream and the last lifecycle stage has fired for it.</summary>
   private static Task _awaitFlow(IHost host, Guid streamId) {
-    var perspectives = host.Services.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<PerspectiveWorker>().Single();
+    var perspectives = host.Services.GetHostedWorkers().OfType<PerspectiveWorker>().Single();
     var applied = new ConcurrentDictionary<string, byte>();
     var bothApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     perspectives.OnPerspectiveEventProcessed += e => {

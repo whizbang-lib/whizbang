@@ -26,6 +26,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -511,7 +512,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
@@ -527,7 +528,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -678,7 +679,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // RabbitMQ consumer with test-specific routing
     // BFF subscribes only to exchanges for events its perspectives handle:
@@ -700,7 +701,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -819,7 +820,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// unbound exchange.
   /// </summary>
   private static async Task _waitForTransportConsumersReadyAsync(Microsoft.Extensions.Hosting.IHost host, CancellationToken ct) {
-    var consumers = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+    var consumers = host.Services.GetHostedWorkers()
       .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
       .ToList();
     if (consumers.Count == 0) {
@@ -862,8 +863,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WireInboxDrain(string host, InboxDrainWorker? w) => WireOnce(host, "InboxDrainWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
     void WirePerspective(string host, PerspectiveWorker? w) => WireOnce(host, "PerspectiveWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-    var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
-    var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
+    var inventoryHostedServices = _inventoryHost!.Services.GetHostedWorkers().ToList();
+    var bffHostedServices = _bffHost!.Services.GetHostedWorkers().ToList();
 
     WireOutboxPublish("Inventory", inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
     WireOutboxPublish("BFF", bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
@@ -1022,7 +1023,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
     // Post-Phase-H: OutboxDrainWorker is the active publish path. Subscribe to both if
     // registered so the fixture works regardless of which worker is active.
-    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var hostedServices = InventoryHost.Services.GetHostedWorkers().ToList();
     var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
     var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
     if (drainWorker is null && publishWorker is null) {
@@ -1103,14 +1104,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
 
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var inventoryWorker = InventoryHost.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(inventoryWorker);
     }
 
     if (hostFilter is null or "bff") {
-      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var bffWorker = BffHost.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(bffWorker);
     }
 
@@ -1170,12 +1169,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
 
     if (hostFilter is null or "inventory") {
-      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
 
     using var watchdogCts = new CancellationTokenSource();

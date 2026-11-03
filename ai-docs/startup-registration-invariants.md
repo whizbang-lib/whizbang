@@ -227,7 +227,17 @@ starts it there; the worker holds no wait on `ISchemaReadyGate`.
   before the worker's start point.
 - Two tests keep it that way: `StartupHostedServiceAuditTests` (every hosted service of a turnkey host has a
   start point or a stated reason it needs none) and `WorkerStartGateSourceGuardTests` (no hosted service in
-  `src` names `ISchemaReadyGate`, except the listed startup machinery).
+  `src` names `ISchemaReadyGate`, except the listed startup machinery; no sample hosts a worker with plain
+  `AddHostedService`; no worker the framework stages is plain-hosted anywhere in `src` or `samples`).
+- `AddHostedService<T>()` activates its own instance, so plain-hosting a worker the framework already stages (the
+  perspective worker via `AddWhizbang()`, the consumer via `AddTransportConsumer()`) runs a second, unstaged copy
+  that starts before migration. Drop the line; a host that builds the worker itself (a hand-named consumer, a test
+  fixture's factory) uses `AddWhizbangWorker(stage, factory)`. The runtime audit sees only its own composition, so the
+  samples are held by the source scan.
+- `GetServices<IHostedService>().OfType<TWorker>()` finds nothing for a staged worker: the hosted service is the wrapper.
+  Tests and fixtures use `Whizbang.Testing.Workers.HostedWorkers.GetHostedWorker<T>()` / `GetHostedWorkers()`; the source
+  guard fails a by-type lookup of a staged worker among the wrappers, and any hosted-service enumeration in a sample. A
+  registration test that filters to `GatedHostedService` to assert a worker is staged is reading the wrapper on purpose.
 - The data plane's gate opens only once the row records Accept commands (the reporter tells observers `recorded`). A
   failed write is held, and the next accepted heartbeat's registration signal writes it and tells them again; a host
   whose coordinator keeps no instance rows (`RecordsInstanceTransitions` false, or no coordinator) reports every stage

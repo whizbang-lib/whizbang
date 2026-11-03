@@ -13,6 +13,7 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 #if AZURESERVICEBUS
@@ -108,9 +109,9 @@ builder.Services.AddOptions<PerspectiveWorkerOptions>()
 // Register event type provider for AOT-compatible polymorphic event deserialization
 builder.Services.AddSingleton<IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
-builder.Services.AddHostedService<PerspectiveWorker>();
+// AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddWhizbangWorker<Worker>();
 
 var host = builder.Build();
 
