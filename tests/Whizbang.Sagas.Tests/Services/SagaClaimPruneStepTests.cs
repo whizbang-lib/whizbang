@@ -178,21 +178,17 @@ public class SagaClaimPruneStepTests {
   [Test]
   [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task AddWhizbangSagas_RetainsEverySagaPrefixFromTheGeneralPrune_OnceEachAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var services = new ServiceCollection();
-      services.AddWhizbangSagas();
-      services.AddWhizbangSagas();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddWhizbangSagas();
+    services.AddWhizbangSagas();
 
-      var retained = services
-        .Where(d => d.ServiceType == typeof(RetainedClaimKeyPrefix))
-        .Select(d => ((RetainedClaimKeyPrefix)d.ImplementationInstance!).KeyPrefix)
-        .ToList();
-      await Assert.That(retained).IsEquivalentTo(["saga-watchdog-sweep:", "saga-completed:", "saga-continuation:", "saga-abandoned:"]);
-      await Assert.That(SagaAbandonGuard.ClaimKey("S", Guid.Empty)).StartsWith(SagaClaimPruneStep.ABANDONED_CLAIM_PREFIX);
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    var retained = services
+      .Where(d => d.ServiceType == typeof(RetainedClaimKeyPrefix))
+      .Select(d => ((RetainedClaimKeyPrefix)d.ImplementationInstance!).KeyPrefix)
+      .ToList();
+    await Assert.That(retained).IsEquivalentTo(["saga-watchdog-sweep:", "saga-completed:", "saga-continuation:", "saga-abandoned:"]);
+    await Assert.That(SagaAbandonGuard.ClaimKey("S", Guid.Empty)).StartsWith(SagaClaimPruneStep.ABANDONED_CLAIM_PREFIX);
   }
 
   [Test]
@@ -203,17 +199,13 @@ public class SagaClaimPruneStepTests {
   [Test]
   [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task AddWhizbangSagas_RegistersTheStepOnce_HoweverOftenItIsCalledAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var services = new ServiceCollection();
-      services.AddWhizbangSagas();
-      services.AddWhizbangSagas();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddWhizbangSagas();
+    services.AddWhizbangSagas();
 
-      await Assert.That(services.Count(d => d.ServiceType == typeof(IMaintenanceStep)
-                                         && d.ImplementationType == typeof(SagaClaimPruneStep))).IsEqualTo(1);
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(services.Count(d => d.ServiceType == typeof(IMaintenanceStep)
+                                       && d.ImplementationType == typeof(SagaClaimPruneStep))).IsEqualTo(1);
   }
 
   private static DutyHolderWorker _holder(bool grants, string role = StartupDuties.MAINTAINER) =>

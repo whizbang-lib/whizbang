@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -48,6 +49,7 @@ public static class SagaServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:HostWithItsOwnTickReceptor_SubscribesOnce_AndEachTickIsRecoveredOnceAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamIdDeriverTests.cs:TwoContainers_EachResolveADeriverForTheirOwnNamespaceAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaItemStreamNamespacePerHostTests.cs:TwoHostsWithDifferentNamespaces_EachHostsWatchdogReadsItsOwnItemsAsTerminalAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ALaterRegistrationWithADifferentNamespace_WarnsAtStartNamingBothAsync</tests>
   public static IServiceCollection AddWhizbangSagas(this IServiceCollection services, Action<SagaOptions>? configure = null) {
     ArgumentNullException.ThrowIfNull(services);
 
@@ -55,10 +57,16 @@ public static class SagaServiceCollectionExtensions {
     configure?.Invoke(opts);
 
     // This host's per-item stream ids derive from these options: the deriver below, and every saga service built with
-    // them, read this host's namespace however many hosts the process builds (#1888). The process-wide value is still
-    // set for code with no container (SagaItemStreams.Of without a namespace); the last registration in a process wins it.
+    // them, read this host's namespace however many hosts the process builds (#1888). The process-wide value, for code
+    // with no container (SagaItemStreams.Of without a namespace), is the first registration's (#2021): a later one that
+    // disagrees leaves it and says so when its host starts, since no logger exists while services are registered.
     opts.RegisteredWithHost = true;
-    SagaItemStreams.AppDefaultNamespace = opts.PerItemStreamNamespace;
+    var processWide = SagaItemStreams.RegisterAppDefaultNamespace(opts.PerItemStreamNamespace);
+    if (processWide != opts.PerItemStreamNamespace) {
+      var requested = opts.PerItemStreamNamespace;
+      services.AddHostedService(sp => new SagaItemStreamNamespaceConflictWarning(
+        sp.GetRequiredService<ILogger<SagaItemStreamNamespaceConflictWarning>>(), processWide, requested));
+    }
 
     // Whizbang:Sagas binds over the code values when the options first resolve, so the watchdog and
     // the stranded-saga sweep can be tuned at deploy time (#1014). A key that is absent leaves the

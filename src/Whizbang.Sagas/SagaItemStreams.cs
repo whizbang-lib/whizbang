@@ -52,28 +52,63 @@ public static class SagaItemStreams {
 
   /// <summary>
   /// The namespace UUID currently in effect for the
-  /// <see cref="Of(Guid, string)"/> no-override path. Set at app startup
-  /// from <c>SagaOptions.PerItemStreamNamespace</c> by every
-  /// <c>AddWhizbangSagas</c> call; defaults to <see cref="DefaultNamespace"/>
-  /// if never set.
+  /// <see cref="Of(Guid, string)"/> no-override path: the
+  /// <c>SagaOptions.PerItemStreamNamespace</c> of the first <c>AddWhizbangSagas</c>
+  /// call in the process; <see cref="DefaultNamespace"/> if none has run.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <strong>Process-wide.</strong> One value for the whole process, so with
-  /// several hosts in one process (integration tests, a test server per
-  /// service) the last <c>AddWhizbangSagas</c> call decides it for every
-  /// host. The framework's own readers do not use it: they derive from
-  /// their host's options through <see cref="ISagaItemStreamIdDeriver"/>,
-  /// which code running in a host should inject as well.
+  /// <strong>Process-wide, first registration wins (#2021).</strong> One value for the whole
+  /// process. With several hosts in one process (integration tests, a test server per service)
+  /// the first <c>AddWhizbangSagas</c> call decides it; a later call with a different namespace
+  /// leaves it unchanged and its host logs a warning at start naming both namespaces, and a
+  /// later call with the same namespace is silent. A value cannot change between two reads once
+  /// set. The framework's own readers do not use it: they derive from their host's options
+  /// through <see cref="ISagaItemStreamIdDeriver"/>, which code running in a host should inject
+  /// as well.
   /// </para>
   /// <para>
-  /// <strong>Configure before any saga operation runs.</strong> Changing
-  /// this value at runtime re-derives every per-item stream id and
-  /// orphans existing projection rows.
+  /// <strong>Configure before any saga operation runs.</strong> The namespace is stream identity:
+  /// every per-item stream id derives from it.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/sagas/whizbang-sagas#per-item-streams-cross-pod-safe-fan-out</docs>
-  public static Guid AppDefaultNamespace { get; internal set; } = DefaultNamespace;
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs</tests>
+  public static Guid AppDefaultNamespace {
+    get => Volatile.Read(ref _registered)?.Namespace ?? DefaultNamespace;
+    // Tests only: overwrites whatever is registered. Registrations go through RegisterAppDefaultNamespace.
+    internal set => Volatile.Write(ref _registered, new Registration(value));
+  }
+
+  /// <summary>The registered namespace, or null before the first registration. Replaced whole, never mutated.</summary>
+  private static Registration? _registered;
+
+  private sealed record Registration(Guid Namespace);
+
+  /// <summary>
+  /// Registers <paramref name="namespaceId"/> as the process-wide namespace unless one is registered already, atomically
+  /// so registrations racing from several threads settle on one.
+  /// </summary>
+  /// <param name="namespaceId">The namespace a registration asks for.</param>
+  /// <returns>The namespace in effect afterward: <paramref name="namespaceId"/> for the first registration, the first
+  /// registration's namespace for every later one.</returns>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ConcurrentRegistrations_SettleOnOneNamespace_ThatEveryRegistrationIsToldAsync</tests>
+  internal static Guid RegisterAppDefaultNamespace(Guid namespaceId) {
+    var prior = Interlocked.CompareExchange(ref _registered, new Registration(namespaceId), null);
+    return prior?.Namespace ?? namespaceId;
+  }
+
+  /// <summary>
+  /// Clears the registration so the next one is the first; for tests that share this process-wide value. Disposing the
+  /// returned scope puts back exactly what was there, including no registration at all.
+  /// </summary>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaItemStreamsFirstRegistrationWinsTests.cs:ResetForTesting_DisposingTheScope_PutsBackTheRegistrationItClearedAsync</tests>
+  internal static IDisposable ResetAppDefaultNamespaceForTesting() =>
+    new RegistrationRestore(Interlocked.Exchange(ref _registered, null));
+
+  private sealed class RegistrationRestore(Registration? saved) : IDisposable {
+    public void Dispose() => Volatile.Write(ref _registered, saved);
+  }
 
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /
@@ -83,7 +118,7 @@ public static class SagaItemStreams {
   /// </summary>
   /// <remarks>
   /// For application code with no container. The namespace is process-wide,
-  /// so in a process with several hosts it is whichever the last
+  /// so in a process with several hosts it is whichever the first
   /// <c>AddWhizbangSagas</c> call set; code running in a host injects
   /// <see cref="ISagaItemStreamIdDeriver"/>, which derives under that host's
   /// own namespace.
