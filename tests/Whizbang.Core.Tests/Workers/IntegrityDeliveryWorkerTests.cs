@@ -342,4 +342,39 @@ public class IntegrityDeliveryWorkerTests {
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
       Entries.Add((logLevel, formatter(state, exception), exception));
   }
+  private sealed class NullValueOptions : IOptions<StreamIntegrityOptions> {
+    public StreamIntegrityOptions Value => null!;
+  }
+
+  [Test]
+  public async Task Construction_WithoutOptions_OrWithOptionsThatHoldNone_IsRefusedAsync() {
+    await using var provider = new ServiceCollection().BuildServiceProvider();
+    var scopes = provider.GetRequiredService<IServiceScopeFactory>();
+
+    await Assert.That(() => new IntegrityDeliveryWorker(scopes, null!, new IntegrityDeliveryRegistry(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<IntegrityDeliveryWorker>.Instance)).Throws<ArgumentNullException>();
+    await Assert.That(() => new IntegrityDeliveryWorker(scopes, new NullValueOptions(), new IntegrityDeliveryRegistry(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<IntegrityDeliveryWorker>.Instance)).Throws<ArgumentNullException>()
+      .Because("options that hold no value would fail later, on the first pass, far from the misconfiguration");
+  }
+
+  [Test]
+  public async Task Construction_WithoutAClock_RecordsDeferralOnTheSystemClockAsync() {
+    var coordinator = new InMemoryIntegrityDeliveryCoordinator();
+    await using var provider = new ServiceCollection()
+      .AddScoped<IWorkCoordinator>(_ => coordinator)
+      .AddSingleton(new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }))
+      .BuildServiceProvider();
+    coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 };
+    var worker = new IntegrityDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new StreamIntegrityOptions()), new IntegrityDeliveryRegistry(), Microsoft.Extensions.Logging.Abstractions.NullLogger<IntegrityDeliveryWorker>.Instance);
+    var before = TimeProvider.System.GetUtcNow();
+
+    var pass = await worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(pass.Outcome).IsEqualTo(IntegrityDeliveryWorker.PassOutcome.Deferred);
+    await Assert.That(worker.DeferredSince).IsNotNull();
+    await Assert.That(worker.DeferredSince!.Value).IsGreaterThanOrEqualTo(before)
+      .Because("with no clock given, the worker reads the system clock");
+  }
 }

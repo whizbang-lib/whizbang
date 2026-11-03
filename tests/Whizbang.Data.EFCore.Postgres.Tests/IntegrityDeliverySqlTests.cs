@@ -144,4 +144,31 @@ public class IntegrityDeliverySqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", id);
     await Assert.That((string?)await cmd.ExecuteScalarAsync()).IsEqualTo("boom again");
   }
+  /// <summary>
+  /// A coordinator built with a throughput gate holds a gate slot for each queue call, as every other coordinator
+  /// call does, so the drain's lease, completion and failure take their turn with the service's other database work.
+  /// </summary>
+  [Test]
+  public async Task TheQueue_ThroughAThroughputGatedCoordinator_LeasesCompletesAndFailsAsync() {
+    var ctx = CreateDbContext();
+    _contexts.Add(ctx);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1,
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
+    var done = TrackedGuid.New().Value;
+    var failing = TrackedGuid.New().Value;
+    await coordinator.EnqueueIntegrityDeliveryAsync(done, TYPE, "{}");
+    await coordinator.EnqueueIntegrityDeliveryAsync(failing, TYPE, "{}");
+
+    var leased = await coordinator.LeaseIntegrityDeliveriesAsync(2, _lease);
+    await coordinator.CompleteIntegrityDeliveryAsync(done);
+    await coordinator.FailIntegrityDeliveryAsync(failing, "boom", TimeSpan.Zero);
+    var retried = await coordinator.LeaseIntegrityDeliveriesAsync(2, _lease);
+
+    await Assert.That(leased.Count).IsEqualTo(2);
+    await Assert.That(retried.Select(d => d.DeliveryId)).IsEquivalentTo([failing])
+      .Because("the completed delivery is gone and the failed one is due again");
+    await Assert.That(retried[0].Attempts).IsEqualTo(1);
+  }
 }

@@ -31,7 +31,20 @@ public class IntegrityDeliveryWorkerLoopTests {
     public Queue<Exception> LeaseFailures { get; } = new();
     public List<Guid> Completed { get; } = [];
 
+    /// <summary>When set, a lease waits until it is canceled, after signaling <see cref="LeaseEntered"/>: a pass in flight.</summary>
+    public bool BlockLeases { get; set; }
+    public TaskCompletionSource LeaseEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private async Task<IReadOnlyList<IntegrityDelivery>> _blockedLeaseAsync(CancellationToken cancellationToken) {
+      LeaseEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken);
+      return [];
+    }
+
     public Task<IReadOnlyList<IntegrityDelivery>> LeaseIntegrityDeliveriesAsync(int maxDeliveries, TimeSpan lease, CancellationToken cancellationToken = default) {
+      if (BlockLeases) {
+        return _blockedLeaseAsync(cancellationToken);
+      }
       if (LeaseFailures.TryDequeue(out var failure)) {
         return Task.FromException<IReadOnlyList<IntegrityDelivery>>(failure);
       }
@@ -147,5 +160,24 @@ public class IntegrityDeliveryWorkerLoopTests {
     await Assert.That(handled).IsEquivalentTo(["after-recovery"])
       .Because("one failed pass must not stop the drain");
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
+  }
+  [Test]
+  public async Task StoppedInTheMiddleOfAPass_TheLoopEndsCleanly_WithoutReportingAFailureAsync() {
+    var (worker, coordinator, handled, logger, _, services) = _build();
+    await using var _ = services;
+    coordinator.BlockLeases = true;
+    var passes = 0;
+    worker.OnPassCompleted += () => Interlocked.Increment(ref passes);
+
+    await worker.StartAsync(CancellationToken.None);
+    await coordinator.LeaseEntered.Task.WaitAsync(_wait);   // a pass is in flight, waiting on the store
+    await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+      .Because("shutdown canceling a pass is the normal way out, not a fault");
+    await Assert.That(logger.Warnings).IsEmpty().Because("a stop is not a failed pass");
+    await Assert.That(passes).IsEqualTo(0).Because("the interrupted pass did not complete");
+    await Assert.That(handled).IsEmpty();
   }
 }
