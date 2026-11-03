@@ -81,14 +81,6 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   }
 
   [Test]
-  public async Task AdvisoryLockKey_ParsesLongAsync() {
-    var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Database:Stamper:AdvisoryLockKey"] = "9223372036854775000",
-    });
-    await Assert.That(bound.AdvisoryLockKey).IsEqualTo(9223372036854775000L);
-  }
-
-  [Test]
   public async Task FencedRetryInterval_ParsesUnderInvariantCultureAsync() {
     var bound = _bind(new Dictionary<string, string?> {
       ["Whizbang:Database:Stamper:FencedRetryInterval"] = "00:00:00.5",
@@ -139,7 +131,6 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
       ["Whizbang:Database:Stamper:LeaderElectionRetry"] = "not-a-timespan",
       ["Whizbang:Database:Stamper:BatchSize"] = "not-a-number",
       ["Whizbang:Database:Stamper:DisableStamper"] = "not-a-bool",
-      ["Whizbang:Database:Stamper:AdvisoryLockKey"] = "not-a-long",
       ["Whizbang:Database:Stamper:FencedRetryInterval"] = "not-a-timespan",
       ["Whizbang:Database:Stamper:NotifyHealthyPollingInterval"] = "not-a-timespan",
     });
@@ -148,7 +139,6 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
     await Assert.That(bound.LeaderElectionRetry).IsEqualTo(defaults.LeaderElectionRetry);
     await Assert.That(bound.BatchSize).IsEqualTo(defaults.BatchSize);
     await Assert.That(bound.DisableStamper).IsEqualTo(defaults.DisableStamper);
-    await Assert.That(bound.AdvisoryLockKey).IsEqualTo(defaults.AdvisoryLockKey);
     await Assert.That(bound.FencedRetryInterval).IsEqualTo(defaults.FencedRetryInterval);
 #pragma warning disable CS0618 // obsolete but still honored
     await Assert.That(bound.NotifyHealthyPollingInterval).IsEqualTo(defaults.NotifyHealthyPollingInterval);

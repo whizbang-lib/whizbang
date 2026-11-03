@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -14,19 +15,18 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Multi-instance end-to-end coverage for duty election (increment 7's testing bar): N instances
-/// contend and exactly one holds; the recorded holdings match who actually holds the lock; the
-/// holder releases (or dies) and another acquires; an evicted instance is refused at acquisition
-/// even when it wins the primitive. Each simulated instance is its own elector over its own
-/// connection, exactly as separate pods would be.
+/// contend and exactly one holds; the recorded holdings match the assignment; the holder releases
+/// (or dies) and another acquires; an evicted instance is refused at acquisition. Every duty is a
+/// role assignment (#2044), a framework duty or a host's own. Each simulated instance is its own
+/// elector over its own connections, exactly as separate pods would be.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDutyElector.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/108_InstanceCapabilities.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
@@ -46,11 +46,14 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     };
   }
 
-  private PgDutyElector _electorFor(Pod pod) => new(
+  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+    Options.Create(new RoleAssignmentOptions()),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
-    NullLogger<PgDutyElector>.Instance);
+    NullLogger<PgRoleElector>.Instance,
+    libraryVersion: null,
+    timeProvider: time);
 
   private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
@@ -88,14 +91,14 @@ public class DutyElectionE2ETests : EFCoreTestBase {
 
     var winner = pods[Array.FindIndex(attempts, a => a.Grant is not null)];
     await Assert.That(await _holdsAsync(winner.InstanceId, "migrator", cancellationToken)).IsTrue()
-      .Because("the lock decides, the row reports — and they must agree once the dust settles");
+      .Because("the vote decides, the row reports, and they must agree once the dust settles");
     foreach (var pod in pods.Where(p => p.InstanceId != winner.InstanceId)) {
       await Assert.That(await _holdsAsync(pod.InstanceId, "migrator", cancellationToken)).IsFalse()
         .Because("a loser records nothing — it holds nothing");
     }
     await Assert.That(await grants[0]!.VerifyStillHeldAsync(cancellationToken)).IsTrue();
 
-    // Clean release: the loser's next attempt wins, and the record follows the lock.
+    // Clean release: the loser's next attempt wins, and the record follows the assignment.
     await grants[0]!.DisposeAsync();
     await Assert.That(await _holdsAsync(winner.InstanceId, "migrator", cancellationToken)).IsFalse()
       .Because("a clean release deletes the holding — tenure ended, the row says so");
@@ -202,13 +205,12 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     var evictedAttempt = await _electorFor(pod).TryAcquireAsync("maintainer", cancellationToken);
 
     await Assert.That(evictedAttempt.Grant).IsNull()
-      .Because("the fence reaches exclusive work: an evicted instance that wins the primitive is "
-             + "refused at recording, releases what it won, and stands down");
+      .Because("the fence reaches exclusive work: an evicted instance is refused by the vote and stands down");
     await Assert.That(evictedAttempt.Refusal).IsEqualTo(DutyRefusal.Refused)
       .Because("issue #494: not a race — retrying cannot help, and the caller must be able to tell");
     await Assert.That(await _holdsAsync(pod.InstanceId, "maintainer", cancellationToken)).IsFalse();
 
-    // And the released lock is genuinely free — a live instance takes it immediately.
+    // And the duty is genuinely free: a live instance takes it immediately.
     var live = new Pod();
     await _joinFleetAsync(live, cancellationToken);
     await using var liveGrant = (await _electorFor(live).TryAcquireAsync("maintainer", cancellationToken)).Grant;
@@ -217,74 +219,42 @@ public class DutyElectionE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
-  public async Task DirtyDeath_TheGrantKnowsItIsLost_AndAnotherInstanceAcquiresAsync(CancellationToken cancellationToken) {
+  public async Task DirtyDeath_JudgedByTheLivenessRule_HandsTheDutyOver_AndTheGrantKnowsItIsLostAsync(CancellationToken cancellationToken) {
+    // The OOMKill shape: the holder stops without a clean release. Its instance stops beating, the one liveness rule
+    // calls it dead, the reap removes its row, and the next vote takes the duty at once (#2044): no lock is left to
+    // free, and no lease has to run out first.
     var victim = new Pod();
     var successor = new Pod();
     await _joinFleetAsync(victim, cancellationToken);
     await _joinFleetAsync(successor, cancellationToken);
-
-    var grant = (await _electorFor(victim).TryAcquireAsync("migrator", cancellationToken)).Grant;
+    var time = new FakeTimeProvider();
+    var grant = (await _electorFor(victim, time).TryAcquireAsync("migrator", cancellationToken)).Grant;
     await Assert.That(grant).IsNotNull();
+    await Assert.That((await _electorFor(successor).TryAcquireAsync("migrator", cancellationToken)).Refusal)
+      .IsEqualTo(DutyRefusal.Contended).Because("the victim is live and holds the duty");
 
-    // The OOMKill shape: terminate the backend session holding the duty lock, without any clean
-    // release. Postgres frees the session lock as the backend dies.
-    var key = DutyLockKey.Compute("public", "migrator");
     await using (var conn = new NpgsqlConnection(ConnectionString)) {
       await conn.OpenAsync(cancellationToken);
-      await using var kill = conn.CreateCommand();
-      kill.CommandText = @"
-        SELECT pg_terminate_backend(l.pid)
-        FROM pg_locks l
-        WHERE l.locktype = 'advisory'
-          AND ((l.classid::bigint << 32) | (l.objid::bigint & 4294967295)) = @key
-          AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-          AND l.pid <> pg_backend_pid()";
-      kill.Parameters.AddWithValue("key", key);
-      _ = await kill.ExecuteScalarAsync(cancellationToken);
+      await using var die = conn.CreateCommand();
+      die.CommandText = """
+        UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id;
+        SELECT count(*) FROM cleanup_stale_instances(now());
+        """;
+      die.Parameters.AddWithValue("id", victim.InstanceId);
+      _ = await die.ExecuteScalarAsync(cancellationToken);
     }
-
-    await Assert.That(await grant!.VerifyStillHeldAsync(cancellationToken)).IsFalse()
-      .Because("fencing: a grant whose session died is a grant another instance may already hold — "
-             + "the holder must learn this before its next unit of exclusive work");
 
     await using var takeover = (await _electorFor(successor).TryAcquireAsync("migrator", cancellationToken)).Grant;
     await Assert.That(takeover).IsNotNull()
-      .Because("a clean OR dirty death releases the session lock server-side; the next attempt wins");
+      .Because("the rule called the holder dead and the reap removed it, so the vote voids its assignment");
+    await Assert.That(takeover!.PreviousHolderInstanceId).IsEqualTo(victim.InstanceId);
     await Assert.That(await _holdsAsync(successor.InstanceId, "migrator", cancellationToken)).IsTrue();
-    // The victim's stale row is EXPECTED to linger until its instance row reaps — the record is
-    // inconsistent only inside the lease window the system already has, and the lock (not the
-    // row) is what decides. Asserting it were already gone would assert a design that needs a
-    // reaper this table exists to avoid.
-    await Assert.That(await _holdsAsync(victim.InstanceId, "migrator", cancellationToken)).IsTrue();
+    await Assert.That(await _holdsAsync(victim.InstanceId, "migrator", cancellationToken)).IsFalse()
+      .Because("the victim's recorded holding went with its row");
+    time.Advance(new RoleAssignmentOptions().RenewInterval);
+    await Assert.That(await grant!.VerifyStillHeldAsync(cancellationToken)).IsFalse()
+      .Because("fencing: a grant whose assignment was taken over must learn it before its next unit of exclusive work");
 
     await grant.DisposeAsync();
-  }
-
-  [Test]
-  [Timeout(60000)]
-  public async Task AVerifyCanceledByShutdown_DoesNotMarkTheDutyLostAsync(CancellationToken cancellationToken) {
-    // VerifyStillHeldAsync pings the session that holds the advisory lock. A ping that FAILS means
-    // the session is gone and so is the lock, so the grant latches _lost and the caller stops its
-    // exclusive work — correct, and deliberately sticky, because a lock cannot come back.
-    //
-    // A ping canceled by shutdown proves nothing about the lock. Latching there would leave a
-    // grant that reports "not held" for the rest of its life while still owning the lock, and the
-    // stickiness that makes the real case safe is exactly what makes this one unrecoverable.
-    var pod = new Pod();
-    await _joinFleetAsync(pod, cancellationToken);
-    await using var grant = (await _electorFor(pod).TryAcquireAsync("migrator", cancellationToken)).Grant;
-
-    await Assert.That(grant).IsNotNull();
-    await Assert.That(await grant!.VerifyStillHeldAsync(cancellationToken)).IsTrue();
-
-    using var stopping = new CancellationTokenSource();
-    await stopping.CancelAsync();
-    await Assert.That(async () => await grant.VerifyStillHeldAsync(stopping.Token))
-      .Throws<OperationCanceledException>()
-      .Because("a canceled ping says nothing about whether the lock is still held");
-
-    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue()
-      .Because("the grant still owns the lock — had the shutdown latched _lost, this would report "
-             + "not-held forever and the duty would go unclaimed while nobody else can take it");
   }
 }

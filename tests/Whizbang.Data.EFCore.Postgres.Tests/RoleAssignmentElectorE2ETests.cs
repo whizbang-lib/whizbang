@@ -51,18 +51,11 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   private WhizbangNotificationOptions _notificationOptions() => new() { DirectConnectionString = ConnectionString };
 
-  private PgDutyElector _legacyFor(Pod pod) => new(
+  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null) => new(
     Options.Create(_notificationOptions()),
+    Options.Create(new RoleAssignmentOptions()),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
-    NullLogger<PgDutyElector>.Instance);
-
-  private PgRoleElector _electorFor(Pod pod, bool bridge = false, TimeProvider? time = null) => new(
-    Options.Create(_notificationOptions()),
-    Options.Create(new RoleAssignmentOptions { HoldLegacySessionLock = bridge }),
-    new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
-    pod,
-    _legacyFor(pod),
     NullLogger<PgRoleElector>.Instance,
     libraryVersion: null,
     timeProvider: time);
@@ -221,16 +214,9 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     using var canceled = new CancellationTokenSource();
     await canceled.CancelAsync();
     var a = await _joinAsync(cancellationToken);
-    var bridged = (await _electorFor(a, bridge: true, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-    await Assert.That(bridged.Duty).IsEqualTo(ROLE);
-    await Assert.That(bridged.AcquiredAt).IsEqualTo(time.GetUtcNow());
-
-    await Assert.That(async () => await bridged.VerifyStillHeldAsync(canceled.Token)).Throws<OperationCanceledException>()
-      .Because("shutdown is not a verdict on the role: the bridge check is abandoned, not failed");
-    await Assert.That(await bridged.VerifyStillHeldAsync(cancellationToken)).IsTrue();
-    await bridged.DisposeAsync();
-
     var plain = (await _electorFor(a, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await Assert.That(plain.Duty).IsEqualTo(ROLE);
+    await Assert.That(plain.AcquiredAt).IsEqualTo(time.GetUtcNow());
     time.Advance(_defaults.RenewInterval);
     await Assert.That(async () => await plain.VerifyStillHeldAsync(canceled.Token)).Throws<OperationCanceledException>();
     await Assert.That(await plain.VerifyStillHeldAsync(cancellationToken)).IsTrue();
@@ -319,110 +305,40 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Dispose_WhenTheReleaseCannotReachItsFunction_DoesNotThrow_AndTheLeaseLapsesInsteadAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
-    var grant = (await _electorFor(a, bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var grant = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     await _executeAsync("ALTER FUNCTION wh_release_role(text, uuid, bigint) RENAME TO wh_release_role_moved", cancellationToken);
 
     await Assert.That(async () => await grant.DisposeAsync()).ThrowsNothing();
 
-    await Assert.That((await _legacyFor(await _joinAsync(cancellationToken)).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull()
-      .Because("the bridge session closes with the grant whatever the release managed");
+    await Assert.That(await _leaseRemainingAsync(cancellationToken)).IsNotNull()
+      .Because("the release could not run, so the assignment stands until its lease lapses");
   }
 
   [Test]
   [Timeout(120000)]
-  public async Task MixedFleet_ALegacyHolder_BlocksABridgedInstance_AndNoAssignmentIsWrittenAsync(CancellationToken cancellationToken) {
+  public async Task MixedFleet_AnOlderReleasesRecordedHolding_IsSeenByTheVote_AndNoAssignmentIsWrittenAsync(CancellationToken cancellationToken) {
+    // #2044: an instance on an older release holds the duty by its own session lock and records the holding. The vote
+    // sees the record (the instance is live by the one liveness rule), never the lock.
     var old = await _joinAsync(cancellationToken);
     var @new = await _joinAsync(cancellationToken);
-    await using var legacyGrant = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await _executeAsync("SELECT record_capability(@id, @role)", cancellationToken, ("id", old.InstanceId), ("role", ROLE));
 
-    var attempt = await _electorFor(@new, bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    var attempt = await _electorFor(@new).TryAcquireAsync(ROLE, cancellationToken);
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Contended);
+    await Assert.That(attempt.Detail).Contains("older release");
     await Assert.That(await _leaseRemainingAsync(cancellationToken)).IsNull()
-      .Because("the new instance deferred before voting, so the old holder stays the only one acting");
+      .Because("the old holder stays the only one acting");
   }
 
   [Test]
   [Timeout(120000)]
-  public async Task MixedFleet_ABridgedHolder_BlocksALegacyInstanceAsync(CancellationToken cancellationToken) {
-    var @new = await _joinAsync(cancellationToken);
-    var old = await _joinAsync(cancellationToken);
-    var grant = (await _electorFor(@new, bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-
-    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
-    var legacyAttempt = await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken);
-
-    await Assert.That(legacyAttempt.Refusal).IsEqualTo(DutyRefusal.Contended)
-      .Because("an old instance only sees the session lock, so the new holder keeps it while the bridge is on");
-    await grant.DisposeAsync();
-    await Assert.That((await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull();
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task MixedFleet_WithTheBridgeOff_ALegacyHolderIsStillSeenByTheVoteAsync(CancellationToken cancellationToken) {
-    var old = await _joinAsync(cancellationToken);
-    var @new = await _joinAsync(cancellationToken);
-    await using var legacyGrant = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-
-    var attempt = await _electorFor(@new, bridge: false).TryAcquireAsync(ROLE, cancellationToken);
-
-    await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Contended);
-    await Assert.That(attempt.Detail).Contains("session-lock");
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task BridgedHolder_ThatLapses_GivesUpItsSessionLockOnItsNextVerifyAsync(CancellationToken cancellationToken) {
-    var time = new FakeTimeProvider();
-    var a = await _joinAsync(cancellationToken);
-    var b = await _joinAsync(cancellationToken);
-    var grant = (await _electorFor(a, bridge: true, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-    await Assert.That((await _electorFor(b, bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Refusal)
-      .IsEqualTo(DutyRefusal.Contended);
-
-    await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
-    time.Advance(_defaults.RenewInterval);
-    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse();
-
-    var next = await _electorFor(b, bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(next.Grant).IsNotNull();
-    await Assert.That(next.Grant!.Epoch).IsEqualTo(grant.Epoch + 1);
-    await next.Grant.DisposeAsync();
-    await grant.DisposeAsync();
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task BridgedHolder_WhoseSessionDies_IsLostAsync(CancellationToken cancellationToken) {
-    var a = await _joinAsync(cancellationToken);
-    var grant = (await _electorFor(a, bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-
-    await _executeAsync("""
-      SELECT pg_terminate_backend(l.pid) FROM pg_locks l
-       WHERE l.locktype = 'advisory' AND l.granted AND l.pid <> pg_backend_pid()
-         AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-      """, cancellationToken);
-
-    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse()
-      .Because("without its session lock an old instance could take the duty, so the new holder must stop");
-    await grant.DisposeAsync();
-  }
-
-  [Test]
-  [Timeout(120000)]
-  [Arguments(true)]
-  [Arguments(false)]
-  public async Task Vote_OnADatabaseWithoutTheRoleFunctions_Throws_AndLeavesNoSessionLockBehindAsync(
-      bool bridge, CancellationToken cancellationToken) {
+  public async Task Vote_OnADatabaseWithoutTheRoleFunctions_ThrowsAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
     await _executeAsync("ALTER FUNCTION wh_vote_role(text, uuid, interval, interval, bigint, integer[], integer) RENAME TO wh_vote_role_moved", cancellationToken);
 
-    await Assert.That(async () => await _electorFor(a, bridge).TryAcquireAsync(ROLE, cancellationToken))
+    await Assert.That(async () => await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken))
       .Throws<PostgresException>();
-
-    await Assert.That((await _legacyFor(await _joinAsync(cancellationToken)).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull()
-      .Because("a vote that could not run must not leave the session lock behind");
   }
 
   [Test]
@@ -445,24 +361,29 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     await _executeAsync("INSERT INTO wh_instance_evictions (instance_id, reason) VALUES (@id, 'test')", cancellationToken, ("id", a.InstanceId));
 
-    var attempt = await _electorFor(a, bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    var attempt = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Refused);
-    await Assert.That((await _legacyFor(await _joinAsync(cancellationToken)).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull()
-      .Because("a refused attempt gives the bridge lock back");
+    await Assert.That((await _electorFor(await _joinAsync(cancellationToken)).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull()
+      .Because("a refused attempt leaves the role free for a live instance");
   }
 
   [Test]
   [Timeout(120000)]
-  public async Task UnmanagedDuty_IsDelegatedToTheSessionLockElectorAsync(CancellationToken cancellationToken) {
+  public async Task EveryDuty_IsHeldByAssignment_EvenOneTheHolderLoopDoesNotHoldAsync(CancellationToken cancellationToken) {
+    // #2044: one way to hold a duty. A host's own duty, not in Roles, is voted in the role table like the framework's.
     var a = await _joinAsync(cancellationToken);
+    var b = await _joinAsync(cancellationToken);
 
     var attempt = await _electorFor(a).TryAcquireAsync("host-duty", cancellationToken);
 
     await Assert.That(attempt.Grant).IsNotNull();
-    await Assert.That(attempt.Grant!.Epoch).IsNull()
-      .Because("a duty that is not a role stays on the session lock, which has no fencing token");
+    await Assert.That(attempt.Grant!.Epoch).IsEqualTo(1L)
+      .Because("every duty carries a fencing token, so a deposed holder's writes are refused");
+    await Assert.That((await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Contended);
     await attempt.Grant.DisposeAsync();
+    await using var next = (await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Grant;
+    await Assert.That(next?.Epoch).IsEqualTo(2L).Because("a release hands the duty off at once");
   }
 
   [Test]
@@ -474,7 +395,6 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
       Options.Create(new RoleAssignmentOptions()),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       pod,
-      NullDutyElector.Instance,
       NullLogger<PgRoleElector>.Instance,
       libraryVersion: null);
 
@@ -564,7 +484,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     PgRoleElector withMetrics(Pod pod) => new(
       Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions()),
-      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), pod, _legacyFor(pod),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), pod,
       NullLogger<PgRoleElector>.Instance, libraryVersion: null, timeProvider: time, metrics: metrics);
 
     var first = (await withMetrics(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
@@ -626,15 +546,14 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var logger = NullLogger<PgRoleElector>.Instance;
     var bad = new RoleAssignmentOptions { MissedRenewalsBeforeLapse = 1 };
 
-    await Assert.That(() => new PgRoleElector(notification, Options.Create(bad), config, pod, NullDutyElector.Instance, logger, null))
+    await Assert.That(() => new PgRoleElector(notification, Options.Create(bad), config, pod, logger, null))
       .Throws<ArgumentOutOfRangeException>();
-    await Assert.That(() => new PgRoleElector(null!, roles, config, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, null!, config, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, null!, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, null!, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, null!, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, null!, null)).Throws<ArgumentNullException>();
-    await Assert.That(async () => await new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, logger, null)
+    await Assert.That(() => new PgRoleElector(null!, roles, config, pod, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, null!, config, pod, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, null!, pod, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, config, null!, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, null!, null)).Throws<ArgumentNullException>();
+    await Assert.That(async () => await new PgRoleElector(notification, roles, config, pod, logger, null)
       .TryAcquireAsync("", cancellationToken)).Throws<ArgumentException>();
   }
 }

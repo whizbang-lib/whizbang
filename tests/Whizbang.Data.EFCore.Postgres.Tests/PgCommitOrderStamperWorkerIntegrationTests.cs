@@ -11,7 +11,9 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.Tests.TestSupport;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -21,17 +23,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///
 /// <para>Locked invariants:</para>
 /// <list type="bullet">
-/// <item><description>The worker acquires <c>pg_try_advisory_lock</c> on startup and
-/// becomes the active stamper; <see cref="PgCommitOrderStamperWorker.IsLeader"/> = true.</description></item>
+/// <item><description>The worker leads once its duty elector grants the stamper role (here an elector that
+/// grants at once; the election itself is <c>CommitOrderStamperRoleTests</c>, #2044);
+/// <see cref="PgCommitOrderStamperWorker.IsLeader"/> = true.</description></item>
 /// <item><description>Polling tick fires <c>stamp_pending_commit_sequences</c>; rows
 /// get a non-NULL <c>commit_sequence</c> within bounded latency without any external
 /// NOTIFY.</description></item>
-/// <item><description>Only one of two concurrent workers becomes leader — the other
-/// sleeps in the retry loop.</description></item>
-/// <item><description>When the leader stops cleanly, the lock auto-releases (session
-/// scope) and a contender's next retry tick acquires it.</description></item>
 /// <item><description>Killswitch <see cref="CommitOrderStamperOptions.DisableStamper"/>
-/// causes the worker to exit immediately without acquiring the lock.</description></item>
+/// causes the worker to exit immediately without asking for the role.</description></item>
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
@@ -47,7 +46,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       string? searchPath = null,
       int batchSize = 100,
       ILogger<PgCommitOrderStamperWorker>? logger = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      IDutyElector? elector = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -77,7 +77,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       config,
       shared,
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
-      dutyElector: null,
+      dutyElector: elector ?? new GrantingDutyElector(),
       notifySignalingGate: gate,
       timeProvider: timeProvider);
   }
@@ -147,6 +147,30 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// #2044: the stamper leads only through its duty elector, whichever one the host registered. Under an elector that
+  /// is not the role elector it stamps on that elector's grant, and gives the grant back when it stops.
+  /// </summary>
+  [Test]
+  public async Task Worker_UnderAHostsOwnElector_LeadsThroughItsGrant_AndGivesItBackOnStopAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var elector = new GrantingDutyElector();
+    var worker = _newWorker(ConnectionString, elector: elector);
+    var leaderTcs = await _whenBecomesLeaderAsync(worker);
+    var stampTcs = _whenStampCount(worker, minStamped: 1);
+    await worker.StartAsync(cts.Token);
+    await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var eventId = (Guid)TrackedGuid.New();
+    await _insertEventStoreRowAsync((Guid)TrackedGuid.New(), eventId, version: 1);
+    await stampTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue();
+    await Assert.That(elector.Released).IsEqualTo(1).Because("stopping ends the tenure, and the grant goes back");
+    await Assert.That(worker.IsLeader).IsFalse();
+  }
+
+  /// <summary>
   /// With nothing unstamped, the polling tick does not run the stamp.
   /// </summary>
   /// <remarks>
@@ -191,107 +215,6 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       .Because("worker exits cleanly when disabled");
 
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  public async Task Worker_TwoInstances_OnlyOneBecomesLeaderAsync() {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    var workerA = _newWorker(ConnectionString);
-    var workerB = _newWorker(ConnectionString);
-    var leaderA = await _whenBecomesLeaderAsync(workerA);
-    var leaderB = await _whenBecomesLeaderAsync(workerB);
-
-    await workerA.StartAsync(cts.Token);
-    await workerB.StartAsync(cts.Token);
-
-    // Wait until at least one has fired OnBecameLeader.
-    _ = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
-
-    // Give the other a window to attempt lock acquisition and fail. With retry interval
-    // 100ms, 500ms is well more than one attempt.
-    await Task.Delay(500);
-
-    var leaderCount = (workerA.IsLeader ? 1 : 0) + (workerB.IsLeader ? 1 : 0);
-    await Assert.That(leaderCount).IsEqualTo(1)
-      .Because("pg_try_advisory_lock is mutually exclusive — exactly one worker holds the lock");
-
-    await workerA.StopAsync(CancellationToken.None);
-    await workerB.StopAsync(CancellationToken.None);
-  }
-
-  /// <summary>
-  /// Two services sharing one database, each in its own schema, each get a stamper. Stamping is
-  /// per schema (each service's <c>wh_event_store</c> is stamped by that service's leader), but
-  /// a Postgres advisory lock is per database. With one key for every schema, the first service
-  /// to elect a stamper excluded every other service's, whose events then stayed unstamped and
-  /// reached their perspectives only through the unstamped-row grace window and the next
-  /// backstop claim: seconds of added latency on every event, for as long as the processes ran.
-  /// </summary>
-  [Test]
-  public async Task Worker_TwoServiceSchemasInOneDatabase_EachElectsItsOwnStamperAsync() {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    const string otherSchema = "stamper_other_service";
-    await using (var setup = new NpgsqlConnection(ConnectionString)) {
-      await setup.OpenAsync();
-      await using var cmd = setup.CreateCommand();
-      // Just enough of a second service's schema for its stamper's pending-work probe to run.
-      cmd.CommandText =
-        $"CREATE SCHEMA {otherSchema}; CREATE TABLE {otherSchema}.wh_event_store (commit_sequence BIGINT)";
-      _ = await cmd.ExecuteNonQueryAsync();
-    }
-
-    var serviceA = _newWorker(ConnectionString, searchPath: "public");
-    var serviceB = _newWorker(ConnectionString, searchPath: otherSchema);
-    var leaderA = await _whenBecomesLeaderAsync(serviceA);
-    var leaderB = await _whenBecomesLeaderAsync(serviceB);
-
-    await serviceA.StartAsync(cts.Token);
-    await leaderA.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await serviceB.StartAsync(cts.Token);
-
-    try {
-      await leaderB.Task.WaitAsync(TimeSpan.FromSeconds(10));
-      await Assert.That(serviceA.IsLeader && serviceB.IsLeader).IsTrue()
-        .Because("each service's stamper leads for its own schema; neither may exclude the other");
-    } finally {
-      await serviceA.StopAsync(CancellationToken.None);
-      await serviceB.StopAsync(CancellationToken.None);
-    }
-  }
-
-  [Test]
-  public async Task Worker_LeaderStops_OtherTakesOverAsync() {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    var workerA = _newWorker(ConnectionString);
-    var workerB = _newWorker(ConnectionString);
-    var leaderA = await _whenBecomesLeaderAsync(workerA);
-    var leaderB = await _whenBecomesLeaderAsync(workerB);
-
-    await workerA.StartAsync(cts.Token);
-    await workerB.StartAsync(cts.Token);
-
-    // Wait until SOMEONE is leader. Then stop that one.
-    var firstAcquired = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
-    PgCommitOrderStamperWorker leader, contender;
-    Task contenderLeaderTask;
-    if (firstAcquired == leaderA.Task) {
-      leader = workerA;
-      contender = workerB;
-      contenderLeaderTask = leaderB.Task;
-    } else {
-      leader = workerB;
-      contender = workerA;
-      contenderLeaderTask = leaderA.Task;
-    }
-
-    await leader.StopAsync(CancellationToken.None);
-
-    // The other should pick up the lock within a few retry intervals (100ms each).
-    await contenderLeaderTask.WaitAsync(TimeSpan.FromSeconds(10));
-    await Assert.That(contender.IsLeader).IsTrue()
-      .Because("lock auto-releases when the holder's session closes; contender's next retry acquires");
-
-    await contender.StopAsync(CancellationToken.None);
   }
 
   /// <summary>
@@ -528,49 +451,6 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(logged).Contains("a stamp of 8 rows timed out").And.Contains("the next asks for 4")
       .Because("a stamper that backs off is visible as one: the warning names the size that failed and the next");
     await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue();
-  }
-
-  /// <summary>
-  /// Completes on one of the worker's warnings (the timeout by default), so a test can act on it without subscribing
-  /// to the event.
-  /// </summary>
-  /// <summary>
-  /// The leader lock is a session-level advisory lock on a direct connection, held for the tenure; stopping the
-  /// leader releases it on the session that took it, with the key it was taken with, so the release finds the lock and
-  /// the next instance can lead at once.
-  /// </summary>
-  [Test]
-  public async Task Worker_StoppingTheLeader_ReleasesItsLockOnTheSessionThatTookItAsync() {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    var logger = new WarningCapturingLogger();
-    var first = _newWorker(ConnectionString, logger: logger);
-    var firstLeads = await _whenBecomesLeaderAsync(first);
-    await first.StartAsync(cts.Token);
-    await firstLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await first.StopAsync(CancellationToken.None);
-
-    await Assert.That(logger.Warnings).IsEmpty()
-      .Because("a release that finds the lock gone is logged, and this one ran where the lock was taken");
-    var second = _newWorker(ConnectionString);
-    var secondLeads = await _whenBecomesLeaderAsync(second);
-    await second.StartAsync(cts.Token);
-    await secondLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await second.StopAsync(CancellationToken.None);
-  }
-
-  private sealed class WarningCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
-    private readonly Lock _lock = new();
-    private readonly List<string> _warnings = [];
-    public List<string> Warnings { get { lock (_lock) { return [.. _warnings]; } } }
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-    public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      if (logLevel == LogLevel.Warning) {
-        lock (_lock) { _warnings.Add(formatter(state, exception)); }
-      }
-    }
   }
 
   private sealed class TimeoutSignalingLogger(int eventIdToSignal = 18) : ILogger<PgCommitOrderStamperWorker> {

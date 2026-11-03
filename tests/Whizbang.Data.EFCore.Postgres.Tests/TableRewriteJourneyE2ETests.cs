@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// journey they compose: requested → measured → elected → rewritten → cleared.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Startup/TableRewriteStartupStep.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDutyElector.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/089_TableRewriteRequests.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
@@ -56,11 +56,13 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     return services.BuildServiceProvider();
   }
 
-  private PgDutyElector _electorFor(Pod pod) => new(
+  private PgRoleElector _electorFor(Pod pod) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+    Options.Create(new RoleAssignmentOptions()),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
-    NullLogger<PgDutyElector>.Instance);
+    NullLogger<PgRoleElector>.Instance,
+    libraryVersion: null);
 
   private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();

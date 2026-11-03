@@ -43,7 +43,7 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
     new() { DirectConnectionString = ConnectionString, SignalingMode = WorkSignalingMode.ListenNotify };
 
   private static RoleAssignmentOptions _roles() {
-    var options = new RoleAssignmentOptions { HoldLegacySessionLock = false, RenewInterval = TimeSpan.FromMilliseconds(250) };
+    var options = new RoleAssignmentOptions { RenewInterval = TimeSpan.FromMilliseconds(250) };
     options.Roles.Add(PartitionAssignerOptions.ROLE);
     return options;
   }
@@ -53,7 +53,6 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
   private PartitionAssignerWorker _workerFor(Pod pod, PartitionAssignerOptions? options = null) {
     var roles = _roles();
     var elector = new PgRoleElector(Options.Create(_notification()), Options.Create(roles), _config(), pod,
-      new PgDutyElector(Options.Create(_notification()), _config(), pod, NullLogger<PgDutyElector>.Instance),
       NullLogger<PgRoleElector>.Instance, null);
     return new PartitionAssignerWorker(elector, _store(), NullInstanceConnectionModeSource.Instance, pod,
       Options.Create(options ?? new PartitionAssignerOptions()), Options.Create(roles), NullLogger<PartitionAssignerWorker>.Instance);

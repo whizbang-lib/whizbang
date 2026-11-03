@@ -153,7 +153,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       config,
       sharedConnection,
       NullLogger<PgCommitOrderStamperWorker>.Instance,
-      dutyElector: null);
+      dutyElector: new Whizbang.Data.EFCore.Postgres.Tests.TestSupport.GrantingDutyElector());
     var leaderTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     stamper.OnBecameLeader += () => leaderTcs.TrySetResult();
 

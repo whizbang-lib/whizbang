@@ -9,12 +9,14 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Startup;
+using Whizbang.Data.EFCore.Postgres.Tests.TestSupport;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Coverage for four <see cref="PgCommitOrderStamperWorker"/> lines that
+/// Coverage for <see cref="PgCommitOrderStamperWorker"/> lines that
 /// <see cref="PgCommitOrderStamperWorkerIntegrationTests"/>'s full leader-election/stamping
 /// scenarios never happen to exercise. A commit-order stamper decides the order events are
 /// read back in; if the leader loop can silently die on an unhandled iteration failure, or the
@@ -76,6 +78,33 @@ public class PgCommitOrderStamperWorkerCoverageTests {
   private const int DISABLED_NO_CONNECTION_EVENT_ID = 2;
 
   /// <summary>
+  /// #2044: the stamper leads only through a duty elector; there is no lock of its own to fall back to. With none
+  /// registered it says so, in a warning an operator can act on, and ends without leading.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task ExecuteAsync_WithNoDutyElector_SaysSoAndEndsWithoutLeadingAsync(bool theNullDefault, CancellationToken testToken) {
+    // No elector at all, or the framework's null default, which is registered when nothing supplies one.
+    var logger = new EventIdRecordingLogger();
+    var worker = _newWorker(directConnectionString: "Host=stamper-has-no-elector;Database=none", logger: logger,
+      withElector: theNullDefault, elector: NullDutyElector.Instance);
+
+    await worker.StartAsync(testToken);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(logger.EventIds).Contains(NO_DUTY_ELECTOR_EVENT_ID)
+      .Because("a stamper that cannot lead must say why rather than end silently");
+    await Assert.That(worker.IsLeader).IsFalse();
+
+    await worker.StopAsync(testToken);
+  }
+
+  private const int NO_DUTY_ELECTOR_EVENT_ID = 20;
+
+  /// <summary>
   /// Captures only EventId 6 (<c>LogIterationError</c>) so a test can wait for a deterministic
   /// count of failed leader-election iterations instead of sleeping. Every non-cancellation
   /// exception thrown while attempting to acquire the lock lands here.
@@ -114,7 +143,9 @@ public class PgCommitOrderStamperWorkerCoverageTests {
 
   private static PgCommitOrderStamperWorker _newWorker(
       string? directConnectionString = null,
-      ILogger<PgCommitOrderStamperWorker>? logger = null) {
+      ILogger<PgCommitOrderStamperWorker>? logger = null,
+      bool withElector = true,
+      IDutyElector? elector = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = directConnectionString,
     };
@@ -129,7 +160,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       config,
       new NoOpSharedNotifyConnection(),
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
-      dutyElector: null);
+      dutyElector: withElector ? elector ?? new GrantingDutyElector() : null);
   }
 
   /// <summary>

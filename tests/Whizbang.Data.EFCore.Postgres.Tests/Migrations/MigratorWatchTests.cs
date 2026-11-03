@@ -16,7 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <summary>
 /// What a waiter watches while another instance migrates (#966 phase 4): the migrator's assignment
 /// row, held live while its lease runs or its marked backend works, and, for a migrator on an older
-/// release, the duty's session lock. Over a real, migrated database.
+/// release that holds the duty by its own session lock, the holding it records, judged by the one
+/// liveness rule (#2044). No lock is read. Over a real, migrated database.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigratorWatch.cs</code-under-test>
 [Category("Integration")]
@@ -56,14 +57,19 @@ public class MigratorWatchTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task AMigratorOnAnOlderRelease_HoldingTheDutysSessionLock_IsMigratingAsync(CancellationToken cancellationToken) {
+  public async Task AMigratorOnAnOlderRelease_IsSeenByItsRecordedHolding_WhileTheRuleCallsItLiveAsync(CancellationToken cancellationToken) {
+    var older = await _joinAsync(cancellationToken);
     await using var waiter = await _openAsync(cancellationToken);
-    await using var older = await _openAsync(cancellationToken);
-    _ = await _scalarAsync(older, "SELECT pg_advisory_lock(@k)", cancellationToken,
-      ("k", DutyLockKey.Compute("public", StartupDuties.MIGRATOR)));
+    _ = await _scalarAsync(waiter, "SELECT record_capability(@id, @role)", cancellationToken,
+      ("id", older), ("role", StartupDuties.MIGRATOR));
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "\"public\"", cancellationToken)).IsTrue()
-      .Because("either spelling of the schema names the same lock");
+      .Because("either spelling of the schema names the same holding");
+
+    _ = await _scalarAsync(waiter, "UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id",
+      cancellationToken, ("id", older));
+    await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "public", cancellationToken)).IsFalse()
+      .Because("the one liveness rule calls the older migrator dead, so its holding no longer keeps anyone waiting");
   }
 
   [Test]
@@ -138,7 +144,7 @@ public class MigratorWatchTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task ASchemaWithoutTheRoleFunctions_AnswersFromTheSessionLockAloneAsync(CancellationToken cancellationToken) {
+  public async Task ASchemaWithoutTheRoleFunctions_IsNotMigratingAsync(CancellationToken cancellationToken) {
     await using var waiter = await _openAsync(cancellationToken);
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "schema_never_bootstrapped", cancellationToken)).IsFalse();
