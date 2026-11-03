@@ -11,6 +11,7 @@ namespace Whizbang.Core.Serialization;
 /// its own records, so nothing is discovered by reflection. The combined options are rebuilt only when a context
 /// registers after they were built.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Serialization/RegisteredJsonTests.cs</tests>
 internal static class RegisteredJson {
   private static readonly Lock _gate = new();
   private static JsonSerializerOptions? _options;
