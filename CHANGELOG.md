@@ -1292,6 +1292,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A destruction hook is honored on the Dapper data layer (#2039).** The ephemeral reap's destruction seam ran on the
+  EF Core driver only: on Dapper a registered `IDestructionHook` was offered nothing, its Cancel and Defer held nothing,
+  a throwing hook forced the delete at once, and the maintenance cycle reaped every eligible body, including ones no
+  hook had seen. The Dapper coordinator now runs the same statements as the EF Core one, from one shared copy
+  (`EphemeralDestructionSql`): the bodies about to be reaped, the hold, the failure count with its retry cap and
+  policy, and the reap restricted to the bodies the hook was offered. Archive, purge and close already offered the hook
+  on both drivers, and perspective rows since #1505.
+- **Finding perspective tables to rebuild no longer reads a stale answer inside a caller's transaction (#2038).** A
+  name lookup (`to_regclass`, `to_regprocedure`) is answered from the session's catalog cache, which a transaction
+  refreshes only when it starts, when a statement opens a relation, or when a name fails to resolve.
+  `ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync` takes any open connection; inside a transaction that
+  looked before another session committed the managed-object ledger, it reported nothing to rebuild and a start took
+  the fast path past a dropped index. It now reads `pg_class` under the statement's snapshot (`CatalogPresence`, which
+  the schema bootstrap now shares), as the bootstrap has since #2009. Every other catalog lookup in the library was
+  audited and kept, each for a recorded reason (`ai-docs/catalog-existence-checks.md`); `MigratorWatch` is kept and its
+  ordering locked by a test. No migration changes.
 - **A positional record whose base record has its own members compiles in the generated JSON context (#2016).** An
   event such as `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036 because the
   generator fell back to a parameterless constructor the record does not have. The constructor now receives the
