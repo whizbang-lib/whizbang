@@ -111,7 +111,8 @@ public sealed class StartupHostedServiceAuditTests {
     // Configuration and registration checks, and log lines.
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
-    "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "CapabilityVerdictEnforcer",
+    "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
+    "CapabilityVerdictEnforcer",
     // In-memory registrations: receptors, backup ticks (run by BackupTickCoordinator), event hooks.
     "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar", "IntegrityManifestReceptorRegistrar",
     "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar", "ScheduledStreamCloseReceptorRegistrar",

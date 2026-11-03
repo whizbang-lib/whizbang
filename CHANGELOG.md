@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Each perspective chooses what happens to its rows of a stream archived whole (#1739, WS-3 S10).**
+  `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]` on a perspective, overridden per perspective by
+  `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>`. `Keep` (the default) changes nothing; `Drop` deletes the
+  row with the companions a row eviction removes (the parked cursors and every snapshot but the latest), and the
+  stream's next event after a restore or a new generation rebuilds it; `Archive` moves the row into
+  `wh_event_archive_rows` beside the archived events and a restore or a new generation puts it back. When the
+  perspectives of one model disagree, the least destructive policy wins. Migration 299 (redefines `wh_archive_stream`,
+  `wh_restore_archived_stream`, `wh_delete_stream_archive` and `_wh_start_new_generations`).
 - **Event bodies compress with lz4 (#1728, WS-2 S11).** Migration 290 sets `lz4` on both `wh_event_body` columns
   (each only when it is not lz4 already; a server built without lz4 keeps pglz and logs a warning). Measured on copies
   of the table, lz4 at the default target was 1.1% smaller, 26% faster to write and 11% faster to read in full than
@@ -1200,6 +1208,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
   CPU at its ceiling. Migration 301 adds an index on `stream_id`, which every stream-keyed digest read and delete now
   uses, and the reconcile names the bundle's streams so the index drives it.
+- **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
+  worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
+  stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not
+  run and the caller's await ends in `OperationCanceledException`. Running the queue stays `DrainAsync`'s job; call it
+  before `StopAsync` for a graceful shutdown. A drain that a stop overlaps now completes normally rather than absorbing
+  the worker's cancellation.
+- **A serial executor's drain honors its cancellation token (#2011).** `SerialExecutor.DrainAsync` never read its
+  token, so a drain waited for the whole queue however its caller asked it to stop, and a drain handed a token that was
+  already canceled closed the channel and reported success. A drain canceled while waiting now throws
+  `OperationCanceledException` and the worker keeps running the queue it closed; a drain whose token is already
+  canceled throws before closing the channel, so the executor keeps accepting work.
+- **An enqueue a stop interrupts cancels its caller and returns its pooled state (#2012).** A
+  `SerialExecutor.ExecuteAsync` that passed the running check just before a stop closed the channel, or whose bounded
+  write was waiting for room, failed with `ChannelClosedException` and left its rented execution state out of the
+  pool. The caller now gets `OperationCanceledException`, the same as work the stop found queued, and a caller whose
+  own token cancels the wait gets that cancellation unchanged; either way the state goes back to the pool.
+- **Concurrent drains of a parallel executor cannot deadlock (#2005).** `ParallelExecutor.DrainAsync` took the
+  concurrency slots one at a time, so two drains at once could each hold some and wait forever for the rest. Drains
+  are now serialized and complete one after another. A drain whose token is canceled gives back the slots it had
+  taken; before, it kept them, lowering the executor's concurrency for good and hanging every later drain.
 - **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
   waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
   worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,

@@ -50,6 +50,7 @@ internal sealed record PerspectiveInfo(
     bool IsEphemeral = false,
     int TtlRowSeconds = -1,
     bool IsFullHistory = false,
+    int ArchivedStreamRowPolicy = -1,
     int RowCapPerScope = -1,
     string? RowCapScopeKey = null,
     string? StreamGroupSpec = null,

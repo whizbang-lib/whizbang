@@ -438,6 +438,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>();
     services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(
       sp => sp.GetRequiredService<Whizbang.Core.Perspectives.PerspectiveRowRetentionConfigurator>());
+    // #1739: the configured policies for rows of archived streams, applied to the registry the generated runners' missing-row
+    // probe reads, the same way. Inert when nothing is configured.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Hosting.IHostedService, Whizbang.Core.Archival.ArchivedStreamRowsConfigurator>());
     // Schema-init behavior (blocking by default; opt-in non-blocking + optional migration timeout).
     services.AddOptions<SchemaInitializationOptions>();
     services.TryAddSingleton(TimeProvider.System);

@@ -94,6 +94,9 @@ public sealed partial class MaintenanceWorker(
     await _syncStreamTypePoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
     // #1725: the stored-metadata settings, for the same reason: every write path decides each event's metadata from them.
     await _syncEventStoreMetadataSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
+    // #1739: the policies for rows of archived streams, for the same reason: an archive can run at any time, and it reads
+    // them inside the database.
+    await _syncArchivedStreamRowPoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
 
     if (_housekeeping is null) {
       await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
@@ -1069,6 +1072,34 @@ public sealed partial class MaintenanceWorker(
       LogEventStoreMetadataSyncFailed(_logger, published ?? "none; settings not resolved", ex);
     }
   }
+
+  /// <summary>
+  /// Publishes the per-perspective policies for rows of archived streams (the declarations joined with
+  /// <c>Whizbang:Perspectives:ArchivedStreamRows</c>) to <c>wh_settings</c>, where the whole-stream archive reads them.
+  /// Best-effort: the archive keeps the policies already stored, so a failed write is logged with the policies it left
+  /// unstored and the tick goes on. Cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerArchivedStreamRowsSyncTests.cs</tests>
+  private async Task _syncArchivedStreamRowPoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    string? published = null;
+    try {
+      // Resolved inside the guard: options that cannot be bound are reported here rather than failing the tick.
+      var overrides = sp.GetService<IOptions<Whizbang.Core.Archival.ArchivedStreamRowsOptions>>()?.Value.Perspectives;
+      var setting = Whizbang.Core.Archival.ArchivedStreamRowPolicies.SettingFor(
+        Whizbang.Core.Archival.ArchivedStreamRowPolicies.Effective(overrides));
+      published = setting.Value.Replace('\n', ' ');
+      await coordinator.SyncRetentionSettingsAsync([setting], ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogArchivedStreamRowPolicySyncFailed(_logger, published ?? "none; policies not resolved", ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 65, Level = LogLevel.Warning,
+    Message = "Failed to publish the policies for rows of archived streams to wh_settings ({Policies}); a whole-stream archive keeps the policies already stored until a later tick succeeds.")]
+  static partial void LogArchivedStreamRowPolicySyncFailed(ILogger logger, string policies, Exception ex);
 
   [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
     Message = "Failed to publish the stored-metadata settings to wh_settings ({Settings}); the write paths keep the settings already stored until a later tick succeeds.")]
