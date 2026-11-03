@@ -97,6 +97,64 @@ public class ParallelExecutorDrainTests {
     await executor.DisposeAsync();
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainAsync_CanceledBeforeTakingAnySlot_LeavesTheExecutorWholeAsync(
+      CancellationToken cancellationToken) {
+    var executor = new ParallelExecutor(maxConcurrency: 1);
+    await executor.StartAsync(cancellationToken);
+
+    var (running, release) = await _startBlockingAsync(executor, cancellationToken);
+
+    // The only slot is busy, so the drain is canceled holding nothing.
+    using var drainCts = new CancellationTokenSource();
+    var canceledDrain = executor.DrainAsync(drainCts.Token);
+    await drainCts.CancelAsync();
+    await Assert.That(async () => await canceledDrain).Throws<OperationCanceledException>()
+      .Because("a drain's token bounds its wait");
+
+    release.SetResult(1);
+    await running;
+
+    var drain = executor.DrainAsync(cancellationToken);
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
+      .Because("a drain canceled before it took a slot gives back nothing and releases the gate, so "
+        + "the next drain of an idle executor completes at once");
+
+    await executor.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainAsync_CanceledWaitingForTheGate_LeavesTheRunningDrainWholeAsync(
+      CancellationToken cancellationToken) {
+    var executor = new ParallelExecutor(maxConcurrency: 1);
+    await executor.StartAsync(cancellationToken);
+
+    var (running, release) = await _startBlockingAsync(executor, cancellationToken);
+
+    // The first drain holds the gate and waits for the busy slot; the second waits for the gate.
+    var holder = executor.DrainAsync(cancellationToken);
+    using var waiterCts = new CancellationTokenSource();
+    var waiter = executor.DrainAsync(waiterCts.Token);
+    await waiterCts.CancelAsync();
+    await Assert.That(async () => await waiter).Throws<OperationCanceledException>()
+      .Because("a drain's token bounds its wait for the gate as well");
+
+    release.SetResult(1);
+    await running;
+    await holder;
+
+    await Assert.That(holder.IsCompletedSuccessfully).IsTrue()
+      .Because("a drain canceled while waiting for the gate never held it, so it must not release it; "
+        + "a release there would overfill the gate and fault the drain that does hold it");
+    var drain = executor.DrainAsync(cancellationToken);
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
+      .Because("the gate and every slot are free again once the holder finishes");
+
+    await executor.DisposeAsync();
+  }
+
   /// <summary>
   /// Starts a handler that signals it is running and then waits for the returned source.
   /// </summary>

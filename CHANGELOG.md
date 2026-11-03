@@ -1185,6 +1185,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
+  worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
+  stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not
+  run and the caller's await ends in `OperationCanceledException`. Running the queue stays `DrainAsync`'s job; call it
+  before `StopAsync` for a graceful shutdown. A drain that a stop overlaps now completes normally rather than absorbing
+  the worker's cancellation.
+- **Concurrent drains of a parallel executor cannot deadlock (#2005).** `ParallelExecutor.DrainAsync` took the
+  concurrency slots one at a time, so two drains at once could each hold some and wait forever for the rest. Drains
+  are now serialized and complete one after another. A drain whose token is canceled gives back the slots it had
+  taken; before, it kept them, lowering the executor's concurrency for good and hanging every later drain.
 - **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
   waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
   worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,

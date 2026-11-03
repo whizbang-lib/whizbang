@@ -24,10 +24,14 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_TwoDrainsOverlap_BothCompleteAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledAfterTakingSlots_GivesThemBackAsync</tests>
 public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 
   private readonly SemaphoreSlim _semaphore;
+  // One drain at a time takes concurrency slots. See DrainAsync.
+  private readonly SemaphoreSlim _drainGate = new(1, 1);
   private readonly int _maxConcurrency;
   private State _state = State.NotStarted;
   private readonly Lock _stateLock = new();
@@ -152,6 +156,24 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   }
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// <para>
+  /// A drain proves nothing is running by holding every concurrency slot at once. The semaphore
+  /// cannot take several slots in one step, so the slots are taken one at a time, and drains are
+  /// serialized through a gate: two drains taking slots together could each hold some and wait forever
+  /// for the rest (#2005). A drain waits for the gate first, so concurrent drains complete one after
+  /// another.
+  /// </para>
+  /// <para>
+  /// A drain whose token is canceled gives back every slot it had taken, and the gate, before the
+  /// cancellation reaches its caller.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/execution-lifecycle</docs>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_TwoDrainsOverlap_BothCompleteAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledAfterTakingSlots_GivesThemBackAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledBeforeTakingAnySlot_LeavesTheExecutorWholeAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledWaitingForTheGate_LeavesTheRunningDrainWholeAsync</tests>
   public async Task DrainAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state != State.Running) {
@@ -159,13 +181,22 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
       }
     }
 
-    // Wait for all semaphore slots to be available (all work complete)
-    for (int i = 0; i < _maxConcurrency; i++) {
-      await _semaphore.WaitAsync(ct);
+    // Outside the try: a drain canceled while waiting here took nothing and must release nothing.
+    await _drainGate.WaitAsync(ct);
+    var held = 0;
+    try {
+      // Every slot free at once means no work is running.
+      while (held < _maxConcurrency) {
+        await _semaphore.WaitAsync(ct);
+        held++;
+      }
+    } finally {
+      // All of them on success; the ones taken so far when the token was canceled.
+      if (held > 0) {
+        _semaphore.Release(held);
+      }
+      _drainGate.Release();
     }
-
-    // Release all slots back
-    _semaphore.Release(_maxConcurrency);
   }
 
   /// <summary>Releases the semaphore and stops the executor if running.</summary>
@@ -177,8 +208,9 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     // Stop the executor if running
     await StopAsync();
 
-    // Dispose the semaphore
+    // Dispose the semaphores
     _semaphore.Dispose();
+    _drainGate.Dispose();
 
     _disposed = true;
     GC.SuppressFinalize(this);
