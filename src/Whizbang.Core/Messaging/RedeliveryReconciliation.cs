@@ -4,10 +4,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 
@@ -44,6 +47,17 @@ public readonly record struct RedeliveryReconciliation(
   int Children, int Present, int Adopted, int MarkedUnhealable, int RefusedTruncated = 0, int RefusedForeignOrigin = 0) {
   /// <summary>Nothing was reconciled: no origin, no children, or no store that can answer.</summary>
   public static RedeliveryReconciliation None => default;
+
+  /// <summary>
+  /// The reconcile was recorded for the maintainer's integrity delivery drain (#2001) instead of running here; the
+  /// counts are those of nothing reconciled yet.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:Reconcile_WithTheQueue_IsRecordedForTheMaintainer_NotRunHereAsync</tests>
+  public bool Deferred { get; init; }
+
+  /// <summary>A reconcile recorded for the maintainer's drain.</summary>
+  public static RedeliveryReconciliation DeferredToTheMaintainer => new() { Deferred = true };
 }
 
 /// <summary>
@@ -67,11 +81,24 @@ public readonly record struct RedeliveryReconciliation(
 /// </remarks>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs</tests>
 public static partial class RedeliveryReconciler {
+  /// <summary>The integrity delivery type a deferred reconcile is recorded under (#2001).</summary>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  public const string DELIVERY_TYPE = "whizbang:redelivery-reconcile";
+
   /// <summary>
   /// Reconciles a committed redelivery bundle's children with the receiver's event store. Best-effort: a failure is
   /// logged and leaves repair to ask again on its own schedule.
   /// </summary>
+  /// <remarks>
+  /// Since #2001 the reconcile is integrity work and runs on the maintainer: when the host has the integrity delivery
+  /// drain (<see cref="IntegrityDeliveryRegistry"/>) and the coordinator can record deliveries, the reconcile is
+  /// recorded with the origin, its name, the children's ids and their origin sequences, and the drain runs it with
+  /// exactly those (<see cref="RedeliveryReconciliation.DeferredToTheMaintainer"/> is returned). The bundle's events
+  /// are already stored by then: that is ordinary event storage and stays at receipt. Otherwise it reconciles here, as
+  /// before. A redelivered bundle with the same children is recorded once.
+  /// </remarks>
   /// <param name="composite">The redelivery bundle.</param>
   /// <param name="children">The children the receiver kept (its subscribed events).</param>
   /// <param name="services">The dispatch scope's services.</param>
@@ -96,14 +123,105 @@ public static partial class RedeliveryReconciler {
     if (coordinator is null) {
       return RedeliveryReconciliation.None;
     }
+    Guid[] eventIds = [.. children.Select(c => c.MessageId)];
+    // A zero sequence is the origin's "not stamped yet" on the wire, never a position.
+    long?[] sequences = [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)];
+    if (services.GetService<IntegrityDeliveryRegistry>() is not null) {
+      try {
+        var payload = _writeDeferred(origin, originServiceName, eventIds, sequences);
+        var recorded = await coordinator.EnqueueIntegrityDeliveryAsync(
+          IntegrityDeliveryId.For(DELIVERY_TYPE, payload), DELIVERY_TYPE, Encoding.UTF8.GetString(payload), cancellationToken)
+          .ConfigureAwait(false);
+        if (recorded == IntegrityDeliveryEnqueueResult.Recorded) {
+          services.GetService<StreamIntegrityMetrics>()?.IntegrityDeliveriesQueued.Add(1,
+            new KeyValuePair<string, object?>("type", DELIVERY_TYPE));
+        }
+        if (recorded != IntegrityDeliveryEnqueueResult.Unsupported) {
+          return RedeliveryReconciliation.DeferredToTheMaintainer;
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogReconcileFailed(logger, children.Count, origin, ex);
+        return RedeliveryReconciliation.None;
+      }
+    }
+    return await _reconcileCoreAsync(
+      coordinator, origin, originServiceName, eventIds, sequences, services, logger, now, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The integrity delivery drain's handler for a deferred reconcile: reads the recorded origin, name, event ids and
+  /// sequences back and reconciles with exactly those, as the inline path would have.
+  /// </summary>
+  /// <param name="payload">The recorded reconcile.</param>
+  /// <param name="services">A scope's services for this delivery.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the reconcile is done.</returns>
+  /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:TheDrain_ReconcilesWithExactlyWhatTheInlineReconcilePassesAsync</tests>
+  internal static async Task HandleDeferredAsync(string payload, IServiceProvider services, CancellationToken cancellationToken) {
+    var (origin, originServiceName, eventIds, sequences) = _readDeferred(payload);
+    var coordinator = services.GetService<IWorkCoordinator>();
+    if (coordinator is null) {
+      return;
+    }
+    var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RedeliveryReconciler).FullName!)
+      ?? NullLogger.Instance;
+    var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    _ = await _reconcileCoreAsync(
+      coordinator, origin, originServiceName, eventIds, sequences, services, logger, now, cancellationToken).ConfigureAwait(false);
+  }
+
+  // The deferred form, written by hand so Core needs no serializer context for it.
+  private static byte[] _writeDeferred(Guid origin, string? originServiceName, Guid[] eventIds, long?[] sequences) {
+    using var buffer = new MemoryStream();
+    using (var writer = new Utf8JsonWriter(buffer)) {
+      writer.WriteStartObject();
+      writer.WriteString("originServiceId", origin);
+      writer.WriteString("originServiceName", originServiceName);
+      writer.WriteStartArray("eventIds");
+      foreach (var id in eventIds) {
+        writer.WriteStringValue(id);
+      }
+      writer.WriteEndArray();
+      writer.WriteStartArray("commitSequences");
+      foreach (var sequence in sequences) {
+        if (sequence is { } value) {
+          writer.WriteNumberValue(value);
+        } else {
+          writer.WriteNullValue();
+        }
+      }
+      writer.WriteEndArray();
+      writer.WriteEndObject();
+    }
+    return buffer.ToArray();
+  }
+
+  private static (Guid Origin, string? Name, Guid[] EventIds, long?[] Sequences) _readDeferred(string payload) {
+    using var document = JsonDocument.Parse(payload);
+    var root = document.RootElement;
+    if (root.ValueKind != JsonValueKind.Object) {
+      throw new JsonException($"A deferred redelivery reconcile is a JSON object, not {root.ValueKind}.");
+    }
+    var name = root.GetProperty("originServiceName");
+    return (
+      root.GetProperty("originServiceId").GetGuid(),
+      name.ValueKind == JsonValueKind.Null ? null : name.GetString(),
+      [.. root.GetProperty("eventIds").EnumerateArray().Select(e => e.GetGuid())],
+      [.. root.GetProperty("commitSequences").EnumerateArray()
+        .Select(e => e.ValueKind == JsonValueKind.Null ? (long?)null : e.GetInt64())]);
+  }
+
+  /// <summary>The reconcile itself, shared by the inline path and the maintainer's drain.</summary>
+  private static async Task<RedeliveryReconciliation> _reconcileCoreAsync(
+      IWorkCoordinator coordinator, Guid origin, string? originServiceName, Guid[] eventIds, long?[] sequences,
+      IServiceProvider services, ILogger logger, DateTimeOffset now, CancellationToken cancellationToken) {
+    var childCount = eventIds.Length;
     try {
-      // A zero sequence is the origin's "not stamped yet" on the wire, never a position.
       var buckets = await coordinator.AdoptRedeliveredOriginAsync(
-        origin,
-        originServiceName,
-        [.. children.Select(c => c.MessageId)],
-        [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)],
-        cancellationToken).ConfigureAwait(false);
+        origin, originServiceName, eventIds, sequences, cancellationToken).ConfigureAwait(false);
       if (buckets is null) {
         return RedeliveryReconciliation.None;   // a store that cannot answer: repair behaves as before
       }
@@ -112,24 +230,24 @@ public static partial class RedeliveryReconciler {
       var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
       var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
       var metrics = services.GetService<StreamIntegrityMetrics>();
-      _reportForeignOrigins(logger, metrics, refusedForeignOrigin, children.Count, originServiceName, origin);
+      _reportForeignOrigins(logger, metrics, refusedForeignOrigin, childCount, originServiceName, origin);
       if (adopted > 0) {
         metrics?.OriginsAdopted.Add(adopted);
-        LogOriginsAdopted(logger, adopted, children.Count, origin);
+        LogOriginsAdopted(logger, adopted, childCount, origin);
       }
       // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
       // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
       // bundle that stored nothing and adopted nothing marks the buckets of the events it found present.
       List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
-      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refusedTruncated >= children.Count
+      List<RedeliveredBucketPresence> unchanged = adopted == 0 && present + refusedTruncated >= childCount
         ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
         : [];
       if (refusedBuckets.Count + unchanged.Count == 0) {
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
+        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
       }
       var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
       if (ledger is null) {
-        return new RedeliveryReconciliation(children.Count, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
+        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
       }
       var marked = await _markAsync(ledger, origin, refusedBuckets, now,
           key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
@@ -140,11 +258,11 @@ public static partial class RedeliveryReconciler {
       if (marked > 0) {
         metrics?.RepairsUnhealable.Add(marked);
       }
-      return new RedeliveryReconciliation(children.Count, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
+      return new RedeliveryReconciliation(childCount, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      LogReconcileFailed(logger, children.Count, origin, ex);
+      LogReconcileFailed(logger, childCount, origin, ex);
       return RedeliveryReconciliation.None;
     }
   }

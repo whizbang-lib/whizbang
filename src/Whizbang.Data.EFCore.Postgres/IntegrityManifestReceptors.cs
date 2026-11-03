@@ -1211,14 +1211,9 @@ internal sealed class IntegrityManifestReceptorRegistrar(
     if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
-    var requestReceptor = new IntegrityManifestRequestReceptor(scopeFactory, requestLogger);
-    registry.Register<RequestIntegrityManifest>(requestReceptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<RequestIntegrityManifest>(requestReceptor, LifecycleStage.PreOutboxInline);
-    registry.Register<RequestIntegrityManifest>(requestReceptor, LifecycleStage.PostInboxInline);
-    var manifestReceptor = new IntegrityManifestReceptor(scopeFactory, manifestLogger);
-    registry.Register<IntegrityManifest>(manifestReceptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<IntegrityManifest>(manifestReceptor, LifecycleStage.PreOutboxInline);
-    registry.Register<IntegrityManifest>(manifestReceptor, LifecycleStage.PostInboxInline);
+    // Deferred at every stage: answering and comparing manifests run on the maintainer's integrity delivery drain (#2001).
+    registry.RegisterIntegrityReceptor(new IntegrityManifestRequestReceptor(scopeFactory, requestLogger), services, scopeFactory);
+    registry.RegisterIntegrityReceptor(new IntegrityManifestReceptor(scopeFactory, manifestLogger), services, scopeFactory);
     return Task.CompletedTask;
   }
 
