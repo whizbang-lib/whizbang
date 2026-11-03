@@ -436,7 +436,7 @@ public partial class WorkTablesAreLockedInOneOrderTests {
   public async Task TheDerivationFindsTheMultiTableFunctionsAsync() {
     var found = _reachableOrders();
 
-    // 300 (#1999) moved the maintenance tasks into wh_perform_maintenance; perform_maintenance() only calls it.
+    // 310 (#1999) moved the maintenance tasks into wh_perform_maintenance; perform_maintenance() only calls it.
     await Assert.That(found.Keys).Contains("wh_perform_maintenance");
     await Assert.That(found.Keys).Contains("recompute_partition_numbers");
     await Assert.That(found.Keys).Contains("deregister_instance");

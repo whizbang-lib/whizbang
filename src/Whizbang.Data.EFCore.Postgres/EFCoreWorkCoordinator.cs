@@ -5978,7 +5978,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _performMaintenanceAsync(null, cancellationToken);
 
   /// <inheritdoc />
-  /// <remarks>Calls <c>wh_perform_maintenance</c> (migration 300) with the ids, in the one statement the unrestricted call runs.</remarks>
+  /// <remarks>Calls <c>wh_perform_maintenance</c> (migration 310) with the ids, in the one statement the unrestricted call runs.</remarks>
   public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
       IReadOnlyCollection<Guid>? ephemeralReapEventIds, CancellationToken cancellationToken = default) =>
     _performMaintenanceAsync(ephemeralReapEventIds, cancellationToken);

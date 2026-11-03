@@ -1310,7 +1310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body that became eligible in between (its grace window or TTL passed, its perspective work finished, a snapshot came
   to cover it) was deleted without the hook or the handler seeing it. The worker now passes the batch it read to the
   reap, which deletes only those bodies; a body that became eligible later is offered on the next cycle. The maintenance
-  tasks move to `wh_perform_maintenance(p_ephemeral_reap_event_ids)` (migration 300), and `perform_maintenance()` keeps
+  tasks move to `wh_perform_maintenance(p_ephemeral_reap_event_ids)` (migration 310), and `perform_maintenance()` keeps
   its name and arity as an unrestricted call of it. The cycle runs the same number of statements.
   `IWorkCoordinator.PerformMaintenanceAsync(IReadOnlyCollection<Guid>?, CancellationToken)` is new, with a default that
   runs the unrestricted call. **Contributor note:** a change to the maintenance tasks now edits `wh_perform_maintenance`.

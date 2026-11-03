@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 300_EphemeralReapDeletesWhatTheHookSaw.sql
+-- Migration: 310_EphemeralReapDeletesWhatTheHookSaw.sql
 -- Date: 2026-11-02
 -- Description: The ephemeral reap deletes exactly the bodies the destruction hook and the compaction handler saw
 --              (#1999).
@@ -23,7 +23,7 @@
 --              becomes a one-line call of wh_perform_maintenance(NULL). A later change to the maintenance tasks edits
 --              wh_perform_maintenance; PerformMaintenanceDelegatesTests fails a perform_maintenance redefined whole.
 --
---              Number 300: reserved for this change.
+--              Number 310: reserved for this change (300 to 302 are taken by other changes).
 --
 -- Dependencies: 295 (last word of perform_maintenance), 079 (wh_event_destruction_hold), 209 (snapshot_version)
 -- Objects: wh_perform_maintenance, perform_maintenance
@@ -341,7 +341,7 @@ BEGIN
       -- guaranteed "by construction" (wh_event_body held only ephemeral bodies); once SOURCED bodies
       -- move into the body table (full split), this gate is what keeps the durable log un-reapable.
       AND (es.flags & 8) = 8
-      -- 300 (#1999): the bodies the destruction hook and the compaction handler were given, and no others. The worker
+      -- 310 (#1999): the bodies the destruction hook and the compaction handler were given, and no others. The worker
       -- reads that batch before this runs, in another statement, so a body that became eligible in between (its grace
       -- or TTL passed, its perspective work finished, a snapshot came to cover it) would otherwise be deleted with no
       -- hook or handler ever seeing it. NULL: no hook or handler ran, so no batch was read, and every eligible body goes.
@@ -585,7 +585,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_perform_maintenance(UUID[]) IS
-  'The maintenance tasks (perform_maintenance''s body from 300, #1999). p_ephemeral_reap_event_ids restricts Task 8''s '
+  'The maintenance tasks (perform_maintenance''s body from 310, #1999). p_ephemeral_reap_event_ids restricts Task 8''s '
   'ephemeral body reap to the bodies the destruction hook and the compaction handler were given; every other gate still '
   'applies to them. NULL reaps every eligible body, for a cycle that ran no hook or handler.';
 
@@ -611,5 +611,5 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance() IS
-  'Runs every maintenance task with no restriction on the ephemeral body reap: wh_perform_maintenance(NULL) (300, #1999). '
+  'Runs every maintenance task with no restriction on the ephemeral body reap: wh_perform_maintenance(NULL) (310, #1999). '
   'The maintenance worker calls wh_perform_maintenance with the batch its destruction hook saw.';

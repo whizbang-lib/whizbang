@@ -228,7 +228,7 @@ CryptoShred is refused everywhere (`crypto_shred_unavailable`). `DestructionCont
 cut. Docs: `stream-end-of-life.md#dispositions`, `operations/diagnostics/whiz137.md`, `ephemeral-events.md`.
 
 **Follow-up (2026-11-02):** #1999 fixed: the ephemeral reap deletes only the bodies the hook and the compaction handler
-were given (migration 300, `wh_perform_maintenance(p_ephemeral_reap_event_ids)`; `perform_maintenance()` calls it with
+were given (migration 310, `wh_perform_maintenance(p_ephemeral_reap_event_ids)`; `perform_maintenance()` calls it with
 no restriction). Event-level archive (#1975) is waiting on owner questions posted on the issue.
 
 Original slice text:

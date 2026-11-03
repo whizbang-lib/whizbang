@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 [Category("Shard4")]
 public class TtlReapDrivesFromRegistryTests {
 
-  // 300 (#1999) moved the maintenance tasks into wh_perform_maintenance; perform_maintenance() only calls it.
+  // 310 (#1999) moved the maintenance tasks into wh_perform_maintenance; perform_maintenance() only calls it.
   private const string MAINTENANCE_FUNCTION = "FUNCTION __SCHEMA__.wh_perform_maintenance";
 
   private static string _maintenanceBody() {

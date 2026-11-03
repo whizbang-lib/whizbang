@@ -10,7 +10,7 @@ using Whizbang.Data.Postgres;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// Since migration 300 (#1999) the maintenance tasks live in <c>wh_perform_maintenance(p_ephemeral_reap_event_ids)</c>,
+/// Since migration 310 (#1999) the maintenance tasks live in <c>wh_perform_maintenance(p_ephemeral_reap_event_ids)</c>,
 /// which the maintenance worker calls with the batch its destruction hook saw, and <c>perform_maintenance()</c> is a call
 /// of it with no restriction. A later migration that redefines <c>perform_maintenance()</c> whole, copied from an older
 /// definition, would leave the worker running the old tasks and every other caller running the new ones, with no error.
@@ -43,7 +43,7 @@ public class PerformMaintenanceDelegatesTests {
     await Assert.That(body).Contains("RETURN QUERY SELECT * FROM __SCHEMA__.wh_perform_maintenance(NULL::UUID[]);")
       .Because("the maintenance tasks belong in wh_perform_maintenance, which the worker calls; edit it there");
     await Assert.That(body).DoesNotContain("DELETE")
-      .Because("a perform_maintenance that runs tasks of its own has been redefined whole from a definition older than 300");
+      .Because("a perform_maintenance that runs tasks of its own has been redefined whole from a definition older than 310");
   }
 
   [Test]
@@ -56,7 +56,7 @@ public class PerformMaintenanceDelegatesTests {
 
   [Test]
   public async Task TheScanner_FindsTheOlderFullDefinition_SoTheRuleIsNotVacuousAsync() {
-    // The control: the same extraction on the definition before 300 sees the tasks, so a whole redefinition is caught.
+    // The control: the same extraction on the definition before 310 sees the tasks, so a whole redefinition is caught.
     var corpus = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, "__SCHEMA__").GetMigrations();
     var sql = corpus.Single(m => m.Name.StartsWith("295_", StringComparison.Ordinal)).Sql;
 
