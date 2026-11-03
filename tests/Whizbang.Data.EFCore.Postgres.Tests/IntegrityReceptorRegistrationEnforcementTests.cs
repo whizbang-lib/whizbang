@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
+[Category("Shard5")]
 public class IntegrityReceptorRegistrationEnforcementTests {
   private static readonly Type[] _integrityMessages = [
     typeof(IntegrityCheckpoint), typeof(RequestIntegrityManifest), typeof(IntegrityManifest), typeof(RequestRedeliveryCommand),
