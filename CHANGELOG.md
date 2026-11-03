@@ -1277,6 +1277,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A positional record whose base record has its own members compiles in the generated JSON context (#2016).** An
+  event such as `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036 because the
+  generator fell back to a parameterless constructor the record does not have. The constructor now receives the
+  leading writable properties in order and the rest are set in an object initializer. A constructor is used only when
+  its parameters are those leading properties in order; before, one matched by name alone could receive its arguments
+  in the wrong positions.
+
+- **The initialization-registry test for a second concurrent call is deterministic (#2019).** It asserted the first
+  call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
+  explicit signal, and a new test reproduces the window on purpose.
+
 - **The integrity ledger gauges no longer read 0 while divergences are unhealed (#2024).** `unhealed_buckets`,
   `repair_exhausted_buckets`, `oldest_unhealed_age_seconds` and `sealed_through` were refreshed only inside the
   maintainer's sweep, so every other instance reported 0 unhealed for as long as it ran, and every instance reported 0
