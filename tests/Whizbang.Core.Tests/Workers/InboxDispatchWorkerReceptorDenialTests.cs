@@ -71,6 +71,15 @@ public class InboxDispatchWorkerReceptorDenialTests {
   }
 
   [Test]
+  public async Task Dispatch_DenialWithoutAReason_RecordsThatNoneWasGivenAsync() {
+    var h = new Harness(new AdmissionInvoker(InterceptorResult.Deny(DeniedAction.DeadLetter)));
+
+    await h.Worker.ProcessOneInnerAsync(_work(), CancellationToken.None);
+
+    await Assert.That(h.DeadLetters.Moves.Single().ErrorText).Contains("no reason given");
+  }
+
+  [Test]
   public async Task Dispatch_Quarantine_HoldsTheRowUnderItsOwnReasonAsync() {
     var invoker = new AdmissionInvoker(InterceptorResult.Deny(DeniedAction.Quarantine, "under review"));
     var h = new Harness(invoker);

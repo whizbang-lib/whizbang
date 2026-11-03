@@ -32,7 +32,10 @@ internal static class ReceptorDenial {
   };
 
   /// <summary>The text a denied message's dead-letter record or failure carries.</summary>
-  internal static string Describe(Guid messageId, string? messageType, InterceptorResult denial) =>
-    $"A receptor interceptor denied inbox message {messageId} ({messageType ?? "unknown type"}) with "
-    + $"DeniedAction.{denial.OnDenied}: {denial.Reason ?? "no reason given"}";
+  internal static string Describe(Guid messageId, string messageType, InterceptorResult denial) =>
+    $"A receptor interceptor denied inbox message {messageId} ({messageType}) with "
+    + $"DeniedAction.{denial.OnDenied}: {ReasonOf(denial)}";
+
+  /// <summary>The interceptor's reason as logs and records print it, saying so when it gave none.</summary>
+  internal static string ReasonOf(InterceptorResult denial) => denial.Reason ?? "no reason given";
 }

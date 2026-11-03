@@ -304,19 +304,14 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   /// </remarks>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusRawReceptorInterceptorTests.cs</tests>
   private async Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) {
-    if (decision.RawReceptor is not { } receptor || decision.RawPayload is not { } payload) {
+    if (decision.RawReceptor is not { } receptor) {
       return;
     }
+    // The decision maker sets the payload whenever it names a raw receptor
+    var payload = decision.RawPayload!.Value;
     if (_receptorInterceptors is not null) {
-      var envelope = decision.Envelope ?? new MessageEnvelope<JsonElement> {
-        MessageId = Whizbang.Core.ValueObjects.MessageId.New(),
-        Payload = payload,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext {
-          Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
-          Source = Whizbang.Core.Messaging.MessageSource.Inbox,
-        },
-      };
+      // The decision maker sets the received envelope whenever it names a raw receptor
+      var envelope = decision.Envelope!;
       if (!await _receptorInterceptors.AdmitAsync(receptor.GetType(), envelope, envelope.GetCurrentScope(), _logger, cancellationToken)) {
         return;
       }

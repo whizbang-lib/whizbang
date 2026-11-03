@@ -183,6 +183,30 @@ public class ReceptorInterceptorDispatchTests {
     await Assert.That(GatePermissionCommandReceptor.Ran.ContainsKey(command.Id)).IsTrue();
   }
 
+  /// <summary>A receptor registered at runtime, run by a local invoke, is gated by its instance's type.</summary>
+  [Test]
+  public async Task LocalInvoke_RuntimeReceptorDroppedQuietly_DoesNotRunAsync() {
+    var runtime = new RuntimeGateReceptor<GateRuntimeCommand>();
+    var (dispatcher, _, provider) = _create(new TargetedInterceptor(typeof(RuntimeGateReceptor<GateRuntimeCommand>), DeniedAction.DropQuiet));
+    provider.GetRequiredService<IReceptorRegistry>().Register(runtime, LifecycleStage.LocalImmediateInline);
+
+    await dispatcher.LocalInvokeAsync(new GateRuntimeCommand(TrackedGuid.New()));
+
+    await Assert.That(runtime.Runs).IsEqualTo(0);
+  }
+
+  /// <summary>A receptor registered at runtime, run by a publish, is gated by its instance's type.</summary>
+  [Test]
+  public async Task Publish_RuntimeReceptorDroppedQuietly_DoesNotRunAsync() {
+    var runtime = new RuntimeGateReceptor<GateRuntimeEvent>();
+    var (dispatcher, _, provider) = _create(new TargetedInterceptor(typeof(RuntimeGateReceptor<GateRuntimeEvent>), DeniedAction.DropQuiet));
+    provider.GetRequiredService<IReceptorRegistry>().Register(runtime, LifecycleStage.LocalImmediateInline);
+
+    await dispatcher.PublishAsync(new GateRuntimeEvent(TrackedGuid.New()));
+
+    await Assert.That(runtime.Runs).IsEqualTo(0);
+  }
+
   internal static ImmutableScopeContext _scopeWith(params string[] permissions) =>
     new(new SecurityExtraction {
       Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-gate", UserId = "user-gate" },
@@ -296,6 +320,21 @@ public class GateCascadedEventReceptor : IReceptor<GateCascadedEvent> {
 
   public ValueTask HandleAsync(GateCascadedEvent message, CancellationToken cancellationToken = default) {
     Ran[message.Id] = true;
+    return ValueTask.CompletedTask;
+  }
+}
+
+public record GateRuntimeCommand([property: StreamId] Guid Id) : ICommand;
+[DefaultRouting(DispatchModes.Local)]
+public record GateRuntimeEvent([property: StreamId] Guid Id) : IEvent;
+
+/// <summary>A receptor registered at runtime (open generic, so discovery leaves it alone); counts its runs.</summary>
+public class RuntimeGateReceptor<TMessage> : IReceptor<TMessage> where TMessage : IMessage {
+  private int _runs;
+  public int Runs => Volatile.Read(ref _runs);
+
+  public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
+    Interlocked.Increment(ref _runs);
     return ValueTask.CompletedTask;
   }
 }

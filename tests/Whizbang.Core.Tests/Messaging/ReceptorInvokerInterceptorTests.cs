@@ -157,6 +157,35 @@ public class ReceptorInvokerInterceptorTests {
   }
 
   [Test]
+  public async Task EvaluateAdmissionAsync_NoReceptorAtTheStages_IsAllowedWithoutAskingAsync() {
+    var registry = new Registry();
+    var interceptor = new Deny(typeof(DeniedReceptor), DeniedAction.DeadLetter);
+    var invoker = new ReceptorInvoker(registry, _provider(interceptor));
+
+    var result = await invoker.EvaluateAdmissionAsync(_envelope(), [LifecycleStage.PostInboxDetached], CancellationToken.None);
+
+    await Assert.That(result.Allow).IsTrue();
+    await Assert.That(interceptor.Contexts).IsEmpty().Because("there is no receptor to ask about");
+  }
+
+  [Test]
+  public async Task EvaluateAdmissionAsync_AsksOncePerReceptorClass_AndSkipsEntriesWithoutOneAsync() {
+    var registry = new Registry();
+    registry.Add<AllowedReceptor>(LifecycleStage.PreInboxInline);
+    registry.Add<AllowedReceptor>(LifecycleStage.PostInboxDetached);
+    registry.Add<DeniedReceptor>(LifecycleStage.PostInboxDetached, withType: false);
+    var interceptor = new Deny(typeof(DeniedReceptor), DeniedAction.DeadLetter);
+    var invoker = new ReceptorInvoker(registry, _provider(interceptor));
+
+    var result = await invoker.EvaluateAdmissionAsync(_envelope(),
+      [LifecycleStage.PreInboxInline, LifecycleStage.PostInboxDetached], CancellationToken.None);
+
+    await Assert.That(result.Allow).IsTrue().Because("an entry that names no receptor class has nothing to ask about");
+    await Assert.That(interceptor.Contexts).Count().IsEqualTo(1)
+      .Because("a receptor class registered at two stages is asked about once");
+  }
+
+  [Test]
   public async Task EvaluateAdmissionAsync_DropQuietOnly_IsAllowedAsync() {
     var registry = new Registry();
     registry.Add<DeniedReceptor>(LifecycleStage.PostInboxDetached);

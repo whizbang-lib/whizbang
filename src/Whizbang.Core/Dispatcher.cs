@@ -556,12 +556,13 @@ public abstract partial class Dispatcher(
     }
   }
 
-  /// <summary>A receptor registered at runtime is gated by its instance's type, as a generated one is by its class (#1996).</summary>
+  /// <summary>
+  /// A receptor registered at runtime is gated by its instance's type, as a generated one is by its class (#1996). The
+  /// dispatcher only runs runtime registrations here, and every one of them carries its instance.
+  /// </summary>
   private ValueTask<bool> _admitRuntimeReceptorAsync(ReceptorInfo receptor, object message, IMessageEnvelope envelope,
       IServiceProvider scopedProvider, CancellationToken cancellationToken) =>
-    (receptor.ReceptorType ?? receptor.RuntimeInstance?.GetType()) is { } receptorType
-      ? AdmitReceptorAsync(receptorType, message, scopedProvider, envelope, cancellationToken)
-      : new ValueTask<bool>(true);
+    AdmitReceptorAsync(receptor.RuntimeInstance!.GetType(), message, scopedProvider, envelope, cancellationToken);
 
   private static DispatchPolicyEngine _resolvePolicyEngine(IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IDispatchPolicyRegistry>();

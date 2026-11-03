@@ -817,7 +817,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// that deletes it. Shared by the undeserializable payload (#938) and the receptor denial (#1996) paths.
   /// </summary>
   private async Task _deadLetterOrFailAsync(InboxWork work, MessageFailureReason reason, string detail, Exception? cause, CancellationToken ct) {
-    var errorText = cause is null ? detail : detail + Environment.NewLine + cause;
+    var errorText = cause is null ? detail : string.Concat(detail, Environment.NewLine, cause.ToString());
     if (_deadLetterStore.IsConfigured) {
       try {
         await _moveToDeadLettersAsync(work, reason, errorText, detail, cause, ct).ConfigureAwait(false);
@@ -872,7 +872,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
   private async Task _handleReceptorDenialAsync(InboxWork work, InterceptorResult denial, CancellationToken ct) {
     var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
-    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, denial.Reason ?? "no reason given");
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));
     if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is { } reason) {
       await _deadLetterOrFailAsync(work, reason, detail, cause: null, ct);
       return;

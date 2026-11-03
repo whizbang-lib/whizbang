@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -81,6 +82,49 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
   }
 
   [Test]
+  public async Task Deliver_DeadLetter_RowAlreadyGone_IsTerminalWithoutCompletionAsync() {
+    // No reason, no instance provider and a generation provider: the record's forensic fields take their fallbacks
+    var h = await Harness.StartAsync(InterceptorResult.Deny(DeniedAction.DeadLetter), configure: services => {
+      services.RemoveAll<IServiceInstanceProvider>();
+      services.AddSingleton<IGenerationProvider, DefaultGenerationProvider>();
+      services.AddSingleton<IDeadLetterStore>(new AlreadyGoneDeadLetterStore());
+    });
+
+    await h.DeliverAsync();
+
+    await Assert.That(h.Strategy.Completions).IsEmpty();
+    await Assert.That(h.Strategy.Failures).IsEmpty()
+      .Because("a row someone else already dead-lettered is terminal; failing it again would record a phantom error");
+    await Assert.That(h.Invoker.Invocations).IsEqualTo(0);
+    await h.StopAsync();
+  }
+
+  [Test]
+  public async Task Deliver_DeadLetter_NoDeadLetterStoreRegisteredAtAll_FailsTheRowAsync() {
+    var h = await Harness.StartAsync(InterceptorResult.Deny(DeniedAction.DeadLetter, "denied"), withDeadLetterStore: false,
+      configure: services => services.RemoveAll<IDeadLetterStore>());
+
+    await h.DeliverAsync();
+
+    await Assert.That(h.Strategy.Failures).Contains(h.MessageId);
+    await Assert.That(h.Strategy.Completions).IsEmpty();
+    await h.StopAsync();
+  }
+
+  [Test]
+  public async Task Deliver_DeadLetter_StoreFails_FailsTheRowInsteadOfCompletingItAsync() {
+    var h = await Harness.StartAsync(InterceptorResult.Deny(DeniedAction.Quarantine, "denied"),
+      configure: services => services.AddSingleton<IDeadLetterStore>(new ThrowingDeadLetterStore()));
+
+    await h.DeliverAsync();
+
+    await Assert.That(h.Strategy.Failures).Contains(h.MessageId)
+      .Because("a failed move leaves the row with its body, failed for the attempts bound");
+    await Assert.That(h.Strategy.Completions).IsEmpty();
+    await h.StopAsync();
+  }
+
+  [Test]
   public async Task Deliver_Throw_FailsTheDeliveryForTheBrokersRetryPolicyAsync() {
     var h = await Harness.StartAsync(InterceptorResult.Deny(DeniedAction.Throw, "try later"));
 
@@ -127,7 +171,8 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
     public AdmissionInvoker Invoker { get; private set; } = null!;
     public Guid MessageId { get; } = (Guid)TrackedGuid.New();
 
-    public static async Task<Harness> StartAsync(InterceptorResult admission, bool withDeadLetterStore = true, bool withInterceptor = true) {
+    public static async Task<Harness> StartAsync(InterceptorResult admission, bool withDeadLetterStore = true, bool withInterceptor = true,
+        Action<IServiceCollection>? configure = null) {
       var h = new Harness { Invoker = new AdmissionInvoker(admission) };
       h.Strategy.WorkFor = h._work;
       var services = new ServiceCollection();
@@ -142,6 +187,7 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
       if (withDeadLetterStore) {
         services.AddSingleton<IDeadLetterStore>(h.DeadLetters);
       }
+      configure?.Invoke(services);
       h._sp = services.BuildServiceProvider();
       h.Worker = new ServiceBusConsumerWorker(
         transport: h.Transport,
@@ -243,6 +289,18 @@ public class ServiceBusConsumerWorkerReceptorDenialTests {
       Moves.Enqueue((sourceTable, sourceId, failureReason, errorText));
       return Task.FromResult<Guid?>(deadLetterId);
     }
+  }
+
+  private sealed class ThrowingDeadLetterStore : IDeadLetterStore {
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) =>
+      Task.FromException<Guid?>(new InvalidOperationException("simulated dead-letter store outage"));
+  }
+
+  private sealed class AlreadyGoneDeadLetterStore : IDeadLetterStore {
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) =>
+      Task.FromResult<Guid?>(null);
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {

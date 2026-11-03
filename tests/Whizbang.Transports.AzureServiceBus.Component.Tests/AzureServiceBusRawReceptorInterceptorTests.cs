@@ -67,6 +67,25 @@ public class AzureServiceBusRawReceptorInterceptorTests {
   }
 
   [Test]
+  public async Task RawReceptor_SessionDelivery_DeadLetterDenial_DeadLettersWithoutRedeliveryAsync() {
+    var receptor = new RecordingRawReceptor(RAW_INNER_TYPE_NAME);
+    var client = new RaisableServiceBusClient();
+    var transport = _transport(client, receptor, new FixedInterceptor(InterceptorResult.Deny(DeniedAction.DeadLetter, "denied")),
+      enableSessions: true);
+    await transport.SubscribeBatchAsync((_, _) => Task.CompletedTask, new TransportDestination("batch-topic", "batch-sub"),
+      new TransportBatchOptions());
+    var receiver = new RecordingTransportSessionReceiver();
+
+    await client.LastSessionProcessor!.RaiseSessionMessageAsync(AsbTransportTestData.SessionArgs(
+      AsbTransportTestData.RawMessage(_rawEnvelopeBody(), RAW_ENVELOPE_TYPE_NAME), receiver));
+
+    await Assert.That(receptor.Handled).IsEmpty();
+    await Assert.That(receiver.DeadLettered.Single().Reason).IsEqualTo("ReceptorDenied");
+    await Assert.That(receiver.Abandoned).IsEmpty();
+    await Assert.That(receiver.Completed).IsEmpty();
+  }
+
+  [Test]
   public async Task RawReceptor_Throw_AbandonsForRedeliveryAsync() {
     var (receptor, receiver) = await _deliverAsync(new FixedInterceptor(InterceptorResult.Deny(DeniedAction.Throw)), expectCompleted: false);
 
@@ -87,14 +106,7 @@ public class AzureServiceBusRawReceptorInterceptorTests {
       IReceptorInterceptor? interceptor, bool expectCompleted) {
     var receptor = new RecordingRawReceptor(RAW_INNER_TYPE_NAME);
     var client = new RaisableServiceBusClient();
-    var transport = new AzureServiceBusTransport(
-      client,
-      AsbTransportTestData.CombinedOptions,
-      new AzureServiceBusOptions { AutoProvisionInfrastructure = false, EnableSessions = false, MaxDeliveryAttempts = 10 },
-      (ILogger<AzureServiceBusTransport>?)NullLogger<AzureServiceBusTransport>.Instance,
-      rawReceptorRegistry: new SingleRawReceptorRegistry(receptor),
-      typeBinder: new MissTypeBinder(),
-      receptorInterceptors: interceptor is null ? null : new ReceptorInterceptorPipeline([interceptor]));
+    var transport = _transport(client, receptor, interceptor, enableSessions: false);
     await transport.SubscribeBatchAsync((_, _) => Task.CompletedTask, new TransportDestination("batch-topic", "batch-sub"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 600_000, MaxWaitMs = 600_000 });
     var receiver = new RecordingTransportReceiver();
@@ -104,6 +116,17 @@ public class AzureServiceBusRawReceptorInterceptorTests {
     await (expectCompleted ? receiver.CompletedSignal.Task : receiver.NotCompletedSignal.Task);
     return (receptor, receiver);
   }
+
+  private static AzureServiceBusTransport _transport(RaisableServiceBusClient client, IRawReceptor receptor,
+      IReceptorInterceptor? interceptor, bool enableSessions) =>
+    new(
+      client,
+      AsbTransportTestData.CombinedOptions,
+      new AzureServiceBusOptions { AutoProvisionInfrastructure = false, EnableSessions = enableSessions, MaxDeliveryAttempts = 10 },
+      (ILogger<AzureServiceBusTransport>?)NullLogger<AzureServiceBusTransport>.Instance,
+      rawReceptorRegistry: new SingleRawReceptorRegistry(receptor),
+      typeBinder: new MissTypeBinder(),
+      receptorInterceptors: interceptor is null ? null : new ReceptorInterceptorPipeline([interceptor]));
 
   private static string _rawEnvelopeBody() {
     var envelope = AsbTransportTestData.CreateEnvelope();

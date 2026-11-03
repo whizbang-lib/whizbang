@@ -872,7 +872,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _logger.LogWarning(
       "Control-class message {MessageId} ({EnvelopeType}) was not compared: a receptor interceptor denied it with "
       + "DeniedAction.{Action}; dropping (control-plane messages are never stored, retried or dead-lettered). Reason: {Reason}",
-      msg.Envelope.MessageId, msg.EnvelopeType, denial.OnDenied, denial.Reason ?? "no reason given");
+      msg.Envelope.MessageId, msg.EnvelopeType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));
     return true;
   }
 

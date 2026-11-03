@@ -392,7 +392,7 @@ public partial class ServiceBusConsumerWorker(
   private async Task _handleReceptorDenialAsync(
     InboxWork work, InterceptorResult denial, IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
     var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
-    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, denial.Reason ?? "no reason given");
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));
     if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is not { } reason) {
       throw new ReceptorInvocationDeniedException(detail, denial.OnDenied, denial.Reason);
     }

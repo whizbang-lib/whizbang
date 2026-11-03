@@ -149,6 +149,26 @@ public class TransportConsumerWorkerControlClassReceiveTests {
   }
 
   [Test]
+  public async Task ControlMessage_InterceptorsAllowTheComparison_StillComparesAsync() {
+    var coordinator = new CountingWorkCoordinator();
+    var invoker = new RecordingReceptorInvoker { WithInterceptor = true };
+    var (worker, transport, sp) = _buildWorker(coordinator, nonDurableReceive: true, invoker: invoker);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONTROL_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(invoker.AdmissionStages).Contains(LifecycleStage.PostInboxInline);
+      await Assert.That(invoker.Stages).Contains(LifecycleStage.PostInboxInline)
+        .Because("an allowed comparison runs as it did before any interceptor was registered");
+    }
+  }
+
+  [Test]
   public async Task DomainMessage_InTheSameBatch_StillTakesTheDurablePathAsync() {
     // The gate must be per MESSAGE, not per batch: a mixed batch is normal on a shared entity.
     var coordinator = new CountingWorkCoordinator();
@@ -270,7 +290,7 @@ public class TransportConsumerWorkerControlClassReceiveTests {
     }
     if (invoker is not null) {
       services.AddScoped<IReceptorInvoker>(_ => invoker);
-      if (!invoker.Admission.Allow) {
+      if (!invoker.Admission.Allow || invoker.WithInterceptor) {
         // Without an interceptor the worker does not ask for admission at all
         services.AddSingleton<IReceptorInterceptor, DefaultRequirePermissionInterceptor>();
       }
@@ -327,6 +347,7 @@ public class TransportConsumerWorkerControlClassReceiveTests {
     public List<LifecycleStage> AdmissionStages { get; } = [];
     public bool Throw { get; init; }
     public InterceptorResult Admission { get; init; } = InterceptorResult.Allowed;
+    public bool WithInterceptor { get; init; }
 
     public ValueTask<InterceptorResult> EvaluateAdmissionAsync(IMessageEnvelope envelope, IReadOnlyList<LifecycleStage> stages,
         CancellationToken cancellationToken = default) {
