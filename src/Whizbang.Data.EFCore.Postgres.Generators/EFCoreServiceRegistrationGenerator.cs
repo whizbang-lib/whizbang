@@ -2513,6 +2513,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
+    // #1992: how the Assess verdict tells whether this context's schema is current, read without a lock. A host that
+    // does not register the context answers null and is passed over, as the initialization above passes it over.
+    sb.AppendLine("    // Lets the Assess verdict tell whether this context's schema is current (nothing to apply or convert)");
+    sb.AppendLine($"    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<{dbContext.FullyQualifiedName}>(async (sp, ct) => {{");
+    sb.AppendLine("      using var scope = sp.CreateScope();");
+    sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct);");
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
+    sb.AppendLine();
   }
 
   /// <summary>

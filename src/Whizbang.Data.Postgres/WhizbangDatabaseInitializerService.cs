@@ -73,6 +73,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   private readonly ILogger<WhizbangDatabaseInitializerService> _logger = logger;
 
   private Task? _backgroundInit;
+  private Task? _standDown;
   private readonly CancellationTokenSource _stopCts = new();
 
   /// <summary>
@@ -81,6 +82,12 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   /// background init completion (success or fail-closed) without polling.
   /// </summary>
   internal Task? BackgroundInitTask => _backgroundInit;
+
+  /// <summary>
+  /// The stood-down instance keeping its row alive (#1992) when the <c>Assess</c> verdict was a stand-down;
+  /// <see langword="null"/> otherwise. Ends when the host stops. Test seam: await it after <see cref="StopAsync"/>.
+  /// </summary>
+  internal Task? StandDownTask => _standDown;
 
   public Task StartAsync(CancellationToken cancellationToken) {
     if (_schemaInitOptions.Value.NonBlockingSchemaInit) {
@@ -137,6 +144,13 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   }
 
   private async Task _runInitializationAsync(CancellationToken cancellationToken) {
+    // #1992: Assess is the first stage. The one verdict is produced before anything is applied, and every runner reads
+    // that same verdict as its input. An unreadable version record throws here, before any runner, and fails the attempt.
+    if (await _assessAsync(cancellationToken) is { Verdict: Whizbang.Core.Startup.StartupVerdict.StandDown } standDown) {
+      await _standDownAsync(standDown, cancellationToken);
+      return;
+    }
+
     await _runMigrationsAsync(cancellationToken);
 
     // #1636: every driver's schema is in place; what follows is coordinated across the fleet and ends with the gate.
@@ -148,6 +162,26 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     await TryRecomputePartitionsAsync(cancellationToken);
 
     _schemaReadyGate.MarkReady();
+  }
+
+  /// <summary>The verdict, or <see langword="null"/> when no driver supplied an assessor (startup runs as it always has).</summary>
+  private async Task<Whizbang.Core.Startup.StartupAssessment?> _assessAsync(CancellationToken cancellationToken) =>
+    _serviceProvider.GetService<Whizbang.Core.Startup.StartupAssessmentSource>() is { IsConfigured: true } source
+      ? await source.AssessAsync(cancellationToken)
+      : null;
+
+  /// <summary>
+  /// The schema is newer than this binary: nothing is applied and the schema-ready gate stays closed, which holds the
+  /// data plane and keeps readiness failing while the process stays alive. The instance records why and registers at
+  /// once, and stays registered until the host stops.
+  /// </summary>
+  private async Task _standDownAsync(Whizbang.Core.Startup.StartupAssessment assessment, CancellationToken cancellationToken) {
+    if (Whizbang.Core.Startup.StartupStandDown.FromServices(_serviceProvider) is not { } standDown) {
+      LogStoodDownUnregistered(_logger, assessment.Reason);
+      return;
+    }
+    await standDown.RecordAsync(assessment, cancellationToken);
+    _standDown = standDown.KeepVisibleAsync(_stopCts.Token);
   }
 
   private async Task _runMigrationsAsync(CancellationToken cancellationToken) {
@@ -213,6 +247,10 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   [LoggerMessage(EventId = 3, Level = LogLevel.Error,
     Message = "Background schema initialization attempt {Attempt} failed; the schema-ready gate stays closed and the next attempt runs in {DelaySeconds}s")]
   static partial void LogBackgroundInitializationRetrying(ILogger logger, Exception ex, int attempt, double delaySeconds);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "Standing down without an instance identity to register as: {Reason}. Nothing is applied and the schema-ready gate stays closed; the fleet cannot see this instance")]
+  static partial void LogStoodDownUnregistered(ILogger logger, string reason);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Background schema initialization recovered on attempt {Attempt}; the schema-ready gate is now open")]

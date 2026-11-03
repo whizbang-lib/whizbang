@@ -162,6 +162,97 @@ public sealed class PostgresSchemaInitializer {
       await _migrateAsync(connection, schemaSql, schema, cancellationToken);
     }
 
+    await _convergeAsync(connection, schema, cancellationToken);
+  }
+
+  /// <summary>
+  /// The start on a schema the <c>Assess</c> verdict found current (#1992): no schema lock and no pass. The perspective
+  /// registry is reconciled (its payload is not part of any hash this driver records), this instance joins the registry,
+  /// and the managed-object reconcile and the storage settings follow, as on every start.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the instance is registered and the schema converged.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:ARestartOnACurrentSchema_TakesNoSchemaLock_AndSkipsElectAndMigrateAsync</tests>
+  public async Task ConvergeCurrentAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
+    if (Instance is { } instance) {
+      await SchemaBootstrapPhase.RegisterInstanceAsync(
+        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+    }
+    await _convergeAsync(connection, schema, cancellationToken);
+  }
+
+  /// <summary>
+  /// Whether the schema needs nothing from this binary (#1992), read without a lock: every migration this binary
+  /// carries recorded at its hash and at this binary's version (the infrastructure schema this driver builds is tied to
+  /// the version, and recorded nowhere else), every perspective table and application object at its hash, every
+  /// declared-key table settled, and every object the perspectives declare present. A schema that cannot be read this
+  /// way (legacy perspective SQL with no entries to hash) is not current.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> when nothing is owed.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaCurrencyTests.cs:WithNoPerspectivesAtAll_AnInitializedSchemaIsCurrentAsync</tests>
+  public async Task<bool> IsCurrentAsync(CancellationToken cancellationToken = default) {
+    if (_perspectiveEntries is null && !string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
+      return false;
+    }
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = DapperCoordinatorSchema.FromConnectionString(_connectionString)
+      ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken);
+    var provider = _rendersForTargetSchema
+      ? new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema)
+      : _migrationProvider;
+    var recorded = await _readLedgerAsync(connection, cancellationToken);
+
+    var owed = provider.GetMigrations()
+      .Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))
+      .Select(m => (m.Name, Hash: MigrationSqlNormalizer.ContentHash(m.Sql), Version: (string?)provider.Version))
+      .Concat((_perspectiveEntries ?? []).Select(e => ($"perspective:{e.Key}", _sha256(e.Value), (string?)null)))
+      .Concat(_applicationObjectHashes());
+    foreach (var (name, hash, version) in owed) {
+      if (!recorded.TryGetValue(name, out var row) || row.Hash != hash || (version is not null && row.Version != version)) {
+        return false;
+      }
+    }
+
+    if (DeclaredKeyTables is { } declaredKeyTables
+        && !await StoredFormSettlement.IsSettledAsync(
+          connection, schema, [], declaredKeyTables.Select(t => (t.JournalName, t.Table)), [], cancellationToken)) {
+      return false;
+    }
+    return ManagedObjects is not { } declared
+      || (await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(connection, schema, declared, cancellationToken)).Count == 0;
+  }
+
+  private IEnumerable<(string Name, string Hash, string? Version)> _applicationObjectHashes() =>
+    (_applicationObjects?.BeforePerspectives ?? []).Select(o => ($"app:before:{o.Name}", _sha256(o.Sql), (string?)null))
+      .Concat((_applicationObjects?.AfterPerspectives ?? []).Select(o => ($"app:after:{o.Name}", _sha256(o.Sql), (string?)null)));
+
+  private static async Task<Dictionary<string, (string Hash, string Version)>> _readLedgerAsync(
+      NpgsqlConnection connection, CancellationToken cancellationToken) {
+    await using var command = connection.CreateCommand();
+    command.CommandText = """
+      SELECT m.file_name, m.content_hash, v.library_version
+      FROM wh_schema_migrations m JOIN wh_schema_versions v ON v.id = m.version_id
+      """;
+    var rows = new Dictionary<string, (string Hash, string Version)>(StringComparer.Ordinal);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      rows[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2));
+    }
+    return rows;
+  }
+
+  /// <summary>
+  /// What follows the schema work on every start: the managed-object reconcile and each perspective table's storage
+  /// settings. Neither takes the schema lock to wait.
+  /// </summary>
+  private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
     // start tries again.

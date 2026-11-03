@@ -248,3 +248,39 @@ starts it there; the worker holds no wait on `ISchemaReadyGate`.
   assigner republishes); an older build that records no phase, and a caller with no row, are served as before.
   `WorkEligibilitySqlTests.Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync` keeps 229's name, because 229 links
   to it and a shipped migration is never edited, and asserts the reversed rule.
+
+
+## Assess is the first stage, and its one verdict binds startup (#1992)
+
+`StartupAssessmentSource` reads the version record once per host; the `Assess` step, the schema initializer and each
+driver's schema pass all read that one verdict (`StartupVerdictBinding.ReadAsync` in a pass). Nothing else reads the
+version record at startup; the standby watcher re-reads the driver's assessor at run time on purpose.
+
+- **First.** `WhizbangDatabaseInitializerService` asks for the verdict before any runner; a runner never starts before
+  it exists (`SchemaInitializationRunnersTests.AnyOtherVerdict_RunsTheRunnersAfterTheVerdict_ThenOpensTheGateAsync`).
+  The EF Core pass reads it too, so a direct `EnsureWhizbangDatabaseInitializedAsync` / `EnsureWhizbangInitializedAsync`
+  on a stood-down host throws `SchemaStandDownException` and applies nothing.
+- **Brand-new vs unreadable.** The assessment probes the catalog first: no `wh_schema_migrations` is a brand-new
+  database (Migrate; the bootstrap that follows is safe because nothing newer can exist), no `wh_schema_versions`
+  records no version (Migrate). A ledger that exists and cannot be read throws: a transient failure
+  (`TransientDatabaseFailure`) is retried within Preflight, anything else is `StartupAssessmentException` and fails the
+  attempt, never a blind migration. A failure is never latched.
+- **Owner column.** The EF Core ledger has `owner`; the Dapper ledger does not and is read whole. The old code took a
+  missing `owner` for "being created" and answered Migrate, which on Dapper would have migrated a newer schema.
+- **StandDown.** No runner, no bootstrap, no election, no pass, no reconcile; the schema-ready gate stays closed (data
+  plane held, readiness 503, process alive). `StartupStandDown` records Preflight + `StandingBy` with the reason through
+  the stage reporter and keeps the row alive with `IWorkCoordinator.RecordHeartbeatAsync` on the heartbeat interval
+  (the heartbeat worker starts at schema ready, which never comes). The bootstrap closure is keyed by hash only, so an
+  older closure would otherwise be re-applied over newer definitions.
+- **Current.** Nothing newer recorded and every registered DbContext's `IsWhizbangSchemaCurrentAsync` (fast-path
+  hashes, duplicate overloads, stale definitions, missing declared objects, and `StoredFormSettlement`) answers true;
+  Dapper: every migration at its hash *and this binary's version*, perspective and application-object hashes, declared
+  keys settled, managed objects present. Current skips bootstrap, election, stored-form rewrite and pass: no schema
+  lock. Converge and Coordinate run. A check that cannot answer is Serve, never Current.
+- **The stored-form rewrite took the schema lock on a current schema.** `CanonicalTemporalRewritePhase.ApplyAsync`
+  filters nothing: any model with a temporal path, stored-form migration or enum column opens a transaction and takes
+  `pg_try_advisory_xact_lock` on the schema key every start, and only then do the DO blocks see "settled". That is why
+  Current needs the settlement check and not only the hashes.
+- Tests: `StartupParityTests` (both drivers: current restart under a held schema lock, stand-down applies nothing,
+  turnkey call refused), `StartupAssessorTests`, `DapperStartupAssessorTests`, `StartupAssessmentSourceTests`,
+  `StartupStandDownTests`, `StartupVerdictBindingTests`.

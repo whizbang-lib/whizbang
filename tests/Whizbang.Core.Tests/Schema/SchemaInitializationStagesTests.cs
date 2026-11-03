@@ -173,6 +173,21 @@ public class SchemaInitializationStagesTests {
     await Assert.That(stages.Calls).IsEquivalentTo(["Enter Coordinate: recomputing partitions before the schema-ready gate opens"]);
   }
 
+  /// <summary>#1992: a Current verdict registers in Preflight, then skips Elect and Migrate, naming why.</summary>
+  [Test]
+  public async Task OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync() {
+    var (stages, services) = _build();
+
+    await SchemaInitializationStages.RegisteringOnACurrentSchemaAsync(services, CancellationToken.None);
+    await SchemaInitializationStages.SchemaCurrentAsync(services, CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo([
+      "Enter Preflight: the schema is current; registering this instance",
+      "Skip Elect: the schema is current; no migrator is needed",
+      "Skip Migrate: the schema is current",
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
   [Test]
   public async Task WithNoProvider_OrNoReporter_NothingIsReportedAsync() {
     await using var empty = new ServiceCollection().BuildServiceProvider();
@@ -192,6 +207,8 @@ public class SchemaInitializationStagesTests {
         await SchemaInitializationStages.BootstrapRetryingAsync(services, CancellationToken.None);
         await SchemaInitializationStages.BootstrapFailedAsync(services, CancellationToken.None);
         await SchemaInitializationStages.RegisteringAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.RegisteringOnACurrentSchemaAsync(services, CancellationToken.None);
+        await SchemaInitializationStages.SchemaCurrentAsync(services, CancellationToken.None);
       }).ThrowsNothing();
     }
   }

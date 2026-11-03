@@ -96,6 +96,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Perspectives.IPerspectiveSnapshotStore>(Perspectives.NullPerspectiveSnapshotStore.Instance);
     services.TryAddSingleton<Perspectives.IPerspectiveStreamLocker>(Perspectives.NullPerspectiveStreamLocker.Instance);
     services.TryAddSingleton<Startup.IStartupAssessor>(Startup.NullStartupAssessor.Instance);
+    Startup.StartupAssessmentSourceServiceCollectionExtensions.TryAddStartupAssessmentSource(services);
     services.TryAddSingleton<Startup.IDutyElector>(Startup.NullDutyElector.Instance);
     services.TryAddSingleton<Startup.IPendingDutyWorkStore>(Startup.NullPendingDutyWorkStore.Instance);
     services.TryAddSingleton<Signals.ISignalBus>(Signals.NullSignalBus.Instance);

@@ -451,6 +451,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
 
 #### Startup
+- **Assess is the first stage of startup, and its one verdict binds everything after it (part of #1636).**
+  `StartupAssessmentSource` reads the version record once per host; the `Assess` step, the schema initializer and each
+  driver's schema pass read that verdict (`StartupVerdictBinding`) and nothing reads the schema again to decide. A
+  temporary failure to read the record is retried within Preflight; any other fails the attempt loudly
+  (`StartupAssessmentException`), never a blind migration; a brand-new database (no ledger) migrates.
+  - **New verdict `StartupVerdict.Current`:** nothing newer recorded, nothing to apply and every stored-form
+    conversion settled (`StoredFormSettlement`, `IsWhizbangSchemaCurrentAsync`). A restart or scale-out on a current
+    schema skips the bootstrap, the election, the stored-form rewrite and the migration pass, so it takes no schema lock;
+    Converge and Coordinate still run. `Serve` now means nothing newer is recorded but the schema could not be shown
+    current, and runs startup as before.
+  - **Stand-down holds and is visible:** an instance whose binary is older than the schema applies nothing (no
+    bootstrap, election, pass or reconcile), keeps the schema-ready gate closed (no data plane, readiness 503, process
+    alive), records Preflight with the reason (both versions) and the `StandingBy` phase through the stage recorder,
+    registers at once and keeps its row alive on the heartbeat interval (`StartupStandDown`). A direct
+    `EnsureWhizbangInitializedAsync` on a stood-down host throws `SchemaStandDownException`.
+  - **The Dapper driver has an assessor** (shared verdict table and ledger read), so it stands down, skips locks on a
+    current schema and refuses to migrate blind like the EF Core driver.
 - **Every instance records and logs its startup stage (part of #1636).** One owner, `IStartupStageReporter`, holds the
   stage this instance is in (`StartupStage`: Preflight 10, Elect 20, Migrate 30, Converge 40, Coordinate 50, Accept
   commands 60, Running 70, Draining 80, Stopped 90; fixed numbers with gaps, never list positions). Entering a stage
@@ -814,6 +831,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WhizbangShardedTests=true` (today `Whizbang.Data.EFCore.Postgres.Tests`), a test class without exactly one
   `Shard*` category, or with one beside `Benchmark`, fails to compile instead of running in no `[Category=ShardN]`
   slice, or in two. `ShardCoverageGuardTests` stays as the runtime check for generated classes.
+- **`StartupVerdict` has a fourth value, `Current` (part of #1636).** **Upgrade note:** a `switch` over
+  `StartupVerdict` that treated every value other than `StandDown` as "migrate or serve" still compiles; one that is
+  exhaustive needs a `Current` arm, which behaves like `Serve` for readiness. The Assess step's reported reason for a
+  current schema ends with "the schema is current". A ledger without an `owner` column (the Dapper driver's) is now
+  read whole instead of being taken for a ledger still being created.
 - **Every worker is hosted with the point it starts at, and none holds a gate of its own (part of #1636).**
   `AddWhizbangWorker<TWorker>(stage)` (Accept commands unless another stage is named) and
   `AddWhizbangWorkerAtSchemaReady<TWorker>()` host a worker that the host starts at that point and stops normally on
