@@ -21,7 +21,7 @@ namespace Whizbang.Sagas.Tests;
 /// <docs>operations/configuration/configuration-reference</docs>
 [Category("Unit")]
 [Category("Saga")]
-[NotInParallel("AppDefaultNamespace")]
+[NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
 public class SagaOptionsConfigurationBindingTests {
 
   private static ServiceProvider _build(Dictionary<string, string?> settings, Action<SagaOptions>? configure = null) {

@@ -1254,6 +1254,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
   CPU at its ceiling. Migration 301 adds an index on `stream_id`, which every stream-keyed digest read and delete now
   uses, and the reconcile names the bundle's streams so the index drives it.
+
+- **Saga tests no longer race on the process-wide per-item stream namespace (#2017).** Every `AddWhizbangSagas` call
+  sets `SagaItemStreams.AppDefaultNamespace`, and the stranded-item reconciler tests and three watchdog tests derived
+  each item's stream id twice through it, so a parallel test registering sagas between the two derivations failed them
+  with "Reconciler queried unknown per-item stream". They now derive through an explicit namespace, a test helper
+  registers sagas between the derivations to prove it, and every test that registers sagas or asserts on the
+  process-wide value runs under one `[NotInParallel]` key and restores it. Tests only; no library behavior changes.
 - **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
   worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
   stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not

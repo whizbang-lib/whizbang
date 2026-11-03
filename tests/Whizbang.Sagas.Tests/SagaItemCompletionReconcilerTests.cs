@@ -29,6 +29,10 @@ public class SagaItemCompletionReconcilerTests {
 
   private static readonly Guid _sagaId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
+  // The reconciler and every stub derive per-item stream ids through this, never through the process-wide namespace.
+  private static readonly ISagaItemStreamIdDeriver _itemStreams =
+    new SagaItemStreamIdDeriver(new SagaOptions { PerItemStreamNamespace = Guid.Parse("7a3b2c1d-0e9f-4a8b-b7c6-d5e4f3a2b190") });
+
   // ── Fast path: aggregate already shows everything terminal ───────────
 
   [Test]
@@ -78,14 +82,17 @@ public class SagaItemCompletionReconcilerTests {
     var agg = new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1);
 
     using var processWide = new ProcessWideSagaNamespace();
-    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    var reader = new StubReader(processWide, _itemStreams, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "c", SagaItemTerminalOutcome.Completed },
     });
 
     var result = await SagaItemCompletionReconciler.ResolveCompletionCountsAsync(
       _sagaId, totalItems: 3, agg,
       getItems: _ => Task.FromResult<IReadOnlyList<SagaItemModel>>(items),
-      reader, CancellationToken.None);
+      reader, _itemStreams, CancellationToken.None);
+
+    await Assert.That(processWide.Registrations).IsEqualTo(1)
+      .Because("the precondition: the process-wide namespace changed between the reconciler's derivation and the reader's");
 
     await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Completed).IsEqualTo(3)
@@ -104,14 +111,17 @@ public class SagaItemCompletionReconcilerTests {
     var agg = new SagaItemAggregate(Total: 2, Completed: 1, Failed: 0, InProgress: 1);
 
     using var processWide = new ProcessWideSagaNamespace();
-    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    var reader = new StubReader(processWide, _itemStreams, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "b", SagaItemTerminalOutcome.Failed },
     });
 
     var result = await SagaItemCompletionReconciler.ResolveCompletionCountsAsync(
       _sagaId, totalItems: 2, agg,
       getItems: _ => Task.FromResult<IReadOnlyList<SagaItemModel>>(items),
-      reader, CancellationToken.None);
+      reader, _itemStreams, CancellationToken.None);
+
+    await Assert.That(processWide.Registrations).IsEqualTo(1)
+      .Because("the precondition: the process-wide namespace changed between the reconciler's derivation and the reader's");
 
     await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Completed).IsEqualTo(1);
@@ -130,14 +140,17 @@ public class SagaItemCompletionReconcilerTests {
     var agg = new SagaItemAggregate(Total: 2, Completed: 1, Failed: 0, InProgress: 1);
 
     using var processWide = new ProcessWideSagaNamespace();
-    var reader = new StubReader(processWide, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
+    var reader = new StubReader(processWide, _itemStreams, _sagaId, new Dictionary<string, SagaItemTerminalOutcome> {
       { "b", SagaItemTerminalOutcome.NotTerminal },
     });
 
     var result = await SagaItemCompletionReconciler.ResolveCompletionCountsAsync(
       _sagaId, totalItems: 2, agg,
       getItems: _ => Task.FromResult<IReadOnlyList<SagaItemModel>>(items),
-      reader, CancellationToken.None);
+      reader, _itemStreams, CancellationToken.None);
+
+    await Assert.That(processWide.Registrations).IsEqualTo(1)
+      .Because("the precondition: the process-wide namespace changed between the reconciler's derivation and the reader's");
 
     await Assert.That(result).IsNull()
       .Because("If the event store has no terminal event for a non-terminal row, the item is genuinely still in flight — saga must NOT complete.");
@@ -150,12 +163,12 @@ public class SagaItemCompletionReconcilerTests {
       throw new InvalidOperationException("Reconciler should not have touched the event store on this code path.");
   }
 
-  private sealed class StubReader(ProcessWideSagaNamespace processWide, Guid expectedSagaId, IDictionary<string, SagaItemTerminalOutcome> outcomesByItemId) : ISagaItemTerminalReader {
+  private sealed class StubReader(ProcessWideSagaNamespace processWide, ISagaItemStreamIdDeriver itemStreams, Guid expectedSagaId, IDictionary<string, SagaItemTerminalOutcome> outcomesByItemId) : ISagaItemTerminalReader {
     public Task<SagaItemTerminalOutcome> CheckAsync(Guid perItemStreamId, CancellationToken cancellationToken) {
       // Another registration lands between the reconciler's derivation and this one.
       processWide.RegisterElsewhere();
       foreach (var (itemId, outcome) in outcomesByItemId) {
-        if (SagaItemStreams.Of(expectedSagaId, itemId) == perItemStreamId) {
+        if (itemStreams.StreamIdOf(expectedSagaId, itemId) == perItemStreamId) {
           return Task.FromResult(outcome);
         }
       }

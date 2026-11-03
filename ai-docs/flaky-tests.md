@@ -46,6 +46,26 @@ await Assert.That(reusedCount).IsGreaterThanOrEqualTo(970)  // Not exactly 1024
   .Because("Pool should reuse approximately 1024 contexts");
 ```
 
+### Prefer removing the read over serializing it
+
+When the static is a value the code under test *reads* (a process-wide setting), the better fix is to stop
+reading it: pass the value explicitly so the test never depends on what another test last wrote. Serialize
+only the tests that are about the static itself.
+
+Worked example: every `AddWhizbangSagas` call sets `SagaItemStreams.AppDefaultNamespace`, the process-wide
+per-item stream namespace. `SagaItemCompletionReconcilerTests` derived each item's stream id twice through
+it, once in the reconciler and once in its stub reader, and failed with "Reconciler queried unknown per-item
+stream" whenever a parallel test registered sagas in between. The fix:
+
+- **Readers stop reading it.** The reconciler tests pass an explicit `ISagaItemStreamIdDeriver`; the
+  watchdog tests give their service host-registered options with a namespace of their own.
+- **The race is reproduced, not hoped away.** `ProcessWideSagaNamespace.RegisterElsewhere()` registers
+  sagas in a throwaway container between the two derivations, so a test that still reads the global fails
+  every run, and the test asserts that the registration happened.
+- **Writers share one key and restore.** Every test that calls `AddWhizbangSagas` or asserts on the global
+  runs under `[NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]` and puts the prior value back
+  (`using var _ = new ProcessWideSagaNamespace();`).
+
 ### When to Use `[NotInParallel]`
 - Tests that modify static state
 - Tests that assert on exact counts from shared resources
@@ -414,3 +434,4 @@ never fills the queue; then the stale answer comes back every time.
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Infrastructure/ServiceBusIntegrationFixtureSanityTests.cs` | Added `InventoryRestockedEvent` waiter |
 | `tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
 | `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool |
+| `tests/Whizbang.Sagas.Tests/SagaItemCompletionReconcilerTests.cs` | Explicit per-item stream deriver instead of the process-wide namespace; the race reproduced by `ProcessWideSagaNamespace` |

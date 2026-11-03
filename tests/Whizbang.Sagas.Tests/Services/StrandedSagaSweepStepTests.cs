@@ -117,7 +117,9 @@ public class StrandedSagaSweepStepTests {
   }
 
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task AddWhizbangSagas_RegistersTheSweepAsAMaintenanceStepOnceAsync() {
+    using var processWide = new ProcessWideSagaNamespace();   // AddWhizbangSagas sets the process-wide namespace
     var services = new ServiceCollection();
     services.AddLogging();
 

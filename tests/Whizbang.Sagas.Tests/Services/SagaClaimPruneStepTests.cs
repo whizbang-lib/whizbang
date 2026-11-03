@@ -176,6 +176,7 @@ public class SagaClaimPruneStepTests {
   /// saga retention instead of going a day after its expiry, and an abandonment claim never goes (#999).
   /// </summary>
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task AddWhizbangSagas_RetainsEverySagaPrefixFromTheGeneralPrune_OnceEachAsync() {
     var prior = SagaItemStreams.AppDefaultNamespace;
     try {
@@ -200,6 +201,7 @@ public class SagaClaimPruneStepTests {
   }
 
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task AddWhizbangSagas_RegistersTheStepOnce_HoweverOftenItIsCalledAsync() {
     var prior = SagaItemStreams.AppDefaultNamespace;
     try {
