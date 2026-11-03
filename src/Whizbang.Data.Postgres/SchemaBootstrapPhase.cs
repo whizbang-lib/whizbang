@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -231,10 +232,17 @@ public static class SchemaBootstrapPhase {
     /// The record is read again once the lock is held: the holder this instance waited for may have applied the same
     /// closure, and applying it again would take every statement's lock on tables now in use, for nothing.
     /// </para>
+    /// <para>
+    /// Read committed explicitly, whatever the database's or the role's default: that recheck sees the holder's commit
+    /// only through a snapshot taken after it, and under repeatable read or serializable the snapshot is taken by the
+    /// try-lock, before the holder committed.
+    /// </para>
     /// </remarks>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:AWaiterOnADatabaseDefaultingToRepeatableRead_StillFindsTheHoldersRecord_AndAppliesNothingAsync</tests>
     private async Task _applyUnderTheLockAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
       Step = SCHEMA_LOCK;
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+      await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+        .ConfigureAwait(false);
 
       if (!await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
         SchemaBootstrapLog.WaitingForTheLock(log, schema, lockId);
@@ -282,15 +290,31 @@ public static class SchemaBootstrapPhase {
 
     /// <summary>Whether the database records <paramref name="closure"/>, under its hash or only under its legacy hash.</summary>
     /// <remarks>
+    /// <para>
     /// Two statements rather than one: a query that names the record table fails to parse when the
     /// table does not exist yet, whatever else the query says, and on an empty database it does not.
     /// A record that cannot be read reads as "not recorded", which applies the closure; the safe
     /// direction, since applying is idempotent and skipping is not.
+    /// </para>
+    /// <para>
+    /// Whether the table exists is read from <c>pg_class</c>, under the statement's snapshot, and never through
+    /// <c>to_regclass</c>. A name lookup is answered from the session's catalog cache, which keeps a cached "no such
+    /// table" until the session starts a transaction or locks a relation. The recheck under the lock runs in a
+    /// transaction that began before the holder committed and has locked nothing but the advisory key, so on a fresh
+    /// database, where the holder's commit is what created the table, <c>to_regclass</c> still said "no such table",
+    /// the record read as absent, and the closure was applied a second time. The second statement names the table and
+    /// is safe: the parser locks what it resolves, and refreshes the cache when a name does not resolve.
+    /// </para>
     /// </remarks>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:AWaiterWhoseSessionCachedTheRecordTableAsMissing_StillFindsTheHoldersRecord_AndAppliesNothingAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync</tests>
     private static async Task<RecordedClosure> _recordedClosureAsync(
         NpgsqlConnection connection, string schema, BootstrapClosure closure, CancellationToken cancellationToken) {
-      await using (var exists = new NpgsqlCommand("SELECT to_regclass($1 || '.wh_bootstrap_closure') IS NOT NULL", connection)) {
-        exists.Parameters.AddWithValue(_quoteIdentifier(schema));
+      await using (var exists = new NpgsqlCommand(
+          "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+          + "WHERE n.nspname = $1 AND c.relname = 'wh_bootstrap_closure')",
+          connection)) {
+        exists.Parameters.AddWithValue(schema);
         if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
           return RecordedClosure.None;
         }
@@ -418,10 +442,19 @@ public static class SchemaBootstrapPhase {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns><see langword="true"/> when an instance can register and be granted a duty.</returns>
   /// <remarks>
+  /// <para>
   /// Asks for exactly what the elector uses and nothing more: somewhere to register, somewhere to
   /// record a holding, and the two functions that do it. Probing the outcome rather than trusting
   /// the scripts is what turns an incomplete closure into a lost optimization instead of an outage.
+  /// </para>
+  /// <para>
+  /// Read from <c>pg_class</c> and <c>pg_proc</c> under the statement's snapshot, never through <c>to_regclass</c> or
+  /// <c>to_regprocedure</c>, whose answers come from the session's catalog cache: inside a transaction that began
+  /// before another session committed these objects, the cache can still say they are missing. The bootstrap probes
+  /// outside any transaction, where the cache is always fresh, but a caller may pass a connection with one open.
+  /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:CanElect_InsideATransactionThatBeganBeforeTheObjectsWereCommitted_SeesThemAsync</tests>
   public static async Task<bool> CanElectAsync(
       NpgsqlConnection connection,
       string schema,
@@ -430,19 +463,24 @@ public static class SchemaBootstrapPhase {
 
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
 
+    // Counted, not tested one by one: (relname) is unique within a schema, and so is (proname, argument types).
     await using var command = new NpgsqlCommand(
       """
-      SELECT to_regclass($1 || '.wh_service_instances') IS NOT NULL
-         AND to_regclass($1 || '.wh_instance_evictions') IS NOT NULL
-         AND to_regclass($1 || '.wh_instance_capabilities') IS NOT NULL
-         AND to_regprocedure($1 || '.record_capability(uuid,text)') IS NOT NULL
-         AND to_regprocedure($1 || '.release_capability(uuid,text)') IS NOT NULL
-         AND to_regprocedure(
-               $1 || '.register_instance_heartbeat(uuid,character varying,character varying,'
-                  || 'integer,jsonb,timestamp with time zone,timestamp with time zone)')
-             IS NOT NULL
+      SELECT (SELECT count(*) FROM pg_catalog.pg_class AS c
+                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1
+                 AND c.relname IN ('wh_service_instances', 'wh_instance_evictions', 'wh_instance_capabilities')) = 3
+         AND (SELECT count(*) FROM pg_catalog.pg_proc AS p
+                JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+               WHERE n.nspname = $1
+                 AND (p.proname, pg_catalog.oidvectortypes(p.proargtypes)) IN (
+                       ('record_capability', 'uuid, text'),
+                       ('release_capability', 'uuid, text'),
+                       ('register_instance_heartbeat',
+                        'uuid, character varying, character varying, integer, jsonb, '
+                        || 'timestamp with time zone, timestamp with time zone'))) = 3
       """, connection);
-    command.Parameters.AddWithValue(_quoteIdentifier(target));
+    command.Parameters.AddWithValue(target);
     return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
   }
 

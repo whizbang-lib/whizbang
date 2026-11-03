@@ -1235,6 +1235,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrency slots one at a time, so two drains at once could each hold some and wait forever for the rest. Drains
   are now serialized and complete one after another. A drain whose token is canceled gives back the slots it had
   taken; before, it kept them, lowering the executor's concurrency for good and hanging every later drain.
+
+- **A starting instance that waited for another's schema bootstrap no longer applies the same closure again.** Once
+  it had the schema lock, the waiter read the bootstrap closure record again, but asked whether the record table
+  existed through `to_regclass`, which answers from the session's catalog cache. On a fresh database that cache still
+  said "no such table" (the waiter had looked before the holder committed, and waiting on an advisory lock refreshes
+  nothing), so the record read as absent and every statement ran again on tables now in use. It happened only when
+  nothing else made the session catch up first, so it showed as a flaky test. The recheck and `CanElectAsync` now read
+  `pg_class` and `pg_proc` under the statement's snapshot, and the bootstrap's transaction is read committed whatever
+  the database's default isolation, since a repeatable read snapshot taken before the holder's commit would miss the
+  record too.
 - **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
   waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
   worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,
