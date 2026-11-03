@@ -56,8 +56,12 @@ public class RedeliveryReconcileDeferralTests {
     return (bundle, children);
   }
 
-  private static ServiceProvider _services(InMemoryIntegrityDeliveryCoordinator coordinator, bool withDeliveries = true) {
+  private static ServiceProvider _services(InMemoryIntegrityDeliveryCoordinator coordinator, bool withDeliveries = true,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     if (withDeliveries) {
       services.AddSingleton<IntegrityDeliveryRegistry>();
@@ -171,13 +175,15 @@ public class RedeliveryReconcileDeferralTests {
     var origin = TrackedGuid.New().Value;
     var (bundle, children) = _bundle(origin, 2);
     var coordinator = new InMemoryIntegrityDeliveryCoordinator();
-    await using var services = _services(coordinator);
+    using var probe = new IntegrityMetricsProbe();
+    await using var services = _services(coordinator, metrics: probe.Metrics);
 
     _ = await RedeliveryReconciler.ReconcileAsync(bundle, children, services, NullLogger.Instance, _now, "orders-service");
     var again = await RedeliveryReconciler.ReconcileAsync(bundle, children, services, NullLogger.Instance, _now, "orders-service");
 
     await Assert.That(again.Deferred).IsTrue();
     await Assert.That(coordinator.Pending.Count).IsEqualTo(1);
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesQueued)).IsEqualTo(1);
   }
 
   [Test]

@@ -106,6 +106,11 @@ public class StreamIntegrityMetricsTests {
     // #1792: deficits a comparison could not add to the paced drain's ledger (per-comparison cap or
     // total backlog bound), deferred to a later audit, so they must be countable.
     await Assert.That(observed).Contains("whizbang.stream_integrity.repairs_deferred");
+    // #2001: the integrity delivery queue the maintainer drains: recorded, handled, retried, dropped.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_queued");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_processed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_failed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_dropped");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }

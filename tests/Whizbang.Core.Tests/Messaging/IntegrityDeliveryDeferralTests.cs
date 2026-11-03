@@ -43,7 +43,8 @@ public class IntegrityDeliveryDeferralTests {
     public ValueTask DisposeAsync() => Services.DisposeAsync();
   }
 
-  private static Fixture _build(bool supported = true, bool withDeliveries = true, bool withCoordinator = true) {
+  private static Fixture _build(bool supported = true, bool withDeliveries = true, bool withCoordinator = true,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var coordinator = new InMemoryIntegrityDeliveryCoordinator { Supported = supported };
     var deliveries = new IntegrityDeliveryRegistry();
     var services = new ServiceCollection();
@@ -52,6 +53,9 @@ public class IntegrityDeliveryDeferralTests {
     }
     if (withDeliveries) {
       services.AddSingleton(deliveries);
+    }
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
     }
     var provider = services.BuildServiceProvider();
     var registry = new RecordingReceptorRegistry();
@@ -102,6 +106,19 @@ public class IntegrityDeliveryDeferralTests {
     await Assert.That(fx.Coordinator.Enqueued.Select(e => e.Id).Distinct().Count()).IsEqualTo(1)
       .Because("the delivery id is derived from the type and payload bytes, so every copy of one message is one delivery");
     await Assert.That(fx.Coordinator.Pending.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task OnlyANewlyRecordedDelivery_IsCountedAsQueuedAsync() {
+    using var probe = new IntegrityMetricsProbe();
+    await using var fx = _build(metrics: probe.Metrics);
+
+    foreach (var stage in _stages) {
+      await fx.At(stage).HandleAsync(_command());
+    }
+
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesQueued)).IsEqualTo(1)
+      .Because("three copies of one message are one delivery");
   }
 
   [Test]

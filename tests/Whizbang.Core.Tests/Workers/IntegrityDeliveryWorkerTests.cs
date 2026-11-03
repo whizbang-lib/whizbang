@@ -50,7 +50,7 @@ public class IntegrityDeliveryWorkerTests {
 
   private static async Task<Fixture> _buildAsync(
       bool? maintainer = true, bool withCoordinator = true, bool withHousekeeping = true,
-      Action<StreamIntegrityOptions>? configure = null) {
+      Action<StreamIntegrityOptions>? configure = null, Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var clock = new FakeTimeProvider(_origin);
     var coordinator = new InMemoryIntegrityDeliveryCoordinator();
     var deliveries = new IntegrityDeliveryRegistry();
@@ -63,6 +63,9 @@ public class IntegrityDeliveryWorkerTests {
     }
     if (housekeeping is not null) {
       services.AddSingleton(housekeeping);
+    }
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
     }
     if (maintainer is { } holds) {
       services.AddSingleton(await MaintainerDutyHolders.ElectedAsync(grants: holds));
@@ -312,6 +315,24 @@ public class IntegrityDeliveryWorkerTests {
     var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
 
     await Assert.That(pass.Failed).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task EveryOutcome_IsCountedAsync() {
+    using var probe = new IntegrityMetricsProbe();
+    await using var fx = await _buildAsync(metrics: probe.Metrics, configure: o => o.MaxIntegrityDeliveryAttempts = 2);
+    fx.Coordinator.Seed(_id(1), TYPE, "ok");
+    fx.Coordinator.Seed(_id(2), TYPE, "fails");
+    fx.Coordinator.Seed(_id(3), TYPE, "exhausted", attempts: 1);
+    fx.Coordinator.Seed(_id(4), "unknown-type", "{}");
+    fx.Fail = payload => payload == "ok" ? null : new InvalidOperationException("no");
+
+    _ = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesProcessed)).IsEqualTo(1);
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesFailed)).IsEqualTo(1);
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesDropped)).IsEqualTo(2)
+      .Because("one spent its attempts and one has no handler");
   }
 
   internal sealed class CapturingLogger : ILogger<IntegrityDeliveryWorker> {

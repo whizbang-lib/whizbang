@@ -907,7 +907,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Commits an expanded composite's children (and its pre-fanout outbox) in one request, then reconciles a
   /// redelivery bundle with the events the store already held (#1790): a redelivered event the store already holds
   /// is skipped as a duplicate, so once the bundle has landed, history stored before origins were recorded adopts
-  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change.
+  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change. Since #2001
+  /// the reconcile itself is integrity work: where the integrity delivery drain is registered it is recorded for the
+  /// maintainer instead of running here (<see cref="RedeliveryReconciler.ReconcileAsync"/>); the children's commit stays
+  /// here, because that is ordinary event storage.
   /// </summary>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
