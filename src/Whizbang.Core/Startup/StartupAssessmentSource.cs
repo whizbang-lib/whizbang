@@ -175,10 +175,11 @@ public static class StartupAssessmentSourceServiceCollectionExtensions {
   public static IServiceCollection TryAddStartupAssessmentSource(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddSingleton<IStartupAssessor>(NullStartupAssessor.Instance);
+    services.TryAddSingleton(TimeProvider.System);
     services.TryAddSingleton(sp => new StartupAssessmentSource(
       sp.GetRequiredService<IStartupAssessor>(),
       sp.GetService<IStartupStageReporter>() ?? NullStartupStageReporter.Instance,
-      sp.GetService<TimeProvider>() ?? TimeProvider.System,
+      sp.GetRequiredService<TimeProvider>(),
       sp.GetService<ILogger<StartupAssessmentSource>>()!));
     return services;
   }

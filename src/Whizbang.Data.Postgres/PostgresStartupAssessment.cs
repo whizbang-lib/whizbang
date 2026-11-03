@@ -153,9 +153,7 @@ internal static class PostgresStartupAssessment {
     var versions = new List<string>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
-        versions.Add(reader.GetString(0));
-      }
+      versions.Add(reader.GetString(0));   // library_version is NOT NULL
     }
     return versions;
   }

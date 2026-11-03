@@ -159,6 +159,8 @@ public class StartupStandDownTests {
     services.AddSingleton<IServiceInstanceProvider>(_instance);
     services.AddSingleton<ILibraryVersionProvider>(new LibraryVersionProvider("1.0.0"));
     services.AddSingleton<TimeProvider>(clock);
+    var stages = new RecordingStageReporter();
+    services.AddSingleton<IStartupStageReporter>(stages);
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.Configure<HeartbeatWorkerOptions>(o => o.IntervalSeconds = 9);
     await using var provider = services.BuildServiceProvider();
@@ -175,6 +177,8 @@ public class StartupStandDownTests {
 
     await Assert.That(coordinator.Requests).Count().IsEqualTo(2);
     await Assert.That(coordinator.Requests[0].LibraryVersion).IsEqualTo("1.0.0");
+    await Assert.That(stages.Calls).IsEquivalentTo(["Registered", "Registered"])
+      .Because("the stand-down records through the host's one stage recorder");
   }
 
   [Test]

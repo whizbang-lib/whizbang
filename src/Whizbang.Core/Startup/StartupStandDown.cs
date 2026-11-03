@@ -134,8 +134,9 @@ public sealed partial class StartupStandDown {
         BeatRecorded?.Invoke(accepted);
         await wait.ConfigureAwait(false);
       }
-    } catch (OperationCanceledException) when (stop.IsCancellationRequested) {
-      // The host is stopping: the row ages out of the fleet the way any stopped instance's does.
+    } catch (OperationCanceledException) {
+      // Only the host stopping cancels here (a beat that failed in any other way was counted as failed): the row ages
+      // out of the fleet the way any stopped instance's does.
     }
   }
 
@@ -153,7 +154,7 @@ public sealed partial class StartupStandDown {
         LibraryVersion: _libraryVersion), stop).ConfigureAwait(false);
     }
 #pragma warning disable CA1031 // logged with what it costs, and retried on the next beat
-    catch (Exception ex) when (ex is not OperationCanceledException) {
+    catch (Exception ex) when (!stop.IsCancellationRequested) {
 #pragma warning restore CA1031
       LogBeatFailed(_logger, ex, _instance.InstanceId);
       return false;

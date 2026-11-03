@@ -132,6 +132,16 @@ public class StartupAssessmentSourceTests {
   }
 
   [Test]
+  public async Task ACancellationTheCallerDidNotAskFor_IsAFailure_NotACancellationAsync() {
+    using var elsewhere = new CancellationTokenSource();
+    await elsewhere.CancelAsync();
+    var source = _source(new CountingAssessor(_ => Task.FromException<StartupAssessment>(new OperationCanceledException(elsewhere.Token))));
+
+    await Assert.That(async () => await source.AssessAsync(CancellationToken.None)).ThrowsExactly<StartupAssessmentException>()
+      .Because("a read that gave up on its own (a timeout surfaced as a cancellation) still did not read the record");
+  }
+
+  [Test]
   public async Task ACanceledCaller_StopsTheRetryWaitAsync() {
     using var cancel = new CancellationTokenSource();
     var retrying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

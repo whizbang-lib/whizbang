@@ -43,18 +43,18 @@ public class DapperStartupAssessorTests {
     await PerTestDatabaseFactory.DropAsync(_database.Name);
   }
 
-  private ServiceProvider _compose() {
+  private ServiceProvider _compose(string? connectionString = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
     services.AddWhizbangPostgres(
-      _database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries,
+      connectionString ?? _database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries,
       managedObjects: null);
     return services.BuildServiceProvider();
   }
 
-  private async Task _startAsync() {
-    await using var provider = _compose();
+  private async Task _startAsync(string? connectionString = null) {
+    await using var provider = _compose(connectionString);
     await provider.GetServices<IHostedService>().OfType<WhizbangDatabaseInitializerService>().Single()
       .StartAsync(CancellationToken.None);
   }
@@ -82,6 +82,19 @@ public class DapperStartupAssessorTests {
     var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current)
       .Because("every migration and perspective table this binary carries is recorded, at this binary's version: " + assessment.Reason);
+  }
+
+  [Test]
+  public async Task ASchemaTheConnectionNames_IsTheOneAssessedAsync() {
+    var named = new NpgsqlConnectionStringBuilder(_database.ConnectionString) { SearchPath = "assess_named" }.ConnectionString;
+    await _startAsync(named);
+
+    await using var provider = _compose(named);
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current).Because(assessment.Reason);
+    await Assert.That(await _verdictAsync()).IsEqualTo(StartupVerdict.Migrate)
+      .Because("the default schema of the same database holds no ledger: a brand-new schema");
   }
 
   [Test]

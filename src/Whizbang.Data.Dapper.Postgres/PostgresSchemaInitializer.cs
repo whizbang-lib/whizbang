@@ -219,7 +219,7 @@ public sealed class PostgresSchemaInitializer {
       }
     }
 
-    if (DeclaredKeyTables is { Count: > 0 } declaredKeyTables
+    if (DeclaredKeyTables is { } declaredKeyTables
         && !await StoredFormSettlement.IsSettledAsync(
           connection, schema, [], declaredKeyTables.Select(t => (t.JournalName, t.Table)), [], cancellationToken)) {
       return false;

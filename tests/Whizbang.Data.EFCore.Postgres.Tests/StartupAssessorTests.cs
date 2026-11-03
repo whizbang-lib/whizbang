@@ -141,6 +141,24 @@ public class StartupAssessorTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task ACurrencyCheckThatCannotAnswer_IsServe_NeverCurrent_AndACancellationPropagatesAsync(
+      CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", "999.0.0",
+      _ => throw new InvalidOperationException("the catalog could not be read"), cancellationToken);
+
+    await Assert.That(unanswered.Verdict).IsEqualTo(StartupVerdict.Serve)
+      .Because("a schema that cannot be shown current takes the full path, which finds out for itself");
+    await Assert.That(unanswered.Reason).Contains("could not be shown current");
+    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", "999.0.0",
+        _ => throw new OperationCanceledException(), cancellationToken))
+      .Throws<OperationCanceledException>();
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task ABrandNewDatabase_HasNoVersionRecord_AndMigratesAsync(CancellationToken cancellationToken) {
     await _execAsync("DROP TABLE wh_schema_migrations CASCADE", cancellationToken);
 
@@ -204,6 +222,8 @@ public class StartupAssessorTests : EFCoreTestBase {
     await Assert.That(await settledAsync([], [], ["something-else:wh_per_settle_probe.amount"])).IsFalse()
       .Because("a rewrite whose settledness cannot be read is never assumed settled");
     await Assert.That(await settledAsync([], [], ["enum-column:no_column_named"])).IsFalse();
+    await Assert.That(await StoredFormSettlement.IsSettledAsync(connection, "", ["wh_per_open"], [], [], cancellationToken)).IsFalse()
+      .Because("no schema named is the default one");
   }
 
   private async Task _initializeTwiceAsync(CancellationToken cancellationToken) {
