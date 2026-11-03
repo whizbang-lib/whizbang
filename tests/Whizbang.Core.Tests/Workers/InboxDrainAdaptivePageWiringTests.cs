@@ -81,7 +81,6 @@ public class InboxDrainAdaptivePageWiringTests {
       new FakeInstance(),
       new DrainChannel(),
       new InboxWriter(),
-      new SchemaReadyGate(),
       Options.Create(options),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       Microsoft.Extensions.Logging.Abstractions.NullLogger<InboxDrainWorker>.Instance);

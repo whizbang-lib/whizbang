@@ -60,13 +60,10 @@ public class HeartbeatWorkerWatchdogBeatTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new ListLogger();
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-      schemaReadyGate: gate,
       options: Options.Create(options ?? new HeartbeatWorkerOptions { IntervalSeconds = 30, SlowIntervalSeconds = 60 }),
       logger: logger,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,

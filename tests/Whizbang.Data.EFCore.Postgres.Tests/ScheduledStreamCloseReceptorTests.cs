@@ -31,9 +31,9 @@ public class ScheduledStreamCloseReceptorTests {
   private sealed class RecordingTruncator : IStreamPrefixTruncator {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
     public int Calls { get; private set; }
-    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition = Whizbang.Core.Lifecycle.Disposition.Delete, CancellationToken cancellationToken = default) {
       Calls++;
-      LastCall = (streamId, throughVersion, archive);
+      LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
       return Task.FromResult(new StreamTruncateResult("truncated", 5));
     }
   }
@@ -78,6 +78,22 @@ public class ScheduledStreamCloseReceptorTests {
     await Assert.That(closer.LastCall!.Value.Through).IsEqualTo(900L);
     await Assert.That(closer.LastCall!.Value.Archive).IsTrue()
       .Because("The receptor forwards the occurrence's {streamId, throughVersion, archive} straight to IStreamPrefixTruncator.CloseAsync.");
+  }
+
+  [Test]
+  public async Task Receptor_AnOccurrenceThatDoesNotArchive_AsksForADiscardAsync() {
+    // #1735: the stored occurrence keeps its archive flag; false is the Delete disposition.
+    var closer = new RecordingTruncator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamPrefixTruncator>(closer);
+    await using var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledStreamCloseReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+
+    await receptor.HandleAsync(new ScheduledStreamClose(Guid.NewGuid(), ThroughVersion: 7, Archive: false));
+
+    await Assert.That(closer.Calls).IsEqualTo(1);
+    await Assert.That(closer.LastCall!.Value.Archive).IsFalse();
   }
 
   [Test]

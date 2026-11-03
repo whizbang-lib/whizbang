@@ -24,7 +24,6 @@ namespace Whizbang.Core.Observability;
 /// </remarks>
 /// <param name="scopeFactory">Creates the scope each cycle resolves its provider from.</param>
 /// <param name="metrics">The metric cache each cycle refreshes.</param>
-/// <param name="schemaReadyGate">Holds the first read until the state table exists.</param>
 /// <param name="logger">Logs a missing provider and failed reads.</param>
 /// <param name="timeProvider">The clock the interval between cycles is measured on; null is the system clock.</param>
 /// <docs>operations/observability/metrics#notify-debounce</docs>
@@ -32,7 +31,6 @@ namespace Whizbang.Core.Observability;
 public sealed partial class NotifyDebounceStatsCollector(
   IServiceScopeFactory scopeFactory,
   NotifyDebounceMetrics metrics,
-  Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
   ILogger<NotifyDebounceStatsCollector> logger,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
@@ -56,13 +54,6 @@ public sealed partial class NotifyDebounceStatsCollector(
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // Don't query the state table before migration 137 has created it.
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {

@@ -337,7 +337,9 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
 
     var provider = services.BuildServiceProvider();
     var expectedWorker = provider.GetRequiredService<TransportConsumerWorker>();
-    var hostedServices = provider.GetServices<IHostedService>().ToList();
+    // Hosted through the stage wrapper, to start at Accept commands (#1636): the wrapper holds the singleton.
+    var hostedServices = provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>()
+      .Select(g => g.Service).ToList();
 
     await Assert.That(hostedServices).Contains(expectedWorker)
       .Because("the IHostedService registration must resolve to the SAME singleton worker instance");
@@ -361,7 +363,8 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
 
     var provider = services.BuildServiceProvider();
     var expectedWorker = provider.GetRequiredService<TransportConsumerWorker>();
-    var hostedServices = provider.GetServices<IHostedService>().ToList();
+    var hostedServices = provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>()
+      .Select(g => g.Service).ToList();
 
     await Assert.That(hostedServices).Contains(expectedWorker)
       .Because("the PerspectiveBuilder overload's IHostedService registration must resolve to the SAME singleton worker instance");

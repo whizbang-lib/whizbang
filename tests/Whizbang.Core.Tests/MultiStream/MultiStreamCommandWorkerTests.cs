@@ -59,7 +59,6 @@ public class MultiStreamCommandWorkerTests {
         Microsoft.Extensions.Options.Options.Create(Options),
         NullLogger<MultiStreamCommandWorker>.Instance,
         Assignment ?? new FixedAssignmentSource(null),
-        SchemaReadyGate.AlreadyReady(),
         Time);
     }
   }
@@ -328,16 +327,14 @@ public class MultiStreamCommandWorkerTests {
     var logger = NullLogger<MultiStreamCommandWorker>.Instance;
     var instance = new FixedInstance(_instance);
     var source = new FixedAssignmentSource(null);
-    var gate = SchemaReadyGate.AlreadyReady();
 
-    await Assert.That(() => new MultiStreamCommandWorker(null!, [], scopes, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, null!, scopes, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], null!, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, null!, options, logger, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, null!, logger, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, null!, source, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, logger, null!, gate)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, logger, source, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(null!, [], scopes, instance, options, logger, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, null!, scopes, instance, options, logger, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], null!, instance, options, logger, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, null!, options, logger, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, null!, logger, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, null!, source)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, logger, null!)).Throws<ArgumentNullException>();
   }
 
   [Test]

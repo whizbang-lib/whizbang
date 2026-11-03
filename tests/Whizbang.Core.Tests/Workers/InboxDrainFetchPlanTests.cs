@@ -71,7 +71,7 @@ public class InboxDrainFetchPlanTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(), new FakeInstance(), new DrainChannel(),
-      new InboxWriter(), new SchemaReadyGate(), Options.Create(o),
+      new InboxWriter(), Options.Create(o),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       Microsoft.Extensions.Logging.Abstractions.NullLogger<InboxDrainWorker>.Instance);
   }

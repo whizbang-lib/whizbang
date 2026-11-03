@@ -77,7 +77,6 @@ public class LeaseRenewalWorkerCoverageTests {
     var logger = new SignalLogger("disabled via options");
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
       logger: logger,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -104,9 +103,13 @@ public class LeaseRenewalWorkerCoverageTests {
   }
 
   /// <summary>What breaks: the killswitch is checked again inside the flush callback itself,
-  /// because the batch flusher's coalescing loop starts in the constructor and can pick up work
-  /// enqueued before (or despite) the disabled flag. If that check were missing, a "disabled"
-  /// worker would still extend leases behind an operator's back.</summary>
+  /// because the batch flusher starts with the worker whatever the flag says, and drains what was
+  /// enqueued when the worker stops. If that check were missing, a "disabled" worker would still
+  /// extend leases behind an operator's back.</summary>
+  /// <remarks>The worker is started first: a flusher that never started flushes nothing (#1636), so
+  /// without the start the flush callback would never run and this test would pass on nothing. With
+  /// the flag on, the same start, enqueue and stop reach the coordinator
+  /// (<see cref="FlushBatchAsync_RowsTheRenewalDidNotCover_AreLoggedAsync"/>).</remarks>
   [Test]
   [Timeout(30000)]
   public async Task FlushBatchAsync_WhenDisabled_NeverReachesTheCoordinatorAsync(CancellationToken testToken) {
@@ -116,7 +119,6 @@ public class LeaseRenewalWorkerCoverageTests {
       .BuildServiceProvider();
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Enabled = false,
         Flusher = new BatchFlusherOptions {
@@ -134,11 +136,11 @@ public class LeaseRenewalWorkerCoverageTests {
     // fallback would unconditionally submit this id to RenewHeldLeasesAsync, making the assertion
     // below meaningful rather than accidentally true for an unrelated reason.
 
+    await worker.StartAsync(testToken);
     var workId = (Guid)TrackedGuid.New();
     await worker.EnqueueAsync(WorkCategory.Inbox, workId, testToken);
-    // The flusher's coalescing loop started in the constructor; StopAsync drains it and waits for
-    // the loop to exit, which only happens once the (disabled, so immediately-returning) flush for
-    // our enqueued item has run.
+    // The flusher started with the worker; StopAsync drains it and waits for the loop to exit, which
+    // only happens once the (disabled, so immediately-returning) flush for our enqueued item has run.
     await worker.StopAsync(testToken);
 
     await Assert.That(coordinator.Calls).IsEmpty()
@@ -161,7 +163,6 @@ public class LeaseRenewalWorkerCoverageTests {
     var instance = new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), "svc", "host", 1);
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 },
       }),

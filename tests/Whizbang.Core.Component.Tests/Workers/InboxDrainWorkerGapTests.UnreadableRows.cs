@@ -83,14 +83,11 @@ public partial class InboxDrainWorkerGapTests {
       services.AddSingleton(setup.DeadLetterLogging);
     }
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
     var logger = new FakeLogger<InboxDrainWorker>();
     var worker = new InboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new FakeInstance(), drain, writer, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = setup.MaxPerStream }), _jsonOpts, logger);
+      sp.GetRequiredService<IServiceScopeFactory>(), new FakeInstance(), drain, writer, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = setup.MaxPerStream }), _jsonOpts, logger);
 
     var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnWorkProcessingIdle += () => idle.TrySetResult();

@@ -93,6 +93,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
+  `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
+  `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees
+  it, at most `Whizbang:StreamLifecycle:SweepBatchSize` (default 500) per cycle. A due stream that a perspective still
+  owes events, or that an active destruction hold covers, is deferred for the destruction retry backoff; a ready one
+  gets a final snapshot at every perspective's cursor, then the PreDestruction hook decides (a veto defers), then the
+  disposition runs: by default the whole stream is archived through `IArchiveStore`. Migration 280.
+  **Upgrade note:** every sealed stream is archived a grace after this release starts; set `FinalizeGrace` to keep them
+  hot longer, or return `DestructionResult.Defer` from a hook.
+- **`AppendToArchived` `NewGeneration` (#1734).** An append to a stream archived whole, of a type declaring it, continues
+  at the tombstone's last version plus one: the stream becomes active with its archive as a prefix and each perspective
+  resumes after its parked cursor. Without a snapshot at every parked cursor the append acts as `AutoRestore`.
+- **Destructions route on their disposition (#1735, WS-3 S6).** The prefix truncate, the ephemeral reaper and the
+  scheduled disposition run `Delete`, `Archive` (stream granularity only), `Compact` (through a developer's new
+  `ICompactionHandler`, kept and logged without one) or refuse `CryptoShred`. **Breaking:**
+  `IStreamPrefixTruncator.TruncateAsync` takes a `Disposition` in place of its `archive` flag, and
+  `DestructionResult.Proceed()` with no argument now runs the declared disposition instead of `Delete`
+  (`DestructionResult.Disposition` is nullable). New analyzer **WHIZ137** fails the build on `Destruction.OnCompaction`
+  and `Destruction.Archived`, which have no handler for event bodies.
+- **The version questions read the archive (#1933).** `GetLastSequenceAsync` answers a stream archived whole with its
+  tombstone's last version, and `HasStreamEventsBeforeAsync` counts archived (or deleted-archive) history, on both
+  drivers, in the one statement each always ran.
 - **Every stream has a lifecycle row, so end-of-life work finds its candidates without reading the event store
   (#1732, WS-3 S3).** Migration 260 adds `wh_stream_lifecycle` (stream type, tenant, first append, the UTC hour of the
   last append, last version, approximate bytes, state `Active`/`Sealed`/`Archived`, and the seal, disposition and
@@ -744,6 +766,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every worker is hosted with the point it starts at, and none holds a gate of its own (part of #1636).**
+  `AddWhizbangWorker<TWorker>(stage)` (Accept commands unless another stage is named) and
+  `AddWhizbangWorkerAtSchemaReady<TWorker>()` host a worker that the host starts at that point and stops normally on
+  shutdown; the worker contains no wait on the schema-ready gate. The data plane (claim, inbox, outbox, perspective,
+  drain, flush, lease, maintenance, integrity, schedule, commit-order stamper, durable-signal, dead-letter and
+  multi-stream workers, the backup-tick coordinator, the orphan-inbox janitor and the integrity sweep scheduler) and
+  the transport consumer start at Accept commands, so nothing claims or receives before the instance's row records
+  that it is eligible for work; the transport consumer receives while the read models catch up. The heartbeat, the
+  instance lifecycle monitor, the standby watcher, the statistics collectors and the type and message-type registry
+  reconcilers start when the schema-ready gate opens, as before. The five flush workers' flushers start with the
+  worker rather than at construction. A worker whose startup others wait on implements the new
+  `IStartAbandonedObserver` and settles that signal when the host stops before its start point
+  (`TransportConsumerWorker.SubscriptionsReady`, `ServiceBusConsumerWorker.SubscriptionsReady`,
+  `PerspectiveWorker.StartupScanComplete`). A turnkey host audit and a source guard fail when a hosted service has no
+  start point or decides its own start on the schema-ready gate. **Upgrade note:** the `ISchemaReadyGate` constructor
+  parameter is removed from every worker that had one; a host that registers `ServiceBusConsumerWorker`,
+  `PerspectiveMigrationWorker` or its own worker with `AddHostedService` should use `AddWhizbangWorker` instead, or it
+  starts with the host, before the schema is migrated. A worker the framework already hosts (the perspective worker
+  through `AddWhizbang()`, the transport consumer through `AddTransportConsumer()`) must not also be registered with
+  `AddHostedService`: that hosts a second, unstaged copy. The ECommerce samples and their test fixtures now host
+  every worker this way, and a source guard fails a plain `AddHostedService` in a sample or a second plain registration
+  of a staged framework worker. A test or fixture finds a hosted worker through the new
+  `Whizbang.Testing.Workers.HostedWorkers` (`GetHostedWorker<TWorker>()`, `GetHostedWorkers()`), which looks through the
+  stage wrapper: a lookup by type over `GetServices<IHostedService>()` finds the wrapper and never the worker.
+
 - **A transient database failure in a worker loop logs at Warning, and only a failure that persists logs an Error
   (#1986).** A worker loop that meets a transient database failure (a dropped connection, a timeout, a deadlock, a
   failover) puts its batch back and retries, so nothing is lost; each one now logs at Warning with its reason and
@@ -1160,6 +1207,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
+  waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
+  worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,
+  the other registered a continuation and looked for the result, with no fence between. On arm64 both could read
+  before either write was visible, so nobody resumed the caller and it waited forever (about one in 50,000
+  completions on an arm64 machine), or the continuation ran without its state, an unhandled exception on a pool
+  thread. Completion and registration now meet in one atomic exchange, so exactly one side runs the continuation,
+  once, with its state; a refused second registration leaves the first one's state in place.
+- **Nothing claims work before the instance's row says it is eligible (part of #1636).** The data plane starts only
+  once the row records Accept commands: a failed write keeps it waiting until the next accepted heartbeat writes the
+  held stage. `IWorkCoordinator.RecordsInstanceTransitions` (false by default, true for the EF Core and Dapper drivers)
+  says whether there is a row to record on; a host with none starts its data plane at once. Migration 300 makes the
+  database refuse such a caller too: `claim_work` and `wh_claim_multi_stream_work` give nothing to a caller whose own
+  row is not eligible for work, and the coalesce shipper's fetch folds nothing for one (new `wh_instance_may_claim`).
+  This reverses 229's "the caller counts itself whatever its row says" for that case; a draining caller still claims
+  its share, a caller that records no phase (an older build) and a caller with no row are served as before. `claim_work`
+  decides it from the row its registration probe already reads, so the claim makes no extra lookup.
+- **A host stopped before its schema is ready ends quietly (#1991).** The shutdown service that deregisters the
+  instance is hosted to start when the schema-ready gate opens, so a host stopped during Preflight or Migrate does not
+  run deregistration against instance tables that may not exist yet, and logs no warning for it.
 - **A retried collective apply resumes after its last committed batch, and a replay folds a collective only as far as
   the live sink applied it (#1969, #1970, #1981).** The collective sink applied a collective in batches, each in a
   transaction of its own, with its cursor in memory only, so every retry (a busy apply lock, a failure, a crash, a

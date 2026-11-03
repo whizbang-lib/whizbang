@@ -52,7 +52,6 @@ public class BackupTickCoordinatorTests {
       registry,
       Options.Create(options ?? new BackupTickCoordinatorOptions()),
       NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       gate: gate ?? NullNotifySignalingGate.Instance,
       timeProvider: timeProvider);
 

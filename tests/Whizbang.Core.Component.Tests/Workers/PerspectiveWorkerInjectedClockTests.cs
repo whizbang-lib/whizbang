@@ -257,7 +257,6 @@ public class PerspectiveWorkerInjectedClockTests {
       instanceProvider: instanceProvider,
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(workerOptions),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: completionStrategy ?? new BatchedCompletionStrategy(),
       eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),

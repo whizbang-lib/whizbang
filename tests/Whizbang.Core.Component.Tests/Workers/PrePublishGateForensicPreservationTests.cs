@@ -205,7 +205,6 @@ public class PrePublishGateForensicPreservationTests {
       drainChannel: drainChannel,
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -285,7 +284,6 @@ public class PrePublishGateForensicPreservationTests {
       drainChannel: drainChannel,
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -351,7 +349,6 @@ public class PrePublishGateForensicPreservationTests {
       drainChannel: drainChannel,
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -407,8 +404,6 @@ public class PrePublishGateForensicPreservationTests {
       messageType: "Contracts.Billing.InvoiceIssued, Contracts")];
 
     var drainChannel = new FakeOutboxDrainChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new DeadLetterRecordLogger<OutboxDrainWorker>();
 
     var services = new ServiceCollection();
@@ -423,7 +418,6 @@ public class PrePublishGateForensicPreservationTests {
       drainChannel: drainChannel,
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(drainOptions),
       jsonOptions: _jsonOpts,
       logger: logger,

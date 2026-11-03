@@ -68,7 +68,6 @@ public class MaintenanceWorkerMaintainerDutyTests {
     var provider = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance,
       metrics: null,

@@ -311,7 +311,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: InboxChannelWriter!,
       handlerCommitChannel: HandlerCommitChannel!,
       failureChannel: FailureChannel!,
-      schemaReadyGate: SchemaGate!,
       options: WorkerOptions!,
       coordinatorOptions: CoordinatorOptions!,
       logger: Logger!,
@@ -365,12 +364,6 @@ public class InboxDispatchWorkerGapTests {
     await _assertCtorGuardAsync(new CtorDeps { FailureChannel = null }, "failureChannel");
   }
 
-  /// <summary>Constructor guard: null ISchemaReadyGate throws with the right ParamName.</summary>
-  [Test]
-  public async Task Constructor_NullSchemaReadyGate_ThrowsArgumentNullExceptionAsync() {
-    await _assertCtorGuardAsync(new CtorDeps { SchemaGate = null }, "schemaReadyGate");
-  }
-
   /// <summary>Constructor guard: null IOptions&lt;InboxDispatchWorkerOptions&gt; throws with the right ParamName.</summary>
   [Test]
   public async Task Constructor_NullOptions_ThrowsArgumentNullExceptionAsync() {
@@ -394,59 +387,6 @@ public class InboxDispatchWorkerGapTests {
   // ============================================================
 
   /// <summary>
-  /// Covers the OperationCanceledException catch around
-  /// <c>_schemaReadyGate.WaitForReadyAsync</c>: when shutdown fires while the gate is
-  /// still closed, ExecuteAsync must return cleanly (no fault, no partition spin-up,
-  /// no dispatched work).
-  /// </summary>
-  [Test]
-  public async Task SchemaGateWaitCanceledByShutdown_ExitsCleanlyWithoutDispatchingAsync() {
-    var inbox = new FakeInboxChannelWriter();
-    var handlerCommit = new FakeHandlerCommitChannel();
-    var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();  // never marked ready
-    await using var sp = new ServiceCollection().BuildServiceProvider();
-
-    var worker = new InboxDispatchWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new FakeInstanceProvider(),
-      inboxChannelWriter: inbox,
-      handlerCommitChannel: handlerCommit,
-      failureChannel: failure,
-      schemaReadyGate: gate,
-      options: Options.Create(new InboxDispatchWorkerOptions()),
-      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
-      deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
-
-    await worker.StartAsync(CancellationToken.None);
-    var executeTask = worker.ExecuteTask;
-    await inbox.WriteAsync(_makeWork());
-
-    // StopAsync cancels the stoppingToken; WaitForReadyAsync throws OCE; the catch returns.
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask is not null).IsTrue();
-    // Graceful shutdown = completed without faulting. Depending on where the OCE surfaces
-    // relative to the catch, the task may end RanToCompletion or Canceled — both are clean.
-    // IsCompletedSuccessfully excludes Canceled and so flakes under CI timing.
-    await Assert.That(executeTask!.IsCompleted).IsTrue()
-      .Because("cancellation while awaiting the schema gate must complete ExecuteAsync");
-    await Assert.That(executeTask!.IsFaulted).IsFalse()
-      .Because("the schema-gate shutdown path must return, not fault");
-    await Assert.That(handlerCommit.All).IsEmpty()
-      .Because("the dispatch loop never started, so the queued work must not have been consumed");
-  }
-
-  /// <summary>
   /// Covers the partition-count clamp log branch: when the WorkCoordinatorGate's
   /// MaxConcurrent is smaller than MaxConcurrentDispatch, the worker logs the clamp
   /// warning (EventId 25) and still dispatches through the reduced fan-out.
@@ -468,7 +408,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -515,8 +454,6 @@ public class InboxDispatchWorkerGapTests {
   public async Task MaxAttemptsExceeded_DeadLetterStoreThrows_FallsBackToTerminalCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var logger = new RecordingLogger<InboxDispatchWorker>();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
@@ -525,7 +462,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -563,8 +499,6 @@ public class InboxDispatchWorkerGapTests {
     var handlerCommit = new FakeHandlerCommitChannel();
     var store = new CapturingDeadLetterStore();
     var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
@@ -595,7 +529,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -640,15 +573,12 @@ public class InboxDispatchWorkerGapTests {
       IGenerationProvider? generationProvider,
       DeadLetterMetrics? dlqMetrics = null,
       InboxDispatchWorkerOptions? options = null) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(options ?? new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -824,7 +754,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -860,8 +789,6 @@ public class InboxDispatchWorkerGapTests {
   public async Task DiscardPolicySaysDiscard_ShortCircuitsRowWithTerminalCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var policy = new AlwaysDiscardInboxPolicy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
@@ -870,7 +797,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -913,8 +839,6 @@ public class InboxDispatchWorkerGapTests {
   public async Task DetachedLifecycleReceptorThrows_RoutesFailureToFailureChannelAsync() {
     var failure = new FakeFailureChannel();
     var handlerCommit = new FakeHandlerCommitChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ =>
@@ -927,7 +851,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -968,8 +891,6 @@ public class InboxDispatchWorkerGapTests {
   public async Task DetachedScope_NoReceptorInvokerRegistered_SkipsDetachedInvocationAsync() {
     var failure = new FakeFailureChannel();
     var handlerCommit = new FakeHandlerCommitChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     // No IReceptorInvoker registered — the detached scope's GetService returns null.
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var signalingFactory = new SignalingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
@@ -980,7 +901,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -1029,8 +949,6 @@ public class InboxDispatchWorkerGapTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var metrics = new InboxMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
@@ -1059,7 +977,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -1350,8 +1267,6 @@ public class InboxDispatchWorkerGapTests {
     // endless re-dead-letter loop hid.
     var handlerCommit = new FakeHandlerCommitChannel();
     var writer = new FakeInboxChannelWriter();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -1359,7 +1274,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: writer,
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: new RecordingLogger<InboxDispatchWorker>(),
@@ -1391,8 +1305,6 @@ public class InboxDispatchWorkerGapTests {
     var store = new AlreadyGoneDeadLetterStore();
     var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var logger = new RecordingLogger<InboxDispatchWorker>();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     long added = 0;
@@ -1410,7 +1322,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: writer,
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -1451,8 +1362,6 @@ public class InboxDispatchWorkerGapTests {
     var handlerCommit = new FakeHandlerCommitChannel();
     var writer = new FakeInboxChannelWriter();
     var logger = new RecordingLogger<InboxDispatchWorker>();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -1460,7 +1369,6 @@ public class InboxDispatchWorkerGapTests {
       inboxChannelWriter: writer,
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,

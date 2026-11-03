@@ -34,7 +34,6 @@ public class IntegrityCheckpointWorkerBranchCoverageTests {
 
     var ex = await Assert.That(() => new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       null!,
       NullLogger<IntegrityCheckpointWorker>.Instance)).Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("options");
@@ -47,7 +46,6 @@ public class IntegrityCheckpointWorkerBranchCoverageTests {
     // An IOptions wrapper with no value must fail at construction, not on the first cycle.
     var ex = await Assert.That(() => new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       new NullValueOptions(),
       NullLogger<IntegrityCheckpointWorker>.Instance)).Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("options");
@@ -189,7 +187,6 @@ public class IntegrityCheckpointWorkerBranchCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }

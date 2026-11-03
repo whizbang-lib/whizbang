@@ -308,6 +308,8 @@ Whizbang:StreamIntegrity:RepairMode
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds
 Whizbang:StreamIntegrity:RepairTopic
 Whizbang:StreamIntegrity:StartupAuditMaxJitterSeconds
+Whizbang:StreamLifecycle:FinalizeGrace
+Whizbang:StreamLifecycle:SweepBatchSize
 Whizbang:StreamLifecycle:Types:*:AppendToArchived
 Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow

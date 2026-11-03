@@ -43,6 +43,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
+  // #1734: each perspective's live cursor, else the one a whole-stream archive parked (migration 280).
+  private const string RESUME_CURSORS_FUNCTION = "wh_perspective_resume_cursors";
   private const string OUTBOX_TABLE = "wh_outbox";
   private const string P_MAX_ATTEMPTS = "p_max_attempts";
   private const string PARAM_INSTANCE_ID = "p_instance_id";
@@ -1822,6 +1824,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.AddWithValue("t", tableName);
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
+
+  /// <inheritdoc />
+  /// <remarks>This driver keeps instance rows, so a stage counts as recorded only once its write lands (#1636).</remarks>
+  public bool RecordsInstanceTransitions => true;
 
   /// <inheritdoc />
   public async Task<bool> RecordInstanceTransitionAsync(
@@ -4519,17 +4525,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // FOR UPDATE SKIP LOCKED: two shippers folding the same group at the same instant
     // partition the rows instead of colliding (the residual fetch→complete race dedups at the
     // consumer's inbox via identity-preserving composites).
+    // 300 (#1636): a caller whose own row says it may not claim (not eligible for work, and not draining) folds nothing,
+    // as the claims refuse it; one primary-key lookup of the caller's row. A coordinator with no instance identity (or a
+    // caller with no row) folds as before.
+    var callerMayClaim = _instanceProvider is null
+      ? string.Empty
+      : $@"
+        AND NOT EXISTS (
+          SELECT 1 FROM {BuildSchemaQualifiedName(schema, "wh_service_instances")} si
+          WHERE si.instance_id = @{PARAM_INSTANCE_ID} AND NOT {BuildSchemaQualifiedName(schema, "wh_instance_may_claim")}(si))";
     cmd.CommandText = $@"
       SELECT message_id, stream_id, destination, message_type, envelope_type,
              event_data::text, metadata::text, is_event, scheduled_for, priority
       FROM {tableName}
-      WHERE coalesce_group = @p_group AND processed_at IS NULL
+      WHERE coalesce_group = @p_group AND processed_at IS NULL{callerMayClaim}
       ORDER BY created_at
       LIMIT @p_limit
       FOR UPDATE SKIP LOCKED";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
     cmd.Parameters.Add(new NpgsqlParameter(P_LIMIT, limit));
+    if (_instanceProvider is not null) {
+      cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
+    }
 
     var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
@@ -4879,16 +4897,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var eventStoreTable = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
 #pragma warning disable S2077 // Schema-qualified table names built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor hydration warms the
     // commit_sequence half of PerspectiveCursorCache (see GetPerspectiveCursorsBatchAsync).
+    // #1734: the live cursor, else the one a whole-stream archive parked (a NewGeneration stream resumes after it).
+    var resumeCursors = BuildSchemaQualifiedName(schema, RESUME_CURSORS_FUNCTION);
     var sql = "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
             + "c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence "
-            + $"FROM {tableName} c "
-            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
-            + "WHERE c.stream_id = {0} AND c.perspective_name = {1}";
+            + $"FROM {resumeCursors}(ARRAY[{{0}}]::uuid[], {{1}}) c "
+            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id";
 #pragma warning restore S2077
 
     var result = await _dbContext.Database
@@ -4920,7 +4938,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -4936,9 +4953,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
         "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
       + "c.rewind_trigger_event_id, e.commit_sequence "
-      + $"FROM {tableName} c "
-      + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
-      + "WHERE c.stream_id = ANY(@p_stream_ids)";
+      + $"FROM {BuildSchemaQualifiedName(schema, RESUME_CURSORS_FUNCTION)}(@p_stream_ids, NULL) c "
+      + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id";
 #pragma warning restore S2077
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {

@@ -224,7 +224,6 @@ public sealed class DeadLetterCanaryCampaignTests {
     var provider = services.BuildServiceProvider();
     return new DeadLetterRecoveryWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new Gate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new Gen(),
@@ -398,11 +397,6 @@ public sealed class DeadLetterCanaryCampaignTests {
     public void Ring() => _onSignal?.Invoke(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
   }
 
-  private sealed class Gate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public void MarkReady() { }
-    public bool IsReady => true;
-  }
   private sealed class Gen : IGenerationProvider {
     public string GetGeneration() => "build/9.9.9";
   }
@@ -424,7 +418,6 @@ public sealed class DeadLetterCanaryCampaignTests {
     var provider = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      new Gate(),
       Options.Create(options),
       Options.Create(new StreamIntegrityOptions()),
       new Gen(),
@@ -695,7 +688,6 @@ public sealed class DeadLetterCanaryCampaignTests {
     await using var provider = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new Gate(),
       options: Options.Create(_opts(RetryHeldOnStartupMode.Canary)),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new Gen(),

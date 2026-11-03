@@ -300,7 +300,6 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new ServiceInstanceProvider(Guid.CreateVersion7(), handlerService, "phase6-host", 1),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

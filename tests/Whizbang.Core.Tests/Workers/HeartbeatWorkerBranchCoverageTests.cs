@@ -220,7 +220,6 @@ public class HeartbeatWorkerBranchCoverageTests {
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: options,
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -243,7 +242,6 @@ public class HeartbeatWorkerBranchCoverageTests {
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(options),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,

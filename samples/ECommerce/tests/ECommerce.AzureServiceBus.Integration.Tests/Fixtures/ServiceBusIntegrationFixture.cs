@@ -28,6 +28,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -505,7 +506,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Azure Service Bus consumer for InventoryWorker
     // CRITICAL: InventoryWorker MUST subscribe to receive its own published events to store them in local event store
@@ -522,7 +523,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       RoutingKey: "sub-01-b"
     ));
     builder.Services.AddSingleton(inventoryConsumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: inventoryConsumerOptions,
@@ -533,7 +534,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -703,7 +703,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
     // BFF subscribes to generic topics with generic subscriptions (sub-00-a, sub-01-a)
@@ -719,7 +719,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       RoutingKey: "sub-01-a"
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -730,7 +730,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -931,12 +930,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
     // This ensures the transport receivers are inactive while we drain stale messages
     Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
-    var inventoryConsumer = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
-      .FirstOrDefault();
-    var bffConsumer = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
-      .FirstOrDefault();
+    var inventoryConsumer = _inventoryHost!.Services.GetHostedWorker<Whizbang.Core.Workers.TransportConsumerWorker>();
+    var bffConsumer = _bffHost!.Services.GetHostedWorker<Whizbang.Core.Workers.TransportConsumerWorker>();
 
     if (inventoryConsumer != null) {
       await inventoryConsumer.PauseAllSubscriptionsAsync();
@@ -1479,7 +1474,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Post-Phase-H: OutboxDrainWorker is the active publish path (OutboxPublishWorker
     // defaults disabled). Both expose OnOutboxMessagePublished; subscribe to whichever
     // is registered as IHostedService so the fixture works on either configuration.
-    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var hostedServices = InventoryHost.Services.GetHostedWorkers().ToList();
     var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
     var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
     if (drainWorker is null && publishWorker is null) {
@@ -1552,13 +1547,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       worker.OnPerspectiveEventProcessed += handler;
     }
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var inventoryWorker = InventoryHost.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(inventoryWorker);
     }
     if (hostFilter is null or "bff") {
-      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
+      var bffWorker = BffHost.Services.GetHostedWorker<PerspectiveWorker>();
       WireWorker(bffWorker);
     }
     var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
@@ -1595,8 +1588,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
     void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-    var inventoryHostedServices = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
-    var bffHostedServices = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var inventoryHostedServices = _inventoryHost!.Services.GetHostedWorkers().ToList();
+    var bffHostedServices = _bffHost!.Services.GetHostedWorkers().ToList();
 
     WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
     WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
@@ -1656,12 +1649,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     if (hostFilter is null or "inventory") {
-      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
 
     using var watchdogCts = new CancellationTokenSource();

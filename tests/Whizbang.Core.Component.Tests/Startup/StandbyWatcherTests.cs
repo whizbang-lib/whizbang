@@ -185,15 +185,12 @@ public class StandbyWatcherTests {
 
     var lifecycle = new RecordingLifecycle();
     var host = new RecordingHostLifetime();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       lifecycle: lifecycle,
       hostLifetime: host,
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider(ourVersion),
       assessor: assessor ?? NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -504,44 +501,6 @@ public class StandbyWatcherTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
-      CancellationToken testToken) {
-    // A host that fails during migration stops everything it built. The watcher reads the
-    // standby table, which may not exist yet, so it waits on the schema gate first.
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinator>(_ => new StandbyCoordinator(null));
-    await using var sp = services.BuildServiceProvider();
-
-    var gate = new BlockingSchemaGate();
-    var watcher = new StandbyWatcher(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
-      hostLifetime: new RecordingHostLifetime(),
-      instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
-      versionProvider: new StubVersionProvider("1.0.0"),
-      assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance,
-      timeProvider: new FakeTimeProvider(_now));
-
-    using var cts = new CancellationTokenSource();
-    await watcher.StartAsync(cts.Token);
-    // StartAsync returning does not mean ExecuteAsync has run -- the host starts it on the thread
-    // pool. Cancelling before it reaches the gate would leave a task that was cancelled before it
-    // began, and "not faulted" is true of that too, so the assertions below would hold without the
-    // watcher ever having handled anything.
-    await gate.WaitEntered.WaitAsync(testToken);
-    var executeTask = watcher.ExecuteTask;
-    await cts.CancelAsync();
-    await watcher.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("the watcher absorbs the cancellation and returns; a faulted or cancelled task "
-             + "turns an ordinary shutdown into a reported crash");
-  }
-
-  [Test]
-  [Timeout(30000)]
   public async Task ExecuteAsync_ATickThatThrows_DoesNotKillTheWatcherAsync(
       CancellationToken testToken) {
     // The watcher is the only thing that answers a standby request. If one failed ledger read
@@ -553,8 +512,6 @@ public class StandbyWatcherTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     await using var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var options = new StandbyWatcherOptions();
     var clock = new ArmedTimerClock();
     var watcher = new StandbyWatcher(
@@ -562,7 +519,6 @@ public class StandbyWatcherTests {
       lifecycle: new RecordingLifecycle(),
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -600,14 +556,11 @@ public class StandbyWatcherTests {
     await using var sp = services.BuildServiceProvider();
 
     var lifecycle = new RecordingLifecycle();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       lifecycle: lifecycle,
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: null!,
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -639,14 +592,11 @@ public class StandbyWatcherTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     await using var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       lifecycle: new RecordingLifecycle(),
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -662,20 +612,4 @@ public class StandbyWatcherTests {
       .Because("a cancellation arriving mid-tick is a shutdown, not a tick failure");
   }
 
-  /// <summary>A schema gate that never opens, and says when the watcher started waiting on it.</summary>
-  private sealed class BlockingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waitEntered =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes once the watcher has actually reached the gate.</summary>
-    public Task WaitEntered => _waitEntered.Task;
-
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-    }
-  }
 }

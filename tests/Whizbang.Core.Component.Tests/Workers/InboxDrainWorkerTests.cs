@@ -154,16 +154,13 @@ public class InboxDrainWorkerTests {
     coord.RowsByStream[streamId] = [_row(msgId, streamId, priority: 250)];
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
     using var cts = new CancellationTokenSource();
@@ -196,16 +193,13 @@ public class InboxDrainWorkerTests {
     coord.RowsByStream[streamId] = [row];
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
     using var cts = new CancellationTokenSource();
@@ -231,8 +225,6 @@ public class InboxDrainWorkerTests {
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel();
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -241,8 +233,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -273,8 +264,6 @@ public class InboxDrainWorkerTests {
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 250 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -283,8 +272,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -374,8 +362,6 @@ public class InboxDrainWorkerTests {
     var drainChannel = new FakeInboxDrainChannel();
     var inboxChannelWriter = new CapturingInboxChannel { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -386,8 +372,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, inboxChannelWriter, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drainChannel, inboxChannelWriter, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -465,8 +450,6 @@ public class InboxDrainWorkerTests {
     var drainChannel = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -474,8 +457,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drainChannel, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -555,8 +537,6 @@ public class InboxDrainWorkerTests {
     var drainChannel = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 6 };
     var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -571,8 +551,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drainChannel, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -620,8 +599,6 @@ public class InboxDrainWorkerTests {
 
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -629,8 +606,7 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 

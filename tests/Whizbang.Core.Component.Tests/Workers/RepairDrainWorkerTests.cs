@@ -209,7 +209,7 @@ public class RepairDrainWorkerTests {
   // ── ExecuteAsync: the paced loop itself ───────────────────────────────────
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator) _buildForLoop(
-      StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate) {
+      StreamIntegrityOptions options, TimeProvider clock) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -229,7 +229,6 @@ public class RepairDrainWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance,
       clock);
@@ -244,8 +243,7 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -265,48 +263,13 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = rate },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse();
 
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  public async Task ExecuteAsync_ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
-    // schema to drain against, so the exit must be silent rather than an error on every fast
-    // restart.
-    //
-    // The gate reports when the body reaches it, and the test stops only after that. On .NET 10
-    // the base class dispatches ExecuteAsync through Task.Run: StartAsync returning proves only
-    // that the body was scheduled, and a work item dequeued after the stopping token is canceled
-    // never invokes the delegate at all. A bare "StopAsync did not throw" would then pass for a
-    // worker that never ran, never parked, and never exercised the catch this test is about.
-    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
-    var gate = new BlockingGate();
-    var (worker, coordinator) = _buildForLoop(
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
-      clock,
-      gate);   // never marked ready
-
-    await worker.StartAsync(CancellationToken.None);
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await Assert.That(async () => await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)))
-      .ThrowsNothing();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("a pod stopped mid-migration is an ordinary deploy, not a crash to report");
-    await Assert.That(coordinator.ClaimCalls).Count().IsEqualTo(0)
-      .Because("the catch must end the run: falling through into the drain loop would claim "
-             + "repair rows out of tables the migration may not have created");
   }
 
   [Test]
@@ -317,8 +280,7 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -363,7 +325,6 @@ public class RepairDrainWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance);
     return (worker, coordinator, transport, tracker);
@@ -374,23 +335,6 @@ public class RepairDrainWorkerTests {
     return (RequestRedeliveryCommand)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-  }
-
-  /// <summary>
-  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
-  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
   }
 
   private sealed class DrainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {

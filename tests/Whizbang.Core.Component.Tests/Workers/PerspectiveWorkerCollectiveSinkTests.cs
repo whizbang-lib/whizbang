@@ -174,11 +174,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
       scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
@@ -239,11 +236,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
       scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
@@ -1549,7 +1543,6 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         CollectiveLockBusyCountsAsFailure = lockBusyCountsAsFailure,
         CollectivePredecessorWaitSeconds = predecessorWaitSeconds,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,

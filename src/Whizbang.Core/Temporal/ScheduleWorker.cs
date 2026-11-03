@@ -22,18 +22,16 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TemporalOptions _options;
   private readonly ILogger<ScheduleWorker> _logger;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly ISignalBus _signalBus;
   private readonly ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private readonly ScheduleTimer _timer;
 
-  /// <summary>Constructor. The schema gate, signal bus, and time provider are optional (defaults suffice).</summary>
+  /// <summary>Constructor. The signal bus and time provider are optional (defaults suffice).</summary>
   public ScheduleWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<TemporalOptions> options,
     ILogger<ScheduleWorker> logger,
-    ISchemaReadyGate schemaReadyGate,
     ILoggerFactory loggerFactory,
     ISignalBus signalBus,
     TimeProvider? timeProvider = null) {
@@ -42,7 +40,6 @@ public sealed partial class ScheduleWorker : BackgroundService {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
-    _schemaReadyGate = schemaReadyGate;
     _signalBus = signalBus;
 
     // The in-memory precise wake: when the earliest owned schedule is due, ring our own doorbell.
@@ -83,14 +80,6 @@ public sealed partial class ScheduleWorker : BackgroundService {
         // expected on shutdown
       }
       return;
-    }
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
     }
 
     LogStarted(_logger, _options.BackstopIntervalMilliseconds);

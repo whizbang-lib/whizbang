@@ -78,7 +78,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // One consumer loop so the batch that fails and the batch that follows are the same loop's.
         MaxConcurrentDrainConsumers = 1
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),

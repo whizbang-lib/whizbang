@@ -135,12 +135,9 @@ public class MaintenanceWorkerRowGuardTests {
       services.AddSingleton(guard);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger);
     return (worker, logger);

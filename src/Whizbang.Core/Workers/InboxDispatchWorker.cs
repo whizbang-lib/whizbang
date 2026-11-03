@@ -70,7 +70,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics;
   private readonly IFailureChannel _failureChannel;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly LeaseHandleOptions _leaseHandleOptions;
@@ -107,7 +106,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IInboxChannelWriter inboxChannelWriter,
     IInboxHandlerCommitChannel handlerCommitChannel,
     IFailureChannel failureChannel,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<InboxDispatchWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
@@ -143,8 +141,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _handlerCommitChannel = handlerCommitChannel;
     ArgumentNullException.ThrowIfNull(failureChannel);
     _failureChannel = failureChannel;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _leaseHandleOptions = leaseHandleOptions.Value;
@@ -196,12 +192,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 

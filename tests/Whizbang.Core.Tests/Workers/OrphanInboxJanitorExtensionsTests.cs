@@ -69,7 +69,9 @@ public class OrphanInboxJanitorExtensionsTests {
     services.AddOrphanInboxJanitor();
 
     var sp = services.BuildServiceProvider();
-    var hosted = sp.GetServices<IHostedService>().OfType<OrphanInboxJanitor>().ToArray();
+    // Hosted through the stage wrapper, to start at Accept commands (#1636).
+    var hosted = sp.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>()
+      .Where(g => g.Service is OrphanInboxJanitor && g.StartPoint == "Accept commands").ToArray();
 
     await Assert.That(hosted.Length).IsEqualTo(1);
   }

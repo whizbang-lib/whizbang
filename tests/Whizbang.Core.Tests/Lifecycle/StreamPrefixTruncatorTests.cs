@@ -105,7 +105,7 @@ public class StreamPrefixTruncatorTests {
     var coord = new FakeCloseCoordinator(log);
     var streamId = Guid.NewGuid();
 
-    var result = await _closer(coord, hook: null).TruncateAsync(streamId, throughVersion: 42, archive: true);
+    var result = await _closer(coord, hook: null).TruncateAsync(streamId, throughVersion: 42, Disposition.Archive);
 
     await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1);
@@ -181,7 +181,7 @@ public class StreamPrefixTruncatorTests {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
 
-    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, Disposition.Delete);
 
     await Assert.That(result.Status).IsEqualTo("full_history_blocked");
     await Assert.That(coord.CloseCalls).IsEqualTo(0)
@@ -197,7 +197,7 @@ public class StreamPrefixTruncatorTests {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
 
-    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, Disposition.Archive);
 
     await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1)
@@ -211,7 +211,7 @@ public class StreamPrefixTruncatorTests {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = ["BalancePerspective_" + Guid.NewGuid().ToString("N")] };
 
-    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, Disposition.Delete);
 
     await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1)

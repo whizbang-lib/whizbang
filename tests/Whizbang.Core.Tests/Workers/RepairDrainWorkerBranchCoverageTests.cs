@@ -103,7 +103,6 @@ public class RepairDrainWorkerBranchCoverageTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(_autoRepair),
       NullLogger<RepairDrainWorker>.Instance);
     return (worker, coordinator, transport, sp);
@@ -121,7 +120,6 @@ public class RepairDrainWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new RepairDrainWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         null!,
         NullLogger<RepairDrainWorker>.Instance))
       .Throws<ArgumentNullException>()
@@ -133,7 +131,6 @@ public class RepairDrainWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new RepairDrainWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         new NullValueOptions(),
         NullLogger<RepairDrainWorker>.Instance))
       .Throws<ArgumentNullException>()

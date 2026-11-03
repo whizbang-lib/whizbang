@@ -128,7 +128,6 @@ public class TableStatisticsCollectorUnusedIndexTests {
       _collector = new TableStatisticsCollector(
         _container.GetRequiredService<IServiceScopeFactory>(),
         new TableStatisticsMetrics(new WhizbangMetrics(_meters)),
-        SchemaReadyGate.AlreadyReady(),
         logger ?? _logger,
         Options.Create(new TableStatisticsOptions { CollectionInterval = _interval }),
         _clock);

@@ -139,7 +139,7 @@ public sealed class WorkCoordinatorMetrics {
   /// </summary>
   /// <param name="pending">Reads the queue depth: what waits in the channel plus what the flusher has taken up.</param>
   /// <docs>operations/observability/metrics#handler-commit-queue</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxHandlerWorkerQueueDepthTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerQueueDepthTests.cs</tests>
   public void ObserveHandlerCommitQueue(Func<long> pending) {
     ArgumentNullException.ThrowIfNull(pending);
     _meter.CreateObservableGauge("whizbang.work_coordinator.handler_commits.queued", pending,

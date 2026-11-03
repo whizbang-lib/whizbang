@@ -132,7 +132,6 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-      schemaReadyGate: new StubSchemaReadyGate(),
       options: Options.Create(opts),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -146,9 +145,4 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
     public bool IsAliveLockHeld { get; set; } = initialHeld;
   }
 
-  private sealed class StubSchemaReadyGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public bool IsReady => true;
-    public void MarkReady() { }
-  }
 }

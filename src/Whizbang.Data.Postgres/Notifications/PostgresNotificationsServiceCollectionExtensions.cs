@@ -131,7 +131,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Register as singleton AND as a hosted service so the worker is also
     // resolvable directly (tests and diagnostics rely on this).
     services.TryAddSingleton<PgCommitOrderStamperWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
+    // Hosted to start at Accept commands (#1636): it stamps the message tables the data plane fills.
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
 
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
@@ -195,7 +196,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
-    services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
+    // Hosted to start at Accept commands (#1636): firing a schedule publishes into the message tables.
+    services.AddWhizbangWorker<Whizbang.Core.Temporal.ScheduleWorker>();
     // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
     // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
@@ -211,18 +213,22 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
     // ride this tail as insurance against NOTIFY drops.
     services.TryAddSingleton<PgDurableSignalTailWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
+    // Hosted to start at Accept commands (#1636).
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
 
     // Instance lifecycle monitor — scans wh_service_instances for stale heartbeats and
     // publishes the durable InstanceDiedSignal so live pods drive orphan takeover.
     services.TryAddSingleton<PgInstanceLifecycleMonitor>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
+    // Hosted to start when the schema-ready gate opens (#1636): death detection is coordination, not work, and runs
+    // while this instance is alive but not yet eligible for work.
+    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
 
     // Retention sweep for wh_signals — deletes rows older than the retention window that every
     // pod's tail has already consumed. Runs hourly; a stalled tail keeps its rows alive because
     // the delete is gated by MIN(last_delivered_signal_id) across all cursors.
     services.TryAddSingleton<PgDurableSignalRetentionWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
+    // Hosted to start at Accept commands (#1636).
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
     // Duty election (#966 phase 3): duties are held by role assignment by default — a vote decides,
     // the row is the role, with an epoch that fences exclusive work. The session-lock elector stays

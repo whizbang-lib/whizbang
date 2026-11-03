@@ -255,62 +255,6 @@ public class InboxDispatchWorkerCoverageTests {
   // ============================================================
 
   [Test]
-  public async Task SchemaGateCanceledBeforeReady_ReturnsCleanlyWithoutDispatchingAsync() {
-    // If shutdown races schema readiness and this catch stopped returning cleanly, ExecuteAsync
-    // would throw an OperationCanceledException out of the BackgroundService's execute task —
-    // surfaced by the host as a faulted hosted service (and, unobserved, a process-ending
-    // exception) instead of the worker just quietly never having started dispatching.
-    var instance = new FakeInstanceProvider();
-    var inbox = new FakeInboxChannelWriter();
-    var handlerCommit = new FakeHandlerCommitChannel();
-    var failure = new FakeFailureChannel();
-    var gate = new EnteredSignallingGate(); // never marked ready
-
-    var sp = new ServiceCollection().BuildServiceProvider();
-    var worker = new InboxDispatchWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: instance,
-      inboxChannelWriter: inbox,
-      handlerCommitChannel: handlerCommit,
-      failureChannel: failure,
-      schemaReadyGate: gate,
-      options: Options.Create(new InboxDispatchWorkerOptions()),
-      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
-      deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    // Wait until the worker is provably parked on the gate before canceling. .NET 10 dispatches
-    // ExecuteAsync via Task.Run(_, stoppingToken), which never invokes the delegate at all if the
-    // token is already canceled when the work item is dequeued -- the task then settles Canceled,
-    // IsCompletedSuccessfully is false, and this test fails in about a millisecond. Cancelling
-    // straight after StartAsync was losing that race intermittently under full-suite load.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    // Now the cancellation must resolve the gate await via OperationCanceledException, caught at
-    // the ExecuteAsync call site, which returns rather than propagating.
-    await cts.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(worker.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
-      .Because("canceling the stopping token while parked on the schema gate must return cleanly, not fault ExecuteAsync");
-    await Assert.That(handlerCommit.All).IsEmpty()
-      .Because("no dispatch work should ever run when shutdown wins the race against schema readiness");
-
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
   public async Task SlowDispatch_DebugLoggingEnabled_EmitsPerfDiagnosticLineAsync() {
     // This is the only per-message dispatch-latency signal broken down by message type available
     // to an operator without standing up metrics infrastructure. If this branch regressed to
@@ -319,8 +263,6 @@ public class InboxDispatchWorkerCoverageTests {
     var instance = new FakeInstanceProvider();
     var inbox = new FakeInboxChannelWriter();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var fakeTime = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var handlerCommit = new TimeAdvancingHandlerCommitChannel(fakeTime);
     var logger = new RecordingLogger<InboxDispatchWorker>();
@@ -332,7 +274,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -394,7 +335,6 @@ public class InboxDispatchWorkerCoverageTests {
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
     var store = new NullMoveDeadLetterStore();
-    var gate = SchemaReadyGate.AlreadyReady();
 
     const string compositeType = "Test.CompositeOverCap, Test";
     var composite = new OverCapComposite(5); // cap = 1 -> CapExceeded outcome
@@ -408,7 +348,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -458,7 +397,6 @@ public class InboxDispatchWorkerCoverageTests {
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
     var store = new NullMoveDeadLetterStore();
-    var gate = SchemaReadyGate.AlreadyReady();
 
     const string compositeType = "Test.CompositeOverBudget, Test";
     var composite = new BulkComposite(
@@ -474,7 +412,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions {
         MaxConcurrentDispatch = 1,
         MaxCompositeChildrenPerExpansion = 2, // 5 children > 2 -> over budget
@@ -534,7 +471,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -583,7 +519,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -621,7 +556,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -700,7 +634,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -723,41 +656,31 @@ public class InboxDispatchWorkerCoverageTests {
       .Because("PostLifecycle rides the same no-local-perspective gate as PostAllPerspectives");
   }
 
-  // Target: src/Whizbang.Core/Workers/InboxDispatchWorker.cs:244 - the catch around
-  // `await Task.WhenAll(consumers)` in ExecuteAsync's finally block.
-  //
-  // The partition consumers are started with Task.Run(..., stoppingToken). If shutdown wins the
-  // race to that line, Task.Run never schedules the delegate and hands back an already-canceled
-  // task - so the consumers' own internal OperationCanceledException handling, which every other
-  // shutdown path relies on, never gets to run. Task.WhenAll then throws from inside a FINALLY
-  // block, where nothing downstream can catch it: the worker faults and the generic host reports a
-  // crashed hosted service, on an ORDINARY stop.
-  //
-  // Getting the token dead by that line without leaving through an earlier return is the whole
-  // trick, and one obvious route does NOT work: starting the worker with an already-cancelled
-  // token means BackgroundService settles ExecuteTask as Canceled WITHOUT EVER RUNNING
-  // ExecuteAsync (measured: Status == Canceled and not one log line emitted). Any test built that
-  // way asserts on a worker that never ran.
-  //
-  // What does work is the gate. ISchemaReadyGate's contract is "blocks until MarkReady is called
-  // OR the token fires", and an implementation is free to observe readiness and RETURN when both
-  // happen together rather than throwing. This gate does exactly that: it parks, the test cancels
-  // while it is parked, and it then returns normally - so the schema-gate catch is bypassed and
-  // execution reaches the consumer spawn with a dead token, which is the real shape of a stop
-  // landing between the barrier and the fan-out.
+  // A stop landing between the worker's start and its consumer spawn: the consumers are spawned with
+  // a dead token and canceled before they ever run, and Task.WhenAll in the finally must absorb that
+  // rather than fault the hosted service. The logger cancels the stopping token when the worker logs
+  // that it started (the first thing ExecuteAsync does), so the spawn always sees a dead token.
   //
   // "Stopped" is the load-bearing assertion: it is logged AFTER the finally, so seeing it proves
   // the catch absorbed the cancellation instead of letting it escape.
   [Test]
   [Timeout(30000)]
-  public async Task ShutdownBetweenTheSchemaGateAndTheConsumerSpawn_AbsorbsTheCanceledConsumersAsync(
+  public async Task ShutdownBetweenTheStartAndTheConsumerSpawn_AbsorbsTheCanceledConsumersAsync(
       CancellationToken testToken) {
     var instance = new FakeInstanceProvider();
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new ParkThenReturnGate();
-    var logger = new EventIdCapturingLogger();
+    using var cts = new CancellationTokenSource();
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var logger = new EventIdCapturingLogger {
+      OnLog = id => {
+        if (id == 1) {
+          cts.Cancel();
+          started.TrySetResult();
+        }
+      },
+    };
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -766,7 +689,6 @@ public class InboxDispatchWorkerCoverageTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
@@ -780,14 +702,8 @@ public class InboxDispatchWorkerCoverageTests {
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider());
 
-    using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Without this the cancellation could beat the worker to the gate, and the worker would
-    // exit through the schema-gate return having never reached the code under test.
-    await gate.Entered.WaitAsync(testToken);
-
-    await cts.CancelAsync();
-    gate.Release();
+    await started.Task.WaitAsync(testToken);
 
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -801,30 +717,9 @@ public class InboxDispatchWorkerCoverageTests {
       .Because("the 'stopped' line is logged after the finally block, so its presence is what "
              + "proves the cancellation was absorbed rather than having escaped past it");
     await Assert.That(handlerCommit.All).IsEmpty()
-      .Because("nothing may be dispatched by a worker whose token died at the barrier");
+      .Because("nothing may be dispatched by a worker whose token died before its consumers ran");
 
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  /// <summary>
-  /// A gate that announces when a waiter arrives, then returns NORMALLY when released - even if
-  /// the token has been canceled meanwhile. That is within its contract ("blocks until MarkReady
-  /// is called or the token fires") and it is what lets a test put the worker past the barrier
-  /// with a dead stopping token.
-  /// </summary>
-  private sealed class ParkThenReturnGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public void Release() => _release.TrySetResult();
-    public bool IsReady => _release.Task.IsCompleted;
-    public void MarkReady() => _release.TrySetResult();
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await _release.Task.ConfigureAwait(false);
-    }
   }
 
   /// <summary>Records the event id of every log entry, so a test can assert which lines were reached.</summary>
@@ -840,6 +735,9 @@ public class InboxDispatchWorkerCoverageTests {
       }
     }
 
+    /// <summary>Called with each event id as it is logged, after it is recorded.</summary>
+    public Action<int>? OnLog { get; init; }
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
 
@@ -852,30 +750,7 @@ public class InboxDispatchWorkerCoverageTests {
       lock (_gate) {
         _eventIds.Add(eventId.Id);
       }
-    }
-  }
-
-  /// <summary>
-  /// A never-ready schema gate that publishes when a waiter arrives.
-  /// </summary>
-  /// <remarks>
-  /// Needed because <c>StartAsync</c> returning does not mean <c>ExecuteAsync</c> has reached the
-  /// gate: .NET 10 queues it with <c>Task.Run</c>. Cancelling before it is dequeued skips the body
-  /// entirely, so a test that cancels straight after starting can pass or fail on scheduling luck.
-  /// </remarks>
-  private sealed class EnteredSignallingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
+      OnLog?.Invoke(eventId.Id);
     }
   }
 
@@ -938,15 +813,12 @@ public class InboxDispatchWorkerCoverageTests {
 
   private static InboxDispatchWorker _buildWorkerWithRuntimeRegistry(IReceptorRegistry runtimeRegistry) {
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

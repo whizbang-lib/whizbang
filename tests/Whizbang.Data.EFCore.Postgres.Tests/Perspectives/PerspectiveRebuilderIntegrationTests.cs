@@ -190,8 +190,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       new ServiceInstanceProvider(instance, "rebuild", "rebuild-host", 1),
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.MultiStream.MultiStreamCommandOptions { PollInterval = TimeSpan.FromHours(1) }),
       sp.GetRequiredService<ILogger<Whizbang.Core.MultiStream.MultiStreamCommandWorker>>(),
-      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance,
-      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance);
     var completed = new TaskCompletionSource<Whizbang.Core.MultiStream.MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnRunCompleted += c => completed.TrySetResult(c);
     await worker.StartAsync(CancellationToken.None);

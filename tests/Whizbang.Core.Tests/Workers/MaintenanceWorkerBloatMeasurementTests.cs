@@ -101,12 +101,9 @@ public class MaintenanceWorkerBloatMeasurementTests {
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics(new TestMeterFactory()));
     services.AddSingleton(metrics);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new FakeLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       logger);
     for (var cycle = 0; cycle < cycles; cycle++) {

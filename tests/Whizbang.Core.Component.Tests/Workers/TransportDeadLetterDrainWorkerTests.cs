@@ -62,8 +62,7 @@ public class TransportDeadLetterDrainWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(opts),
       whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance);
   }
 
   private static TransportDeadLetterDrainWorker _buildWorker(
@@ -80,8 +79,7 @@ public class TransportDeadLetterDrainWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(opts),
       whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: logger,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: logger);
   }
 
   [Test]
@@ -108,37 +106,6 @@ public class TransportDeadLetterDrainWorkerTests {
       .Because("disabled means no broker is touched at all, not merely drained less often");
 
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  [Timeout(30000)]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync(CancellationToken ct) {
-    // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
-    // schema to drain against, so the exit must be silent rather than an error on every fast
-    // restart.
-    var services = new ServiceCollection();
-    services.AddLogging();
-    var provider = services.BuildServiceProvider();
-    var gate = new BlockingGate();
-    var log = new RecordingLogger();
-    var worker = new TransportDeadLetterDrainWorker(
-      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true }),
-      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: log,
-      schemaReadyGate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.WaitEntered.WaitAsync(ct);
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("stopping mid-wait is an ordinary shutdown; a faulted worker reports it as a crash");
-    await Assert.That(log.Events).DoesNotContain(CYCLE_ERROR_EVENT_ID)
-      .Because("a fast restart is not a drain failure, and logging it as one would make every "
-             + "rollout look like the DLQ drain is broken");
   }
 
   [Test]
@@ -179,8 +146,7 @@ public class TransportDeadLetterDrainWorkerTests {
         IntervalMinutes = 0
       }),
       whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: log,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: log);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -346,8 +312,7 @@ public class TransportDeadLetterDrainWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 500 }),
       whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: logger,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      logger: logger);
 
     await worker.DrainOnceAsync(CancellationToken.None);
     await worker.DrainOnceAsync(CancellationToken.None);
@@ -431,20 +396,6 @@ public class TransportDeadLetterDrainWorkerTests {
         _second.TrySetResult();
       }
       throw new InvalidOperationException("scope unavailable");
-    }
-  }
-
-  /// <summary>A schema gate that never opens, and reports when the worker began waiting.</summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task WaitEntered => _waitEntered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
     }
   }
 

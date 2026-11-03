@@ -40,10 +40,6 @@ public partial class ServiceBusConsumerWorker(
   IServiceScopeFactory scopeFactory,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
-  // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
-  // database work against a schema that may not exist yet on a first boot. Optional only so
-  // existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate schemaReadyGate,
   ILifecycleMessageDeserializer lifecycleMessageDeserializer,
   IEnvelopeSerializer envelopeSerializer,
   IReceptorRegistryQuery receptorRegistry,
@@ -51,10 +47,10 @@ public partial class ServiceBusConsumerWorker(
   IEventMarkerResolver eventMarkerResolver,
   IEphemeralModeResolver ephemeralModeResolver,
   ServiceBusConsumerOptions? options = null,
-  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
+  Whizbang.Core.Startup.IStartAbandonedObserver {
 #pragma warning restore S107
   private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>
@@ -70,6 +66,14 @@ public partial class ServiceBusConsumerWorker(
   /// <inheritdoc />
   Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <summary>
+  /// The host stopped before this worker's start point, so it never started (#1636): <see cref="SubscriptionsReady"/> is
+  /// settled as canceled, so a waiter on it observes an outcome rather than hanging.
+  /// </summary>
+  /// <param name="stoppingToken">The host's stopping token.</param>
+  void Whizbang.Core.Startup.IStartAbandonedObserver.OnStartAbandoned(CancellationToken stoppingToken)
+    => _subscriptionsReady.TrySetCanceled(stoppingToken);
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
@@ -137,7 +141,7 @@ public partial class ServiceBusConsumerWorker(
   /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
   /// </summary>
   /// <summary>
-  /// Background loop: waits for the schema gate, subscribes to the configured topics, then keeps
+  /// Background loop: subscribes to the configured topics, then keeps
   /// the worker alive while subscriptions process messages.
   /// </summary>
   /// <remarks>
@@ -146,22 +150,13 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate, subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
     LogWorkerStarting(_logger);
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        _subscriptionsReady.TrySetCanceled(stoppingToken);
-        return;
-      }
-    }
 
     try {
       foreach (var topicConfig in _options.Subscriptions) {
