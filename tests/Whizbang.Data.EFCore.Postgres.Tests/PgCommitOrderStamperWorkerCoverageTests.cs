@@ -31,6 +31,50 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     }
   }
 
+  /// <summary>Records the event ids a worker logs.</summary>
+  private sealed class EventIdRecordingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<int> _ids = new();
+
+    public IReadOnlyCollection<int> EventIds => [.. _ids];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) => _ids.Enqueue(eventId.Id);
+  }
+
+  /// <summary>
+  /// Production impact if this guard regresses: a host whose notification options name no database (no connection
+  /// string and no registered data source) would try to elect a stamper leader over a connection it cannot open. The
+  /// worker instead says why it is disabled, in a warning an operator can act on, and ends without electing.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoConnectionStringAndNoDataSource_SaysSoAndEndsWithoutElectingAsync(
+      CancellationToken testToken) {
+    var logger = new EventIdRecordingLogger();
+    var worker = _newWorker(directConnectionString: null, logger: logger);
+
+    await worker.StartAsync(testToken);
+    // The body returns on its own here, so the execute task completing is the signal that it ran.
+    await worker.ExecuteTask!.WaitAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(logger.EventIds).Contains(DISABLED_NO_CONNECTION_EVENT_ID)
+      .Because("the worker must say it is disabled for want of a connection, not end silently");
+    await Assert.That(worker.IsLeader).IsFalse();
+
+    await worker.StopAsync(testToken);
+  }
+
+  private const int DISABLED_NO_CONNECTION_EVENT_ID = 2;
+
   /// <summary>
   /// Captures only EventId 6 (<c>LogIterationError</c>) so a test can wait for a deterministic
   /// count of failed leader-election iterations instead of sleeping. Every non-cancellation

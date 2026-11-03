@@ -20,6 +20,10 @@ namespace Whizbang.Core.Tests.Notifications;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgInstanceLifecycleMonitor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDurableSignalRetentionWorker.cs</code-under-test>
+/// <remarks>
+/// A host that names no database reaches the "nothing to connect to" side of each worker: the monitor's tick and the
+/// retention sweep both do nothing and say so, rather than throwing on a connection that cannot be opened.
+/// </remarks>
 [Category("Startup")]
 [NotInParallel(Order = 103)]
 public class PgNotificationStackStartupGateTests {
@@ -85,6 +89,43 @@ public class PgNotificationStackStartupGateTests {
       .Because("the sweep retries through an outage and still stops cleanly when asked");
   }
 
+  /// <summary>
+  /// A host whose notification options name no database (no connection string, no data source) has
+  /// nothing to scan: the tick reads nothing, announces no death, and comes back at the cadence of a
+  /// fleet with no stale peer, rather than throwing on a connection it cannot open.
+  /// </summary>
+  [Test]
+  public async Task InstanceLifecycleMonitor_WithNoDatabaseToReach_ScansNothingAndKeepsItsIdleCadenceAsync(
+      CancellationToken ct) {
+    var bus = new NoOpSignalBus();
+    var worker = new PgInstanceLifecycleMonitor(
+      Options.Create(new WhizbangNotificationOptions()),
+      _plainConfig(),
+      bus,
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgInstanceLifecycleMonitor>.Instance);
+
+    var next = await worker.TickForTestsAsync(ct);
+
+    await Assert.That(next).IsEqualTo(PgInstanceLifecycleMonitor.ComputeTickInterval(null, worker.StaleThreshold))
+      .Because("with nothing to read there is no oldest stale peer, so the tick keeps the idle cadence");
+    await Assert.That(bus.Published).IsEqualTo(0)
+      .Because("a monitor that cannot see the fleet table must never announce a death");
+  }
+
+  /// <summary>
+  /// A host whose notification options name no database has no signal table to sweep: the sweep deletes
+  /// nothing and reports zero rather than throwing on a connection it cannot open.
+  /// </summary>
+  [Test]
+  public async Task DurableSignalRetention_WithNoDatabaseToReach_SweepsNothingAsync(CancellationToken ct) {
+    var worker = new PgDurableSignalRetentionWorker(
+      Options.Create(new WhizbangNotificationOptions()),
+      _plainConfig(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgDurableSignalRetentionWorker>.Instance);
+
+    await Assert.That(await worker.SweepOnceAsync(ct)).IsEqualTo(0);
+  }
+
   private const int TICK_FAILED_EVENT_ID = 1;
   private const int SWEEP_FAILED_EVENT_ID = 1;
 
@@ -115,11 +156,18 @@ public class PgNotificationStackStartupGateTests {
   }
 
   private sealed class NoOpSignalBus : ISignalBus {
+    private int _published;
+
+    public int Published => Volatile.Read(ref _published);
+
     private sealed class Subscription : ISignalSubscription {
       public void Dispose() { }
     }
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
-      where TSignal : ISignal => ValueTask.CompletedTask;
+      where TSignal : ISignal {
+      Interlocked.Increment(ref _published);
+      return ValueTask.CompletedTask;
+    }
     public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler)
       where TSignal : ISignal => new Subscription();
   }

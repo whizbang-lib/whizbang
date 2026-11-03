@@ -93,6 +93,7 @@ public sealed partial class PgDurableSignalRetentionWorker(
   }
 
   /// <summary>Test hook: run one sweep synchronously. Returns the number of rows deleted.</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs:DurableSignalRetention_WithNoDatabaseToReach_SweepsNothingAsync</tests>
   public async Task<int> SweepOnceAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     // Prefer the registered notification data source - the only path that

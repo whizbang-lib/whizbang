@@ -286,6 +286,51 @@ public class CoalesceShipWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// A worker built without a clock uses the system clock: with nothing bound it parks on that clock and still ends
+  /// cleanly when the host stops it. The park's log line is the signal that the body ran, since StartAsync returning
+  /// proves only that it was scheduled.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoClockGiven_ParksOnTheSystemClockAndStopsCleanlyAsync(CancellationToken testToken) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new FakeCoalesceCoordinator());
+    var sp = services.BuildServiceProvider();
+    var logger = new ParkedSignalLogger();
+    var worker = new CoalesceShipWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: logger,
+      compositeFactory: new CompositeFactory());
+
+    await worker.StartAsync(testToken);
+    await logger.Parked.WaitAsync(testToken);
+    await worker.StopAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a stop is the normal way out of the park, on the system clock as on any other");
+  }
+
+  /// <summary>Completes when the worker logs that it parked for want of a binding (EventId 2).</summary>
+  private sealed class ParkedSignalLogger : Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker> {
+    private const int PARKED_EVENT_ID = 2;
+    private readonly TaskCompletionSource _parked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Parked => _parked.Task;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == PARKED_EVENT_ID) {
+        _parked.TrySetResult();
+      }
+    }
+  }
+
   #endregion
 
   #region Tick loop (FakeTimeProvider-driven)

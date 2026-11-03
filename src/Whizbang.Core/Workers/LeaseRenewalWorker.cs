@@ -63,6 +63,8 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LeaseRenewalWorkerCoverageTests.cs:ExecuteAsync_WhenDisabled_ParksThenStopsCleanlyOnShutdownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LeaseRenewalWorkerCoverageTests.cs:FlushBatchAsync_WhenDisabled_NeverReachesTheCoordinatorAsync</tests>
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.Enabled) {
       LogDisabled(_logger);

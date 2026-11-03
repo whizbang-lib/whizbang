@@ -50,6 +50,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ContinuousArrivalsPastMaxDelay_FoldsAnywayAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_PendingLargerThanMaxBatch_FoldsInChunksAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_NoEnabledBindings_ParksWithoutTouchingTheCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_WithNoClockGiven_ParksOnTheSystemClockAndStopsCleanlyAsync</tests>
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,

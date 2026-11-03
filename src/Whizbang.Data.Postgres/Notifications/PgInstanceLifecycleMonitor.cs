@@ -135,6 +135,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <summary>Test hook: run one detection tick without the loop.</summary>
   /// <returns>The delay the loop would wait before the next tick, so a test can assert the cadence a tick chose.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs:InstanceLifecycleMonitor_WithNoDatabaseToReach_ScansNothingAndKeepsItsIdleCadenceAsync</tests>
   public Task<TimeSpan> TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
 
   private async Task<TimeSpan> _tickOnceAsync(CancellationToken ct) {
