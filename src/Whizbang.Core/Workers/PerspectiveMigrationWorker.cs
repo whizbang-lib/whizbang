@@ -17,11 +17,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/perspectives/rebuild</docs>
 public sealed partial class PerspectiveMigrationWorker(
     IPerspectiveRebuilder rebuilder,
-    ILogger<PerspectiveMigrationWorker> logger,
-    ISchemaReadyGate schemaReadyGate) : BackgroundService {
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
-
-
+    ILogger<PerspectiveMigrationWorker> logger) : BackgroundService {
   /// <summary>
   /// Callback to query pending migration rebuilds (status 4) from the database.
   /// Set by the hosting infrastructure during registration.
@@ -36,20 +32,11 @@ public sealed partial class PerspectiveMigrationWorker(
   public Func<string, int, string, CancellationToken, Task>? UpdateMigrationStatus { get; set; }
 
   /// <inheritdoc/>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The worker is inert unless both delegates are wired, waits on the schema gate, and then processes each pending rebuild with its own success, failure and status-update error handling, because a failed status update must not lose the rebuild's own result.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The worker is inert unless both delegates are wired, and then processes each pending rebuild with its own success, failure and status-update error handling, because a failed status update must not lose the rebuild's own result.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (GetPendingRebuilds == null || UpdateMigrationStatus == null) {
       return;
     }
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
-
 
     try {
       var pendingRebuilds = await GetPendingRebuilds(stoppingToken);

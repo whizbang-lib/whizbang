@@ -66,7 +66,7 @@ public class TableStatisticsRegistrationTests {
     services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
     await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(provider.GetServices<IHostedService>().OfType<TableStatisticsCollector>().Count()).IsEqualTo(1);
+    await Assert.That(provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<TableStatisticsCollector>().Count()).IsEqualTo(1);
     await Assert.That(provider.GetServices<IConfigureOptions<TableStatisticsOptions>>().Count()).IsEqualTo(1);
     await Assert.That(provider.GetService<TableStatisticsMetrics>()).IsNotNull()
       .Because("the collector writes to the meter, so registering the collector registers the meter");
@@ -145,7 +145,7 @@ public class TableStatisticsRegistrationTests {
     services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
     await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(provider.GetServices<IHostedService>().OfType<EventTypeBytesSampler>().Count()).IsEqualTo(1)
+    await Assert.That(provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<EventTypeBytesSampler>().Count()).IsEqualTo(1)
       .Because("two samplers would each try to claim the same window, and one is all a fleet needs");
     await Assert.That(provider.GetServices<IValidateOptions<TableStatisticsOptions>>().Count()).IsEqualTo(1);
   }

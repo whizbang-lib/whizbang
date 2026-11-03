@@ -72,11 +72,8 @@ public class MaintenanceWorkerIntegrityGaugeTests {
     services.AddSingleton(metrics);
     services.AddSingleton(Options.Create(new StreamIntegrityOptions { MaxRepairAttemptsPerBucket = maxAttempts }));
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
     return (worker, metrics);

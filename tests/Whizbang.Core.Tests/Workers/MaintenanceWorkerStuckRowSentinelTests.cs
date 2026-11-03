@@ -171,12 +171,9 @@ public class MaintenanceWorkerStuckRowSentinelTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions {
         IntervalMinutes = 1,
         StuckRowSentinelEnabled = sentinelEnabled,

@@ -14,9 +14,10 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// The integrity delivery drain's loop (#2001): it waits for the schema, runs a pass, survives a failed pass, and
-/// stops cleanly. Every wait is on a signal the worker body emits (<see cref="IntegrityDeliveryWorker.OnPassCompleted"/>,
-/// or the gate being entered); the clock is fake and advanced explicitly.
+/// The integrity delivery drain's loop (#2001): it runs a pass, survives a failed pass, and stops cleanly. When it starts
+/// is its registration's business (hosted at Accept commands, #1636, locked by the startup hosted-service audit), so
+/// the loop holds no gate. Every wait is on a signal the worker body emits
+/// (<see cref="IntegrityDeliveryWorker.OnPassCompleted"/>); the clock is fake and advanced explicitly.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityDeliveryWorker.cs</code-under-test>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
@@ -57,17 +58,6 @@ public class IntegrityDeliveryWorkerLoopTests {
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
-  /// <summary>A gate that never opens and says when the worker reached it.</summary>
-  private sealed class ClosedGate : ISchemaReadyGate {
-    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      Entered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken);
-    }
-  }
-
   /// <summary>A fake clock that signals each timer created on it, so a test advances only once the worker is waiting.</summary>
   private sealed class SignalingClock(DateTimeOffset start) : FakeTimeProvider(start) {
     public SemaphoreSlim TimersCreated { get; } = new(0);
@@ -90,7 +80,7 @@ public class IntegrityDeliveryWorkerLoopTests {
   }
 
   private static (IntegrityDeliveryWorker Worker, QueueCoordinator Coordinator, List<string> Handled, CapturingLogger Logger, SignalingClock Clock, ServiceProvider Services)
-      _build(ISchemaReadyGate gate) {
+      _build() {
     var coordinator = new QueueCoordinator();
     var provider = new ServiceCollection().AddScoped<IWorkCoordinator>(_ => coordinator).BuildServiceProvider();
     var deliveries = new IntegrityDeliveryRegistry();
@@ -98,7 +88,7 @@ public class IntegrityDeliveryWorkerLoopTests {
     deliveries.Register(TYPE, (payload, _, _) => { handled.Add(payload); return Task.CompletedTask; });
     var logger = new CapturingLogger();
     var clock = new SignalingClock(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
-    var worker = new IntegrityDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(), gate,
+    var worker = new IntegrityDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new StreamIntegrityOptions { IntegrityDeliveryIntervalSeconds = 15 }), deliveries, logger, clock);
     return (worker, coordinator, handled, logger, clock, provider);
   }
@@ -114,8 +104,8 @@ public class IntegrityDeliveryWorkerLoopTests {
   }
 
   [Test]
-  public async Task TheLoop_RunsAPassOnceTheSchemaIsReady_AndStopsCleanlyAsync() {
-    var (worker, coordinator, handled, _, _, services) = _build(SchemaReadyGate.AlreadyReady());
+  public async Task TheLoop_RunsAPass_AndStopsCleanlyAsync() {
+    var (worker, coordinator, handled, _, _, services) = _build();
     await using var _ = services;
     var id = Guid.NewGuid();
     coordinator.Due.Enqueue(new IntegrityDelivery(id, TYPE, "payload", 0, DateTimeOffset.UnixEpoch));
@@ -135,7 +125,7 @@ public class IntegrityDeliveryWorkerLoopTests {
   [Arguments(false)]
   [Arguments(true)]
   public async Task AFailedPass_IsLogged_AndTheNextIntervalRunsAgainAsync(bool cancellationNotFromTheHost) {
-    var (worker, coordinator, handled, logger, clock, services) = _build(SchemaReadyGate.AlreadyReady());
+    var (worker, coordinator, handled, logger, clock, services) = _build();
     await using var _ = services;
     // A cancellation the host did not ask for (a downstream timeout) is a failed pass too, not a stop.
     coordinator.LeaseFailures.Enqueue(cancellationNotFromTheHost
@@ -157,24 +147,5 @@ public class IntegrityDeliveryWorkerLoopTests {
     await Assert.That(handled).IsEquivalentTo(["after-recovery"])
       .Because("one failed pass must not stop the drain");
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
-  }
-
-  [Test]
-  public async Task StoppedBeforeTheSchemaIsReady_TheLoopEndsWithoutAPassAsync() {
-    var gate = new ClosedGate();
-    var (worker, coordinator, _, _, _, services) = _build(gate);
-    await using var _ = services;
-    var passes = 0;
-    worker.OnPassCompleted += () => Interlocked.Increment(ref passes);
-
-    await worker.StartAsync(CancellationToken.None);
-    await gate.Entered.Task.WaitAsync(_wait);
-    await worker.StopAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
-    await Assert.That(passes).IsEqualTo(0).Because("the worker provably reached the gate and touched nothing before it opened");
-    await Assert.That(coordinator.Completed).IsEmpty();
   }
 }

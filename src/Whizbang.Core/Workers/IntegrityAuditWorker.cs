@@ -37,11 +37,9 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
 public sealed partial class IntegrityAuditWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
   ILogger<IntegrityAuditWorker> logger) : BackgroundService, IIntegritySweepRunner {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityAuditWorker> _logger = ArgumentGuard.NotNull(logger);
   private int _cycleCount;
@@ -54,12 +52,6 @@ public sealed partial class IntegrityAuditWorker(
       return;
     }
     LogStarted(_logger, _options.AuditIntervalMinutes);
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
 
     var firstCycle = true;
     // A cycle that reached no origins has not audited across services; the next delay re-arms the

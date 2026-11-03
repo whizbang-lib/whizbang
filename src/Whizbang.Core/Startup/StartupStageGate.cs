@@ -11,7 +11,9 @@ namespace Whizbang.Core.Startup;
 /// </summary>
 /// <remarks>
 /// One signal per startup stage, completed once and never reset: stages only move forward, and a stage reached stays
-/// reached. A shutdown stage completes none, so a worker still waiting for its stage when the host starts to stop is
+/// reached. A stage that makes the instance eligible for work (Accept commands, Running) is reached only once the
+/// instance's row records it, so a held write keeps the data plane waiting until the next registration signal (an
+/// accepted heartbeat) writes it. A shutdown stage completes none, so a worker still waiting for its stage when the host starts to stop is
 /// never started.
 /// </remarks>
 /// <param name="schemaReady">
@@ -41,8 +43,11 @@ public sealed class StartupStageGate(ISchemaReadyGate schemaReady) : IStartupSta
   public ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(snapshot);
     if (StartupStages.OrdinalOf(snapshot.Stage) is not null) {
+      // An eligible stage is reached only once the row records it (#1636): the instance is eligible for work by its
+      // row, and a worker that starts there must not claim before the row says so. Without a row to record on, the
+      // reporter reports every stage as recorded. A held write is told again, recorded, when it lands.
       foreach (var (stage, signal) in _reached) {
-        if (stage <= snapshot.Stage) {
+        if (stage <= snapshot.Stage && (recorded || !_isEligibleForWork(stage))) {
           signal.TrySetResult();
         }
       }
@@ -54,6 +59,9 @@ public sealed class StartupStageGate(ISchemaReadyGate schemaReady) : IStartupSta
     _reached.TryGetValue(stage, out var signal)
       ? signal
       : throw new ArgumentOutOfRangeException(nameof(stage), stage, "Only a startup stage can be waited for.");
+
+  /// <summary>Whether an instance whose row records <paramref name="stage"/> is eligible for work.</summary>
+  private static bool _isEligibleForWork(StartupStage stage) => stage >= StartupStage.AcceptingCommands;
 
   /// <summary>Whether the schema-ready gate opening also reaches <paramref name="stage"/>.</summary>
   private static bool _bySchemaGate(StartupStage stage) => stage <= StartupStage.Coordinate;

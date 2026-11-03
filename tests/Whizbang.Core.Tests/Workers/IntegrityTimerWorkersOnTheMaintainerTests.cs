@@ -111,7 +111,7 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
   // ── the deep audit ──────────────────────────────────────────────────────
 
   private static IntegrityAuditWorker _audit(Host host) => new(
-    host.Services.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(),
+    host.Services.GetRequiredService<IServiceScopeFactory>(),
     Options.Create(new StreamIntegrityOptions()), NullLogger<IntegrityAuditWorker>.Instance);
 
   [Test]
@@ -159,7 +159,7 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     });
     host.Tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var drain = new RepairDrainWorker(
-      host.Services.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(),
+      host.Services.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new StreamIntegrityOptions {
         RepairMode = IntegrityRepairMode.AutoRepairCapped,
         RepairDrainRatePerSecond = 10,
@@ -209,7 +209,7 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
   // ── checkpoint publishing: the maintainer, never the idle gate ─────────
 
   private static IntegrityCheckpointWorker _checkpoint(Host host, ILogger<IntegrityCheckpointWorker>? logger = null) => new(
-    host.Services.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(),
+    host.Services.GetRequiredService<IServiceScopeFactory>(),
     Options.Create(new StreamIntegrityOptions { CheckpointIntervalSeconds = 60 }),
     logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
 
@@ -251,7 +251,7 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     IntegrityDeliveryWorker? drain = null;
     await using var host = await _hostAsync(maintainer: true, services =>
       services.AddSingleton(sp => drain ??= new IntegrityDeliveryWorker(
-        sp.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(), Options.Create(new StreamIntegrityOptions()),
+        sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(new StreamIntegrityOptions()),
         new IntegrityDeliveryRegistry(), NullLogger<IntegrityDeliveryWorker>.Instance, deliveryClock)));
     var origin = TrackedGuid.New().Value;
     host.Tracker.RecordCheckpoint(origin, "quiet-origin", now - TimeSpan.FromMinutes(10));

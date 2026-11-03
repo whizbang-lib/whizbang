@@ -65,7 +65,9 @@ public class TransportConsumerWithoutATransportTests {
 
     var worker = provider.GetRequiredService<TransportConsumerWorker>();
 
-    await Assert.That(provider.GetServices<IHostedService>()).Contains(worker);
+    // Hosted through the stage wrapper, to start at Accept commands (#1636).
+    await Assert.That(provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service))
+      .Contains(worker);
     await Assert.That(provider.GetServices<IStartupReadinessContributor>()).Contains(worker);
   }
 

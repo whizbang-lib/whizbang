@@ -32,8 +32,7 @@ public class PerspectiveMigrationWorkerTests {
     var fetched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => {
         fetched.TrySetResult();
         return Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([]);
@@ -61,8 +60,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("OrderPerspective", "perspective:OrderPerspective")
       ]),
@@ -94,8 +92,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("FailingPerspective", "perspective:FailingPerspective")
       ]),
@@ -122,8 +119,7 @@ public class PerspectiveMigrationWorkerTests {
     var rebuilder = new FakeRebuilder();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance);
 
     // Act — the unwired path touches nothing, so it emits no signal of its own. The settled state
     // of the worker's own task is the signal instead: awaiting it BEFORE anything cancels means it
@@ -151,8 +147,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("First", "perspective:First"),
         new PendingMigrationRebuild("Second", "perspective:Second"),
@@ -186,8 +181,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("CrashPerspective", "perspective:CrashPerspective")
       ]),
@@ -220,8 +214,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("CrashPerspective", "perspective:CrashPerspective")
       ]),
@@ -256,8 +249,7 @@ public class PerspectiveMigrationWorkerTests {
 
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => {
         enumerationAttempted.TrySetResult();
         throw new InvalidOperationException("Database unavailable");
@@ -284,8 +276,7 @@ public class PerspectiveMigrationWorkerTests {
     var rebuilder = new FakeRebuilder();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
 
@@ -312,8 +303,7 @@ public class PerspectiveMigrationWorkerTests {
     var fetchCalled = false;
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => {
         Volatile.Write(ref fetchCalled, true);
         return Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([]);

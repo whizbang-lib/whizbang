@@ -32,7 +32,6 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
   private readonly INotifySignalingGate _signalingGate;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IWorkChannelWriter _outboxChannel;
   private readonly IInboxChannelWriter _inboxChannel;
   private readonly IPerspectiveChannelWriter _perspectiveChannel;
@@ -143,7 +142,6 @@ public sealed partial class ClaimWorker : BackgroundService {
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
     IWorkNotificationListener notificationListener,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> options,
     ILogger<ClaimWorker> logger,
     IWorkChannelWriter outboxChannel,
@@ -175,8 +173,6 @@ public sealed partial class ClaimWorker : BackgroundService {
     ArgumentNullException.ThrowIfNull(notificationListener);
     _notificationListener = notificationListener;
     _signalingGate = signalingGate;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _claimWindow = new AdaptiveClaimWindow(
       ceiling: _options.MaxStreamsPerBatch,
@@ -377,7 +373,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   /// <inheritdoc />
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, the schema gate, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
 
@@ -414,11 +410,6 @@ public sealed partial class ClaimWorker : BackgroundService {
     // (WhizbangDatabaseInitializerService) signals the gate after migrations succeed.
     // This decouples worker startup from hosted-service registration order — even if
     // this worker's StartAsync runs before the initializer, we still wait here.
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
 
     // Register the instance in wh_service_instances before the first claim_work call.
     // HeartbeatWorker performs the UPSERT but ticks on its own cadence, so without this the

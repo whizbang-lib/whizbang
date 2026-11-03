@@ -325,7 +325,6 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
         PollingIntervalMilliseconds = 1_000_000,
         MaxConcurrentDrainConsumers = 1,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new BatchedCompletionStrategy(),
       eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),

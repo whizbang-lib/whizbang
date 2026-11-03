@@ -87,7 +87,6 @@ public class MaintenanceWorkerHousekeepingLogTests {
     var logger = new FakeLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger,
       metrics: null,

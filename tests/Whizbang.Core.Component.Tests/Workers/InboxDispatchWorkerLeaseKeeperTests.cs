@@ -89,15 +89,12 @@ public sealed class InboxDispatchWorkerLeaseKeeperTests {
 
   private static InboxDispatchWorker _worker(InboxChannelWriter writer, IWorkCoordinator coordinator, FakeTimeProvider time, bool renewalEnabled) {
     var sp = new ServiceCollection().AddSingleton(coordinator).BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: writer,
       handlerCommitChannel: new NullCommitChannel(),
       failureChannel: new NullFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 10, MaxConcurrentDispatch = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

@@ -280,7 +280,6 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
         PollingIntervalMilliseconds = 50,
         DrainLoopMaxIterations = 1
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: eventTypeProvider,

@@ -75,7 +75,7 @@ public class IntegrityDeliveryWorkerTests {
     configure?.Invoke(options);
     var logger = new CapturingLogger();
     var worker = new IntegrityDeliveryWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(), new SchemaReadyGate(), Options.Create(options), deliveries,
+      provider.GetRequiredService<IServiceScopeFactory>(), Options.Create(options), deliveries,
       logger, clock);
     var fixture = new Fixture(worker, coordinator, deliveries, housekeeping, clock, logger, provider);
     deliveries.Register(TYPE, (payload, _, _) => {

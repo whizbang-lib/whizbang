@@ -128,11 +128,8 @@ public class MaintenanceWorkerBranchCoverageTests {
 
   private static MaintenanceWorker _build(
       IServiceScopeFactory scopeFactory, MaintenanceMetrics? metrics = null, ILogger<MaintenanceWorker>? logger = null) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       scopeFactory,
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       logger ?? NullLogger<MaintenanceWorker>.Instance,
       metrics);
@@ -143,7 +140,6 @@ public class MaintenanceWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new MaintenanceWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         null!,
         NullLogger<MaintenanceWorker>.Instance))
       .Throws<ArgumentNullException>()
@@ -155,7 +151,6 @@ public class MaintenanceWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new MaintenanceWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         new NullValueOptions(),
         NullLogger<MaintenanceWorker>.Instance))
       .Throws<ArgumentNullException>()

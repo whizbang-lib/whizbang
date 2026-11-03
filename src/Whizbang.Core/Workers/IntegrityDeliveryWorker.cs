@@ -37,14 +37,12 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityDeliveryWorkerLoopTests.cs</tests>
 public sealed partial class IntegrityDeliveryWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<StreamIntegrityOptions> options,
     IntegrityDeliveryRegistry deliveries,
     ILogger<IntegrityDeliveryWorker> logger,
     TimeProvider? timeProvider = null) : BackgroundService {
   private static readonly TimeSpan _maxBackoff = TimeSpan.FromHours(1);
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IntegrityDeliveryRegistry _deliveries = ArgumentGuard.NotNull(deliveries);
   private readonly ILogger<IntegrityDeliveryWorker> _logger = ArgumentGuard.NotNull(logger);
@@ -87,11 +85,7 @@ public sealed partial class IntegrityDeliveryWorker(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
+    // Hosted at Accept commands (#1636): the registration decides when this starts, so the loop holds no gate of its own.
     var interval = TimeSpan.FromSeconds(Math.Max(1, _options.IntegrityDeliveryIntervalSeconds));
     while (!stoppingToken.IsCancellationRequested) {
       try {

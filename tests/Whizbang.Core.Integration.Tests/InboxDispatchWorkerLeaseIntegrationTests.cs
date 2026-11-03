@@ -198,8 +198,6 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       var sp = new ServiceCollection()
         .AddScoped<IReceptorInvoker>(_ => invoker)
         .BuildServiceProvider();
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
 
       var worker = new InboxDispatchWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -207,7 +205,6 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
         inboxChannelWriter: inbox,
         handlerCommitChannel: handlerCommit,
         failureChannel: failure,
-        schemaReadyGate: gate,
         options: Options.Create(new InboxDispatchWorkerOptions()),
         coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
         logger: NullLogger<InboxDispatchWorker>.Instance,

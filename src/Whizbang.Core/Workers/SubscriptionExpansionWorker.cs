@@ -22,24 +22,21 @@ namespace Whizbang.Core.Workers;
 /// ONE broadcast, STATE-ONLY <see cref="RequestRedeliveryCommand"/>: every origin answers with its
 /// own history targeted back at this service; bundles build state without re-firing triggers, and
 /// duplicate sources converge by event-id identity. Disabled = expansions stay Pending (the audit
-/// surface). One-shot: runs once after the schema gate, then completes.
+/// surface). One-shot: runs once when it starts at Accept commands, then completes.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SubscriptionExpansionWorkerTests.cs</tests>
 public sealed partial class SubscriptionExpansionWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
   ILogger<SubscriptionExpansionWorker> logger) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<SubscriptionExpansionWorker> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
       await RunOnceAsync(stoppingToken);
     } catch (OperationCanceledException) {
       // shutdown during startup — nothing to do

@@ -142,7 +142,6 @@ public class InboxPrePublishGateForensicPreservationTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 10 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

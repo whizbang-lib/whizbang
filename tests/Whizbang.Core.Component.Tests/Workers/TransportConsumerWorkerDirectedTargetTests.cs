@@ -154,7 +154,6 @@ public class TransportConsumerWorkerDirectedTargetTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: serviceName is null ? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance : new StubServiceInstanceProvider(serviceName),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

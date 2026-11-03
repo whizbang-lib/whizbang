@@ -62,12 +62,9 @@ public class MaintenanceWorkerStepTests {
       services.AddSingleton<IMaintenanceStep>(step);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new CapturingLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger);
     return (worker, logger);

@@ -43,7 +43,6 @@ public sealed partial class InboxDrainWorker(
   IServiceInstanceProvider instanceProvider,
   IInboxDrainChannel drainChannel,
   IInboxChannelWriter inboxChannelWriter,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<InboxDrainWorkerOptions> options,
   JsonSerializerOptions jsonOptions,
   ILogger<InboxDrainWorker> logger,
@@ -57,7 +56,6 @@ public sealed partial class InboxDrainWorker(
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly IInboxDrainChannel _drainChannel = ArgumentGuard.NotNull(drainChannel);
   private readonly IInboxChannelWriter _inboxChannelWriter = ArgumentGuard.NotNull(inboxChannelWriter);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly InboxDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = ArgumentGuard.NotNull(jsonOptions);
   private readonly ILogger<InboxDrainWorker> _logger = ArgumentGuard.NotNull(logger);
@@ -99,12 +97,6 @@ public sealed partial class InboxDrainWorker(
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 

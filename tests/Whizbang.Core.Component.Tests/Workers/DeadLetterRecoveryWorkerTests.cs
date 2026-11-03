@@ -168,12 +168,6 @@ public class DeadLetterRecoveryWorkerTests {
     }
   }
 
-  private sealed class ImmediateSchemaGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public void MarkReady() { }
-    public bool IsReady => true;
-  }
-
   private sealed class FixedGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
@@ -354,66 +348,6 @@ public class DeadLetterRecoveryWorkerTests {
       .Because("a counter that cannot be read is indistinguishable from a sweep that never ran");
   }
 
-  [Test]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate before its first sweep. A pod stopped while still
-    // waiting has no DLQ table to scan, so the exit must be silent rather than an error on every
-    // fast restart.
-    var svc = new FakeRecoveryService();
-    var services = new ServiceCollection();
-    services.AddSingleton<IDeadLetterRecoveryService>(svc);
-    services.AddSingleton<IDeadLetterRecoveryPolicy>(
-      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
-    var sp = services.BuildServiceProvider();
-    var gate = new NeverReadySchemaGate();
-    var worker = new DeadLetterRecoveryWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
-      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      generationProvider: new FixedGenerationProvider("test/0.0.1"),
-      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: new NoOpWorkNotificationListener(),
-      metrics: null);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Wait until the body is actually parked at the barrier. Since .NET 10,
-    // BackgroundService.StartAsync dispatches ExecuteAsync via Task.Run(action, stoppingToken):
-    // StartAsync returning proves only that the body was scheduled, and stopping before the
-    // thread pool dequeues it settles the task Canceled with the delegate never invoked. The
-    // "zero scans" assertion is satisfied by that too, so without this wait the test passes on a
-    // worker that never ran.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await worker.StopAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.TotalScans).IsEqualTo(0L)
-      .Because("nothing may be scanned before the schema exists — a sweep against a missing table "
-             + "is what the gate is there to prevent");
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the parked worker must unpark on stop rather than hanging shutdown");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a fast restart during migrations is routine, not a crash to report");
-  }
-
-  /// <summary>A schema gate that never opens, for the shutdown-while-waiting path. It announces
-  /// arrival so a test can wait for the worker to be parked instead of assuming StartAsync left
-  /// it there.</summary>
-  private sealed class NeverReadySchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   /// <summary>Completes when the worker's first scan has finished with its rows; subscribe before starting it.</summary>
   private static Task _firstScanCompleted(DeadLetterRecoveryWorker worker) {
     var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -435,7 +369,6 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(generation),
@@ -683,7 +616,6 @@ public class DeadLetterRecoveryWorkerTests {
     var logger = new EventIdSignalLogger(16);  // LogNoRecoveryService
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1206,7 +1138,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1267,7 +1198,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1311,7 +1241,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1540,7 +1469,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),

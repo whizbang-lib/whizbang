@@ -127,15 +127,12 @@ public class InboxDispatchWorkerCollectiveLifecycleTests {
         services.AddSingleton<ICollectiveDispatcher>(new UnusedCollectiveDispatcher());
       }
       var sp = services.BuildServiceProvider();
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
       Worker = new InboxDispatchWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         instanceProvider: new FakeInstanceProvider(),
         inboxChannelWriter: new NoOpInboxChannelWriter(),
         handlerCommitChannel: Commits,
         failureChannel: new NoOpFailureChannel(),
-        schemaReadyGate: gate,
         options: Options.Create(new InboxDispatchWorkerOptions()),
         coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
         logger: NullLogger<InboxDispatchWorker>.Instance,
