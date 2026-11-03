@@ -2719,6 +2719,25 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
   /// <summary>
+  /// Runs the maintenance tasks as <see cref="PerformMaintenanceAsync(CancellationToken)"/> does, with the ephemeral body
+  /// reap restricted to <paramref name="ephemeralReapEventIds"/>: the batch the maintenance worker read with
+  /// <see cref="GetEphemeralBodiesAboutToReapAsync"/> and gave its destruction hook and compaction handler. A body that
+  /// became eligible after that read is left for the next cycle, so no body is reaped unseen (#1999). <c>null</c>
+  /// restricts nothing, for a cycle that read no batch. Default: the unrestricted call, for an engine with no ephemeral
+  /// body offload, whose batch is always empty.
+  /// </summary>
+  /// <param name="ephemeralReapEventIds">The only ephemeral bodies the reap may delete, or <c>null</c> for any eligible one.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Results for each maintenance task with row counts and durations.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#reap-deletes-what-the-hook-saw</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapSeenSetTests.cs:Reap_GivenIds_DeletesOnlyThose_AnEmptyListNothing_AndNullEveryEligibleBodyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerReapScopeTests.cs:TheRestrictedCall_OnAnEngineThatImplementsOnlyTheUnrestrictedOne_RunsItAsync</tests>
+  Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
+    IReadOnlyCollection<Guid>? ephemeralReapEventIds,
+    CancellationToken cancellationToken = default)
+    => PerformMaintenanceAsync(cancellationToken);
+
+  /// <summary>
   /// Deletes <c>wh_inbox</c> rows whose <c>message_type</c> is NOT in the provided list of
   /// locally-handled types. Slice 3 of the resilient-transport plan — companion to slice 2's
   /// receptor-registry filter at receive. Slice 2 prevents new orphans from landing; this

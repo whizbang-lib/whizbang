@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
-/// <docs>fundamentals/events/ephemeral-events#destruction-hooks</docs>
+/// <docs>fundamentals/events/ephemeral-events#reap-deletes-what-the-hook-saw</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
@@ -181,5 +181,42 @@ public class EphemeralReapSeenSetTests : EFCoreTestBase {
     await Assert.That(compactor.Compacted).Count().IsEqualTo(2);
     await Assert.That(compactor.Compacted[1]).IsEquivalentTo([late]);
     await Assert.That(await _hasBodyAsync(conn, late, cancellationToken)).IsFalse();
+  }
+  [Test]
+  [Timeout(120000)]
+  public async Task Reap_GivenIds_DeletesOnlyThose_AnEmptyListNothing_AndNullEveryEligibleBodyAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    var given = Guid.NewGuid();
+    var givenButInGrace = Guid.NewGuid();
+    var other = Guid.NewGuid();
+    foreach (var id in new[] { given, givenButInGrace, other }) {
+      await _commitEphemeralAsync(conn, id, cancellationToken);
+    }
+    await _agePastGraceAsync(conn, given, cancellationToken);
+    await _agePastGraceAsync(conn, other, cancellationToken);
+    await using var ctx = CreateDbContext();
+    IWorkCoordinator coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    await coordinator.PerformMaintenanceAsync([given, givenButInGrace], cancellationToken);
+
+    await Assert.That(await _hasBodyAsync(conn, given, cancellationToken)).IsFalse();
+    await Assert.That(await _hasBodyAsync(conn, givenButInGrace, cancellationToken)).IsTrue()
+      .Because("the ids restrict the reap; they never lift a gate, so a given body still inside its grace window stays");
+    await Assert.That(await _hasBodyAsync(conn, other, cancellationToken)).IsTrue()
+      .Because("an eligible body that was not given is left for a later cycle");
+
+    var reaped = await coordinator.PerformMaintenanceAsync([], cancellationToken);
+
+    await Assert.That(reaped.Single(r => r.TaskName == "reap_consumed_ephemeral_bodies").RowsAffected).IsEqualTo(0L)
+      .Because("an empty batch means the hook saw nothing, so nothing may go");
+    await Assert.That(await _hasBodyAsync(conn, other, cancellationToken)).IsTrue();
+
+    await coordinator.PerformMaintenanceAsync(null, cancellationToken);
+
+    await Assert.That(await _hasBodyAsync(conn, other, cancellationToken)).IsFalse()
+      .Because("the control: with no restriction every eligible body goes, as perform_maintenance() always did");
+    await Assert.That(await _hasBodyAsync(conn, givenButInGrace, cancellationToken)).IsTrue();
   }
 }

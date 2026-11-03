@@ -5974,7 +5974,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+  public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) =>
+    _performMaintenanceAsync(null, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Calls <c>wh_perform_maintenance</c> (migration 300) with the ids, in the one statement the unrestricted call runs.</remarks>
+  public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
+      IReadOnlyCollection<Guid>? ephemeralReapEventIds, CancellationToken cancellationToken = default) =>
+    _performMaintenanceAsync(ephemeralReapEventIds, cancellationToken);
+
+  private async Task<IReadOnlyList<MaintenanceResult>> _performMaintenanceAsync(
+      IReadOnlyCollection<Guid>? ephemeralReapEventIds, CancellationToken cancellationToken) {
     var schema = _resolveSchema(typeof(OutboxRecord));
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -5982,7 +5992,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var connection = __scope.Connection;
 
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
-    command.CommandText = $"SELECT * FROM \"{schema}\".perform_maintenance()";
+    command.CommandText = $"SELECT * FROM \"{schema}\".wh_perform_maintenance(@reap_ids)";
+    var reapIds = command.CreateParameter();
+    reapIds.ParameterName = "reap_ids";
+    reapIds.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid;
+    reapIds.Value = ephemeralReapEventIds is null ? DBNull.Value : AsArray(ephemeralReapEventIds);
+    command.Parameters.Add(reapIds);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
     var results = new List<MaintenanceResult>();
