@@ -136,6 +136,11 @@ public sealed partial class IntegrityCheckpointReceptor(
         // regression of the same window warns afresh.
         repairPolicy.RecordHealed(observation);
         tracker.ClearConfirmed(pending);
+        // #2034: the type lane's ledger entry heals with its window, so a later gap of the type starts a fresh ladder
+        // instead of inheriting spent attempts.
+        await ledger.MarkHealedAsync(
+          new IntegrityRepairLedger.DivergenceKey(pending.OriginServiceId, pending.TenantScope, pending.EventType, Guid.Empty),
+          cancellationToken).ConfigureAwait(false);
         continue;
       }
 
@@ -191,7 +196,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "checkpoint"),
           new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
-        await _sendRepairRequestAsync(services, tracker, options, pending, cancellationToken).ConfigureAwait(false);
+        await _sendRepairRequestAsync(services, ledger, tracker, options, pending, repairNow, cancellationToken).ConfigureAwait(false);
         // Charged only for a request that was actually sent, so the per-checkpoint budget and the
         // ledger cannot burn this window's attempt budget on requests that never left.
         repairPolicy.RecordRequested(observation);
@@ -277,8 +282,8 @@ public sealed partial class IntegrityCheckpointReceptor(
   private static readonly IntegrityRepairPolicy _processFallbackPolicy = new(new IntegrityRepairPolicy.Settings());
 
   private async Task _sendRepairRequestAsync(
-      IServiceProvider services, IntegrityGapTracker tracker, StreamIntegrityOptions options,
-      IntegrityGapTracker.PendingGap pending, CancellationToken cancellationToken) {
+      IServiceProvider services, IIntegrityRepairLedger ledger, IntegrityGapTracker tracker, StreamIntegrityOptions options,
+      IntegrityGapTracker.PendingGap pending, DateTimeOffset now, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var requester = services.GetService<IServiceInstanceProvider>()?.ServiceName;
@@ -320,6 +325,13 @@ public sealed partial class IntegrityCheckpointReceptor(
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
+    // #2034: the whole-window request answers the type lane and the per-stream drain rows of the type inside it. The
+    // ledger's window is the request's range shifted by one (an exclusive floor and an inclusive ceiling), as the drain
+    // converts it the other way.
+    _ = await ledger.MarkAnswerPendingAsync(
+      [new IntegrityRepairLedger.DivergenceKey(pending.OriginServiceId, pending.TenantScope, pending.EventType, Guid.Empty)],
+      pending.FromCommitSequence + 1, pending.ToCommitSequence + 1, now,
+      TimeSpan.FromMinutes(options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
   }
 
   private static int _bucketCount(IReadOnlyList<CheckpointBucket> buckets, string? tenantScope, string eventType) =>

@@ -50,6 +50,31 @@ public class StreamIntegrityOptionsValidatorTests {
   }
 
   [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnAnswerTimeoutBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairAnswerTimeoutMinutes = minutes });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("a timeout of zero would make every requested bucket claimable again at once, which is the storm (#2029)");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes");
+  }
+
+  [Test]
+  public async Task Validate_BothSettingsWrong_NamesBothKeysAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxRepairDrainBacklog = 0, RepairAnswerTimeoutMinutes = 0 });
+
+    await Assert.That(result.FailureMessage).Contains("MaxRepairDrainBacklog");
+    await Assert.That(result.FailureMessage).Contains("RepairAnswerTimeoutMinutes");
+  }
+
+  [Test]
+  public async Task RepairAnswerTimeout_DefaultsToThreeHoursAsync() =>
+    await Assert.That(new StreamIntegrityOptions().RepairAnswerTimeoutMinutes).IsEqualTo(180)
+      .Because("it covers the origin's maintainer deferral (one hour by default) with room for queue time, and stays well inside the daily audit");
+
+  [Test]
   public async Task Validate_ANullOptionsInstance_ThrowsAsync() =>
     await Assert.That(() => new StreamIntegrityOptionsValidator().Validate(null, null!)).Throws<ArgumentNullException>();
 

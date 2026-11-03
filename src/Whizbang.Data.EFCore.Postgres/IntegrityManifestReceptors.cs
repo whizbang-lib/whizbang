@@ -478,9 +478,11 @@ public sealed partial class IntegrityManifestReceptor(
       // #1842: the kind rides the report, because the ledger row cannot derive it (its digest halves are
       // hashes, not counts) and the paced drain claims only the rows a redelivery can repair.
       var (origin, mine, isDeficit, _) = divergent[i];
+      // #2030: the size rides too, so a deficit that grew resets the repair ladder and an origin that moved on does not.
       observations[i] = new IntegrityReportObservation(
         new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId),
-        origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, isDeficit);
+        origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, isDeficit,
+        origin.EventCount - (mine?.EventCount ?? 0));
     }
     var reportFlags = divergent.Count > 0
       ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
@@ -889,10 +891,10 @@ public sealed partial class IntegrityManifestReceptor(
       // the report row is the operator-facing record of the type-level deficit itself.
       var observations = new IntegrityReportObservation[bulkCandidates.Count];
       for (var i = 0; i < bulkCandidates.Count; i++) {
-        var (origin, mine, _) = bulkCandidates[i];
+        var (origin, mine, deficit) = bulkCandidates[i];
         // Every bulk candidate is a deficit by construction (the origin holds more than this store).
         observations[i] = new IntegrityReportObservation(
-          keys[i], origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, IsDeficit: true);
+          keys[i], origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, IsDeficit: true, deficit);
       }
       _ = await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false);
       var grants = await ledger.TryBeginRepairBatchAsync(
@@ -914,8 +916,15 @@ public sealed partial class IntegrityManifestReceptor(
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
           new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
-        await _sendBulkBackfillRequestAsync(services, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
+        var sent = await _sendBulkBackfillRequestAsync(services, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
           .ConfigureAwait(false);
+        if (sent) {
+          // #2034: the bulk request answers the type lane and every per-stream drain row of the type inside its window,
+          // so those wait for it instead of re-shipping the same window beside it.
+          _ = await ledger.MarkAnswerPendingAsync(
+            [keys[i]], message.SinceSequence ?? 0, message.ComputedThrough,
+            now, TimeSpan.FromMinutes(options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
+        }
         LogBulkBackfillRequested(logger, origin.EventType, origin.TenantScope, deficit, message.OriginServiceName);
       }
     }
@@ -1009,7 +1018,7 @@ public sealed partial class IntegrityManifestReceptor(
     string Requester,
     string Topic);
 
-  private async Task _sendBulkBackfillRequestAsync(
+  private async Task<bool> _sendBulkBackfillRequestAsync(
       IServiceProvider services, ControlPlaneSender sender,
       IntegrityManifest manifest, string? tenantScope, string eventType,
       CancellationToken cancellationToken) {
@@ -1017,7 +1026,7 @@ public sealed partial class IntegrityManifestReceptor(
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     if (string.IsNullOrEmpty(originRequestTopic)) {
       LogRepairSkippedNoOriginTopic(logger, manifest.OriginServiceName, eventType, 0);
-      return;
+      return false;
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
@@ -1048,6 +1057,7 @@ public sealed partial class IntegrityManifestReceptor(
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
+    return true;
   }
 
   private async Task _sendRepairRequestAsync(

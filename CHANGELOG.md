@@ -1351,6 +1351,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
   explicit signal, and a new test reproduces the window on purpose.
 
+- **Integrity repair waits for the answer to its request (#2029).** The paced repair drain re-asked for a bucket while
+  the answer to its previous request was still on the way, and a received answer stopped nothing until the next audit.
+  A sent request now marks its buckets answer-pending for `Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes`
+  (default 180), and a committed redelivery bundle marks them answered: neither is requested again until the answer
+  times out or the next comparison re-sights the bucket. Both ledgers keep the pending answer: the durable one and
+  the in-memory fallback, where a reconciled bundle clears it. Gauges `repair_answer_pending_buckets` and
+  `repair_answered_buckets` (durable ledger). Migration 320.
+- **The repair attempt budget ends the asking (#2029).** Past `MaxRepairAttemptsPerBucket` a bucket was re-requested
+  every 5 h 20 m forever (the terminal cadence of migration 099). It is now never requested again until a change repair
+  can act on resets it, and counts in `repair_exhausted_buckets`. Both ledgers, the durable one and the in-memory
+  fallback, run one shared contract test, so their ladders cannot drift. **Behavior change:** a bucket whose budget burned
+  against an unreachable origin is re-armed by its next local change or a grown deficit, not by time.
+- **An origin's new events no longer reset the repair ladder (#2030).** Any change in either side's digest reset a
+  bucket's attempts and lifted its unhealable mark, so every audit of an active, still-divergent stream started a fresh
+  ladder. In both ledgers, the durable one and the in-memory fallback, only a change in this store's digest of the
+  bucket, or a deficit that grew (the comparison now records its size), resets it.
+- **A redelivery bundle that changed nothing is marked when it commits (#2033).** The unhealable mark waited for the
+  maintainer's idle-gated reconcile, up to `MaxDeferral` under load, while repair kept asking. The bundle's answer is
+  now recorded when its children commit (one small query by primary key); only origin adoption and digest moves stay
+  deferred. "Changed nothing" is judged on what the store held at commit, because by the time the deferred reconcile
+  runs the bundle's own children are stored and read as present, which could mark a bucket the bundle had just repaired.
+- **Smaller duplicate-redelivery paths are closed (#2034).** A granted bulk backfill and a checkpoint gap request mark
+  the per-stream drain rows of their type inside their window as answer-pending; a type-lane request stands down while
+  per-stream requests of its type await their answers; the checkpoint path's ledger entry heals with its window; and
+  the drain groups requests by window, so no stream is re-shipped over a wider range than its own divergence.
+- **Integrity deliveries waiting for the maintainer are visible (#2035).** Gauges `deliveries_pending` and
+  `oldest_delivery_age_seconds` (meter `Whizbang.StreamIntegrity`), read with the ledger gauges at the start of every
+  maintenance tick on every instance.
 - **The integrity ledger gauges no longer read 0 while divergences are unhealed (#2024).** `unhealed_buckets`,
   `repair_exhausted_buckets`, `oldest_unhealed_age_seconds` and `sealed_through` were refreshed only inside the
   maintainer's sweep, so every other instance reported 0 unhealed for as long as it ran, and every instance reported 0

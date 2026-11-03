@@ -185,42 +185,32 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task TryBeginRepairBatch_PastTheCap_FlattensToTheTerminalCadenceAsync() {
-    // Migration 099 deliberately walked back a hard cap: a bucket that exhausts its attempts is
-    // not silenced, it drops to one ask per terminal interval (base x 2^6). The distinction
-    // matters because a static deficit — a stream that will never reconcile without an operator —
-    // would otherwise be shadow-banned forever, and the ledger would stop showing that it is
-    // still trying. So past the cap the answer must be "not yet", never "never again".
+  public async Task TryBeginRepairBatch_PastTheCap_IsRefusedForGoodAsync() {
+    // Migration 099 flattened the cap to one ask per terminal interval (base x 2^6), forever. That is about four
+    // re-shipments of the same events a day per bucket, indefinitely (#2029), so 320 makes the cap real: past it the
+    // answer is "never again" until a change repair can act on (the local digest, or a deficit that grew) resets it.
+    // The bucket stays in the ledger and is counted as exhausted for an operator.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var baseBackoff = TimeSpan.FromSeconds(10);
-    var terminalInterval = TimeSpan.FromSeconds(baseBackoff.TotalSeconds * 64);
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [.. keys.Select(_observation)], now, TimeSpan.FromMinutes(5));
 
-    // Walk well past the cap with the clock far ahead, so every one of these is granted.
-    var lastGrantAt = now;
+    var grants = new List<bool>();
     for (var i = 0; i < 4; i++) {
-      lastGrantAt = now.AddHours(i + 1);
       var verdict = await coordinator.IntegrityTryBeginRepairBatchAsync(
-        origin, keys, lastGrantAt, baseBackoff, maxAttempts: 2, maxGrants: 10);
-      await Assert.That(verdict![0]).IsTrue()
-        .Because("an hour is far longer than the terminal cadence, so every ask here is due");
+        origin, keys, now.AddHours(i + 1), baseBackoff, maxAttempts: 2, maxGrants: 10);
+      grants.Add(verdict![0]);
     }
+    var muchLater = await coordinator.IntegrityTryBeginRepairBatchAsync(
+      origin, keys, now.AddDays(30), baseBackoff, maxAttempts: 2, maxGrants: 10);
 
-    var tooSoon = await coordinator.IntegrityTryBeginRepairBatchAsync(
-      origin, keys, lastGrantAt.Add(terminalInterval / 2), baseBackoff, maxAttempts: 2, maxGrants: 10);
-    var due = await coordinator.IntegrityTryBeginRepairBatchAsync(
-      origin, keys, lastGrantAt.Add(terminalInterval * 2), baseBackoff, maxAttempts: 2, maxGrants: 10);
-
-    await Assert.That(tooSoon![0]).IsFalse()
-      .Because("inside the terminal interval the capped bucket must still be paced");
-    await Assert.That(due![0]).IsTrue()
-      .Because("past the terminal interval it earns its one ask — a capped bucket is rate-limited, "
-             + "not permanently refused");
+    await Assert.That(grants).IsEquivalentTo([true, true, false, false])
+      .Because("two attempts are the budget; an hour apart, backoff is never the reason for a refusal here");
+    await Assert.That(muchLater![0]).IsFalse();
   }
 
   // ============================================================
