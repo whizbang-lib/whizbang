@@ -1,10 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using System.Text.Json;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Serialization;
 
