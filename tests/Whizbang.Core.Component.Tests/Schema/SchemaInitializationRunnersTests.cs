@@ -10,6 +10,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
@@ -119,6 +121,178 @@ public class SchemaInitializationRunnersTests {
       .Because("Coordinate (#1636) follows every driver's schema work and precedes the gate the data plane waits on");
     await Assert.That(stages.GateWasOpen).IsFalse();
     await Assert.That(gate.IsReady).IsTrue();
+  }
+
+  [Test]
+  public async Task StandDown_RunsNoRunner_KeepsTheGateClosed_AndRegistersTheInstanceVisiblyAsync() {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var coordinator = new BeatingCoordinator();
+    var stages = new StageLog();
+    var service = _create(gate, new StartupAssessment(StartupVerdict.StandDown,
+      "the ledger records version 2.0.0, newer than this binary's 1.0.0"), coordinator, stages,
+      new RecordingRunner("runner", order, gate));
+
+    await service.StartAsync(CancellationToken.None);
+    await coordinator.FirstBeat.Task;
+    await service.StopAsync(CancellationToken.None);
+    await service.StandDownTask!;
+
+    await Assert.That(order).IsEmpty()
+      .Because("a stood-down instance applies nothing: no bootstrap, no election, no pass, no reconcile");
+    await Assert.That(gate.IsReady).IsFalse()
+      .Because("the schema-ready gate stays closed, so the data plane never starts and readiness stays 503");
+    await Assert.That(stages.Calls).Contains(
+      "Enter Preflight: standing down: the ledger records version 2.0.0, newer than this binary's 1.0.0");
+    await Assert.That(stages.Calls).Contains("Phase StandingBy");
+    await Assert.That(stages.Calls).Contains("Registered")
+      .Because("the instance registers at once, so the state it recorded is visible on its row");
+  }
+
+  [Test]
+  [Arguments(StartupVerdict.Migrate)]
+  [Arguments(StartupVerdict.Serve)]
+  [Arguments(StartupVerdict.Current)]
+  public async Task AnyOtherVerdict_RunsTheRunnersAfterTheVerdict_ThenOpensTheGateAsync(StartupVerdict verdict) {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var assessor = new GatedAssessor(new StartupAssessment(verdict, "clear"));
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IStartupAssessor>(assessor);
+    var provider = services.BuildServiceProvider();
+    var source = provider.GetRequiredService<StartupAssessmentSource>();
+    var runner = new VerdictReadingRunner(source, order);
+    var service = _create(provider, gate, runner);
+
+    var starting = service.StartAsync(CancellationToken.None);
+    await assessor.Asked.Task;
+    await Assert.That(order).IsEmpty()
+      .Because("Assess is the first stage: no runner starts before the one verdict exists");
+    assessor.Release();
+    await starting;
+
+    await Assert.That(order).IsEquivalentTo([verdict.ToString()])
+      .Because("the runner reads the verdict the initializer produced, not a second answer");
+    await Assert.That(assessor.Calls).IsEqualTo(1);
+    await Assert.That(gate.IsReady).IsTrue();
+  }
+
+  [Test]
+  public async Task AnUnreadableVersionRecord_FailsTheAttemptLoudly_BeforeAnyRunnerAsync() {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IStartupAssessor>(new ThrowingAssessor(new InvalidOperationException("permission denied")));
+    var service = _create(services.BuildServiceProvider(), gate, new RecordingRunner("runner", order, gate));
+
+    await Assert.That(async () => await service.StartAsync(CancellationToken.None))
+      .ThrowsExactly<StartupAssessmentException>()
+      .Because("never migrating blind: a record that cannot be read fails startup like a bootstrap that cannot be applied");
+    await Assert.That(order).IsEmpty();
+    await Assert.That(gate.IsReady).IsFalse();
+  }
+
+  private static WhizbangDatabaseInitializerService _create(
+      ISchemaReadyGate gate, StartupAssessment assessment, BeatingCoordinator coordinator, StageLog stages,
+      params ISchemaInitializationRunner[] runners) {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IStartupAssessor>(new FixedAssessor(assessment));
+    services.AddSingleton<IStartupStageReporter>(stages);
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(new FixedInstance());
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    return _create(services.BuildServiceProvider(), gate, runners);
+  }
+
+  private static WhizbangDatabaseInitializerService _create(
+      IServiceProvider provider, ISchemaReadyGate gate, params ISchemaInitializationRunner[] runners) =>
+    new(
+      provider,
+      runners,
+      gate,
+      Options.Create(new ClaimWorkerOptions()),
+      Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false }),
+      new FakeTimeProvider(),
+      NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
+
+  private sealed class FixedAssessor(StartupAssessment assessment) : IStartupAssessor {
+    public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) => Task.FromResult(assessment);
+  }
+
+  private sealed class ThrowingAssessor(Exception failure) : IStartupAssessor {
+    public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) => Task.FromException<StartupAssessment>(failure);
+  }
+
+  /// <summary>Holds its answer until released, and says when it was asked.</summary>
+  private sealed class GatedAssessor(StartupAssessment assessment) : IStartupAssessor {
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int Calls { get; private set; }
+
+    public void Release() => _release.SetResult();
+
+    public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
+      Calls++;
+      Asked.TrySetResult();
+      await _release.Task;
+      return assessment;
+    }
+  }
+
+  private sealed class VerdictReadingRunner(StartupAssessmentSource source, List<string> order) : ISchemaInitializationRunner {
+    public async Task RunAsync(CancellationToken cancellationToken) =>
+      order.Add((await source.AssessAsync(cancellationToken)).Verdict.ToString());
+  }
+
+  private sealed class StageLog : IStartupStageReporter {
+    private readonly Lock _lock = new();
+    private readonly List<string> _calls = [];
+    public IReadOnlyList<string> Calls { get { lock (_lock) { return [.. _calls]; } } }
+    public StartupStageSnapshot? Current => null;
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) => _add($"Enter {stage}: {message}");
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) => _add($"Skip {stage}: {reason}");
+    public ValueTask EnterPhaseAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) => _add($"Phase {phase}");
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => _add("Registered");
+
+    private ValueTask _add(string call) {
+      lock (_lock) {
+        _calls.Add(call);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class FixedInstance : Whizbang.Core.Observability.IServiceInstanceProvider {
+    public Guid InstanceId { get; } = Guid.CreateVersion7();
+    public string ServiceName => "orders";
+    public string HostName => "host-1";
+    public int ProcessId => 42;
+    public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() => throw new NotSupportedException();
+  }
+
+  /// <summary>Accepts every heartbeat; says when the first one landed.</summary>
+  private sealed class BeatingCoordinator : IWorkCoordinator {
+    public TaskCompletionSource FirstBeat { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool RecordsInstanceTransitions => true;
+
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+      FirstBeat.TrySetResult();
+      return Task.FromResult(true);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
   /// <summary>Records each stage entered, and whether the schema-ready gate was already open then.</summary>

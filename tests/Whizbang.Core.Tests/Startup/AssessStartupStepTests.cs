@@ -62,6 +62,18 @@ public class AssessStartupStepTests {
   }
 
   [Test]
+  public async Task CurrentVerdict_CompletesWithTheReason_LikeServeAsync() {
+    var step = new AssessStartupStep(assessor: new FixedAssessor(
+      new StartupAssessment(StartupVerdict.Current, "the schema is already current")), logger: NullLogger<AssessStartupStep>.Instance);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed)
+      .Because("#1992: Current only skips the election and the migration; the instance still becomes ready");
+    await Assert.That(report.Reason).IsEqualTo("the schema is already current");
+  }
+
+  [Test]
   public async Task StandDownVerdict_FailsTheBlockingStep_WhichIsNotReadyWhileAliveAsync() {
     var step = new AssessStartupStep(assessor: new FixedAssessor(
       new StartupAssessment(StartupVerdict.StandDown, "the ledger records a newer version")), logger: NullLogger<AssessStartupStep>.Instance);
