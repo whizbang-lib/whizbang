@@ -136,6 +136,16 @@ internal static class ArchiveOptionsBinder {
     throw new InvalidOperationException($"{key} is '{value}', which names no policy for rows of archived streams. Use one of: Keep, Drop, Archive.");
   }
 
+  /// <summary>
+  /// Applies the <see cref="Attributes.StreamEndOfLifeAttribute"/> declarations (#1740) before configuration binds, so a
+  /// key set in configuration wins over the attribute's value.
+  /// </summary>
+  /// <param name="declarations">The declarations (<see cref="StreamEndOfLifeDeclarations.All"/>).</param>
+  /// <param name="options">The options to fill.</param>
+  /// <exception cref="InvalidOperationException">A declared value cannot be used; the message names the type.</exception>
+  internal static void Apply(IEnumerable<StreamEndOfLifeDeclaration> declarations, StreamLifecycleOptions options) =>
+    throw new NotImplementedException($"{declarations} {options.Types.Count}");
+
   private static AppendToArchivedPolicy _policy(string key, string value) {
     // Names only: a number would bind a policy by position.
     if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'

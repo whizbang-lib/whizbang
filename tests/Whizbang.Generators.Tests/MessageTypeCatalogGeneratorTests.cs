@@ -381,6 +381,49 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_StreamEndOfLife_RegistersTheDeclarationOfEachEventType_InheritedAsync() {
+    // #1740: the end-of-life policy is declared on the event type that opens a stream, keyed by the CLR type name the
+    // ledger records as the stream type (nested types with '+'), inherited, and only for events.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Archival;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [StreamEndOfLife(IdleTtl = "90.00:00:00", MaxAge = "365.00:00:00", KeepTailVersions = 10, TenantByteCap = 2048, Action = StreamLifecycleAction.Purge)]
+      public record OrderPlaced : IEvent;
+
+      public record RushOrderPlaced : OrderPlaced;
+
+      public static class Ledgers {
+        [StreamEndOfLife]
+        public record LedgerOpened : IEvent;
+      }
+
+      [StreamEndOfLife(IdleTtl = "1.00:00:00")]
+      public record PlaceOrder : ICommand;
+
+      public record CartStarted : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    const string register = "global::Whizbang.Core.Archival.StreamEndOfLifeDeclarations.Register(new global::Whizbang.Core.Archival.StreamEndOfLifeDeclaration(";
+    const string purge = "(global::Whizbang.Core.Archival.StreamLifecycleAction)2";
+
+    await Assert.That(generated).Contains($"{register}\"MyApp.OrderPlaced\", \"90.00:00:00\", \"365.00:00:00\", 10L, 2048L, {purge}));");
+    await Assert.That(generated).Contains($"{register}\"MyApp.RushOrderPlaced\", \"90.00:00:00\", \"365.00:00:00\", 10L, 2048L, {purge}));")
+      .Because("the attribute is inherited, so the streams a derived event opens carry the same policy");
+    await Assert.That(generated).Contains($"{register}\"MyApp.Ledgers+LedgerOpened\", null, null, 0L, 0L, (global::Whizbang.Core.Archival.StreamLifecycleAction)0));")
+      .Because("the key is the ledger's stream type, the CLR name with '+' for a nested type");
+    await Assert.That(generated.Contains("\"MyApp.PlaceOrder\"")).IsFalse().Because("a command never opens a stream");
+    await Assert.That(generated.Contains("\"MyApp.CartStarted\"")).IsFalse();
+  }
+
+  [Test]
   public async Task Generator_TerminalEvent_StampsTheEntryAndRegistersTheTypeAsync() {
     // A terminal event seals its stream (WS-3 S4). The flag is stamped from the generated registration on the dispatch
     // path and from the catalog entry on the receive path, so the attribute must reach both at compile time, including
