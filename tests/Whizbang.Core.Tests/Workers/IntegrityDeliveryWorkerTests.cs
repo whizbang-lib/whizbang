@@ -372,7 +372,7 @@ public class IntegrityDeliveryWorkerTests {
     var pass = await worker.RunPassAsync(CancellationToken.None);
 
     await Assert.That(pass.Outcome).IsEqualTo(IntegrityDeliveryWorker.PassOutcome.Deferred);
-    await Assert.That(worker.DeferredSince).IsNotNull()
+    await Assert.That(worker.DeferredSince.HasValue).IsTrue()
       .Because("with no clock given, the worker still has one to record when it was first deferred");
   }
 }
