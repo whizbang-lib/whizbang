@@ -149,7 +149,7 @@ public partial class WorkerStartGateSourceGuardTests {
     var tests = await _sourceFilesAsync("tests");
 
     await Assert.That(tests.Where(f => f.Code.Contains("GetHostedWorker", StringComparison.Ordinal)).Select(f => f.Path))
-      .Contains("tests/Whizbang.Testing.Tests/Workers/HostedWorkersTests.cs")
+      .Contains("tests/Whizbang.Testing.Component.Tests/Workers/HostedWorkersTests.cs")
       .Because("the scan must find the lookup's own tests, or it is not reading the tests");
 
     var found = new List<string>();

@@ -14,7 +14,7 @@ namespace Whizbang.Testing.Workers;
 /// look through the wrapper, and are the one way a test or a fixture finds a hosted worker.
 /// </summary>
 /// <docs>operations/startup/startup-status#finding-a-hosted-worker</docs>
-/// <tests>tests/Whizbang.Testing.Tests/Workers/HostedWorkersTests.cs</tests>
+/// <tests>tests/Whizbang.Testing.Component.Tests/Workers/HostedWorkersTests.cs</tests>
 public static class HostedWorkers {
   /// <summary>
   /// The provider's hosted services, each worker hosted with its start point given as the worker itself.
