@@ -31,7 +31,7 @@ namespace Whizbang.Data.Postgres;
 /// anything.
 /// </para>
 /// </remarks>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
 internal static class PostgresStartupAssessment {
@@ -86,17 +86,17 @@ internal static class PostgresStartupAssessment {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
       // drivers always do; a host that bypasses them must register LibraryVersionProvider itself.
       return new StartupAssessment(StartupVerdict.StandDown,
-        "no ILibraryVersionProvider is registered, so this binary's own library version is unknown — "
+        "no ILibraryVersionProvider is registered, so this binary's own library version is unknown; "
         + "refusing to migrate; every wrong answer here is worse than stopping. The Postgres driver "
         + "registers one; a host that bypasses it must register LibraryVersionProvider itself");
     }
     if (!SemanticVersion.TryParse(mine, out var myVersion)) {
       return new StartupAssessment(StartupVerdict.StandDown,
-        $"own library version '{mine}' is unreadable — refusing to migrate; every wrong answer here is worse than stopping");
+        $"own library version '{mine}' is unreadable, so this instance refuses to migrate; every wrong answer here is worse than stopping");
     }
 
     if (recorded.Count == 0) {
-      return new StartupAssessment(StartupVerdict.Migrate, "fresh database — nothing recorded in the ledger");
+      return new StartupAssessment(StartupVerdict.Migrate, "fresh database: nothing recorded in the ledger");
     }
 
     string? newest = null;
@@ -104,7 +104,7 @@ internal static class PostgresStartupAssessment {
     var hasNewest = false;
     foreach (var version in recorded) {
       if (!SemanticVersion.TryParse(version, out var parsed)) {
-        continue;   // unreadable history cannot outrank anything — same stance as the ledger guard
+        continue;   // unreadable history cannot outrank anything (the ledger guard's stance)
       }
       if (!hasNewest || parsed.CompareTo(newestParsed) > 0) {
         newest = version;
@@ -115,13 +115,13 @@ internal static class PostgresStartupAssessment {
 
     if (hasNewest && newestParsed.CompareTo(myVersion) > 0) {
       return new StartupAssessment(StartupVerdict.StandDown,
-        $"the ledger records version {newest}, newer than this binary's {mine} — standing down: never apply anything, hold the data plane, report not-ready-while-alive");
+        $"the ledger records version {newest}, newer than this binary's {mine}; standing down: never apply anything, hold the data plane, report not-ready-while-alive");
     }
 
     return new StartupAssessment(StartupVerdict.Serve,
       hasNewest
-        ? $"schema recorded at {newest}; this binary runs {mine} — nothing newer recorded"
-        : $"only unreadable versions recorded; this binary runs {mine} — unreadable history does not block");
+        ? $"schema recorded at {newest}; this binary runs {mine}; nothing newer recorded"
+        : $"only unreadable versions recorded; this binary runs {mine}; unreadable history does not block");
   }
 
   private static async Task<(bool Ledger, bool Versions, bool Owner)> _probeAsync(

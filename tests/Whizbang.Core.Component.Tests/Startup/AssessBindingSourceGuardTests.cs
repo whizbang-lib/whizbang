@@ -15,7 +15,7 @@ namespace Whizbang.Core.Tests.Startup;
 /// generated pass reads the verdict before it applies anything (before the bootstrap, the election and the lock). A new
 /// runner, or a reordering of the generated pass, fails here instead of quietly migrating without a verdict.
 /// </summary>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 [Category("Startup")]
 public partial class AssessBindingSourceGuardTests {
   private static readonly string _repoRoot = _findRepoRoot();

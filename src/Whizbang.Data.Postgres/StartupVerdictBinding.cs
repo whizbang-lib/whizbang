@@ -12,7 +12,7 @@ namespace Whizbang.Data.Postgres;
 /// here first (the shared initializer's runners, and a direct call to the EF Core driver's initialization), so none can
 /// skip the decision.
 /// </summary>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Schema/StartupVerdictBindingTests.cs</tests>
 public static class StartupVerdictBinding {
@@ -44,7 +44,7 @@ public static class StartupVerdictBinding {
 /// than this binary, so nothing is applied. The shared initializer never asks; a direct call to a driver's
 /// initialization on a stood-down host gets this instead of a bootstrap or a migration over newer definitions.
 /// </summary>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#standing-down</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheTurnkeyCall_OnAStoodDownInstance_IsRefused_AndAppliesNothingAsync</tests>
 public sealed class SchemaStandDownException : InvalidOperationException {
   /// <summary>Creates the refusal with no reason.</summary>

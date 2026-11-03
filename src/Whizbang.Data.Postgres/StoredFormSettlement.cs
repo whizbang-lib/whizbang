@@ -25,7 +25,7 @@ namespace Whizbang.Data.Postgres;
 /// the full startup path runs and settles it.
 /// </para>
 /// </remarks>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#current</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs:StoredForms_AreSettledOnlyWhenEveryLedgerSaysSoAsync</tests>
 public static class StoredFormSettlement {
   private const string ENUM_COLUMN = "enum-column:";

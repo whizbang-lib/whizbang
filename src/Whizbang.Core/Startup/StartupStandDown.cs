@@ -35,7 +35,7 @@ namespace Whizbang.Core.Startup;
 /// instance was evicted) ends the beating, since an evicted instance id never becomes valid again.
 /// </para>
 /// </remarks>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#standing-down</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStandDownTests.cs</tests>
 public sealed partial class StartupStandDown {
   private const string STANDING_DOWN = "standing down: ";
@@ -81,7 +81,7 @@ public sealed partial class StartupStandDown {
   /// Raised after each beat, with whether it was accepted, once the wait for the next beat has been scheduled: a
   /// monitor can count the beats, and a test driving a fake clock can advance it as soon as it hears.
   /// </summary>
-  /// <docs>operations/startup/rolling-upgrades#assess</docs>
+  /// <docs>operations/startup/rolling-upgrades#standing-down</docs>
   public event Action<bool>? BeatRecorded;
 
   /// <summary>

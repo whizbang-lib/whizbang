@@ -15,7 +15,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <param name="connectionString">The database.</param>
 /// <param name="createInitializer">Builds the schema initializer whose check says whether the schema is current.</param>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
 internal sealed class DapperPostgresStartupAssessor(string connectionString, Func<PostgresSchemaInitializer> createInitializer)
     : IStartupAssessor {
