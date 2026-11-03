@@ -47,14 +47,19 @@ public sealed class StreamLifecycleOptions {
   /// <see cref="StreamLifecycleAction.Archive"/> for a type not listed or with no type.</summary>
   /// <param name="streamType">The stream type as the lifecycle ledger records it.</param>
   /// <returns>The action.</returns>
-  public StreamLifecycleAction ActionFor(string? streamType) => throw new NotImplementedException($"{streamType} of {Types.Count}");
+  public StreamLifecycleAction ActionFor(string? streamType) =>
+    streamType is not null && Types.TryGetValue(streamType, out var type) ? type.Action : StreamLifecycleAction.Archive;
 
   /// <summary>
   /// Every listed stream type that sets at least one end-of-life trigger, ordered by type, as the disposition step passes
   /// them to the ledger (#1740).
   /// </summary>
   /// <returns>One entry per type with a trigger.</returns>
-  public IReadOnlyList<StreamEndOfLifePolicy> EndOfLifePolicies() => throw new NotImplementedException($"{Types.Count}");
+  public IReadOnlyList<StreamEndOfLifePolicy> EndOfLifePolicies() =>
+    [.. Types
+      .Where(t => t.Value.IdleTtl.HasValue || t.Value.MaxAge.HasValue || t.Value.KeepTailVersions.HasValue || t.Value.TenantByteCap.HasValue)
+      .OrderBy(t => t.Key, StringComparer.Ordinal)
+      .Select(t => new StreamEndOfLifePolicy(t.Key, t.Value.IdleTtl, t.Value.MaxAge, t.Value.KeepTailVersions, t.Value.TenantByteCap, t.Value.Action))];
 
   /// <summary>Every listed stream type's append-to-archived policy, ordered by type, as the write paths store it.</summary>
   /// <returns>One entry per listed type.</returns>

@@ -36,5 +36,9 @@ public static class StreamLifecycleActionExtensions {
   /// <summary>The disposition the action runs: Archive, Compact, or Delete for Purge.</summary>
   /// <param name="action">The action.</param>
   /// <returns>The disposition.</returns>
-  public static Disposition ToDisposition(this StreamLifecycleAction action) => throw new NotImplementedException();
+  public static Disposition ToDisposition(this StreamLifecycleAction action) => action switch {
+    StreamLifecycleAction.Compact => Disposition.Compact,
+    StreamLifecycleAction.Purge => Disposition.Delete,
+    _ => Disposition.Archive,
+  };
 }

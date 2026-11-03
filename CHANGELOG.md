@@ -79,6 +79,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **End-of-life policies per stream type (#1740, WS-3 S11).** With `Whizbang:StreamLifecycle:Enabled` (default
+  `false`), the `stream-disposition` step also ends streams nobody sealed, per type under
+  `Whizbang:StreamLifecycle:Types:<StreamType>`: `IdleTtl` (nothing appended for the span, counted from the end of the
+  newest append's hour), `MaxAge` (first append that old), `TenantByteCap` (the least recently appended streams of the
+  type in a tenant, until the rest fit) and `KeepTailVersions` (the prefix before the newest N versions, through
+  `IStreamPrefixTruncator` with the new `DestructionReason.VersionCapExceeded`). `Action` (`Archive` by default,
+  `Compact`, `Purge`; `CloseBooks` refused until #1741) says what happens, and is also the disposition of the type's
+  sealed streams. Candidates are read from the lifecycle ledger alone; a purge or compaction by policy first seals the
+  stream, only if nothing was appended since it was picked. Migration 297 (`truncated_through_version`,
+  `wh_stream_policy_candidates`, `wh_stream_disposition_readiness`, `wh_seal_stream_if_unchanged`,
+  `wh_set_stream_truncated_through`; `wh_due_stream_dispositions` returns the stream type). **Upgrade note:** a type
+  that sets `Action` now has its sealed streams disposed of by that action instead of always archived.
 - **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
   `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
   `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees

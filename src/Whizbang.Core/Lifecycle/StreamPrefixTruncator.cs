@@ -93,7 +93,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   public async Task<StreamTruncateResult> TruncateAsync(
       Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default) {
     var context = new DestructionContext {
-      Reason = DestructionReason.PeriodClose,
+      Reason = reason,
       Granularity = DestructionGranularity.Stream,
       StreamId = streamId,
       ThroughVersion = throughVersion,

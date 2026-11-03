@@ -15,7 +15,9 @@ namespace Whizbang.Core.Archival;
 /// <remarks>
 /// A policy is bound by its name only: a number is refused, because binding a policy by its position is a setting nobody
 /// reading the configuration can check. <c>FinalizeGrace</c> must be a time span of zero or more and
-/// <c>SweepBatchSize</c> a whole number of one or more (#1734).
+/// <c>SweepBatchSize</c> a whole number of one or more (#1734). <c>Enabled</c> is a boolean; a type's <c>IdleTtl</c> and
+/// <c>MaxAge</c> are time spans above zero, its <c>KeepTailVersions</c> and <c>TenantByteCap</c> whole numbers of one or
+/// more, and its <c>Action</c> a name, <c>CloseBooks</c> refused until closing the books ships (#1740).
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
@@ -24,6 +26,7 @@ internal static class ArchiveOptionsBinder {
   private const string TYPES_SECTION = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.Types);
   private const string FINALIZE_GRACE_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.FinalizeGrace);
   private const string SWEEP_BATCH_SIZE_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.SweepBatchSize);
+  private const string ENABLED_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.Enabled);
 
   /// <summary>Binds <c>Whizbang:Archive</c>.</summary>
   /// <param name="configuration">The host's configuration.</param>
@@ -55,14 +58,56 @@ internal static class ArchiveOptionsBinder {
         ? size
         : throw new InvalidOperationException($"{SWEEP_BATCH_SIZE_KEY} is '{batch}'; it must be a whole number of 1 or more.");
     }
-    foreach (var type in configuration.GetSection(TYPES_SECTION).GetChildren()) {
-      var typeOptions = new StreamTypeLifecycleOptions();
-      var value = type[nameof(StreamTypeLifecycleOptions.AppendToArchived)];
-      if (value is not null) {
-        typeOptions.AppendToArchived = _policy($"{TYPES_SECTION}:{type.Key}:{nameof(StreamTypeLifecycleOptions.AppendToArchived)}", value);
-      }
-      options.Types[type.Key] = typeOptions;
+    if (configuration[ENABLED_KEY] is { } enabled) {
+      options.Enabled = bool.TryParse(enabled, out var on)
+        ? on
+        : throw new InvalidOperationException($"{ENABLED_KEY} is '{enabled}'; it must be true or false.");
     }
+    foreach (var type in configuration.GetSection(TYPES_SECTION).GetChildren()) {
+      options.Types[type.Key] = _type(type);
+    }
+  }
+
+  // One stream type's settings; each key names itself in its refusal.
+  private static StreamTypeLifecycleOptions _type(IConfigurationSection type) {
+    var prefix = $"{TYPES_SECTION}:{type.Key}:";
+    var options = new StreamTypeLifecycleOptions();
+    if (type[nameof(StreamTypeLifecycleOptions.AppendToArchived)] is { } appendToArchived) {
+      options.AppendToArchived = _policy(prefix + nameof(StreamTypeLifecycleOptions.AppendToArchived), appendToArchived);
+    }
+    options.IdleTtl = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.IdleTtl), type[nameof(StreamTypeLifecycleOptions.IdleTtl)]);
+    options.MaxAge = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.MaxAge), type[nameof(StreamTypeLifecycleOptions.MaxAge)]);
+    options.KeepTailVersions = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.KeepTailVersions), type[nameof(StreamTypeLifecycleOptions.KeepTailVersions)]);
+    options.TenantByteCap = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.TenantByteCap), type[nameof(StreamTypeLifecycleOptions.TenantByteCap)]);
+    if (type[nameof(StreamTypeLifecycleOptions.Action)] is { } action) {
+      options.Action = _action(prefix + nameof(StreamTypeLifecycleOptions.Action), action);
+    }
+    return options;
+  }
+
+  // Unset is no trigger; zero would act on every stream of the type at once, so a trigger is above zero.
+  private static TimeSpan? _positiveSpan(string key, string? value) => value switch {
+    null => null,
+    _ when TimeSpan.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var span) && span > TimeSpan.Zero => span,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a time span above zero, such as 90.00:00:00."),
+  };
+
+  private static long? _positiveCount(string key, string? value) => value switch {
+    null => null,
+    _ when long.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count) && count >= 1 => count,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a whole number of 1 or more."),
+  };
+
+  private static StreamLifecycleAction _action(string key, string value) {
+    // Names only, as for a policy; CloseBooks is a planned action, refused by name so a host learns it has not shipped.
+    if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
+        && Enum.TryParse<StreamLifecycleAction>(value, ignoreCase: true, out var action) && Enum.IsDefined(action)) {
+      return action;
+    }
+    var planned = string.Equals(value, "CloseBooks", StringComparison.OrdinalIgnoreCase)
+      ? " Closing the books is planned (#1741) and has not shipped."
+      : string.Empty;
+    throw new InvalidOperationException($"{key} is '{value}', which names no end-of-life action.{planned} Use one of: Archive, Compact, Purge.");
   }
 
   /// <summary>Binds <c>Whizbang:Perspectives:ArchivedStreamRows:&lt;Perspective&gt;</c> (#1739).</summary>
