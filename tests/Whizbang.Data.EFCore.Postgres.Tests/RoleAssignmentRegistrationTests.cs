@@ -104,7 +104,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     var assigner = await elector.TryAcquireAsync(Whizbang.Core.Workers.PartitionAssignerOptions.ROLE, cancellationToken);
     await Assert.That(assigner.Grant!.Epoch).IsEqualTo(1L).Because("the partition assigner is a role too (#1254)");
     var unmanaged = await elector.TryAcquireAsync("host-duty", cancellationToken);
-    await Assert.That(unmanaged.Grant!.Epoch).IsNull().Because("a duty that is not a role stays on the session-lock elector");
+    await Assert.That(unmanaged.Grant!.Epoch).IsEqualTo(1L).Because("#2044: every duty is a role assignment, a host's own too");
     await unmanaged.Grant.DisposeAsync();
 
     await Assert.That(provider.GetServices<IReleasesDutiesOnShutdown>().Single()).IsSameReferenceAs(elector);
@@ -237,6 +237,10 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
       ["Whizbang:Database:Stamper:DisableStamper"] = "true",
     };
     await using var provider = _driverOnly(pod, dataSource, settings).BuildServiceProvider();
+    await using (var ctx = CreateDbContext()) {
+      var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
+      await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), cancellationToken);
+    }
 
     var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
     await Assert.That(options.RenewInterval).IsEqualTo(TimeSpan.FromSeconds(2));
@@ -247,9 +251,10 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
       .Because("a disabled stamper has no leader to elect");
     await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsTrue()
       .Because("the removed Enabled key turns nothing off");
-    await Assert.That(provider.GetRequiredService<DutyHolderWorker>().Roles).Contains(StartupDuties.MAINTAINER);
     var elector = provider.GetRequiredService<IDutyElector>();
-    await using var grant = (await elector.TryAcquireAsync(StartupDuties.MAINTAINER, cancellationToken)).Grant;
-    await Assert.That(grant?.Epoch).IsEqualTo(1L).Because("the duty is held in the role table, with an epoch");
+    var attempt = await elector.TryAcquireAsync(StartupDuties.MAINTAINER, cancellationToken);
+    await using var grant = attempt.Grant;
+    await Assert.That(grant?.Epoch).IsEqualTo(1L)
+      .Because($"the duty is held in the role table, with an epoch. Refusal: {attempt.Refusal} ({attempt.Detail})");
   }
 }

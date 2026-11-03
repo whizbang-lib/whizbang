@@ -13,10 +13,9 @@ namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
 /// Slice 26 commit-order stamper. Allocates <c>commit_sequence</c> values via
-/// <c>stamp_pending_commit_sequences</c> on every wake. Singleton per service schema —
-/// every instance of the service runs the worker but only the one holding the schema's
-/// <c>pg_try_advisory_lock</c> (see <see cref="CommitOrderStamperLockKey"/>) stamps.
-/// Non-holders sleep on a retry interval.
+/// <c>stamp_pending_commit_sequences</c> on every wake. Singleton per service schema:
+/// every instance of the service runs the worker, but only the holder of the stamper's role
+/// (<see cref="CommitOrderStamperOptions.ROLE"/>) stamps. Non-holders wait for the role.
 ///
 /// <para>
 /// Wake sources:
@@ -27,31 +26,26 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <see cref="ISharedNotifyConnection"/> (slice 33.5) instead of a dedicated direct connection
 /// so all per-pod LISTEN traffic multiplexes onto one direct Postgres connection.</description></item>
 /// <item><description><strong>Polling tick</strong> — <see cref="CommitOrderStamperOptions.PollingInterval"/>.
-/// Correctness floor; runs unconditionally on the lock-holder, so the system stamps
+/// Correctness floor; runs unconditionally on the role holder, so the system stamps
 /// even when LISTEN is unavailable (gate reports IsAvailable=false → wake won't fire from
 /// NOTIFY; polling tick keeps stamping anyway).</description></item>
 /// </list>
 ///
 /// <para>
-/// The advisory lock is still held on a dedicated short-lived connection — not the shared
-/// conn — because the lock is session-scoped and would pin the shared conn for the worker's
-/// entire leader tenure. That's incompatible with the shared conn's role as the per-pod
-/// multiplexer.
+/// <b>Leadership is a role (#966, #2044).</b> The stamper leads only through its duty elector; it
+/// holds no lock of its own. Under the Postgres elector the role is an assignment: one holder per
+/// schema, won by a vote, kept by the stamping loop itself (each iteration verifies the grant, which
+/// renews the lease, and the loop never sleeps longer than one renew interval), and every stamp is
+/// fenced by the holder's epoch in the same transaction, so a stamper that lost the role cannot
+/// stamp. A non-holder waits for the retry interval or for the role's release to be announced. A
+/// newer-version instance asking for the role gets it after the stamp in progress. A holder that
+/// dies stops renewing, and the role goes to the next vote once its lease lapses or the one
+/// liveness rule has the instance reaped. With no elector registered, the stamper says so and
+/// does not lead.
 /// </para>
-///
 /// <para>
-/// Restart safety: the advisory lock is session-scoped, so a crash auto-releases.
-/// The next instance's retry tick picks it up within <see cref="CommitOrderStamperOptions.LeaderElectionRetry"/>.
-/// </para>
-/// <para>
-/// <b>Leadership by role assignment (#966).</b> When the duty elector holds
-/// <see cref="CommitOrderStamperOptions.ROLE"/> by assignment (the default), leadership is that role
-/// instead of the session lock: one holder per schema, won by a vote, kept by the stamping loop
-/// itself (each iteration verifies the grant, which renews the lease, and the loop never sleeps
-/// longer than one renew interval), and every stamp is fenced by the holder's epoch in the same
-/// transaction, so a stamper that lost the role cannot stamp. A non-holder waits for the retry
-/// interval or for the role's release to be announced. A newer-version instance asking for the role
-/// gets it after the stamp in progress.
+/// The stamping connection is held for the tenure, but each stamp is one transaction, so a
+/// transaction-pooling front end serves it; no session state has to survive between statements.
 /// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
@@ -92,8 +86,8 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   private const string CHANNEL_NAME = "wh_committed";
   private const string FENCE_SQLSTATE = "WHF01";
-  private readonly PgRoleElector? _roleElector =
-    dutyElector is PgRoleElector role && role.Manages(CommitOrderStamperOptions.ROLE) ? role : null;
+  private readonly IDutyElector? _elector = dutyElector;
+  private readonly PgRoleElector? _roleElector = dutyElector as PgRoleElector;
   // The most a call should take: half the renewal interval when the stamper is a role, since the holder renews only
   // between calls (#1327).
   private TimeSpan _callBudget => _roleElector is null ? CommitOrderStampBatch.DefaultCallBudget : _roleElector.RenewInterval / 2;
@@ -102,19 +96,19 @@ public sealed partial class PgCommitOrderStamperWorker(
   private bool _isLeader;
   private int _totalStamped;
 
-  /// <summary>True while this instance holds the advisory lock (i.e. is the active stamper).</summary>
+  /// <summary>True while this instance holds the stamper's role (i.e. is the active stamper).</summary>
   public bool IsLeader => _isLeader;
 
   /// <summary>Cumulative count of rows this instance has stamped since start.</summary>
   public int TotalStamped => Volatile.Read(ref _totalStamped);
 
-  /// <summary>Fires when this instance acquires the advisory lock and becomes the active stamper.</summary>
+  /// <summary>Fires when this instance is granted the stamper's role and becomes the active stamper.</summary>
   public event Action? OnBecameLeader;
 
   /// <summary>
   /// Fires when this instance stops being the active stamper: its tenure ended (the role was lost,
-  /// handed to a newer instance, or refused by the fence) or the worker is stopping. Under role
-  /// assignment the role has already been released when it fires.
+  /// handed to a newer instance, or refused by the fence) or the worker is stopping. The role has
+  /// already been released when it fires.
   /// </summary>
   public event Action? OnStoppedLeading;
 
@@ -149,7 +143,7 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgCommitOrderStamperWorkerCoverageTests.cs:ExecuteAsync_WithNoConnectionStringAndNoDataSource_SaysSoAndEndsWithoutElectingAsync</tests>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Stamper drives the full leader-election + NOTIFY-driven wake + back-pressured stamping protocol. Splitting would require sharing the lock-conn lifetime + leader-state semaphore across helpers and lose the visible try/finally structure.")]
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgCommitOrderStamperWorkerCoverageTests.cs:ExecuteAsync_WithNoDutyElector_SaysSoAndEndsWithoutLeadingAsync</tests>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_stamperOptions.DisableStamper) {
       LogDisabled(_logger);
@@ -160,9 +154,6 @@ public sealed partial class PgCommitOrderStamperWorker(
     // The host starts this worker at Accept commands (#1636), after the migration.
 
     var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback).WithAppliedSearchPath();
-    // One stamper per SCHEMA, not per database: the advisory lock spans the database, and a
-    // key shared by every schema let one service's stamper exclude every other service's.
-    var lockKey = CommitOrderStamperLockKey.Compute(resolution.SearchPath, _stamperOptions.AdvisoryLockKey);
     // Prefer a DI-registered NpgsqlDataSource: when the DbContext is configured
     // via UseNpgsql(NpgsqlDataSource), neither the connection string nor the
     // data source's public ConnectionString carry the password (Npgsql strips
@@ -170,6 +161,11 @@ public sealed partial class PgCommitOrderStamperWorker(
     // to open the connection itself.
     if (resolution.ConnectionString is null && _dataSource is null) {
       LogDisabledNoConnection(_logger);
+      return;
+    }
+    // #2044: one way to hold a duty. Without an elector there is no role to hold, and no lock to fall back to.
+    if (_elector is not { IsConfigured: true } elector) {
+      LogNoDutyElector(_logger);
       return;
     }
 
@@ -191,15 +187,6 @@ public sealed partial class PgCommitOrderStamperWorker(
     var (HasUsername, HasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
     LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, HasUsername, HasSecret);
 
-    // Loud-and-early warning mirroring PgSharedNotifyConnection: PooledKeyFallback
-    // means the leader-lock connection routes through pgbouncer in tx-pooling mode.
-    // pg_try_advisory_lock is session-scoped, so a tx-pool front-end will not preserve
-    // the lock across the leader's tenure — operators MUST switch to `-direct` for the
-    // stamper to function.
-    if (effectiveSource == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
-      LogPooledFallbackWarning(_logger, keyForDiagnostics);
-    }
-
     // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
     // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
     // the wake semaphore saturates at maxCount of 1 and the stamping loop never starts,
@@ -219,58 +206,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     try {
-      if (_roleElector is not null) {
-        await _runAsRoleHolderAsync(_roleElector, resolution, stoppingToken);
-        LogStopped(_logger);
-        return;
-      }
-      while (!stoppingToken.IsCancellationRequested) {
-        NpgsqlConnection? lockConn = null;
-        try {
-          // Prefer NpgsqlDataSource.OpenConnectionAsync — it carries the
-          // credentials internally and is the only path that works with the
-          // UseNpgsql(NpgsqlDataSource) DbContext configuration. Falls back to
-          // the resolved connection string when no data source is registered.
-          lockConn = _dataSource is not null
-            ? await _dataSource.OpenConnectionAsync(stoppingToken)
-            : new NpgsqlConnection(resolution.ConnectionString);
-          if (_dataSource is null) {
-            await lockConn.OpenAsync(stoppingToken);
-          }
-
-          var gotLock = await _tryAcquireLeaderLockAsync(lockConn, lockKey, stoppingToken);
-          if (!gotLock) {
-            await lockConn.DisposeAsync();
-            lockConn = null;
-            await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken);
-            continue;
-          }
-
-          _setLeader(true);
-
-          // Cancellation anywhere below means shutdown, and one handler answers it: the
-          // per-iteration catch further down, reached after this iteration's finally has
-          // released the advisory lock and cleared the leader flag. Answering it here too sent
-          // the same shutdown out through a different line depending on which await happened to
-          // observe the token first, so which line ran was a matter of timing.
-          await _stampWhileLeaderAsync(lockConn, grant: null, stoppingToken);
-        } catch (OperationCanceledException) {
-          // The one shutdown exit: every canceled await in the iteration above lands here.
-          break;
-        } catch (Exception ex) {
-          LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
-          // Fall through to retry loop; lockConn finally below will release.
-        } finally {
-          _setLeader(false);
-          if (lockConn is not null) {
-            try { _ = await _releaseLeaderLockAsync(lockConn, lockKey, _logger); } catch { /* best effort */ }
-            await lockConn.DisposeAsync();
-          }
-        }
-
-        // Brief pause before re-attempting lock acquisition on next iteration.
-        try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
-      }
+      await _runAsRoleHolderAsync(elector, resolution, stoppingToken);
     } finally {
       if (_notifySignalingGate is not null) {
         _notifySignalingGate.OnAvailabilityChanged -= handleGateChange;
@@ -281,17 +217,16 @@ public sealed partial class PgCommitOrderStamperWorker(
   }
 
   /// <summary>
-  /// The stamping loop while this instance leads. Under the session lock (<paramref name="grant"/>
-  /// null) it runs until shutdown or an error. Under role assignment it also returns when the grant
-  /// is lost, when a newer-version instance asked for the role (after the stamp in progress), or when
-  /// a stamp is refused by the epoch fence; and it wakes at least once per renew interval, because
-  /// its own verification is what renews the lease.
+  /// The stamping loop while this instance leads. It returns at shutdown, when the grant is lost, when
+  /// a newer-version instance asked for the role (after the stamp in progress), or when a stamp is
+  /// refused by the epoch fence; and it wakes at least once per renew interval, because its own
+  /// verification is what renews the lease.
   /// </summary>
-  private async Task _stampWhileLeaderAsync(NpgsqlConnection conn, IDutyGrant? grant, CancellationToken stoppingToken) {
+  private async Task _stampWhileLeaderAsync(NpgsqlConnection conn, IDutyGrant grant, CancellationToken stoppingToken) {
     var skipWakeWait = false;
     var fencedDrain = false;
     while (!stoppingToken.IsCancellationRequested) {
-      if (grant is not null && !await _stillLeadsAsync(grant, stoppingToken)) {
+      if (!await _stillLeadsAsync(grant, stoppingToken)) {
         return;
       }
       // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
@@ -383,7 +318,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// the retry interval or for the role's release to be announced, whichever comes first.
   /// </summary>
   private async Task _runAsRoleHolderAsync(
-      PgRoleElector elector, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
+      IDutyElector elector, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
     using var releases = _sharedConnection.Subscribe(new RoleReleaseSubscription(this));
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -485,17 +420,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
   }
 
-  private static async Task<bool> _tryAcquireLeaderLockAsync(NpgsqlConnection conn, long lockKey, CancellationToken ct) {
-    await using var cmd = new NpgsqlCommand("SELECT pg_try_advisory_lock(@k)", conn);
-    cmd.Parameters.AddWithValue("k", lockKey);
-    var result = await cmd.ExecuteScalarAsync(ct);
-    return ScalarResult.IsTrue(result);
-  }
-
-  private static Task<bool> _releaseLeaderLockAsync(NpgsqlConnection conn, long lockKey, ILogger logger) =>
-    AdvisoryLockRelease.ReleaseAsync(conn, lockKey, "commit-order stamper leader lock", logger, CancellationToken.None);
-
-  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, IDutyGrant? grant, CancellationToken ct) {
+  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, IDutyGrant grant, CancellationToken ct) {
     // notifyOwners: TRUE only on the fenced-retry drain — the one case where the rows'
     // commit-time doorbell was provably consumed before they became visible, so the stamp
     // must ring the make-up doorbell (migration 118). Steady-state stamps pass FALSE and
@@ -504,18 +429,14 @@ public sealed partial class PgCommitOrderStamperWorker(
     int stamped;
     // A role holder's stamp is fenced: the epoch check and the stamp commit together, so a
     // holder that lost the role cannot stamp (#966, requirement 1).
-    await using (var tx = grant is null ? null : await conn.BeginTransactionAsync(ct)) {
-      if (grant is not null) {
-        await PgRoleElector.AssertEpochAsync(conn, grant, ct);
-      }
+    await using (var tx = await conn.BeginTransactionAsync(ct)) {
+      await PgRoleElector.AssertEpochAsync(conn, grant, ct);
       await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
       cmd.Parameters.AddWithValue("bs", _sizer.Size);
       cmd.Parameters.AddWithValue("notify", notifyOwners);
       var result = await cmd.ExecuteScalarAsync(ct);
       stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
-      if (tx is not null) {
-        await tx.CommitAsync(ct);
-      }
+      await tx.CommitAsync(ct);
     }
     if (notifyOwners && stamped > 0) {
       // #720: the make-up doorbells were queued inside the stamp's transaction; ring them after it commits.
@@ -561,11 +482,10 @@ public sealed partial class PgCommitOrderStamperWorker(
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker started with connection from {Source} for key '{ConnectionStringKey}'")]
   static partial void LogStarted(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source, string connectionStringKey);
 
-  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
-    Message = "PgCommitOrderStamperWorker resolved the POOLED connection (key '{ConnectionStringKey}') — pg_try_advisory_lock cannot be held " +
-              "through pgbouncer in transaction-pooling mode. Add ConnectionStrings:{ConnectionStringKey}-direct pointing to a direct " +
-              "(non-pgbouncer) Postgres connection. Until then, leader election fails and commit-order stamping stalls.")]
-  static partial void LogPooledFallbackWarning(ILogger logger, string connectionStringKey);
+  [LoggerMessage(EventId = 20, Level = LogLevel.Warning,
+    Message = "PgCommitOrderStamperWorker has no duty elector, so it cannot hold the stamper's role and does not stamp. "
+      + "Register the Postgres notification services (AddWhizbangPostgresNotifications), which register the role elector")]
+  static partial void LogNoDutyElector(ILogger logger);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker became leader — actively stamping")]
   static partial void LogBecameLeader(ILogger logger);

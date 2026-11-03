@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using NpgsqlTypes;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
@@ -14,11 +13,10 @@ using Whizbang.Core.Startup;
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
-/// The role-assignment <see cref="IDutyElector"/>: the advisory lock decides only the vote, and the
-/// role is a row from then on. A duty listed in <see cref="RoleAssignmentOptions.Roles"/> is won by
-/// <c>wh_vote_role</c> (migration 184) and held as an assignment with an epoch, a lease in database
-/// time (its own, when the duty declares one), and no session to keep open. Every other duty is
-/// delegated to the session-lock elector unchanged.
+/// The Postgres <see cref="IDutyElector"/>, and the one way a duty is held (#2044): every duty is won
+/// by <c>wh_vote_role</c> (migrations 184 and 321) and held as an assignment row with an epoch and a
+/// lease in database time (its own, when the duty declares one). No duty is held by a session
+/// advisory lock, and no session has to stay open while a duty is held.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,18 +29,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// lets a write through anyway: writes are fenced in SQL by <c>wh_assert_role_epoch</c>.
 /// </para>
 /// <para>
-/// <b>The grant holds no connection</b> unless the bridge is on. Each vote, renewal and release is one
-/// statement on an ordinary connection, which a transaction-pooling front end serves correctly and
-/// which a database restart does not invalidate: the row survives, and the next renewal presents the
-/// same epoch.
+/// <b>The grant holds no connection.</b> Each vote, renewal and release is one statement on an
+/// ordinary connection, which a transaction-pooling front end serves correctly and which a database
+/// restart does not invalidate: the row survives, and the next renewal presents the same epoch.
 /// </para>
 /// <para>
-/// <b>The bridge</b> (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) keeps mixed-version
-/// fleets from ever both acting. Before voting, the elector takes the duty's legacy session lock
-/// (<see cref="DutyLockKey"/>, the key the session-lock elector uses) and votes only if it won, and
-/// the holder keeps that lock for as long as it holds the role. An old instance therefore sees the
-/// duty as held, and a new instance defers to an old holder. With the bridge off, the vote still
-/// refuses while another backend holds that lock.
+/// <b>Mixed-version fleets.</b> An instance on an older release that holds a duty by its own session
+/// lock records the holding; while the one liveness rule calls that instance live, the vote answers
+/// that the duty is held outside the table, and a holder that sees such a holding steps aside within
+/// one renewal. No lock is read to decide it.
 /// </para>
 /// <para>
 /// A transient failure to renew answers false without marking the grant lost, because the lease may
@@ -53,9 +48,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// goes to the newest version voting for it, and a live holder on an older version is asked to drain,
 /// which it learns on a renewal (<see cref="IDutyGrant.DrainRequested"/>). A holder running one long
 /// statement marks that statement's backend (<see cref="MarkDutyBackendAsync"/>) and is treated as
-/// live while it runs. While bridged, a lapsed holder whose session still holds the legacy lock has
-/// that session, and only that session, ended by the next would-be winner, which is logged and
-/// counted. A fleet-wide lapse carries no cool-down (decided in SQL).
+/// live while it runs. A fleet-wide lapse carries no cool-down (decided in SQL).
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
@@ -69,7 +62,6 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   private readonly RoleAssignmentOptions _roleOptions;
   private readonly IConfiguration _configuration;
   private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly IDutyElector _delegate;
   private readonly ILogger<PgRoleElector> _logger;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource;
@@ -84,7 +76,6 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// <param name="roleOptions">Role-assignment tuning; validated here.</param>
   /// <param name="configuration">Configuration, for connection resolution.</param>
   /// <param name="instanceProvider">This instance's identity.</param>
-  /// <param name="delegateElector">The elector for every duty this one does not manage.</param>
   /// <param name="logger">Logger.</param>
   /// <param name="libraryVersion">This instance's library version, presented to every vote. Required,
   /// and null only by an explicit choice: without it this instance counts as the oldest version, so it
@@ -95,13 +86,12 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// <param name="metrics">Optional meters.</param>
   /// <exception cref="ArgumentNullException">A required argument is null.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The role options describe an unworkable lease.</exception>
-#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam (same reasoning as PgDutyElector)
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list
   public PgRoleElector(
       IOptions<WhizbangNotificationOptions> options,
       IOptions<RoleAssignmentOptions> roleOptions,
       IConfiguration configuration,
       IServiceInstanceProvider instanceProvider,
-      IDutyElector delegateElector,
       ILogger<PgRoleElector> logger,
       ILibraryVersionProvider? libraryVersion,
       INotificationConnectionStringFallback? connectionStringFallback = null,
@@ -113,14 +103,12 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     ArgumentNullException.ThrowIfNull(roleOptions);
     ArgumentNullException.ThrowIfNull(configuration);
     ArgumentNullException.ThrowIfNull(instanceProvider);
-    ArgumentNullException.ThrowIfNull(delegateElector);
     ArgumentNullException.ThrowIfNull(logger);
     _options = options.Value;
     _roleOptions = roleOptions.Value;
     _roleOptions.Validate();
     _configuration = configuration;
     _instanceProvider = instanceProvider;
-    _delegate = delegateElector;
     _logger = logger;
     _connectionStringFallback = connectionStringFallback;
     _notificationDataSource = notificationDataSource;
@@ -129,35 +117,25 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     _versionKey = LibraryVersionKey.From(libraryVersion?.LibraryVersion);
   }
 
-  /// <summary>Whether <paramref name="duty"/> is held by assignment here rather than delegated.</summary>
-  /// <param name="duty">The duty.</param>
-  /// <returns>True when the role options manage it.</returns>
-  public bool Manages(string duty) => _roleOptions.Manages(duty);
-
   /// <summary>How often a holder renews; a holder's work loop wakes at least this often.</summary>
   public TimeSpan RenewInterval => _roleOptions.RenewInterval;
 
   /// <inheritdoc />
   public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
-    return _roleOptions.Manages(duty)
-      ? _voteAsync(duty, cancellationToken)
-      : _delegate.TryAcquireAsync(duty, cancellationToken);
+    return _voteAsync(duty, cancellationToken);
   }
 
   /// <summary>
-  /// Votes for several duties at once. The roles managed here that this instance does not hold yet
-  /// are voted for in ONE statement (<c>wh_vote_roles</c>), unless bridged, when each role's legacy
-  /// lock must be taken first; everything else is attempted one at a time.
+  /// Votes for several duties at once. The duties this instance does not hold yet are voted for in
+  /// ONE statement (<c>wh_vote_roles</c>); a duty already held, or a lone one, is attempted on its own.
   /// </summary>
   /// <param name="duties">The duties.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One attempt per duty, in order.</returns>
   public async Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(duties);
-    var voted = _roleOptions.HoldLegacySessionLock
-      ? new Dictionary<string, DutyAttempt>(StringComparer.Ordinal)
-      : await _voteManyAsync([.. duties.Where(Manages).Distinct(StringComparer.Ordinal)], cancellationToken).ConfigureAwait(false);
+    var voted = await _voteManyAsync([.. duties.Distinct(StringComparer.Ordinal)], cancellationToken).ConfigureAwait(false);
     var attempts = new List<DutyAttempt>(duties.Count);
     foreach (var duty in duties) {
       attempts.Add(voted.Remove(duty, out var attempt)
@@ -335,112 +313,13 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     if (!plan.IsAvailable) {
       return _unavailable(role);
     }
-
-    var legacyKey = _legacyKey(resolution.SearchPath, role);
-    var slot = new BridgeSlot();
-    var voting = _voteUnderBridgeAsync(plan, role, legacyKey, slot, cancellationToken);
-    // Wait for the vote however it ends without throwing yet, because the bridge must be released
-    // first; awaiting it again afterwards rethrows a failure with its original stack. (A finally
-    // that awaits would do the same but leaves a compiler branch no test can take.)
-    await ((Task)voting).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    if (slot.Connection is not null) {
-      // Anything but a grant gives the session lock back, including a vote that threw.
-      await _releaseBridgeAsync(slot.Connection, legacyKey, role, _logger).ConfigureAwait(false);
-    }
-    return await voting.ConfigureAwait(false);
-  }
-
-  /// <summary>How an instance on the session-lock elector locks <paramref name="role"/> in this schema.</summary>
-  private long _legacyKey(string? searchPath, string role) =>
-    _roleOptions.LegacyLockKeys.TryGetValue(role, out var key) ? key(searchPath) : DutyLockKey.Compute(searchPath, role);
-
-  /// <summary>The bridge connection a vote holds until a grant takes it over.</summary>
-  private sealed class BridgeSlot {
-    public NpgsqlConnection? Connection { get; set; }
-  }
-
-  private async Task<DutyAttempt> _voteUnderBridgeAsync(
-      NotificationConnectionPlan plan, string role, long legacyKey, BridgeSlot slot, CancellationToken cancellationToken) {
-    if (!_roleOptions.HoldLegacySessionLock) {
-      // No bridge: the vote itself refuses while another backend holds the legacy lock.
-      return await _decideAsync(plan, role, legacyKey, null, legacyKey, cancellationToken).ConfigureAwait(false);
-    }
-    if (plan.ResolvesThroughPooledKey) {
-      // The bridge is a session lock held for the tenure; a transaction pooler does not keep it on one backend.
-      LogBridgePooledWarning(_logger, role);
-    }
-    var bridge = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
-    slot.Connection = bridge;
-    if (!await _tryLockAsync(bridge, legacyKey, cancellationToken).ConfigureAwait(false)
-        && !await _endLapsedBridgeAndRetryAsync(plan, bridge, role, legacyKey, cancellationToken).ConfigureAwait(false)) {
-      slot.Connection = null;
-      await bridge.DisposeAsync().ConfigureAwait(false);   // lost the lock, so there is nothing to unlock
-      // Still a candidate, and still able to ask an older holder to drain: the bridge must not cost
-      // the newest-version preference or the cooperative drain.
-      return await _requestDrainAsync(plan, role, cancellationToken).ConfigureAwait(false) == "draining"
-        ? DutyAttempt.Lost(DutyRefusal.Contended,
-            $"role '{role}' is held on an older library version, which has been asked to drain and release it")
-        : DutyAttempt.Lost(DutyRefusal.Contended,
-            $"the session lock for role '{role}' is held by another instance (a session-lock or bridged holder)");
-    }
-    var attempt = await _decideAsync(plan, role, null, bridge, legacyKey, cancellationToken).ConfigureAwait(false);
-    if (attempt.Grant is not null) {
-      slot.Connection = null;   // the grant owns the bridge now
-    }
-    return attempt;
-  }
-
-  /// <summary>
-  /// The legacy lock is taken. If the row says its holder is a bridged holder that has lapsed, end that
-  /// holder's lock session (decision 4 of #968), which waits for the session to exit, and try the lock
-  /// once more. True when this instance now holds the lock.
-  /// </summary>
-  private async Task<bool> _endLapsedBridgeAndRetryAsync(
-      NotificationConnectionPlan plan, NpgsqlConnection bridge, string role, long legacyKey, CancellationToken cancellationToken) {
-    int? ended;
-    var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
-    await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT wh_end_lapsed_bridge(@role, @key)";
-      cmd.Parameters.AddWithValue(nameof(role), role);
-      cmd.Parameters.AddWithValue("key", legacyKey);
-      ended = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as int?;
-    }
-    if (ended is not { } pid) {
-      return false;
-    }
-    LogBridgeSessionEnded(_logger, role, pid, _instanceProvider.InstanceId);
-    _metrics?.BridgeSessionsEnded.Add(1, RoleAssignmentMetrics.RoleTag(role));
-    return await _tryLockAsync(bridge, legacyKey, cancellationToken).ConfigureAwait(false);
-  }
-
-  private async Task<string?> _requestDrainAsync(NotificationConnectionPlan plan, string role, CancellationToken cancellationToken) {
-    string? answer;
-    var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
-    await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT wh_request_role_drain(@role, @id, @lease, @version)";
-      cmd.Parameters.AddWithValue(nameof(role), role);
-      cmd.Parameters.AddWithValue("id", _instanceProvider.InstanceId);
-      cmd.Parameters.AddWithValue("lease", _roleOptions.LeaseFor(role));
-      cmd.Parameters.AddWithValue("version", _versionKey);
-      answer = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
-    }
-    return answer;
-  }
-
-  /// <summary>Runs the vote and turns its outcome into an attempt; a grant takes ownership of the bridge.</summary>
-  private async Task<DutyAttempt> _decideAsync(
-      NotificationConnectionPlan plan, string role, long? voteLegacyKey, NpgsqlConnection? bridge, long legacyKey,
-      CancellationToken cancellationToken) {
     var sendStarted = _time.GetTimestamp();
-    var vote = await _electAsync(plan, role, voteLegacyKey, bridge?.ProcessID, cancellationToken).ConfigureAwait(false);
-    return _conclude(plan, role, vote, bridge, legacyKey, sendStarted);
+    var vote = await _electAsync(plan, role, cancellationToken).ConfigureAwait(false);
+    return _conclude(plan, role, vote, sendStarted);
   }
 
   /// <summary>Turns one vote's outcome into an attempt; a grant becomes this elector's tenure.</summary>
-  private DutyAttempt _conclude(
-      NotificationConnectionPlan plan, string role, Vote vote, NpgsqlConnection? bridge, long legacyKey, long sendStarted) {
+  private DutyAttempt _conclude(NotificationConnectionPlan plan, string role, Vote vote, long sendStarted) {
     var instanceId = _instanceProvider.InstanceId;
     if (vote.Outcome is OUTCOME_GRANTED or "held") {
       if (vote.Outcome == OUTCOME_GRANTED && vote.PreviousHolder is { } previous) {
@@ -458,7 +337,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       LogAcquired(_logger, role, instanceId, vote.Epoch);
       // Only a fresh grant took the role from anyone: "held" is this instance keeping what it had.
       var previousHolder = vote.Outcome == OUTCOME_GRANTED ? vote.PreviousHolder : null;
-      var tenure = new Tenure(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow(), previousHolder);
+      var tenure = new Tenure(this, plan, role, new TenureGrant(vote.Epoch, instanceId, sendStarted, _time.GetUtcNow(), previousHolder));
       _tenures[role] = tenure;
       _metrics?.Held.Add(1, RoleAssignmentMetrics.RoleTag(role));
       return DutyAttempt.Granted(tenure.OpenHandle());
@@ -475,7 +354,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   }
 
   /// <summary>
-  /// One statement for the roles not held yet (bridge off); each granted role becomes a tenure. Roles
+  /// One statement for the roles not held yet; each granted role becomes a tenure. Roles
   /// already held, and a lone role, are left out of the result for the caller to attempt one at a time.
   /// </summary>
   private async Task<Dictionary<string, DutyAttempt>> _voteManyAsync(IReadOnlyList<string> candidates, CancellationToken cancellationToken) {
@@ -498,12 +377,11 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       await using (connection.ConfigureAwait(false)) {
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT role, outcome, holder_instance_id, epoch, lease_remaining, previous_holder_instance_id, void_reason "
-          + "FROM wh_vote_roles(@roles, @leases, @id, @cooldown, @legacy, @version)";
+          + "FROM wh_vote_roles(@roles, @leases, @id, @cooldown, NULL, @version)";
         cmd.Parameters.AddWithValue(nameof(roles), roles);
         cmd.Parameters.AddWithValue("leases", roles.Select(_roleOptions.LeaseFor).ToArray());
         cmd.Parameters.AddWithValue("id", _instanceProvider.InstanceId);
         cmd.Parameters.AddWithValue("cooldown", _roleOptions.CooldownAfterLapse);
-        cmd.Parameters.AddWithValue("legacy", roles.Select(role => _legacyKey(resolution.SearchPath, role)).ToArray());
         cmd.Parameters.AddWithValue("version", _versionKey);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -511,7 +389,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         }
       }
       foreach (var role in roles) {
-        attempts[role] = _conclude(plan, role, votes[role], null, _legacyKey(resolution.SearchPath, role), sendStarted);
+        attempts[role] = _conclude(plan, role, votes[role], sendStarted);
       }
       return attempts;
     } finally {
@@ -528,7 +406,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
 
   private static string _contendedDetail(string role, Vote vote) => vote.Outcome switch {
     "cooling_down" => $"this instance's assignment to role '{role}' lapsed, and it is cooling down before it may be elected again",
-    "legacy_holder" => $"role '{role}' is held through its session lock by an instance on the session-lock elector",
+    "legacy_holder" => $"role '{role}' is held outside the role table by an instance on an older release, through its own session lock",
     "deferred" => $"role '{role}' is free, but an instance on a newer library version is voting for it and is preferred",
     "draining" => $"role '{role}' is held by instance {vote.Holder} on an older library version, which has been asked to drain and release it",
     _ => $"role '{role}' is held by instance {vote.Holder} at epoch {vote.Epoch}, "
@@ -537,21 +415,18 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
 
   private sealed record Vote(string Outcome, Guid? Holder, long Epoch, TimeSpan? LeaseRemaining, Guid? PreviousHolder, string? VoidReason);
 
-  private async Task<Vote> _electAsync(
-      NotificationConnectionPlan plan, string role, long? legacyKey, int? bridgePid, CancellationToken cancellationToken) {
+  private async Task<Vote> _electAsync(NotificationConnectionPlan plan, string role, CancellationToken cancellationToken) {
     Vote vote;
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateCommand();
       cmd.CommandText = "SELECT outcome, holder_instance_id, epoch, lease_remaining, previous_holder_instance_id, void_reason "
-        + "FROM wh_vote_role(@role, @id, @lease, @cooldown, @legacy, @version, @bridge)";
+        + "FROM wh_vote_role(@role, @id, @lease, @cooldown, NULL, @version, NULL)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("id", _instanceProvider.InstanceId);
       cmd.Parameters.AddWithValue("lease", _roleOptions.LeaseFor(role));
       cmd.Parameters.AddWithValue("cooldown", _roleOptions.CooldownAfterLapse);
-      cmd.Parameters.Add(new NpgsqlParameter("legacy", NpgsqlDbType.Bigint) { Value = (object?)legacyKey ?? DBNull.Value });
       cmd.Parameters.AddWithValue("version", _versionKey);
-      cmd.Parameters.Add(new NpgsqlParameter("bridge", NpgsqlDbType.Integer) { Value = (object?)bridgePid ?? DBNull.Value });
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
       vote = await _readVoteAsync(reader, 0, cancellationToken).ConfigureAwait(false);
@@ -567,33 +442,8 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     await reader.IsDBNullAsync(first + 4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(first + 4),
     await reader.IsDBNullAsync(first + 5, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(first + 5));
 
-  private static async Task<bool> _tryLockAsync(NpgsqlConnection connection, long key, CancellationToken cancellationToken) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = "SELECT pg_try_advisory_lock(@key)";
-    cmd.Parameters.AddWithValue(nameof(key), key);
-    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
-  }
-
-  /// <summary>
-  /// Unlocks and closes a bridge connection. The unlock is explicit because disposing a pooled
-  /// connection returns its session to the pool with the lock still held, and the pool resets the
-  /// session only when it is next handed out. A session that has already died released the lock
-  /// with it, so a failed unlock is not an error; an unlock that finds the lock not held is logged.
-  /// </summary>
-  private static async Task _releaseBridgeAsync(NpgsqlConnection bridge, long key, string role, ILogger logger) {
-#pragma warning disable CA1031, RCS1075 // best-effort: a dead session already released the lock server-side
-    try {
-      _ = await AdvisoryLockRelease.ReleaseAsync(bridge, key, $"role '{role}' bridge lock", logger, CancellationToken.None).ConfigureAwait(false);
-    } catch (Exception) {
-      // intentionally swallowed — see pragma justification
-    }
-#pragma warning restore CA1031, RCS1075
-    await bridge.DisposeAsync().ConfigureAwait(false);
-  }
-
   private static async Task<object?> _callAsync(
-      NotificationConnectionPlan plan, string commandText, string role, Guid instanceId, long epoch, long? legacyKey,
-      CancellationToken cancellationToken) {
+      NotificationConnectionPlan plan, string commandText, string role, Guid instanceId, long epoch, CancellationToken cancellationToken) {
     object? answered;
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
@@ -602,9 +452,6 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("id", instanceId);
       cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-      if (legacyKey is not null) {
-        cmd.Parameters.AddWithValue("legacy", legacyKey.Value);
-      }
       answered = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     }
     return answered;
@@ -618,29 +465,18 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// shutdown.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A private tenure records everything one grant decided (role, epoch, holder, bridge session and key, renewal clock, acquisition time, previous holder), and is constructed in exactly one place, from the vote that granted it.")]
-  private sealed class Tenure(
-      PgRoleElector elector,
-      NotificationConnectionPlan plan,
-      string role,
-      long epoch,
-      Guid instanceId,
-      NpgsqlConnection? bridge,
-      long legacyKey,
-      long renewedAtTimestamp,
-      DateTimeOffset acquiredAt,
-      Guid? previousHolder) {
+  private sealed class Tenure(PgRoleElector elector, NotificationConnectionPlan plan, string role, TenureGrant grant) {
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private long _renewedAtTimestamp = renewedAtTimestamp;
+    private long _renewedAtTimestamp = grant.RenewedAtTimestamp;
     private int _handles;
     private bool _over;
     private volatile bool _drainRequested;
 
     public string Role => role;
-    public long Epoch => epoch;
-    public Guid InstanceId => instanceId;
-    public DateTimeOffset AcquiredAt => acquiredAt;
-    public Guid? PreviousHolder => previousHolder;
+    public long Epoch => grant.Epoch;
+    public Guid InstanceId => grant.InstanceId;
+    public DateTimeOffset AcquiredAt => grant.AcquiredAt;
+    public Guid? PreviousHolder => grant.PreviousHolder;
     public bool DrainRequested => _drainRequested;
 
     public Handle OpenHandle() {
@@ -649,17 +485,11 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     }
 
     public async Task<bool> VerifyAsync(CancellationToken cancellationToken) {
-      // The gate only serializes this tenure's own calls (the bridge connection cannot run two
-      // commands at once), and is held for one round trip at most; the caller's token reaches the
-      // round trip itself.
+      // The gate only serializes this tenure's own calls, and is held for one round trip at most;
+      // the caller's token reaches the round trip itself.
       await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
       try {
         if (_over) {
-          return false;
-        }
-        // The bridge is checked on every verify, not throttled: the moment its session dies, an old
-        // instance can take the session lock, so "held" can no longer be answered from memory.
-        if (!await _bridgeAliveAsync(cancellationToken).ConfigureAwait(false)) {
           return false;
         }
         if (elector._time.GetElapsedTime(_renewedAtTimestamp) < elector._roleOptions.RenewInterval) {
@@ -675,67 +505,41 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       var sendStarted = elector._time.GetTimestamp();
       string? renewed;
       try {
-        // Unbridged, the legacy key goes with the renewal, so a session-lock holder that took the
-        // duty after the vote (an unsafe mixed fleet) is seen within one renewal and this one steps
-        // aside. Bridged, this holder holds that lock itself.
-        renewed = bridge is null
-          ? await _callAsync(plan, "SELECT wh_renew_role_lease(@role, @id, @epoch, @legacy)", role, instanceId, epoch, legacyKey, cancellationToken).ConfigureAwait(false) as string
-          : await _callAsync(plan, "SELECT wh_renew_role_lease(@role, @id, @epoch)", role, instanceId, epoch, null, cancellationToken).ConfigureAwait(false) as string;
+        // A holder on an older release that took the duty outside the table after the vote is seen by
+        // the renewal (321), and this one steps aside.
+        renewed = await _callAsync(plan, "SELECT wh_renew_role_lease(@role, @id, @epoch)", role, InstanceId, Epoch, cancellationToken)
+          .ConfigureAwait(false) as string;
       } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
         // Not a verdict: the lease may still be valid, and the next verify asks again.
-        LogRenewFailed(elector._logger, role, instanceId, ex);
+        LogRenewFailed(elector._logger, role, InstanceId, ex);
         return false;
       }
 
       if (renewed is not ("renewed" or "drain")) {
-        await _loseAsync(null).ConfigureAwait(false);
+        _lose();
         return false;
       }
       if (renewed == "drain" && !_drainRequested) {
         _drainRequested = true;
-        LogDrainRequested(elector._logger, role, instanceId, epoch);
+        LogDrainRequested(elector._logger, role, InstanceId, Epoch);
       }
       _renewedAtTimestamp = sendStarted;
       return true;
     }
 
-    /// <summary>
-    /// While bridged, the session lock is what keeps an old instance from acting, so a bridge
-    /// session that has died means the tenure is lost, not merely unconfirmed.
-    /// </summary>
-    private async Task<bool> _bridgeAliveAsync(CancellationToken cancellationToken) {
-      if (bridge is null) {
-        return true;
-      }
-      try {
-        await using var ping = bridge.CreateCommand();
-        ping.CommandText = "SELECT 1";
-        _ = await ping.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        return true;
-      } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-        throw;
-      } catch (Exception ex) {
-        await _loseAsync(ex).ConfigureAwait(false);
-        return false;
-      }
-    }
-
-    private async Task _loseAsync(Exception? cause) {
-      LogGrantLost(elector._logger, role, instanceId, epoch, cause);
+    private void _lose() {
+      LogGrantLost(elector._logger, role, InstanceId, Epoch, null);
       elector._metrics?.Lost.Add(1, RoleAssignmentMetrics.RoleTag(role));
-      await _endAsync().ConfigureAwait(false);
+      _end();
     }
 
-    /// <summary>Ends the tenure once: it stops being this elector's, and the bridge closes.</summary>
-    private async Task _endAsync() {
+    /// <summary>Ends the tenure once: it stops being this elector's.</summary>
+    private void _end() {
       _over = true;
       _ = elector._tenures.TryRemove(new KeyValuePair<string, Tenure>(role, this));
       elector._metrics?.Held.Add(-1, RoleAssignmentMetrics.RoleTag(role));
-      if (bridge is not null) {
-        await _releaseBridgeAsync(bridge, legacyKey, role, elector._logger).ConfigureAwait(false);
-      }
     }
 
     /// <summary>A handle closed; the last one releases the role.</summary>
@@ -756,20 +560,23 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         // lease to lapse, which is the crash path the design already bounds; failing a dispose over
         // it would turn a crash-tolerant design into a shutdown error.
         try {
-          if (await _callAsync(plan, "SELECT wh_release_role(@role, @id, @epoch)", role, instanceId, epoch, null, CancellationToken.None).ConfigureAwait(false) is true) {
-            LogReleased(elector._logger, role, instanceId, epoch);
+          if (await _callAsync(plan, "SELECT wh_release_role(@role, @id, @epoch)", role, InstanceId, Epoch, CancellationToken.None).ConfigureAwait(false) is true) {
+            LogReleased(elector._logger, role, InstanceId, Epoch);
             elector._metrics?.Released.Add(1, RoleAssignmentMetrics.RoleTag(role));
           }
         } catch (Exception ex) {
-          LogReleaseFailed(elector._logger, role, instanceId, ex);
+          LogReleaseFailed(elector._logger, role, InstanceId, ex);
         }
 #pragma warning restore CA1031, RCS1075
-        await _endAsync().ConfigureAwait(false);
+        _end();
       } finally {
         _gate.Release();
       }
     }
   }
+
+  /// <summary>What one vote decided for a new tenure: its epoch, holder, renewal clock, acquisition time and previous holder.</summary>
+  private sealed record TenureGrant(long Epoch, Guid InstanceId, long RenewedAtTimestamp, DateTimeOffset AcquiredAt, Guid? PreviousHolder);
 
   /// <summary>One holder's handle on a tenure: what <see cref="TryAcquireAsync"/> returns.</summary>
   private sealed class Handle(Tenure tenure) : IDutyGrant {
@@ -827,13 +634,4 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   [LoggerMessage(EventId = 9, Level = LogLevel.Information,
     Message = "PgRoleElector: instance {InstanceId} holding role '{Role}' at epoch {Epoch} was asked by a newer-version instance to drain; it releases after its current step")]
   static partial void LogDrainRequested(ILogger logger, string role, Guid instanceId, long epoch);
-
-  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
-    Message = "PgRoleElector: instance {InstanceId} ended backend {BackendPid}, the legacy-lock session of a lapsed bridged holder of role '{Role}', so the role can be voted again")]
-  static partial void LogBridgeSessionEnded(ILogger logger, string role, int backendPid, Guid instanceId);
-
-  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
-    Message = "PgRoleElector: role '{Role}' holds its legacy session lock (the bridge) on a connection that resolves through a pooled key; "
-      + "a transaction-pooling pooler does not keep a session lock on one backend. Configure the '-direct' connection")]
-  static partial void LogBridgePooledWarning(ILogger logger, string role);
 }

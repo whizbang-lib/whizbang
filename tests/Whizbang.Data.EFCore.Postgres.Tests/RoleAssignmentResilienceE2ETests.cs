@@ -1,9 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -52,7 +50,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
   private static IConfiguration _config() => new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
   private PgRoleElector _electorFor(
-      Pod pod, string? version = null, TimeProvider? time = null, RoleAssignmentMetrics? metrics = null,
+      Pod pod, string? version = null, TimeProvider? time = null,
       Action<RoleAssignmentOptions>? configure = null, string? connectionString = null) {
     var options = new RoleAssignmentOptions();
     options.Roles.Add(OTHER);
@@ -60,7 +58,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
     return new PgRoleElector(
       Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod,
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version),
-      timeProvider: time, metrics: metrics);
+      timeProvider: time);
   }
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
@@ -100,26 +98,6 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
        WHERE role = @role RETURNING 1)
     UPDATE wh_role_candidates SET last_voted_at = last_voted_at - @by WHERE role = @role
     """, ct, ("by", by), ("role", role));
-
-  private sealed class MeterReader : IDisposable {
-    private readonly MeterListener _listener = new();
-    private readonly List<(string Name, long Value)> _seen = [];
-    public MeterReader(Meter meter) {
-      _listener.InstrumentPublished = (instrument, l) => {
-        if (instrument.Meter == meter) {
-          l.EnableMeasurementEvents(instrument);
-        }
-      };
-      _listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => _seen.Add((instrument.Name, value)));
-      _listener.Start();
-    }
-    public long Total(string name) {
-      _seen.Clear();
-      _listener.RecordObservableInstruments();
-      return _seen.Where(s => s.Name == name).Sum(s => s.Value);
-    }
-    public void Dispose() => _listener.Dispose();
-  }
 
   private sealed class OtherGrant : IDutyGrant {
     public string Duty => ROLE;

@@ -315,9 +315,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
     // Phase 2: whoever does the schema work rewrites first; whoever does not, waits.
     //
-    // A waiter lost the election, so it watches the DUTY lock: the migrator holds the duty until it
-    // returns, so a holder that dies releases it and the wait ends in a takeover with no deadline
-    // to tune. How the wait ended decides one thing. Either the holder finished, and the fast path
+    // A waiter lost the election, so it watches the migrator's DUTY: the migrator holds the role until
+    // it returns, and a holder that dies loses it (its lease lapses, or the one liveness rule has it
+    // reaped), so the wait ends in a takeover. How the wait ended decides one thing. Either the holder finished, and the fast path
     // below reads clean hashes and exits in one query; or the holder is gone, or could not be
     // watched, and this instance is about to do the schema work itself: then it rewrites first,
     // because a migrator killed mid-rewrite leaves the remaining tables in the old form and every
@@ -338,9 +338,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       try {
         await using var waitConnection = segmentConnectionFactory();
         await waitConnection.OpenAsync(cancellationToken);
-        // A waiter watches the migrator: its assignment row (the duty is held by assignment) or,
-        // while an older release may be the migrator, the duty's session lock (DutyLockKey for
-        // StartupDuties.MIGRATOR). Anyone else watches the schema lock.
+        // A waiter watches the migrator: its assignment row, or, while an older release may be the
+        // migrator, the holding that release records (judged by the one liveness rule, #2044).
+        // Anyone else watches the schema lock.
         System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
           ? ct => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", ct)
           : ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct);

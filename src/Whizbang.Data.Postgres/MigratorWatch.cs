@@ -17,36 +17,32 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// The migrator duty is held by assignment (#966 phase 4): a row with a lease, renewed by the
 /// migrator and held live while its marked backend runs a statement. A waiter therefore watches
-/// that row. It also watches the duty's session lock, because during a rolling deploy the migrator
-/// may be an instance on a release that still holds the duty by session lock.
+/// that row. During a rolling deploy the migrator may be an instance on an older release that holds
+/// the duty by its own session lock; such an instance records the holding, and a waiter watches
+/// that record too, judged by the one liveness rule (#2044). No lock is read.
 /// </para>
 /// <para>
-/// Either one held means "keep waiting"; neither means the migrator finished or is gone, and the
-/// caller then reads the schema to tell which. A database whose role functions do not exist yet
-/// (one the bootstrap could not bring up) answers from the session lock alone.
+/// Either one means "keep waiting"; neither means the migrator finished or is gone, and the caller
+/// then reads the schema to tell which. A database whose role functions do not exist yet (one the
+/// bootstrap could not bring up) has no migrator to watch.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorWatchTests.cs</tests>
 public static class MigratorWatch {
   /// <summary>Whether an instance other than the caller is migrating <paramref name="schema"/>.</summary>
-  /// <param name="connection">An open connection. Its own session's locks do not count.</param>
+  /// <param name="connection">An open connection.</param>
   /// <param name="schema">The schema, in either the raw or the quoted spelling.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>True while the migrator's assignment is live or its session lock is held elsewhere.</returns>
+  /// <returns>True while the migrator's assignment is live, or a live instance holds the duty outside the table.</returns>
   public static async Task<bool> IsMigratingElsewhereAsync(
       NpgsqlConnection connection, string schema, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
 
-    if (await AdvisoryLockProbe.IsHeldElsewhereAsync(
-        connection, DutyLockKey.Compute(schema, StartupDuties.MIGRATOR), cancellationToken).ConfigureAwait(false)) {
-      return true;
-    }
-
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty, StringComparison.Ordinal);
     var quoted = "\"" + target.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     await using (var exists = new NpgsqlCommand("SELECT to_regprocedure($1) IS NOT NULL", connection)) {
-      exists.Parameters.AddWithValue($"{quoted}._role_lapse_reason({quoted}.wh_role_assignments)");
+      exists.Parameters.AddWithValue($"{quoted}._role_held_outside_assignment(text, uuid)");
       if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
         return false;
       }
@@ -54,7 +50,8 @@ public static class MigratorWatch {
 
     await using var held = new NpgsqlCommand(
       $"SELECT EXISTS (SELECT 1 FROM {quoted}.wh_role_assignments r "
-      + $"WHERE r.role = $1 AND r.holder_instance_id IS NOT NULL AND {quoted}._role_lapse_reason(r) IS NULL)", connection);
+      + $"WHERE r.role = $1 AND r.holder_instance_id IS NOT NULL AND {quoted}._role_lapse_reason(r) IS NULL) "
+      + $"OR {quoted}._role_held_outside_assignment($1, NULL)", connection);
     held.Parameters.AddWithValue(StartupDuties.MIGRATOR);
     return await held.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
   }

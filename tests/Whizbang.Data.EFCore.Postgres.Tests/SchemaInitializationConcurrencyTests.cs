@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -524,11 +525,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await using (var killer = new NpgsqlConnection(ConnectionString)) {
       await killer.OpenAsync(cancellationToken);
       await using var kill = killer.CreateCommand();
-      kill.CommandText = """
-        UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id;
-        SELECT count(*) FROM cleanup_stale_instances(now());
-        """;
-      kill.Parameters.AddWithValue("id", holder.InstanceId);
+      kill.CommandText = "SELECT pg_terminate_backend(@pid)";
+      kill.Parameters.AddWithValue("pid", pid);
       await kill.ExecuteScalarAsync(cancellationToken);
     }
 
@@ -645,7 +643,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   }
 
   /// <summary>The role elector, as the driver registers it: the migrator is a role assignment (#2044).</summary>
-  private PgRoleElector _electorFor(Pod pod, TimeSpan? migratorLease = null) {
+  private PgRoleElector _electorFor(Pod pod, TimeSpan? migratorLease = null, TimeProvider? time = null) {
     var roles = new RoleAssignmentOptions();
     if (migratorLease is { } lease) {
       roles.RoleLeases[StartupDuties.MIGRATOR] = lease;
@@ -656,7 +654,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       pod,
       NullLogger<PgRoleElector>.Instance,
-      libraryVersion: null);
+      libraryVersion: null,
+      timeProvider: time);
   }
 
   /// <summary>A scope carrying what staged startup resolves: an identity and an elector.</summary>
@@ -671,7 +670,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   /// Another registered instance holding the migrator role, standing in for the instance that won it. Its lease is
   /// long, so only what a test does to it (a release, or its death judged by the liveness rule) ends it.
   /// </summary>
-  private async Task<(IDutyGrant Grant, Pod Holder)> _holdMigratorDutyAsync(CancellationToken ct) {
+  private async Task<(IDutyGrant Grant, Pod Holder, FakeTimeProvider Time)> _holdMigratorDutyAsync(CancellationToken ct) {
     var holder = new Pod();
     await using (var conn = new NpgsqlConnection(ConnectionString)) {
       await conn.OpenAsync(ct);
@@ -681,8 +680,9 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       register.Parameters.AddWithValue("id", holder.InstanceId);
       await register.ExecuteNonQueryAsync(ct);
     }
-    var attempt = await _electorFor(holder, TimeSpan.FromHours(1)).TryAcquireAsync(StartupDuties.MIGRATOR, ct);
-    return (attempt.Grant ?? throw new InvalidOperationException($"the holder did not win the migrator: {attempt.Detail}"), holder);
+    var time = new FakeTimeProvider();
+    var attempt = await _electorFor(holder, TimeSpan.FromHours(1), time).TryAcquireAsync(StartupDuties.MIGRATOR, ct);
+    return (attempt.Grant ?? throw new InvalidOperationException($"the holder did not win the migrator: {attempt.Detail}"), holder, time);
   }
 
   private async Task<long> _capabilityRowsAsync(Guid instanceId, CancellationToken ct) {
@@ -750,7 +750,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Staged_ANonHolderWaitsForTheDutyHolderAsync(CancellationToken cancellationToken) {
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
-    var (holding, _) = await _holdMigratorDutyAsync(cancellationToken);
+    var (holding, _, _) = await _holdMigratorDutyAsync(cancellationToken);
 
     await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
@@ -787,7 +787,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Staged_AKilledDutyHolderIsTakenOverAsync(CancellationToken cancellationToken) {
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
-    var (holding, holder) = await _holdMigratorDutyAsync(cancellationToken);
+    var (holding, holder, holderTime) = await _holdMigratorDutyAsync(cancellationToken);
 
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
@@ -816,6 +816,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .Because("the survivor took over the work the dead holder left outstanding");
     await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED);
 
+    holderTime.Advance(new RoleAssignmentOptions().RenewInterval);
     await Assert.That(await holding.VerifyStillHeldAsync(cancellationToken)).IsFalse()
       .Because("the dead holder's assignment was voided; its grant cannot fence a write any more");
     await holding.DisposeAsync();

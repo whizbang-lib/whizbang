@@ -310,7 +310,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
     await Assert.That(async () => await grant.DisposeAsync()).ThrowsNothing();
 
-    await Assert.That(await _leaseRemainingAsync(cancellationToken)).IsNotNull()
+    await Assert.That((await _leaseRemainingAsync(cancellationToken)).HasValue).IsTrue()
       .Because("the release could not run, so the assignment stands until its lease lapses");
   }
 
