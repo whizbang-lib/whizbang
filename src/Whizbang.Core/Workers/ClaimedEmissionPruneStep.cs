@@ -85,9 +85,7 @@ public sealed partial class ClaimedEmissionPruneStep(
   /// case only on its holder.
   /// </summary>
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(StartupDuties.MAINTAINER);
+    MaintainerDuty.IsThisInstancesTurn(services);
 
   [LoggerMessage(Level = LogLevel.Information, Message = "Pruned {Count} claimed-emission claim(s) that expired before {ExpiredBefore}")]
   private static partial void LogPruned(ILogger logger, int count, DateTimeOffset expiredBefore);
