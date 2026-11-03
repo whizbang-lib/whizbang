@@ -1179,8 +1179,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public async Task FailIntegrityDeliveryAsync(
-      Guid deliveryId, string error, TimeSpan backoff, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(error);
+      Guid deliveryId, string failure, TimeSpan backoff, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(failure);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_delivery_fail");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -1190,7 +1190,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT {fn}(@p_delivery_id, @p_error, @p_backoff_seconds)";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("p_delivery_id", deliveryId);
-    cmd.Parameters.AddWithValue("p_error", error);
+    cmd.Parameters.AddWithValue("p_error", failure);
     cmd.Parameters.AddWithValue("p_backoff_seconds", _wholeSeconds(backoff));
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }

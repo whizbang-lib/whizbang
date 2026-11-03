@@ -166,7 +166,7 @@ public static partial class RedeliveryReconciler {
     if (coordinator is null) {
       return;
     }
-    var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RedeliveryReconciler).FullName!)
+    var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RedeliveryReconciler))
       ?? NullLogger.Instance;
     var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
     _ = await _reconcileCoreAsync(

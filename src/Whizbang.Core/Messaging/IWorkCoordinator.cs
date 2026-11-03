@@ -2026,17 +2026,17 @@ public interface IWorkCoordinator {
   Task CompleteIntegrityDeliveryAsync(Guid deliveryId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
-  /// Records a failed attempt of an integrity delivery: counts it, keeps <paramref name="error"/>, and holds the
+  /// Records a failed attempt of an integrity delivery: counts it, keeps <paramref name="failure"/>, and holds the
   /// delivery back for <paramref name="backoff"/>.
   /// </summary>
   /// <param name="deliveryId">The delivery.</param>
-  /// <param name="error">What failed, for an operator.</param>
+  /// <param name="failure">What failed, for an operator.</param>
   /// <param name="backoff">How long before it is due again.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Fail_CountsTheAttempt_KeepsTheError_AndHoldsItForTheBackoffAsync</tests>
   Task FailIntegrityDeliveryAsync(
-    Guid deliveryId, string error, TimeSpan backoff, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    Guid deliveryId, string failure, TimeSpan backoff, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and

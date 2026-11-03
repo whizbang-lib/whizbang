@@ -72,8 +72,8 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
   }
 
   /// <summary>Failed rows stay leased (held for their backoff) for the rest of the test.</summary>
-  public Task FailIntegrityDeliveryAsync(Guid deliveryId, string error, TimeSpan backoff, CancellationToken cancellationToken = default) {
-    Failed.Add((deliveryId, error, backoff));
+  public Task FailIntegrityDeliveryAsync(Guid deliveryId, string failure, TimeSpan backoff, CancellationToken cancellationToken = default) {
+    Failed.Add((deliveryId, failure, backoff));
     var i = _queue.FindIndex(d => d.DeliveryId == deliveryId);
     _queue[i] = _queue[i] with { Attempts = _queue[i].Attempts + 1 };
     return Task.CompletedTask;
