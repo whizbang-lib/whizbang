@@ -1292,6 +1292,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The live audit path resolves event types through the same catalog as the audit ledger rebuild (#2040).** The
+  outbox audit builder resolved an event's type with `Type.GetType` (under an IL2057 suppression) while the rebuild
+  resolved through the message-type catalog, so a loaded type outside the catalog was audited by its attribute live and
+  by the mode alone on rebuild, and a catalog type written by its full name alone the other way round: the two
+  disagreed about whether the event was audited. Both now resolve through `AuditTypeResolver`, built once from the
+  catalog and registered as a singleton, and passed by the work coordinator strategy factory to every strategy that
+  builds audit records. `TryBuildAuditMessage` takes it as a new optional `eventTypes` argument; without one, every type
+  is decided by the audit mode alone. No reflection remains on the audit path. **Upgrade note:** an event type that is
+  not in a generated message-type catalog is now audited under `OptOut` and not under `OptIn`, whatever attribute it
+  carries, as the rebuild already decided it.
 - **A destruction hook is honored on the Dapper data layer (#2039).** The ephemeral reap's destruction seam ran on the
   EF Core driver only: on Dapper a registered `IDestructionHook` was offered nothing, its Cancel and Defer held nothing,
   a throwing hook forced the delete at once, and the maintenance cycle reaped every eligible body, including ones no
