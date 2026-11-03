@@ -25,80 +25,62 @@ namespace Whizbang.Sagas.Tests;
 [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
 public class SagaServiceCollectionExtensionsTests {
 
-  // Each test must restore AppDefaultNamespace so subsequent tests in
-  // the suite don't pick up a configured override unexpectedly.
+  // Each test starts with no namespace registered and puts back what was there, so a registration it
+  // makes is the process's first and later tests do not inherit it.
 
   [Test]
   public async Task AddWhizbangSagas_NoConfigure_LeavesAppDefaultNamespaceAtFactoryDefaultAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      SagaItemStreams.AppDefaultNamespace = SagaItemStreams.DefaultNamespace;
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    services.AddWhizbangSagas();
 
-      var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-      services.AddWhizbangSagas();
-
-      await Assert.That(SagaItemStreams.AppDefaultNamespace)
-        .IsEqualTo(SagaItemStreams.DefaultNamespace)
-        .Because("Calling AddWhizbangSagas without a configure callback must not alter the namespace — fresh consumers get Whizbang's default unchanged.");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(SagaItemStreams.AppDefaultNamespace)
+      .IsEqualTo(SagaItemStreams.DefaultNamespace)
+      .Because("Calling AddWhizbangSagas without a configure callback must not alter the namespace: fresh consumers get Whizbang's default unchanged.");
   }
 
   [Test]
   public async Task AddWhizbangSagas_WithCustomNamespace_AppliesItToAppDefaultNamespaceAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
 
-      var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-      services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
+    var services = new ServiceCollection();
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
-      await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(custom)
-        .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the consumer migration story — one line at startup, no per-saga attribute pollution.");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(custom)
+      .Because("The configured namespace must take effect immediately so every subsequent SagaItemStreams.Of(sagaId, itemId) call uses the consumer's value. This is the consumer migration story: one line at startup, no per-saga attribute pollution.");
   }
 
   [Test]
   public async Task AddWhizbangSagas_RegistersSagaOptionsAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
 
-      var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-      services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
+    var services = new ServiceCollection();
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
-      var sp = services.BuildServiceProvider();
-      var opts = sp.GetRequiredService<SagaOptions>();
+    var sp = services.BuildServiceProvider();
+    var opts = sp.GetRequiredService<SagaOptions>();
 
-      await Assert.That(opts.PerItemStreamNamespace).IsEqualTo(custom)
-        .Because("SagaOptions is the resolvable representation of the configured values; services depending on it must see the configured namespace.");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(opts.PerItemStreamNamespace).IsEqualTo(custom)
+      .Because("SagaOptions is the resolvable representation of the configured values; services depending on it must see the configured namespace.");
   }
 
   [Test]
   public async Task AddWhizbangSagas_RegistersSagaMetricsAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-      services.AddWhizbangSagas();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    services.AddWhizbangSagas();
 
-      var sp = services.BuildServiceProvider();
-      var metrics = sp.GetRequiredService<SagaMetrics>();
+    var sp = services.BuildServiceProvider();
+    var metrics = sp.GetRequiredService<SagaMetrics>();
 
-      await Assert.That(metrics).IsNotNull()
-        .Because("SagaMetrics is the standard observability surface every saga emits into; if it's not registered, every consumer would silently lose telemetry.");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(metrics).IsNotNull()
+      .Because("SagaMetrics is the standard observability surface every saga emits into; if it's not registered, every consumer would silently lose telemetry.");
   }
 
   /// <summary>
@@ -107,38 +89,30 @@ public class SagaServiceCollectionExtensionsTests {
   /// </summary>
   [Test]
   public async Task AddWhizbangSagas_ConsumerEmitterRegisteredFirst_IsKeptAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var consumerEmitter = new ConsumerEmitter();
-      var services = new ServiceCollection();
-      services.AddSingleton<Whizbang.Sagas.Services.ISagaEventEmitter>(consumerEmitter);
-      services.AddWhizbangSagas();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var consumerEmitter = new ConsumerEmitter();
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Sagas.Services.ISagaEventEmitter>(consumerEmitter);
+    services.AddWhizbangSagas();
 
-      await using var sp = services.BuildServiceProvider();
-      await using var scope = sp.CreateAsyncScope();
+    await using var sp = services.BuildServiceProvider();
+    await using var scope = sp.CreateAsyncScope();
 
-      await Assert.That(scope.ServiceProvider.GetRequiredService<Whizbang.Sagas.Services.ISagaEventEmitter>()).IsSameReferenceAs(consumerEmitter)
-        .Because("registering the framework default over it silently replaced the consumer's emitter");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(scope.ServiceProvider.GetRequiredService<Whizbang.Sagas.Services.ISagaEventEmitter>()).IsSameReferenceAs(consumerEmitter)
+      .Because("registering the framework default over it silently replaced the consumer's emitter");
   }
 
   /// <summary>With no emitter of the consumer's own, saga services publish through the dispatcher.</summary>
   [Test]
   public async Task AddWhizbangSagas_NoEmitterRegistered_RegistersTheDispatcherBackedOneAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var services = new ServiceCollection();
-      services.AddWhizbangSagas();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddWhizbangSagas();
 
-      var registration = services.Single(d => d.ServiceType == typeof(Whizbang.Sagas.Services.ISagaEventEmitter));
+    var registration = services.Single(d => d.ServiceType == typeof(Whizbang.Sagas.Services.ISagaEventEmitter));
 
-      await Assert.That(registration.ImplementationType).IsEqualTo(typeof(Whizbang.Sagas.Services.DispatcherSagaEventEmitter));
-      await Assert.That(registration.Lifetime).IsEqualTo(ServiceLifetime.Scoped);
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(registration.ImplementationType).IsEqualTo(typeof(Whizbang.Sagas.Services.DispatcherSagaEventEmitter));
+    await Assert.That(registration.Lifetime).IsEqualTo(ServiceLifetime.Scoped);
   }
 
   private sealed class ConsumerEmitter : Whizbang.Sagas.Services.ISagaEventEmitter {

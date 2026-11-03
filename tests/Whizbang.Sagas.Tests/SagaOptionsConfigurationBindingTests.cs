@@ -34,85 +34,69 @@ public class SagaOptionsConfigurationBindingTests {
 
   [Test]
   public async Task EveryKeyBindsAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      await using var provider = _build(new() {
-        ["Whizbang:Sagas:MinWatchdogDelay"] = "00:00:10",
-        ["Whizbang:Sagas:MaxWatchdogDelay"] = "01:00:00",
-        ["Whizbang:Sagas:WatchdogSafetyMargin"] = "00:00:05",
-        ["Whizbang:Sagas:MaxConsecutiveStalls"] = "9",
-        ["Whizbang:Sagas:StallBackoffMultiplier"] = "1.5",
-        ["Whizbang:Sagas:StrandedSagaIdleGuard"] = "00:10:00",
-        ["Whizbang:Sagas:StrandedSagaRearmInterval"] = "00:20:00",
-        ["Whizbang:Sagas:ClaimRetention"] = "3.00:00:00",
-      });
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    await using var provider = _build(new() {
+      ["Whizbang:Sagas:MinWatchdogDelay"] = "00:00:10",
+      ["Whizbang:Sagas:MaxWatchdogDelay"] = "01:00:00",
+      ["Whizbang:Sagas:WatchdogSafetyMargin"] = "00:00:05",
+      ["Whizbang:Sagas:MaxConsecutiveStalls"] = "9",
+      ["Whizbang:Sagas:StallBackoffMultiplier"] = "1.5",
+      ["Whizbang:Sagas:StrandedSagaIdleGuard"] = "00:10:00",
+      ["Whizbang:Sagas:StrandedSagaRearmInterval"] = "00:20:00",
+      ["Whizbang:Sagas:ClaimRetention"] = "3.00:00:00",
+    });
 
-      var options = provider.GetRequiredService<SagaOptions>();
+    var options = provider.GetRequiredService<SagaOptions>();
 
-      await Assert.That(options.MinWatchdogDelay).IsEqualTo(TimeSpan.FromSeconds(10));
-      await Assert.That(options.MaxWatchdogDelay).IsEqualTo(TimeSpan.FromHours(1));
-      await Assert.That(options.WatchdogSafetyMargin).IsEqualTo(TimeSpan.FromSeconds(5));
-      await Assert.That(options.MaxConsecutiveStalls).IsEqualTo(9);
-      await Assert.That(options.StallBackoffMultiplier).IsEqualTo(1.5);
-      await Assert.That(options.StrandedSagaIdleGuard).IsEqualTo(TimeSpan.FromMinutes(10));
-      await Assert.That(options.StrandedSagaRearmInterval).IsEqualTo(TimeSpan.FromMinutes(20));
-      await Assert.That(options.ClaimRetention).IsEqualTo(TimeSpan.FromDays(3));
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(options.MinWatchdogDelay).IsEqualTo(TimeSpan.FromSeconds(10));
+    await Assert.That(options.MaxWatchdogDelay).IsEqualTo(TimeSpan.FromHours(1));
+    await Assert.That(options.WatchdogSafetyMargin).IsEqualTo(TimeSpan.FromSeconds(5));
+    await Assert.That(options.MaxConsecutiveStalls).IsEqualTo(9);
+    await Assert.That(options.StallBackoffMultiplier).IsEqualTo(1.5);
+    await Assert.That(options.StrandedSagaIdleGuard).IsEqualTo(TimeSpan.FromMinutes(10));
+    await Assert.That(options.StrandedSagaRearmInterval).IsEqualTo(TimeSpan.FromMinutes(20));
+    await Assert.That(options.ClaimRetention).IsEqualTo(TimeSpan.FromDays(3));
   }
 
   [Test]
   public async Task ConfigurationOverridesCode_AndCodeSurvivesAbsentKeysAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      await using var provider = _build(new() {
-        ["Whizbang:Sagas:MaxConsecutiveStalls"] = "2",
-      }, o => {
-        o.MaxConsecutiveStalls = 7;
-        o.MinWatchdogDelay = TimeSpan.FromSeconds(3);
-      });
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    await using var provider = _build(new() {
+      ["Whizbang:Sagas:MaxConsecutiveStalls"] = "2",
+    }, o => {
+      o.MaxConsecutiveStalls = 7;
+      o.MinWatchdogDelay = TimeSpan.FromSeconds(3);
+    });
 
-      var options = provider.GetRequiredService<SagaOptions>();
+    var options = provider.GetRequiredService<SagaOptions>();
 
-      await Assert.That(options.MaxConsecutiveStalls).IsEqualTo(2);
-      await Assert.That(options.MinWatchdogDelay).IsEqualTo(TimeSpan.FromSeconds(3));
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(options.MaxConsecutiveStalls).IsEqualTo(2);
+    await Assert.That(options.MinWatchdogDelay).IsEqualTo(TimeSpan.FromSeconds(3));
   }
 
   [Test]
   public async Task PerItemStreamNamespace_IsNeverReadFromConfigurationAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var code = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
-      await using var provider = _build(new() {
-        ["Whizbang:Sagas:PerItemStreamNamespace"] = "11111111-1111-1111-1111-111111111111",
-      }, o => o.PerItemStreamNamespace = code);
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var code = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
+    await using var provider = _build(new() {
+      ["Whizbang:Sagas:PerItemStreamNamespace"] = "11111111-1111-1111-1111-111111111111",
+    }, o => o.PerItemStreamNamespace = code);
 
-      var options = provider.GetRequiredService<SagaOptions>();
+    var options = provider.GetRequiredService<SagaOptions>();
 
-      await Assert.That(options.PerItemStreamNamespace).IsEqualTo(code)
-        .Because("the namespace is stream identity; a configuration key changing it would re-route every per-item stream");
-      await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(code);
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(options.PerItemStreamNamespace).IsEqualTo(code)
+      .Because("the namespace is stream identity; a configuration key changing it would re-route every per-item stream");
+    await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(code);
   }
 
   [Test]
   public async Task NoConfigurationRegistered_ResolvesDefaultsAsync() {
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-      services.AddWhizbangSagas();
-      await using var provider = services.BuildServiceProvider();
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var services = new ServiceCollection();
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    services.AddWhizbangSagas();
+    await using var provider = services.BuildServiceProvider();
 
-      await Assert.That(provider.GetRequiredService<SagaOptions>().MaxConsecutiveStalls).IsEqualTo(4);
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(provider.GetRequiredService<SagaOptions>().MaxConsecutiveStalls).IsEqualTo(4);
   }
 }

@@ -30,6 +30,14 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="auditDecisionHook">The registered decision hook; null behaves as no opinion.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_IsNotAuditedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_WarnsThatItWasNotAuditedNamingTheTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:LiveAndRebuild_AgreeOnAnUnresolvableType_UnderEitherModeAsync</tests>
+  /// <remarks>
+  /// An event type that cannot be resolved is decided as the ledger rebuild decides it (#1980): audited under
+  /// <see cref="AuditMode.OptOut"/>, not audited under <see cref="AuditMode.OptIn"/>, and every such skip logs a warning
+  /// naming the type.
+  /// </remarks>
   public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
       return null;
@@ -41,7 +49,7 @@ public static partial class AuditOutboxMessageBuilder {
     // The dispatcher stamped the ephemeral flag on the message, so it decides here without the type (#1730).
     var isEphemeral = (eventMessage.Flags & EventFlags.Ephemeral) != 0;
     var eventType = _resolveEventType(eventMessage.MessageType, logger ?? NullLogger.Instance);
-    var auditDecision = _decide(eventMessage, eventType, isEphemeral, options, auditDecisionHook);
+    var auditDecision = _decide(eventMessage, eventType, isEphemeral, options, auditDecisionHook, logger ?? NullLogger.Instance);
     if (!auditDecision.ShouldAudit) {
       return null;
     }
@@ -167,12 +175,22 @@ public static partial class AuditOutboxMessageBuilder {
   }
 
   private static AuditDecision _decide(
-      OutboxMessage eventMessage, Type? eventType, bool isEphemeral, SystemEventOptions options, IAuditDecisionHook? hook) {
-    if (eventType is null) {
-      // An unresolvable type is audited as it always was, unless it is ephemeral: it cannot have asked for its body.
-      return isEphemeral ? AuditDecision.Skip : AuditDecision.Record();
+      OutboxMessage eventMessage, Type? eventType, bool isEphemeral, SystemEventOptions options, IAuditDecisionHook? hook,
+      ILogger logger) {
+    if (eventType is not null) {
+      return AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, hook, isEphemeral);
     }
-    return AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, hook, isEphemeral);
+    // An unresolvable type is decided as the ledger rebuild decides it (#1980): not when ephemeral, since it cannot have
+    // asked for its body; not under OptIn, since it carries no mark; audited under OptOut, since nothing excludes it.
+    if (isEphemeral) {
+      return AuditDecision.Skip;
+    }
+    if (options.AuditMode == AuditMode.OptIn) {
+      // Never silent: in the ledger this record's absence looks like a type nobody opted in.
+      LogAuditUnresolvedTypeSkipped(logger, eventMessage.MessageType);
+      return AuditDecision.Skip;
+    }
+    return AuditDecision.Record();
   }
 
   private static Type? _resolveEventType(string assemblyQualifiedName, ILogger logger) {
@@ -194,13 +212,18 @@ public static partial class AuditOutboxMessageBuilder {
 
   [LoggerMessage(
     Level = LogLevel.Warning,
-    Message = "Audit type name '{TypeName}' could not be resolved (Type.GetType returned null); the audit include/exclude decision falls back to the default.")]
+    Message = "Audit type name '{TypeName}' could not be resolved (Type.GetType returned null); it is audited under OptOut and not audited under OptIn.")]
   private static partial void LogAuditTypeUnresolved(ILogger logger, string typeName);
 
   [LoggerMessage(
     Level = LogLevel.Warning,
-    Message = "Audit type name '{TypeName}' threw during resolution; the audit include/exclude decision falls back to the default.")]
+    Message = "Audit type name '{TypeName}' threw during resolution; it is audited under OptOut and not audited under OptIn.")]
   private static partial void LogAuditTypeResolveFailed(ILogger logger, Exception ex, string typeName);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Event of type '{TypeName}' was not audited: the type could not be resolved, and under OptIn only a type marked [AuditEvent] is audited.")]
+  private static partial void LogAuditUnresolvedTypeSkipped(ILogger logger, string typeName);
 
   private static string _extractFullTypeName(string messageType) =>
     TypeNameFormatter.GetFullName(messageType);

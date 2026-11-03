@@ -214,6 +214,58 @@ public class AuditLedgerRebuildTests {
       .Because("OptIn audits only marked types, and a type this build does not know carries no mark");
   }
 
+  /// <summary>
+  /// The rebuild's skip of an unresolvable type under OptIn is never silent (#1980), as the live outbox path's is not:
+  /// a missing record looks like a type nobody opted in. Documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>.
+  /// </summary>
+  [Test]
+  public async Task Rederive_AnUnknownTypeUnderOptIn_WarnsNamingTheTypeAsync() {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var logger = new CapturingLogger();
+
+    var message = _rebuildLogging(AuditMode.OptIn, logger).Rederive(stored);
+
+    await Assert.That(message).IsNull();
+    await Assert.That(logger.Warnings.Any(w => w.Contains("Gone.Renamed, Gone", StringComparison.Ordinal)
+        && w.Contains("was not audited", StringComparison.Ordinal))).IsTrue()
+      .Because("a record not rebuilt because its type could not be resolved must say so, and name the type");
+  }
+
+  /// <summary>Under OptOut the unresolvable type is audited, so there is no skip to report.</summary>
+  [Test]
+  public async Task Rederive_AnUnknownTypeUnderOptOut_DoesNotWarnAsync() {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var logger = new CapturingLogger();
+
+    var message = _rebuildLogging(AuditMode.OptOut, logger).Rederive(stored);
+
+    await Assert.That(message).IsNotNull();
+    await Assert.That(logger.Warnings).IsEmpty();
+  }
+
+  private static AuditLedgerRebuild _rebuildLogging(AuditMode mode, CapturingLogger logger) {
+    var options = new SystemEventOptions();
+    options.EnableEventAudit();
+    options.AuditMode = mode;
+    return new AuditLedgerRebuild(new Catalog(), options, new FakeTimeProvider(_now), logger);
+  }
+
+  private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger<AuditLedgerRebuild> {
+    private readonly List<string> _warnings = [];
+    public IReadOnlyList<string> Warnings { get { lock (_warnings) { return [.. _warnings]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) {
+        lock (_warnings) {
+          _warnings.Add(formatter(state, exception));
+        }
+      }
+    }
+  }
+
   [Test]
   public async Task Rederive_AnUnknownEphemeralType_IsNoRecordAsync() {
     var stored = _stored(typeof(RebuildOrderPlaced), flags: EventFlags.Ephemeral) with { EventType = "Gone.Renamed, Gone" };
@@ -298,28 +350,52 @@ public class AuditLedgerRebuildTests {
   [Test]
   public async Task Rederive_ARecordTheLiveWriterMinted_IsTheSameRecordAsync() {
     var stored = _stored(typeof(RebuildOrderPlaced));
-    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(new OutboxMessage {
-      MessageId = stored.EventId,
-      Envelope = new Whizbang.Core.Observability.MessageEnvelope<JsonElement> {
-        MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId),
-        Payload = JsonElement.Parse(stored.EventData),
-        Hops = [],
-        DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
-          Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
-          Source = MessageSource.Outbox,
-        },
-      },
-      Metadata = new Whizbang.Core.Observability.EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId), Hops = [] },
-      EnvelopeType = "MessageEnvelope",
-      IsEvent = true,
-      MessageType = stored.EventType,
-    }, _options());
+    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(stored), _options());
 
     var rebuilt = _rebuild().Rederive(stored)!;
 
     await Assert.That(_record(rebuilt).GetProperty("Id").GetGuid()).IsEqualTo(_record(live!).GetProperty("Id").GetGuid())
       .Because("a re-derived record deduplicates against the one the event produced when it was first written");
   }
+
+  /// <summary>
+  /// The live outbox path and the rebuild decide a type this build cannot resolve the same way under both modes
+  /// (#1980): audited under OptOut, not audited under OptIn. Documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>; a rebuilt ledger missing a record the
+  /// live path wrote, or holding one it did not, fails this test.
+  /// </summary>
+  [Test]
+  [Arguments(AuditMode.OptIn)]
+  [Arguments(AuditMode.OptOut)]
+  public async Task LiveAndRebuild_AgreeOnAnUnresolvableType_UnderEitherModeAsync(AuditMode mode) {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var options = _options();
+    options.AuditMode = mode;
+
+    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(stored), options);
+    var rebuilt = _rebuild(o => o.AuditMode = mode).Rederive(stored);
+
+    await Assert.That(live is null).IsEqualTo(rebuilt is null)
+      .Because("a rebuilt ledger must hold exactly the records the live path wrote for the same events");
+    await Assert.That(live is null).IsEqualTo(mode == AuditMode.OptIn);
+  }
+
+  private static OutboxMessage _liveMessageOf(RedeliveryEvent stored) => new() {
+    MessageId = stored.EventId,
+    Envelope = new Whizbang.Core.Observability.MessageEnvelope<JsonElement> {
+      MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId),
+      Payload = JsonElement.Parse(stored.EventData),
+      Hops = [],
+      DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+        Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
+        Source = MessageSource.Outbox,
+      },
+    },
+    Metadata = new Whizbang.Core.Observability.EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId), Hops = [] },
+    EnvelopeType = "MessageEnvelope",
+    IsEvent = true,
+    MessageType = stored.EventType,
+  };
 
   private static SystemEventOptions _options() {
     var options = new SystemEventOptions();

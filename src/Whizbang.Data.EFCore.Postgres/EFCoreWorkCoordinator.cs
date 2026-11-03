@@ -2483,6 +2483,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralDestructionTargetSqlTests.cs:GetEphemeralBodiesAboutToReap_AnAfterTtlBodyNotYetExpired_IsNotOffered_AndOfferedMatchesDeletedAsync</tests>
   public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -2499,9 +2500,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // The exact predicate of migration 073 Task 8's DELETE, as a SELECT: ephemeral (flags&8), consumed
-    // (no unprocessed work item), aged past its grace window, and snapshot-covered (no consuming
-    // perspective lacks a covering snapshot). These are the bodies THIS maintenance cycle will reap.
+    // The exact predicate of Task 8's DELETE (wh_perform_maintenance, migration 310), as a SELECT: ephemeral (flags&8),
+    // not held, aged past its grace window, past its AfterTtl expiry, consumed (no unprocessed work item), and
+    // snapshot-covered (no consuming perspective lacks a covering snapshot). These are the bodies THIS cycle will reap.
 #pragma warning disable S2077
     cmd.CommandText =
       "SELECT es.event_id, es.stream_id, es.event_type " +
@@ -2514,6 +2515,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       "  * INTERVAL '1 second') " +
+      // #2018: the reap's TTL floor. An AfterTtl body is kept until past its own expiry, so it is not offered before then:
+      // a body offered and kept was reported destroyed while it survived. No key (Sourced / WhenConsumed) passes.
+      "AND (eb.metadata ->> 'ephemeral_expires_at' IS NULL " +
+      "  OR (eb.metadata ->> 'ephemeral_expires_at')::timestamptz < NOW()) " +
       $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       $"AND NOT EXISTS (SELECT 1 FROM {assoc} ma WHERE ma.normalized_message_type = es.event_type " +
       "  AND ma.association_type = 'perspective' " +

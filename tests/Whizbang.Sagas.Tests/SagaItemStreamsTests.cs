@@ -86,20 +86,16 @@ public class SagaItemStreamsTests {
   [Test]
   public async Task AppDefaultNamespace_WhenChanged_IsUsedByDefaultOverloadAsync() {
     // Capture and restore so subsequent tests see the canonical default.
-    var prior = SagaItemStreams.AppDefaultNamespace;
-    try {
-      var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
-      SagaItemStreams.AppDefaultNamespace = custom;
+    using var namespaceScope = SagaItemStreams.ResetAppDefaultNamespaceForTesting();
+    var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
+    SagaItemStreams.AppDefaultNamespace = custom;
 
-      var sagaId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-      var resolved = SagaItemStreams.Of(sagaId, "item-42");
-      var withCustomExplicit = SagaItemStreams.Of(custom, sagaId, "item-42");
+    var sagaId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var resolved = SagaItemStreams.Of(sagaId, "item-42");
+    var withCustomExplicit = SagaItemStreams.Of(custom, sagaId, "item-42");
 
-      await Assert.That(resolved).IsEqualTo(withCustomExplicit)
-        .Because("The no-namespace overload must route through the current AppDefaultNamespace; that's the only way consumer-level config (e.g. a consumer setting its historical namespace via AddWhizbangSagas) reaches every call site without per-saga attribute pollution.");
-    } finally {
-      SagaItemStreams.AppDefaultNamespace = prior;
-    }
+    await Assert.That(resolved).IsEqualTo(withCustomExplicit)
+      .Because("The no-namespace overload must route through the current AppDefaultNamespace; that's the only way consumer-level config (e.g. a consumer setting its historical namespace via AddWhizbangSagas) reaches every call site without per-saga attribute pollution.");
   }
 
   [Test]
