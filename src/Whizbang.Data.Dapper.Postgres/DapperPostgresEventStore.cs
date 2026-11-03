@@ -38,7 +38,7 @@ public partial class DapperPostgresEventStore(
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger,
   Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
@@ -280,6 +280,21 @@ public partial class DapperPostgresEventStore(
       cancellationToken: cancellationToken);
     return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
   }
+
+  /// <summary>
+  /// The values this store's direct append stores for <paramref name="payload"/> (#1741), so the book closer stores the
+  /// closing summary and the opening balance exactly as an append would: the same envelope, persistence policies, size
+  /// validation and kind bits.
+  /// </summary>
+  /// <typeparam name="TMessage">The type the event is stored as.</typeparam>
+  /// <param name="payload">The event.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The row.</returns>
+  /// <docs>fundamentals/events/closing-the-books</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCloseBooksTests.cs</tests>
+  public ValueTask<Whizbang.Data.Postgres.DirectAppendRow> BuildAsync<TMessage>(TMessage payload, CancellationToken cancellationToken = default)
+      where TMessage : notnull =>
+    throw new NotImplementedException($"{payload}");
 
   // --- Private helper methods ---
 

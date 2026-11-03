@@ -27,6 +27,14 @@ public enum StreamLifecycleAction {
 
   /// <summary>The whole stream is purged (<see cref="Messaging.IStreamPurger"/>), or, for the version cap, its prefix discarded.</summary>
   Purge = 2,
+
+  /// <summary>
+  /// The stream's books are closed (#1741): the registered <see cref="IBookClosingHandler"/> supplies the closing summary
+  /// and the opening balance, and <see cref="IBookCloser"/> appends the summary, seals the stream and opens its successor.
+  /// The sealed predecessor is then archived once its grace has passed. A host that declares it without a handler fails
+  /// its start.
+  /// </summary>
+  CloseBooks = 3,
 }
 
 /// <summary>Maps a <see cref="StreamLifecycleAction"/> to the <see cref="Disposition"/> every destruction routes on.</summary>

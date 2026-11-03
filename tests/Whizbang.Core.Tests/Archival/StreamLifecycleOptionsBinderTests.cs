@@ -233,7 +233,7 @@ public class StreamLifecycleOptionsBinderTests {
   [Arguments("Action", "2")]
   [Arguments("Action", "")]
   [Arguments("Action", "-1")]
-  [Arguments("Action", "Compact,Purge")]
+  [Arguments("Action", " 5")]
   public async Task APolicyValueThatCannotBeUsed_IsRefusedNamingTheKeyAndTheValueAsync(string setting, string value) {
     var key = $"Whizbang:StreamLifecycle:Types:Shop.Order:{setting}";
 
@@ -245,15 +245,53 @@ public class StreamLifecycleOptionsBinderTests {
   }
 
   [Test]
-  public async Task Action_CloseBooks_IsRefusedUntilClosingTheBooksShips_NamingItsIssueAsync() {
-    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(
-        _config(("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "CloseBooks")), new StreamLifecycleOptions()))
-      .Throws<InvalidOperationException>();
+  public async Task Action_CloseBooks_IsAnAction_AndItsSealedPredecessorIsArchivedAsync() {
+    var options = new StreamLifecycleOptions();
 
-    await Assert.That(thrown!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:Action");
-    await Assert.That(thrown.Message).Contains("#1741")
-      .Because("closing the books is a planned action; a host that names it must learn it has not shipped, not have it read as another");
-    await Assert.That(thrown.Message).Contains("Archive, Compact, Purge");
+    ArchiveOptionsBinder.Bind(_config(("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "closebooks")), options);
+
+    await Assert.That(options.Types["Shop.Order"].Action).IsEqualTo(StreamLifecycleAction.CloseBooks)
+      .Because("#1741 ships closing the books, so the action is no longer refused");
+    await Assert.That(StreamLifecycleAction.CloseBooks.ToDisposition()).IsEqualTo(Whizbang.Core.Lifecycle.Disposition.Archive)
+      .Because("closing the books seals the predecessor, which is then disposed of like any sealed stream: archived, so it stays readable");
+  }
+
+  [Test]
+  public async Task Registration_CloseBooksWithNoBookClosingHandler_FailsTheStart_NamingTheTypes_AndWithOneStartsAsync() {
+    static ServiceProvider build(bool withHandler) {
+      var services = new ServiceCollection();
+      services.AddSingleton(_config(
+        ("Whizbang:StreamLifecycle:Types:Shop.Ledger:Action", "CloseBooks"),
+        ("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "Purge")));
+      services.AddWhizbangWorkers();
+      if (withHandler) {
+        services.AddSingleton<Whizbang.Core.Lifecycle.IBookClosingHandler>(new NoBooks());
+      }
+      return services.BuildServiceProvider();
+    }
+    await using var without = build(withHandler: false);
+    await using var with = build(withHandler: true);
+    await using var none = new ServiceCollection().AddWhizbangWorkers().BuildServiceProvider();
+    Exception? failure = null;
+
+    try {
+      without.GetRequiredService<IStartupValidator>().Validate();
+    } catch (Exception ex) when (ex is OptionsValidationException or AggregateException) {
+      failure = ex;
+    }
+    with.GetRequiredService<IStartupValidator>().Validate();
+    none.GetRequiredService<IStartupValidator>().Validate();
+
+    await Assert.That(failure).IsNotNull()
+      .Because("only the domain can write a closing summary and an opening balance, so CloseBooks with no handler could never run");
+    await Assert.That(failure!.Message).Contains("Shop.Ledger");
+    await Assert.That(failure.Message).Contains(nameof(Whizbang.Core.Lifecycle.IBookClosingHandler));
+    await Assert.That(failure.Message).DoesNotContain("Shop.Order");
+  }
+
+  private sealed class NoBooks : Whizbang.Core.Lifecycle.IBookClosingHandler {
+    public ValueTask<Whizbang.Core.Lifecycle.BooksToClose?> PrepareAsync(Whizbang.Core.Lifecycle.BookClosingContext context, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult<Whizbang.Core.Lifecycle.BooksToClose?>(null);
   }
 
   [Test]

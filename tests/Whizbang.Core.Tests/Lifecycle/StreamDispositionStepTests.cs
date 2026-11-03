@@ -193,7 +193,7 @@ public class StreamDispositionStepTests {
       Func<List<string>, IDestructionHook>? hookFor = null, string storeStatus = ArchiveStatus.ARCHIVED, bool withCompactor = false,
       IPerspectiveRunner? runner = null, IReadOnlyList<StreamCursorPosition>? cursors = null,
       StreamDispositionReadiness candidateReadiness = StreamDispositionReadiness.Ready, bool sealSucceeds = true,
-      Func<List<string>, IStreamPrefixTruncator>? truncatorFor = null) {
+      Func<List<string>, IStreamPrefixTruncator>? truncatorFor = null, IBookClosingHandler? closingHandler = null, IBookCloser? closer = null) {
     var log = new List<string>();
     var ledger = new Ledger(log, due ?? [new DueStreamDisposition(_stream, readiness)]) {
       Cursors = cursors ?? [new("Orders", _cursorEvent)],
@@ -219,6 +219,12 @@ public class StreamDispositionStepTests {
     }
     if (truncatorFor is not null) {
       services.AddSingleton(truncatorFor(log));
+    }
+    if (closingHandler is not null) {
+      services.AddSingleton(closingHandler);
+    }
+    if (closer is not null) {
+      services.AddSingleton(closer);
     }
     return new Harness(log, ledger, store, purger, new ListLogger(), services.BuildServiceProvider());
   }
@@ -648,5 +654,90 @@ public class StreamDispositionStepTests {
     await Assert.That(purged.Purger.Requests).Count().IsEqualTo(1);
     await Assert.That(untyped!.Seen!.DeclaredDefault).IsEqualTo(Disposition.Archive);
     await Assert.That(archived.Store.Written).Count().IsEqualTo(1);
+  }
+
+  // ===== #1741 (WS-3 S12): closing the books by policy =====
+
+  public sealed record ProbeClosed([property: StreamId] Guid LedgerId = default) : IEvent;
+
+  public sealed record ProbeOpened : OpeningBalance;
+
+  private sealed class ClosingHandler(bool prepares = true) : IBookClosingHandler {
+    public List<BookClosingContext> Asked { get; } = [];
+
+    public ValueTask<BooksToClose?> PrepareAsync(BookClosingContext context, CancellationToken cancellationToken = default) {
+      Asked.Add(context);
+      return ValueTask.FromResult(prepares ? BooksToClose.Of(new ProbeClosed(), new ProbeOpened()) : null);
+    }
+  }
+
+  private sealed class Closer(BookCloseStatus status = BookCloseStatus.Closed) : IBookCloser {
+    public List<(Guid Stream, Type Closing, Type Opening)> Calls { get; } = [];
+
+    public Task<BookCloseResult> CloseBooksAsync<TClosing, TOpening>(
+        Guid streamId, TClosing closingSummary, TOpening openingBalance, CancellationToken cancellationToken = default)
+        where TClosing : IEvent
+        where TOpening : OpeningBalance {
+      Calls.Add((streamId, typeof(TClosing), typeof(TOpening)));
+      return Task.FromResult(new BookCloseResult(status, status == BookCloseStatus.Closed ? Guid.Empty : null));
+    }
+  }
+
+  [Test]
+  [Arguments(StreamEndOfLifeTrigger.IdleTtl, DestructionReason.IdleTtlElapsed)]
+  [Arguments(StreamEndOfLifeTrigger.VersionCap, DestructionReason.VersionCapExceeded)]
+  public async Task CloseBooks_AsksTheHandlerForTheEvents_ThenTheCloserClosesTheBooks_WithNoHookNoGateAndNoTruncateAsync(
+      StreamEndOfLifeTrigger trigger, DestructionReason reason) {
+    var handler = new ClosingHandler();
+    var closer = new Closer();
+    Truncator? truncator = null;
+    var h = _harness(lifecycle: _policies(StreamLifecycleAction.CloseBooks), due: [],
+      candidates: [_candidate(trigger, through: trigger == StreamEndOfLifeTrigger.VersionCap ? 9 : null)],
+      hookFor: log => new Hook(log), truncatorFor: log => truncator = new Truncator(log), closingHandler: handler, closer: closer);
+
+    await h.RunAsync();
+
+    await Assert.That(handler.Asked).IsEquivalentTo([new BookClosingContext(_stream, POLICY_TYPE, reason, 12)])
+      .Because("the handler is told the stream, its type, which trigger picked it and the version it was picked at");
+    await Assert.That(closer.Calls).IsEquivalentTo([(_stream, typeof(ProbeClosed), typeof(ProbeOpened))]);
+    await Assert.That(h.Log).DoesNotContain("before")
+      .Because("closing the books destroys nothing: the predecessor is sealed whole, and its own disposition runs the gates and the hook later");
+    await Assert.That(truncator!.Calls).IsEmpty().Because("a version cap whose action closes the books closes them instead of cutting the prefix");
+    await Assert.That(h.Ledger.ReadinessQueries.SelectMany(q => q)).DoesNotContain(_stream);
+    await Assert.That(h.Ledger.Moved).IsEmpty();
+  }
+
+  [Test]
+  public async Task CloseBooks_AHandlerThatReturnsNothing_DefersTheStream_AndNothingIsClosedAsync() {
+    var closer = new Closer();
+    var h = _harness(lifecycle: _policies(StreamLifecycleAction.CloseBooks), due: [], candidates: [_candidate()],
+      closingHandler: new ClosingHandler(prepares: false), closer: closer);
+
+    await h.RunAsync();
+
+    await Assert.That(closer.Calls).IsEmpty();
+    await Assert.That(h.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))])
+      .Because("a handler that is not ready leaves the stream open, offered again after the backoff");
+  }
+
+  [Test]
+  public async Task CloseBooks_NoHandlerOrNoCloser_DefersAndLogs_AndARefusedClose_IsLoggedAndLeftForTheNextCycleAsync() {
+    var noHandler = _harness(lifecycle: _policies(StreamLifecycleAction.CloseBooks), due: [], candidates: [_candidate()], closer: new Closer());
+    var noCloser = _harness(lifecycle: _policies(StreamLifecycleAction.CloseBooks), due: [], candidates: [_candidate()],
+      closingHandler: new ClosingHandler());
+    var changed = _harness(lifecycle: _policies(StreamLifecycleAction.CloseBooks), due: [], candidates: [_candidate()],
+      closingHandler: new ClosingHandler(), closer: new Closer(BookCloseStatus.StreamChanged));
+
+    await noHandler.RunAsync();
+    await noCloser.RunAsync();
+    await changed.RunAsync();
+
+    await Assert.That(noHandler.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(noHandler.Logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains(nameof(IBookClosingHandler), StringComparison.Ordinal))).IsTrue();
+    await Assert.That(noCloser.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(noCloser.Logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains(nameof(IBookCloser), StringComparison.Ordinal))).IsTrue();
+    await Assert.That(changed.Ledger.Moved).IsEmpty()
+      .Because("a stream appended to while its books were closing is picked again only if a trigger still holds next cycle");
+    await Assert.That(changed.Logger.Entries.Exists(e => e.Message.Contains(nameof(BookCloseStatus.StreamChanged), StringComparison.Ordinal))).IsTrue();
   }
 }
