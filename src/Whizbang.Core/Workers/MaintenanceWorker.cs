@@ -77,9 +77,50 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
   private static partial void LogSkippedNotMaintainer(ILogger logger);
 
+  /// <summary>
+  /// Publishes the integrity ledger's reading to the convergence gauges (#2024): unhealed buckets, those past their
+  /// repair budget, the age of the oldest, and the per-origin verified watermarks.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Runs at the start of every tick, on every instance, ahead of the maintainer check and the idle gate. Every
+  /// instance exports these gauges and every instance reads the same ledger, so a refresh that only the maintainer's
+  /// unblocked sweep made left the others reporting the empty reading, 0 unhealed, indefinitely, and left all of them
+  /// at 0 for up to <c>MaxDeferral</c> after a restart under load: the value of a fully healed service, exactly when a
+  /// backlog of divergences most needs watching. Reading the ledger is not the fleet-wide work the duty guards.
+  /// </para>
+  /// <para>
+  /// It rides the tick's scope rather than a timer of its own: a standalone collector would be one more background
+  /// service acquiring a connection on a schedule in every host, and small pools feel that immediately. One query
+  /// against two small tables per tick. Best-effort: a failed read is logged and leaves the previous reading, and never
+  /// fails the tick; a canceled read is a stopping host and propagates.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:AnInstanceThatIsNotTheMaintainer_StillPublishesTheLedgerReadingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:ATickTheIdleGateDefers_StillPublishesTheLedgerReadingAsync</tests>
+  private async Task _refreshLedgerGaugesAsync(IServiceProvider sp, CancellationToken ct) {
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    if (integrity is null || integrityMetrics is null) {
+      return;
+    }
+    var coordinator = sp.GetRequiredService<IWorkCoordinator>();   // the tick requires one anyway, just below
+    try {
+      integrityMetrics.UpdateLedgerGauges(
+        await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false));
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLedgerGaugeRefreshFailed(_logger, ex);
+    }
+  }
+
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
+    // #2024: the integrity gauges first, on every instance and every tick, ahead of the duty check and the idle gate.
+    await _refreshLedgerGaugesAsync(sp, ct).ConfigureAwait(false);
     // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
     // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
     if (!_isThisInstancesTurn(sp)) {
@@ -234,24 +275,8 @@ public sealed partial class MaintenanceWorker(
     // targets so PostDestruction can fire after the delete. Inert without a registered hook.
     var destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct);
 
-    // Stream-integrity convergence gauges. Deliberately folded into THIS cycle rather than given
-    // their own timer: a standalone collector would be one more background service acquiring a
-    // connection on a schedule in every host, and small pools feel that immediately (the sample
-    // harnesses run with Max Pool Size 2). This rides a scope and a cadence that already exist, so
-    // it costs one extra query rather than a new periodic connection. Best-effort — a metrics read
-    // must never fail a maintenance cycle.
+    // The ledger gauges are published at the start of every tick (_refreshLedgerGaugesAsync, #2024), not here.
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
-    try {
-      var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
-      if (integrity is not null && integrityMetrics is not null) {
-        integrityMetrics.UpdateLedgerGauges(
-          await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct));
-      }
-    } catch (OperationCanceledException) {
-      throw;
-    } catch (Exception ex) {
-      LogLedgerGaugeRefreshFailed(_logger, ex);
-    }
 
     // Digest-epoch closure (migration 092). The substrate is inert without a caller — nothing
     // else advances the frontier, and an unclosed frontier means manifests keep re-aggregating
@@ -1212,7 +1237,6 @@ public sealed partial class MaintenanceWorker(
 
   [LoggerMessage(EventId = 34, Level = LogLevel.Debug, Message = "Could not scan for tables needing rewrite")]
   static partial void LogRewriteScanFailed(ILogger logger, Exception ex);
-
 
   [LoggerMessage(EventId = 56, Level = LogLevel.Debug,
     Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]

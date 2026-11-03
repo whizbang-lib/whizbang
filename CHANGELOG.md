@@ -1277,6 +1277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The integrity ledger gauges no longer read 0 while divergences are unhealed (#2024).** `unhealed_buckets`,
+  `repair_exhausted_buckets`, `oldest_unhealed_age_seconds` and `sealed_through` were refreshed only inside the
+  maintainer's sweep, so every other instance reported 0 unhealed for as long as it ran, and every instance reported 0
+  for up to `Whizbang:Housekeeping:MaxDeferral` after a restart under load: the reading of a fully healed service. The
+  refresh now runs at the start of every maintenance tick on every instance, ahead of the duty check and the idle gate.
 - **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
   reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's
