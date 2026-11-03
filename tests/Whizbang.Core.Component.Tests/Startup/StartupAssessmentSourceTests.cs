@@ -8,7 +8,6 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Startup;
-using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Startup;
@@ -71,7 +70,7 @@ public class StartupAssessmentSourceTests {
     var retrying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var stages = new SignalingReporter("could not be read for a moment", retrying);
     var assessor = new CountingAssessor(call => call == 1
-      ? Task.FromException<StartupAssessment>(FakeDbException.WithSqlState("57P03"))
+      ? Task.FromException<StartupAssessment>(new SqlStateException("57P03"))
       : Task.FromResult(_serve));
     var source = new StartupAssessmentSource(assessor, stages, clock, NullLogger<StartupAssessmentSource>.Instance);
 
@@ -87,7 +86,7 @@ public class StartupAssessmentSourceTests {
 
   [Test]
   public async Task AnyOtherFailure_FailsStartupLoudly_AndIsNotLatchedAsync() {
-    var stages = new RecordingStageReporter();
+    var stages = new SignalingReporter("not read", new TaskCompletionSource());
     var cause = new InvalidOperationException("permission denied for table wh_schema_versions");
     var assessor = new CountingAssessor(call => call == 1
       ? Task.FromException<StartupAssessment>(cause)
@@ -146,7 +145,7 @@ public class StartupAssessmentSourceTests {
     using var cancel = new CancellationTokenSource();
     var retrying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var stages = new SignalingReporter("could not be read for a moment", retrying);
-    var assessor = new CountingAssessor(_ => Task.FromException<StartupAssessment>(FakeDbException.WithSqlState("40P01")));
+    var assessor = new CountingAssessor(_ => Task.FromException<StartupAssessment>(new SqlStateException("40P01")));
     var source = new StartupAssessmentSource(assessor, stages, new FakeTimeProvider(), NullLogger<StartupAssessmentSource>.Instance);
 
     var assessing = source.AssessAsync(cancel.Token);
@@ -218,7 +217,14 @@ public class StartupAssessmentSourceTests {
       assess(Interlocked.Increment(ref _calls), cancellationToken);
   }
 
-  /// <summary>Records like <see cref="RecordingStageReporter"/> and signals when a message containing a phrase is entered.</summary>
+  /// <summary>A database failure carrying only a SQLSTATE, the one thing the transient classification reads.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
+    Justification = "A test double thrown and caught in-process; it is built only with a SQLSTATE.")]
+  private sealed class SqlStateException(string sqlState) : System.Data.Common.DbException($"database failure {sqlState}") {
+    public override string? SqlState { get; } = sqlState;
+  }
+
+  /// <summary>Records every stage call in order and signals when a message containing a phrase is entered.</summary>
   private sealed class SignalingReporter(string phrase, TaskCompletionSource signal) : IStartupStageReporter {
     public List<string> Calls { get; } = [];
     public StartupStageSnapshot? Current => null;

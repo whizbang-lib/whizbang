@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Versioning;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
@@ -64,6 +65,24 @@ public class DapperStartupAssessorTests {
     return (await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None)).Verdict;
   }
 
+  /// <summary>
+  /// A release strictly older than this binary, whatever version the build stamped (a CI build and a local build stamp
+  /// different ones): the SemVer floor, checked against this binary's own version.
+  /// </summary>
+  private static string _olderThanThisBinary() {
+    const string FLOOR = "0.0.0-0";
+    if (!SemanticVersion.TryParse(BuildInfo.Version, out var mine) || !SemanticVersion.TryParse(FLOOR, out var floor) || floor >= mine) {
+      throw new InvalidOperationException($"this binary's version '{BuildInfo.Version}' has no strictly older SemVer version");
+    }
+    return FLOOR;
+  }
+
+  /// <summary>A release strictly newer than this binary, derived from its version: the next major.</summary>
+  private static string _newerThanThisBinary() =>
+    SemanticVersion.TryParse(BuildInfo.Version, out var mine)
+      ? $"{mine.Major + 1}.0.0"
+      : throw new InvalidOperationException($"this binary's version '{BuildInfo.Version}' is not SemVer");
+
   private async Task _execAsync(string sql) {
     await using var db = new NpgsqlConnection(_database.ConnectionString);
     await db.ExecuteAsync(sql);
@@ -108,8 +127,8 @@ public class DapperStartupAssessorTests {
   [Test]
   public async Task AMigrationLastRecordedByAnotherRelease_IsServeAsync() {
     await _startAsync();
-    await _execAsync("""
-      WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('0.0.1') RETURNING id)
+    await _execAsync($"""
+      WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{_olderThanThisBinary()}') RETURNING id)
       UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
         WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
       """);
@@ -129,8 +148,8 @@ public class DapperStartupAssessorTests {
   [Test]
   public async Task ANewerRelease_StandsThisBinaryDownAsync() {
     await _startAsync();
-    await _execAsync("""
-      WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
+    await _execAsync($"""
+      WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{_newerThanThisBinary()}') RETURNING id)
       UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
         WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
       """);

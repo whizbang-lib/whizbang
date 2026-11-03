@@ -31,8 +31,8 @@ namespace Whizbang.Core.Startup;
 /// stop being right while the instance runs.
 /// </para>
 /// </remarks>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupAssessmentSourceTests.cs</tests>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupAssessmentSourceTests.cs</tests>
 public sealed partial class StartupAssessmentSource : IStartupAssessor {
   private static readonly TimeSpan _maxRetryDelay = TimeSpan.FromSeconds(30);
 
@@ -162,8 +162,8 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
 }
 
 /// <summary>Registers the one <see cref="StartupAssessmentSource"/> of a host (#1992).</summary>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupAssessmentSourceTests.cs:TheDefaults_RegisterOneSourceOverTheRegisteredAssessor_AndTheAssessStepReadsThroughItAsync</tests>
+/// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupAssessmentSourceTests.cs:TheDefaults_RegisterOneSourceOverTheRegisteredAssessor_AndTheAssessStepReadsThroughItAsync</tests>
 public static class StartupAssessmentSourceServiceCollectionExtensions {
   /// <summary>
   /// Registers the source over whichever assessor the host registers (the framework's null default when none),
@@ -190,8 +190,8 @@ public static class StartupAssessmentSourceServiceCollectionExtensions {
 /// Preflight, as a bootstrap that cannot be applied does, rather than let an instance migrate a schema it cannot place
 /// against its own version.
 /// </summary>
-/// <docs>operations/startup/rolling-upgrades#assess</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupAssessmentSourceTests.cs:AnyOtherFailure_FailsStartupLoudly_AndIsNotLatchedAsync</tests>
+/// <docs>operations/startup/rolling-upgrades#unreadable-version-record</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupAssessmentSourceTests.cs:AnyOtherFailure_FailsStartupLoudly_AndIsNotLatchedAsync</tests>
 public sealed class StartupAssessmentException : Exception {
   /// <summary>Creates the refusal with no cause.</summary>
   public StartupAssessmentException() : this(DEFAULT_MESSAGE) { }
