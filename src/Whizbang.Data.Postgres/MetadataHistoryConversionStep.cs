@@ -130,6 +130,7 @@ public sealed partial class MetadataHistoryConversionStep : IMaintenanceStep {
       reader.GetInt64(4), reader.GetInt64(5), reader.GetString(6));
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A LoggerMessage's parameters are its structured log fields, one per counter the conversion reports; a parameter object would log as one opaque value and lose the fields operators filter on.")]
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Converted {Converted} historical event metadata row(s) to the slim form ({Scanned} read, {KeptFull} kept full) with {RoutesAdded} new and {RoutesUpdated} counted route(s) and {Traces} trace(s) in {Batches} batch(es); {Status}")]
   static partial void LogConverted(ILogger logger, long converted, long scanned, long keptFull, long routesAdded, long routesUpdated, long traces, int batches, string status);
