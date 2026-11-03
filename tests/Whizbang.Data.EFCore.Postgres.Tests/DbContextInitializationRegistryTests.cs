@@ -235,15 +235,23 @@ public class DbContextInitializationRegistryTests {
   /// still migrating. The first call is held mid-initialization by its own callback, so "not finished" is a fact when
   /// it is asserted, not a race.
   /// </summary>
+  /// <remarks>
+  /// What the second call waits for is the initialization, and that is what is asserted: the callback's last statement
+  /// has run. The first call's own task completes a few statements later (it logs completion and returns), and nothing
+  /// orders the waiting call after that, so asserting the first call had returned failed once in a while (#2019); the
+  /// test below holds that window open.
+  /// </remarks>
   [Test]
   public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsOnlyOnceTheFirstHasFinishedAsync() {
     var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var calls = 0;
+    var finished = 0;
     DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
       Interlocked.Increment(ref calls);
       entered.TrySetResult();
       await release.Task;
+      Interlocked.Exchange(ref finished, 1);
     });
     var host = new FakeServiceProvider();
     var sink = new List<string>();
@@ -257,14 +265,16 @@ public class DbContextInitializationRegistryTests {
     await Assert.That(sink).Contains("Whizbang database initialization is in progress; waiting for it to finish");
     release.TrySetResult();
     await second;
-    await Assert.That(first.IsCompletedSuccessfully).IsTrue().Because("the second returned only after the first finished");
+    await Assert.That(Volatile.Read(ref finished)).IsEqualTo(1).Because("the second returned only after the first's initialization finished");
+    await first;
     await Assert.That(calls).IsEqualTo(1).Because("waiting is not initializing again");
   }
 
   /// <summary>
   /// The window behind the flake in #2019, held open on purpose: the first call's attempt completes, then the first call
   /// still logs that initialization is complete before its own task completes. The first call's logger parks in that log
-  /// line, so the window stays open for as long as the test needs.
+  /// line, so the window stays open for as long as the test needs. The second call returns inside it: it waits for the
+  /// initialization, not for the other call's epilogue, so a test of it asserts the initialization finished.
   /// </summary>
   [Test]
   public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsWhenTheInitializationFinishes_NotWhenTheFirstCallReturnsAsync() {
@@ -284,8 +294,8 @@ public class DbContextInitializationRegistryTests {
     await parked.Reached;
 
     await second;
-    await Assert.That(first.IsCompletedSuccessfully).IsTrue()
-      .Because("this is what the flaky test asserted: that the first call had returned when the second did");
+    await Assert.That(first.IsCompleted).IsFalse()
+      .Because("the first call is parked after its initialization finished, and the second waited only for that");
 
     parked.Release();
     await first;

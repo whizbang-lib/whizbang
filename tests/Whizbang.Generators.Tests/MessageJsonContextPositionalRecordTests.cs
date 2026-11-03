@@ -32,6 +32,16 @@ public class MessageJsonContextPositionalRecordTests {
   private static ImmutableArray<Diagnostic> _compileErrors(string source) =>
     GeneratorTestHelper.GetGeneratedCompilationErrors([new MessageJsonContextGenerator(), new WhizbangIdGenerator()], source);
 
+  /// <summary>
+  /// The object creator the context generates for <paramref name="type"/>, with its whitespace collapsed to single
+  /// spaces so an assertion does not depend on the generator's indentation.
+  /// </summary>
+  private static string _creatorOf(string code, string type) {
+    var start = code.IndexOf($"static args => new {type}(", StringComparison.Ordinal);
+    var end = code.IndexOf("PropertyMetadataInitializer", start, StringComparison.Ordinal);
+    return string.Join(' ', code[start..end].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+  }
+
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_APositionalRecordDerivingFromOpeningBalance_CompilesAsync() {
@@ -54,16 +64,39 @@ public class MessageJsonContextPositionalRecordTests {
       public sealed record AccountOpened(decimal Balance) : OpeningBalance;
       """);
     var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, CONTEXT);
+    var creator = _creatorOf(code, "global::TestApp.AccountOpened");
 
-    await Assert.That(code).Contains(
-      "static args => new global::TestApp.AccountOpened(" + Environment.NewLine
-      + "          (decimal)args[0]" + Environment.NewLine
-      + "      ) {" + Environment.NewLine
-      + "          SuccessorStreamId = (global::System.Guid)args[1]," + Environment.NewLine
-      + "          PredecessorStreamId = (global::System.Guid)args[2]," + Environment.NewLine
-      + "          PredecessorFinalVersion = (long)args[3]" + Environment.NewLine
-      + "      },")
-      .Because("the positional member goes to the constructor, and the base's init members follow in an initializer");
+    await Assert.That(creator).StartsWith("static args => new global::TestApp.AccountOpened( (decimal)args[0] ) {")
+      .Because("the positional member goes to the constructor");
+    await Assert.That(creator).Contains("SuccessorStreamId = (global::System.Guid)args[");
+    await Assert.That(creator).Contains("PredecessorStreamId = (global::System.Guid)args[");
+    await Assert.That(creator).Contains("PredecessorFinalVersion = (long)args[")
+      .Because("the base's init members follow the constructor in an object initializer");
+  }
+
+  /// <summary>
+  /// A public constructor binds only when its parameters are the leading writable properties, in order: one taking
+  /// more parameters than there are writable properties, or one whose parameter is not the first property, is passed
+  /// over, and the parameterless constructor with an initializer is used.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_ConstructorsThatDoNotTakeTheLeadingProperties_AreNotUsedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace TestApp;
+      public class Tallied : IEvent {
+        public Tallied() { }
+        public Tallied(int count, string note, bool flag) { Count = count; }
+        public Tallied(string other) { }
+        public int Count { get; set; }
+      }
+      """;
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+    var creator = _creatorOf(GeneratorTestHelper.GetRequiredGeneratedSource(result, CONTEXT), "global::TestApp.Tallied");
+
+    await Assert.That(creator).IsEqualTo("static args => new global::TestApp.Tallied() { Count = (int)args[0] },");
+    await Assert.That(_compileErrors(source)).IsEmpty();
   }
 
   [Test]

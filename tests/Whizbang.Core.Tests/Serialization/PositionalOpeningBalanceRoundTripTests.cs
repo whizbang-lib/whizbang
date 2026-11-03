@@ -33,7 +33,8 @@ public class PositionalOpeningBalanceRoundTripTests {
 
   [Test]
   public async Task GeneratedContext_ResolvesThePositionalOpeningEvent_SoTheRoundTripExercisesItAsync() {
-    var info = ((IJsonTypeInfoResolver)MessageJsonContext.Default).GetTypeInfo(typeof(PositionalAccountOpened), _options());
+    IJsonTypeInfoResolver generated = MessageJsonContext.Default;
+    var info = generated.GetTypeInfo(typeof(PositionalAccountOpened), _options());
 
     await Assert.That(info).IsNotNull()
       .Because("the generated context, not a reflection fallback, must be the one serializing this event");

@@ -17,7 +17,9 @@ namespace Whizbang.Generators;
 /// <param name="IsSerializable">True if type is marked with [WhizbangSerializable] attribute</param>
 /// <param name="IsComposite">True if type implements ICompositeEvent (wire-only; registered as IMessage but NOT IEvent, so it is never persisted)</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
-/// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
+/// <param name="ConstructorArgumentCount">How many of the writable properties, from the first, a public constructor takes:
+/// all of them for a positional record, only the positional ones when a base record contributes further members (those
+/// are set in an object initializer after the constructor, #2016), and 0 for a parameterless construction</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record JsonMessageTypeInfo(
     string FullyQualifiedName,
@@ -28,7 +30,7 @@ internal sealed record JsonMessageTypeInfo(
     bool IsSerializable,
     bool IsComposite,
     EquatableArray<PropertyInfo> Properties,
-    bool HasParameterizedConstructor
+    int ConstructorArgumentCount
 ) {
   /// <summary>
   /// Unique identifier derived from fully qualified name, suitable for C# identifiers.
