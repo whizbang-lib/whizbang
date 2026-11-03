@@ -183,6 +183,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var isFullHistory = classSymbol.GetAttributes().Any(
         static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "FullHistoryAttribute" or "FullHistory");
 
+    // #1739: what happens to this perspective's rows when their stream is archived whole. -1 when undeclared, so an
+    // explicit Keep (0) stays distinct from no declaration: an explicit Keep outvotes another perspective that drops.
+    var archivedStreamRowPolicy = _resolveArchivedStreamRows(classSymbol);
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -266,8 +270,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
-            IsFullHistory: isFullHistory
-,
+            IsFullHistory: isFullHistory,
+            ArchivedStreamRowPolicy: archivedStreamRowPolicy,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
             StreamGroupSpec: streamGroupSpec,
@@ -360,6 +364,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
     return -1;
   }
+
+  /// <summary>
+  /// Reads [ArchivedStreamRows] on the perspective class (#1739): the policy's value, or -1 when the class declares none
+  /// or the declaration carries no policy (a declaration that does not compile registers nothing).
+  /// </summary>
+  private static int _resolveArchivedStreamRows(INamedTypeSymbol classSymbol) =>
+    classSymbol.GetAttributes()
+      .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "ArchivedStreamRowsAttribute" or "ArchivedStreamRows")
+      .Select(static a => a.ConstructorArguments is [{ Value: int policy }] ? policy : -1)
+      .DefaultIfEmpty(-1)
+      .First();
 
   /// <summary>
   /// Reads [RowCap] on the perspective class. PerScope is the more specific partition, so it outranks
@@ -584,6 +599,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
         : "");
+    // #1739: every runner knows its perspective's name in the form cursors are keyed by, and its missing-row probe asks
+    // the policy registry under it, so a policy configured on a perspective that declares none reaches the probe too. A
+    // declaration registers itself the same turnkey way the cap does; no declaration emits no registration.
+    result = TemplateUtilities.ReplaceRegion(result, "ARCHIVED_STREAM_ROWS",
+        $"private const string _archivedStreamRowsName = \"{perspective.ClrTypeName}\";"
+        + (perspective.ArchivedStreamRowPolicy >= 0
+          ? "\n  [global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerArchivedStreamRows() =>\n"
+            + $"      global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(_archivedStreamRowsName, (global::Whizbang.Core.Archival.ArchivedStreamRowPolicy){perspective.ArchivedStreamRowPolicy});"
+          : ""));
     // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
     // membership, decoded from the compact spec, so the maintenance cascade can compute the
     // eviction closure without reflection.

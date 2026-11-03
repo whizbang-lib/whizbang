@@ -103,6 +103,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
   #endregion
 
+  #region ARCHIVED_STREAM_ROWS
+  // Generated (#1739): the perspective's CLR type name, which the missing-row probe asks the policy registry under, and
+  // for an [ArchivedStreamRows] perspective a [ModuleInitializer] registering its declared policy.
+  private const string _archivedStreamRowsName = "";
+  #endregion
+
   #region PHYSICAL_FIELD_REGISTRATION
   // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
   // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
@@ -455,7 +461,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // THIS PERSPECTIVE FOLDS: that means evicted-and-woken. The probe is perspective-aware on purpose
       // (issue #696): a stream shared by several contracts holds history this perspective never folded,
       // and "any earlier event" read that as an evicted row on every first contact. A perspective whose
-      // rows nothing can evict never probes, so it pays nothing.
+      // rows nothing can evict never probes, so it pays nothing. A row an archive dropped or moved out of its table
+      // (#1739, [ArchivedStreamRows] Drop or Archive) is missing the same way when its stream comes back, and is rebuilt
+      // the same way.
       //
       // The rebuild is the rewind CORE (latest snapshot + the events after it; the incoming events are
       // already stored, so the replay includes them). The eviction kept exactly that snapshot. The core
@@ -466,7 +474,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // format is the same case (issue #1506): the rewind could not restore it, would find no floor, and
       // would drop this batch as a late straggler, leaving the row missing until the next event.
       if (events.Count > 0
-          && global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
+          && (global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
+              || global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_archivedStreamRowsName))
           && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
         var floor = !_isEphemeralPerspective
             ? (State: EvictedRowFloor.Readable, SnapshotEventId: Guid.Empty)

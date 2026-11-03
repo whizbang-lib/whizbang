@@ -59,8 +59,9 @@ public class MaintenanceWorkerRetentionSyncTests {
     public int MaintenanceCalls;
 
     public virtual Task SyncRetentionSettingsAsync(IReadOnlyList<RetentionSetting> settings, CancellationToken cancellationToken = default) {
-      // The stored-metadata settings are published on every tick through the same call (#1725); this class records
-      // the retention write, so it leaves that one out (MaintenanceWorkerEventStoreMetadataSyncTests covers it).
+      // The stored-metadata settings (#1725) and the policies for rows of archived streams (#1739) are published on every
+      // tick through the same call; this class records the retention write, so it leaves those out
+      // (MaintenanceWorkerEventStoreMetadataSyncTests and MaintenanceWorkerArchivedStreamRowsSyncTests cover them).
       if (_isStoredMetadataPublish(settings)) {
         return Task.CompletedTask;
       }
@@ -93,7 +94,8 @@ public class MaintenanceWorkerRetentionSyncTests {
   }
 
   private static bool _isStoredMetadataPublish(IReadOnlyList<RetentionSetting> settings) =>
-    settings.Any(s => s.Key == Whizbang.Core.Messaging.EventStoreMetadataSettings.WRITE_FORM_KEY);
+    settings.Any(s => s.Key == Whizbang.Core.Messaging.EventStoreMetadataSettings.WRITE_FORM_KEY
+      || s.Key == Whizbang.Core.Archival.ArchivedStreamRowPolicies.SETTING_KEY);
 
   /// <summary>A coordinator that implements only the older debug-only sync, as a third-party engine might.</summary>
   private sealed class DebugOnlyCoordinator : IWorkCoordinator {

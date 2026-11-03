@@ -354,8 +354,29 @@ Original slice text:
 
 ### S10. Per-perspective policy for rows of archived streams
 
-**Status (2026-10-24):** open. No `[ArchivedStreamRows]`. Depends on S7; reuses the WS-5 S1 companion cleanup,
-which is done.
+**Status (2026-11-02):** implemented on `feat/1739-storage` (#1739), migration `299_ArchivedStreamRows.sql`. As built:
+
+- `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]`, registered by the perspective-runner generator
+  under the perspective's CLR type name; `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>` overrides it (applied
+  at startup by `ArchivedStreamRowsConfigurator`). The maintenance worker publishes the effective policies every tick to
+  `wh_settings` (`archived_stream_rows`, one `name=policy` per line), which `wh_archive_stream` reads; no new
+  coordinator API.
+- Only a whole-stream archive applies it. Per table the least destructive declared policy wins (Keep, Archive, Drop); a
+  perspective that declares nothing does not vote; an active row hold keeps the row.
+- `Drop` reuses `_wh_evict_perspective_row_companions` (latest snapshot kept) and deletes the parked cursors of the
+  model's perspectives; the generated runner's missing-row probe runs for Drop and Archive perspectives, so the row is
+  rebuilt when the stream comes back.
+- `Archive` parks the whole row (`to_jsonb`) in `wh_event_archive_rows` (FK to the ledger, `ON DELETE CASCADE`), in the
+  service's database for every store, as the parked cursors are; a restore and a new generation put it back over the
+  table's current shape, keeping a row written since; deleting the archive deletes it; a row whose table is gone is
+  discarded.
+- Open: the archived rows of an Azure Blob archive stay in the database (not in the blob objects); a column added with
+  `NOT NULL` and no default since the archive makes the restore fail.
+
+Docs: `archive-store.md#perspective-rows` (docs branch `docs/1739`), `stream-end-of-life.md`, `row-retention.md`,
+`rebuild.md`, the configuration reference.
+
+Original slice text:
 
 - **Change.** `[ArchivedStreamRows(Keep | Drop | Archive)]` on a perspective, with a config override.
   `Drop` deletes the row and its cursor and snapshots (shares the companion cleanup from WS-5);

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Whizbang.Core.Archival;
 
 /// <summary>
-/// Binds <see cref="ArchiveOptions"/> and <see cref="StreamLifecycleOptions"/> from configuration by hand, so a value the
+/// Binds <see cref="ArchiveOptions"/>, <see cref="StreamLifecycleOptions"/> and <see cref="ArchivedStreamRowsOptions"/> from configuration by hand, so a value the
 /// framework cannot use is refused at startup with the key that holds it, rather than read as a default.
 /// </summary>
 /// <remarks>
@@ -65,6 +65,32 @@ internal static class ArchiveOptionsBinder {
     }
   }
 
+  /// <summary>Binds <c>Whizbang:Perspectives:ArchivedStreamRows:&lt;Perspective&gt;</c> (#1739).</summary>
+  /// <param name="configuration">The host's configuration.</param>
+  /// <param name="options">The options to fill.</param>
+  /// <exception cref="InvalidOperationException">A perspective's value names no policy, is a section rather than a value, or
+  /// the perspective's name holds <c>=</c> or a line break, which the stored policies cannot carry.</exception>
+  internal static void Bind(IConfiguration configuration, ArchivedStreamRowsOptions options) {
+    foreach (var perspective in configuration.GetSection(ArchivedStreamRowsOptions.SECTION).GetChildren()) {
+      var key = $"{ArchivedStreamRowsOptions.SECTION}:{perspective.Key}";
+      if (perspective.Key.AsSpan().IndexOfAny('=', '\n', '\r') >= 0) {
+        throw new InvalidOperationException($"{key} cannot name a perspective: the stored policies are one name=policy per line.");
+      }
+      var value = perspective.Value
+        ?? throw new InvalidOperationException($"{key} is a section; it must be a policy: Keep, Drop, Archive.");
+      options.Perspectives[perspective.Key] = _rowPolicy(key, value);
+    }
+  }
+
+  private static ArchivedStreamRowPolicy _rowPolicy(string key, string value) {
+    // Names only, as for the append policy: a number would bind a policy by position.
+    if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
+        && Enum.TryParse<ArchivedStreamRowPolicy>(value, ignoreCase: true, out var policy) && Enum.IsDefined(policy)) {
+      return policy;
+    }
+    throw new InvalidOperationException($"{key} is '{value}', which names no policy for rows of archived streams. Use one of: Keep, Drop, Archive.");
+  }
+
   private static AppendToArchivedPolicy _policy(string key, string value) {
     // Names only: a number would bind a policy by position.
     if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
@@ -76,7 +102,7 @@ internal static class ArchiveOptionsBinder {
   }
 
   /// <summary>
-  /// Registers both options, bound from the host's configuration and validated when the host starts. Safe to call more
+  /// Registers the three options, bound from the host's configuration and validated when the host starts. Safe to call more
   /// than once: the binders are added once.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -84,15 +110,26 @@ internal static class ArchiveOptionsBinder {
   internal static IServiceCollection AddWhizbangArchiveOptions(this IServiceCollection services) {
     services.AddOptions<ArchiveOptions>().ValidateOnStart();
     services.AddOptions<StreamLifecycleOptions>().ValidateOnStart();
+    services.AddOptions<ArchivedStreamRowsOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ArchiveOptions>, ArchiveOptionsSetup>(
       sp => new ArchiveOptionsSetup(sp.GetService<IConfiguration>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<StreamLifecycleOptions>, StreamLifecycleOptionsSetup>(
       sp => new StreamLifecycleOptionsSetup(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ArchivedStreamRowsOptions>, ArchivedStreamRowsOptionsSetup>(
+      sp => new ArchivedStreamRowsOptionsSetup(sp.GetService<IConfiguration>())));
     return services;
   }
 
   private sealed class ArchiveOptionsSetup(IConfiguration? configuration) : IConfigureOptions<ArchiveOptions> {
     public void Configure(ArchiveOptions options) {
+      if (configuration is not null) {
+        Bind(configuration, options);
+      }
+    }
+  }
+
+  private sealed class ArchivedStreamRowsOptionsSetup(IConfiguration? configuration) : IConfigureOptions<ArchivedStreamRowsOptions> {
+    public void Configure(ArchivedStreamRowsOptions options) {
       if (configuration is not null) {
         Bind(configuration, options);
       }
