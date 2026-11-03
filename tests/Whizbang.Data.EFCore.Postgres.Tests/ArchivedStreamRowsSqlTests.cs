@@ -269,7 +269,7 @@ public class ArchivedStreamRowsSqlTests : EFCoreTestBase {
     await _publishAsync(conn, (PERSPECTIVE_A, "Archive"));
     await _archiveWholeAsync(stream);
 
-    await _executeAsync(conn, "SELECT * FROM wh_purge_streams(ARRAY[@s]::uuid[])", ("s", stream));
+    await _executeAsync(conn, "SELECT count(*) FROM wh_purge_streams(ARRAY[@s]::uuid[], FALSE, gen_random_uuid(), 0, 'operator-1', 'test')", ("s", stream));
 
     await Assert.That(await _parkedRowCountAsync(conn, stream)).IsEqualTo(0L)
       .Because("a purged stream never existed: its archived row goes with its tombstone");
