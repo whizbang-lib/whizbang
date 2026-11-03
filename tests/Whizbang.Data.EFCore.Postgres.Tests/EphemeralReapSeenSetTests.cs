@@ -80,11 +80,8 @@ public class EphemeralReapSeenSetTests : EFCoreTestBase {
     if (compactor is not null) {
       services.AddSingleton(compactor);
     }
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
   }
