@@ -376,15 +376,67 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     await Assert.That(summary.OldestIntegrityDeliveryAgeSeconds).IsEqualTo(0d);
   }
 
+  // ===== Through the throughput gate, and during shutdown =====
+
+  [Test]
+  public async Task MarkAnswerPending_ThroughAThroughputGatedCoordinator_MarksAsync() {
+    var origin = TrackedGuid.New().Value;
+    var key = _key(origin, TrackedGuid.New().Value);
+    await _reportAsync(_coordinator(), key, deficit: 1, at: _t0);
+    using var gate = _gate();
+
+    var marked = await _coordinator(gate).IntegrityMarkAnswerPendingAsync(origin, [key], null, null, _t0, _answerTimeout);
+
+    await Assert.That(marked).IsEqualTo(1).Because("the gate bounds how many calls run at once; it does not change the answer");
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_ThroughAThroughputGatedCoordinator_RecordsAsync() {
+    using var gate = _gate();
+
+    var answer = await _coordinator(gate).IntegrityRecordBundleAnswerAsync(
+      TrackedGuid.New().Value, [TrackedGuid.New().Value], [1], _t0);
+
+    await Assert.That(answer).IsNotNull();
+    await Assert.That(answer!.Absent).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkAnswerPending_CanceledDuringShutdown_PropagatesInsteadOfReadingAsNothingMarkedAsync() {
+    var origin = TrackedGuid.New().Value;
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    // Non-empty keys: an empty list returns before the call, which would never reach the arm under test.
+    await Assert.That(async () => await _coordinator().IntegrityMarkAnswerPendingAsync(
+        origin, [_key(origin, TrackedGuid.New().Value)], null, null, _t0, _answerTimeout, stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("0 marked reads as 'nothing was requested', so a swallowed shutdown would be taken as a settled answer");
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_CanceledDuringShutdown_PropagatesInsteadOfReadingAsUnrecordedAsync() {
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await _coordinator().IntegrityRecordBundleAnswerAsync(
+        TrackedGuid.New().Value, [TrackedGuid.New().Value], [1], _t0, stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("null sends the reconcile on without the commit's view, which a shutdown is no reason to do");
+  }
+
   // ===== Helpers =====
 
   private readonly List<WorkCoordinationDbContext> _contexts = [];
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator() {
+  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinatorGate? gate = null) {
     var ctx = CreateDbContext();
     _contexts.Add(ctx);
-    return new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
+    return new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions(), gate: gate);
   }
+
+  private static WorkCoordinatorGate _gate() =>
+    new(maxConcurrent: 1, logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
 
   [After(Test)]
   public async Task DisposeContextsAsync() {

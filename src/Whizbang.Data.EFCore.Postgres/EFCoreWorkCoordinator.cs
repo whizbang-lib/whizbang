@@ -53,6 +53,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   // argument names of the SQL functions in the migrations; the SQL text itself still
   // spells them inline as @p_..., because a parameter marker inside a query string is
   // part of the query, not a value.
+  private const string P_EVENT_IDS = "p_event_ids";
   private const string P_IDS = "p_ids";
   private const string P_KEY = "p_key";
   private const string P_FLOOR_KEY = "p_floor_key";
@@ -1140,7 +1141,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
       cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = eventIds.ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -1203,7 +1204,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_service_name", NpgsqlTypes.NpgsqlDbType.Text) {
       Value = (object?)originServiceName ?? DBNull.Value
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = eventIds.ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -6018,7 +6019,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd => {
         cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
         cmd.Parameters.Add(new NpgsqlParameter("p_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = workIds.ToArray() });
-        cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
       },
       cancellationToken).ConfigureAwait(false);
   }
@@ -6062,7 +6063,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var dbConnection = __scope.Connection;
     await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_event_ids)";
-    cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArr });
+    cmd.Parameters.Add(new NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArr });
 
     var results = new List<StreamEventData>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

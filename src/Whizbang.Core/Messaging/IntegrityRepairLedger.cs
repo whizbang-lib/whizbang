@@ -79,7 +79,8 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
       DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
       DateTimeOffset now, TimeSpan cooldown) {
     lock (_lock) {
-      return _report(key, originLo, originHi, localLo, localHi, deficitEvents: null, now, cooldown);
+      // The ladder reads the digests and the deficit size only; whether it is a deficit does not change the report.
+      return _report(new IntegrityReportObservation(key, originLo, originHi, localLo, localHi, IsDeficit: false), now, cooldown);
     }
   }
 
@@ -93,16 +94,14 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     var results = new bool[observations.Count];
     lock (_lock) {
       for (var i = 0; i < observations.Count; i++) {
-        var o = observations[i];
-        results[i] = _report(o.Key, o.OriginLo, o.OriginHi, o.LocalLo, o.LocalHi, o.DeficitEvents, now, cooldown);
+        results[i] = _report(observations[i], now, cooldown);
       }
     }
     return ValueTask.FromResult<IReadOnlyList<bool>>(results);
   }
 
-  private bool _report(
-      DivergenceKey key, long originLo, long originHi, long localLo, long localHi, long? deficitEvents,
-      DateTimeOffset now, TimeSpan cooldown) {
+  private bool _report(IntegrityReportObservation observation, DateTimeOffset now, TimeSpan cooldown) {
+    var (key, originLo, originHi, localLo, localHi, _, deficitEvents) = observation;
     var entry = _getOrAdd(key, now);
     entry.LastTouched = now;
     var localChanged = entry.LocalLo != localLo || entry.LocalHi != localHi;

@@ -146,6 +146,9 @@ public abstract class IntegrityRepairLedgerContractTests {
     var origin = TrackedGuid.New().Value;
     var perStream = _key(origin, TrackedGuid.New().Value);
     var otherType = new IntegrityRepairLedger.DivergenceKey(origin, null, "Contracts.OtherProbe", TrackedGuid.New().Value);
+    // Same type, never requested: nothing is on the way for it, so it alone would not stand the lane down.
+    var notRequested = _key(origin, TrackedGuid.New().Value);
+    await _reportAsync(ledger, notRequested, deficit: 1, at: _t0);
     await _reportAsync(ledger, perStream, deficit: 1, at: _t0);
     await _reportAsync(ledger, otherType, deficit: 1, at: _t0);
     _ = await ledger.MarkAnswerPendingAsync([perStream, otherType], null, null, _t0, _answerTimeout);

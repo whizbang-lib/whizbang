@@ -155,7 +155,9 @@ public static partial class RedeliveryReconciler {
     long?[] sequences = [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)];
     // #2033: the answer is recorded now, while the store still shows what the bundle found (its own children are not
     // stored yet), and it is small: the buckets stop waiting, and a bundle that changed nothing is marked at once.
-    var answer = await _recordAnswerAsync(coordinator, origin, eventIds, sequences, services, logger, now, cancellationToken)
+    var answer = await _recordAnswerAsync(
+        coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, AllPresentAtCommit: null), services,
+        logger, now, cancellationToken)
       .ConfigureAwait(false);
     var markedAtCommit = answer is null ? 0 : answer.MarkedRefusedTruncated.Count + answer.MarkedUnchanged.Count;
     if (services.GetService<IntegrityDeliveryRegistry>() is not null) {
@@ -190,8 +192,9 @@ public static partial class RedeliveryReconciler {
   /// judges the bundle as before.
   /// </summary>
   private static async Task<IntegrityBundleAnswer?> _recordAnswerAsync(
-      IWorkCoordinator coordinator, Guid origin, Guid[] eventIds, long?[] sequences, IServiceProvider services,
-      ILogger logger, DateTimeOffset now, CancellationToken cancellationToken) {
+      IWorkCoordinator coordinator, BundleAdoption bundle, IServiceProvider services, ILogger logger, DateTimeOffset now,
+      CancellationToken cancellationToken) {
+    var (origin, _, eventIds, sequences, _) = bundle;
     IntegrityBundleAnswer? answer;
     try {
       answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, eventIds, sequences, now, cancellationToken)
