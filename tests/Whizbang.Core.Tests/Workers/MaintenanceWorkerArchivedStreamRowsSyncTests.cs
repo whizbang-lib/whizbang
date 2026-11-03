@@ -71,10 +71,8 @@ public class MaintenanceWorkerArchivedStreamRowsSyncTests {
       services.AddSingleton(options);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), gate, Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger ?? NullLogger<MaintenanceWorker>.Instance, metrics: null,
       housekeeping: new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }));
   }
