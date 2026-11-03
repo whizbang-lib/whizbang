@@ -193,16 +193,17 @@ public class HousekeepingCooldownTests {
   }
 
   [Test]
-  public async Task IntegrityIsNotHeldByTheDwell_BecauseItCarriesItsOwnGateAsync() {
-    // Integrity is correctness-bearing and on a far tighter cadence; the checkpoint path applies
-    // its own settledness rule that distinguishes a lagging consumer from a genuine deficit.
-    // Putting the cleanup dwell in front of it would hold correctness work behind cleanup policy.
+  public async Task IntegrityIsHeldByTheDwell_LikeRecoveryAsync() {
+    // #2001 reversed the earlier rule that integrity was not gated on settledness. The receive-side
+    // integrity work (bundle reconcile, manifest compare, building a redelivery) is the expensive
+    // part of the feature, so it waits out the same dwell as dead-letter recovery, and the
+    // deferral ceiling (MaxDeferral) still forces it through on a service that never goes quiet.
     var (coordinator, _) = _build(TimeSpan.FromMinutes(2));
 
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _settled());
 
-    await Assert.That(decision.Granted).IsTrue();
-    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.Proceed);
+    await Assert.That(decision.Granted).IsFalse();
+    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ServiceCoolingDown);
   }
 
   [Test]
