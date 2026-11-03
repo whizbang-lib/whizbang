@@ -10,6 +10,7 @@ When a test fails intermittently, check these patterns in order:
 2. **Missing event waiters** → Wait for ALL events that affect asserted data
 3. **Insufficient timeouts** → Increase waiter/delay timeouts for parallel load
 4. **Timing-sensitive operations** → Use deterministic synchronization instead of delays
+5. **A fake-clock advance that is lost** → Check the clock double reports a timer only after it registers it (Pattern 10)
 
 ---
 
@@ -422,6 +423,48 @@ SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c
 and begin the transaction as read committed explicitly, since a repeatable read default takes the snapshot at the
 first statement. To reproduce it deterministically, keep the other session's commit small (a table or two) so it
 never fills the queue; then the stale answer comes back every time.
+
+---
+
+## Pattern 10: A Fake Clock That Reports a Timer Before It Holds It
+
+### Symptoms
+- A test that owns a `FakeTimeProvider` waits for a wait to be "armed", advances the clock, and then runs out its
+  `[Timeout]`, ending in `TaskCanceledException` from the test method itself
+- Almost every run passes; the one that fails shows the worker parked on a wait the test already advanced past
+
+### Root Cause
+A clock double that overrides `CreateTimer` (or wraps `ITimer.Change`) and signals "armed" **before** calling
+`base.CreateTimer` / `inner.Change`. The signal releases the test on another thread, and if the test's
+`clock.Advance(due)` runs before the base call registers the timer, `FakeTimeProvider` has nothing to fire. The timer
+is then registered against the advanced time and is due one more interval later, which no test step ever supplies.
+`PerspectiveWorkerInjectedClockTests.BlockingRewindScan_RepollsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync`
+failed this way in a merge-queue run (#2020); the production worker was correct.
+
+### Example - WRONG
+```csharp
+public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+  _onArmed(dueTime);                                  // the test may advance right here
+  return base.CreateTimer(callback, state, dueTime, period);
+}
+```
+
+### Fix - CORRECT
+```csharp
+public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+  var timer = base.CreateTimer(callback, state, dueTime, period);
+  _onArmed(dueTime);                                  // an advance from here on fires it
+  return timer;
+}
+```
+
+The same order applies to a wrapped `Change`: call `inner.Change` first, then report. The shared
+`tests/Whizbang.Core.Component.Tests/Workers/ArmingClock.cs` already does this; prefer it to a private copy.
+
+### Rule
+A clock double reports a wait only once an advance would end it. To prove the order, advance the clock from inside
+the report itself (the earliest any test could) and assert the timer fired; with the wrong order that test fails every
+run rather than once in a thousand.
 
 ---
 

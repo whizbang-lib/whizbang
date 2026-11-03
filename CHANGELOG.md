@@ -91,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **Close the books (#1741, WS-3 S12).** `IBookCloser.CloseBooksAsync(streamId, closingSummary, openingBalance)`
+  appends the closing summary, seals the stream and opens a successor stream (its id chosen by the framework and
+  returned) whose first event, derived from the new `OpeningBalance` record, carries `SuccessorStreamId`,
+  `PredecessorStreamId` and `PredecessorFinalVersion`, all in one transaction (migration 315, `wh_close_books`). Both
+  Postgres drivers register it. The end-of-life `Action` `CloseBooks` closes a picked stream's books through a
+  developer's `IBookClosingHandler`; declaring it without one fails the start.
 - **End-of-life policies per stream type (#1740, WS-3 S11).** With `Whizbang:StreamLifecycle:Enabled` (default
   `false`), the `stream-disposition` step also ends streams nobody sealed, per type under
   `Whizbang:StreamLifecycle:Types:<StreamType>`: `IdleTtl` (nothing appended for the span, counted from the end of the
@@ -1261,6 +1267,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with "Reconciler queried unknown per-item stream". They now derive through an explicit namespace, a test helper
   registers sagas between the derivations to prove it, and every test that registers sagas or asserts on the
   process-wide value runs under one `[NotInParallel]` key and restores it. Tests only; no library behavior changes.
+
+- **The perspective worker's injected-clock tests no longer lose a clock advance (#2020).** Their fake clock reported a
+  wait as armed before it registered the timer, so a test that advanced the clock in that gap lost the advance and
+  waited out its timeout (seen once on the blocking startup rewind scan test in a merge-queue run). The clock now
+  reports a wait only once an advance would end it, and two fixture-contract tests advance from inside the report to
+  hold it there. Test-only; no library behavior changed.
 - **Stopping a serial executor finishes every queued caller (#2004).** `SerialExecutor.StopAsync` canceled only the
   worker's read, so an item still in the channel could be neither run nor canceled and its caller waited forever. A
   stop now lets the item already running finish and finishes every item still queued as canceled: the handler is not

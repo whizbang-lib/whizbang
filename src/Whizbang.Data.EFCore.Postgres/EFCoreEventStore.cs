@@ -130,21 +130,9 @@ public sealed class EFCoreEventStore<TDbContext>(
   public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Create a minimal envelope - registry-based lookup would require constructor injection
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
-        }
-      ],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-
-    return AppendAsync(streamId, envelope, cancellationToken);
+    // Create a minimal envelope - registry-based lookup would require constructor injection. The book closer (#1741)
+    // stores its events with the same one.
+    return AppendAsync(streamId, EFCoreEventStoreRows.MinimalEnvelope(message), cancellationToken);
   }
 
   private async Task _appendCoreAsync<TMessage>(
@@ -157,12 +145,7 @@ public sealed class EFCoreEventStore<TDbContext>(
 
     // Envelope metadata is bound as the same POCO EF Core's jsonb mapping wrote, so the stored
     // document is produced by the same serializer as before (the data source's JSON options).
-    var metadata = new EnvelopeMetadata {
-      MessageId = envelope.MessageId,
-      Hops = envelope.Hops?.ToList() ?? [],
-      // #1729: wh_append_event stamps a superseding event's key from the metadata it stores.
-      SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(envelope.Payload)
-    };
+    var metadata = EFCoreEventStoreRows.MetadataOf(envelope);
 
     // The append used to ride SaveChangesAsync, which also flushed whatever else the shared, scoped
     // context was tracking. Callers may depend on that, so pending changes are still saved first.
