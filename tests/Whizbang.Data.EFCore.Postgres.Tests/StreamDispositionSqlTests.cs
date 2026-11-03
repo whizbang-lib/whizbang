@@ -108,10 +108,10 @@ public class StreamDispositionSqlTests : EFCoreTestBase {
     var limited = await ledger.GetDueAsync(_t0.AddMinutes(10), 2);
 
     await Assert.That(due).IsEquivalentTo([
-      new DueStreamDisposition(done, StreamDispositionReadiness.Done),
-      new DueStreamDisposition(ready, StreamDispositionReadiness.Ready),
-      new DueStreamDisposition(blocked, StreamDispositionReadiness.Blocked),
-      new DueStreamDisposition(held, StreamDispositionReadiness.Held),
+      new DueStreamDisposition(done, StreamDispositionReadiness.Done, LEDGER),
+      new DueStreamDisposition(ready, StreamDispositionReadiness.Ready, LEDGER),
+      new DueStreamDisposition(blocked, StreamDispositionReadiness.Blocked, OWED),
+      new DueStreamDisposition(held, StreamDispositionReadiness.Held, LEDGER),
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(limited.Select(d => d.StreamId)).IsEquivalentTo([done, ready], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }

@@ -79,6 +79,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbangPostgresTraceStore()`. Retention, skipped under debug mode: staged forms 2 days
   (`metadata_staging_days`), traces 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`), routes 365 days after
   last taken (`...:Retention:RouteIdleDays`).
+- **End-of-life policies per stream type (#1740, WS-3 S11).** With `Whizbang:StreamLifecycle:Enabled` (default
+  `false`), the `stream-disposition` step also ends streams nobody sealed, per type under
+  `Whizbang:StreamLifecycle:Types:<StreamType>`: `IdleTtl` (nothing appended for the span, counted from the end of the
+  newest append's hour), `MaxAge` (first append that old), `TenantByteCap` (the least recently appended streams of the
+  type in a tenant, until the rest fit) and `KeepTailVersions` (the prefix before the newest N versions, through
+  `IStreamPrefixTruncator` with the new `DestructionReason.VersionCapExceeded`). `Action` (`Archive` by default,
+  `Compact`, `Purge`; `CloseBooks` refused until #1741) says what happens, and is also the disposition of the type's
+  sealed streams. Candidates are read from the lifecycle ledger alone; a purge or compaction by policy first seals the
+  stream, only if nothing was appended since it was picked. Migration 297 (`truncated_through_version`,
+  `wh_stream_policy_candidates`, `wh_stream_disposition_readiness`, `wh_seal_stream_if_unchanged`,
+  `wh_set_stream_truncated_through`; `wh_due_stream_dispositions` returns the stream type). **Upgrade note:** a type
+  that sets `Action` now has its sealed streams disposed of by that action instead of always archived.
+- **`[StreamEndOfLife]` declares a stream type's end-of-life policy in code (#1740).** Put it on the event type that
+  opens the stream (`IdleTtl`, `MaxAge`, `KeepTailVersions`, `TenantByteCap`, `Action`); the message-type catalog
+  generator registers it without reflection, inherited, events only. Configuration under
+  `Whizbang:StreamLifecycle:Types:<StreamType>` wins key by key; a declared value that cannot be used fails the start
+  naming the type.
+- **The scheduled prefix-truncate types are named for what they do (#1760).** `ScheduledStreamClose`,
+  `StreamCloseSchedule` and `ScheduledStreamCloseReceptor` are now `ScheduledPrefixTruncate`, `PrefixTruncateSchedule`
+  and `ScheduledPrefixTruncateReceptor`, leaving "close" to closing the books. The former occurrence name is kept in
+  the pinned-type ledger, so a schedule stored before the rename still fires. **Breaking:** code that names the old types
+  must use the new names.
 - **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
   `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
   `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees
@@ -1225,6 +1247,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrency slots one at a time, so two drains at once could each hold some and wait forever for the rest. Drains
   are now serialized and complete one after another. A drain whose token is canceled gives back the slots it had
   taken; before, it kept them, lowering the executor's concurrency for good and hanging every later drain.
+
+- **A starting instance that waited for another's schema bootstrap no longer applies the same closure again.** Once
+  it had the schema lock, the waiter read the bootstrap closure record again, but asked whether the record table
+  existed through `to_regclass`, which answers from the session's catalog cache. On a fresh database that cache still
+  said "no such table" (the waiter had looked before the holder committed, and waiting on an advisory lock refreshes
+  nothing), so the record read as absent and every statement ran again on tables now in use. It happened only when
+  nothing else made the session catch up first, so it showed as a flaky test. The recheck and `CanElectAsync` now read
+  `pg_class` and `pg_proc` under the statement's snapshot, and the bootstrap's transaction is read committed whatever
+  the database's default isolation, since a repeatable read snapshot taken before the holder's commit would miss the
+  record too.
 - **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
   waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
   worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,

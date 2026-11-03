@@ -308,6 +308,39 @@ not the ledger), the election is still probed rather than assumed, and a record 
 falls through to applying, never to skipping. `ACurrentClosureIsNotAppliedAgainAsync` and
 `AChangedClosureIsAppliedAsync` are the guards.
 
+### The recheck under the lock reads the catalog, never the session's name cache
+
+A waiter reads the closure record twice: once before it tries the lock, and again once it has waited for and taken
+it, so the holder's commit serves it. On a fresh database the record table is part of what the holder is creating,
+so the first read finds no table, and the session **caches** that. A session refreshes its catalog cache when a
+transaction starts and when it locks a relation; waiting on `pg_advisory_xact_lock` does neither. So
+`to_regclass(... wh_bootstrap_closure)` under the lock kept answering "no such table" after the holder committed, the
+record read as absent, and the waiter applied the closure a second time, taking every statement's lock on tables now
+in use. It surfaced only as a flaky test: a commit as large as the full closure fills the shared invalidation queue,
+the server then signals lagging sessions to catch up, and whether the waiter caught up before its recheck was a race.
+
+The rules:
+
+1. **Presence is read from `pg_class` / `pg_proc` joined to `pg_namespace`**, which a statement reads under its own
+   MVCC snapshot. No `to_regclass` or `to_regprocedure` in `SchemaBootstrapPhase`, including `CanElectAsync`: the
+   bootstrap calls it outside a transaction, where the cache is always fresh, but it is public and takes any open
+   connection.
+2. **The bootstrap transaction is `ReadCommitted` explicitly.** Under a `repeatable read` default the snapshot is taken
+   by the first statement, the try-lock, before the holder committed, and even the catalog read would miss the record.
+3. **A statement that names the table directly is safe**: the parser locks the relation it resolves, and a name it
+   cannot resolve makes it refresh the cache and look again. Only lookups that take no lock are stale.
+
+`to_regclass` is used in many other places in `Whizbang.Data.Postgres`. It is correct wherever the lookup is the first
+statement of its own transaction, or follows a relation lock in it; it is wrong only inside a transaction that waited
+for, or otherwise began before, another session's commit of the object it asks about.
+
+Guards: `SchemaBootstrapPhaseTests.AWaiterWhoseSessionCachedTheRecordTableAsMissing_StillFindsTheHoldersRecord_AndAppliesNothingAsync`
+(the defect, deterministic: a two-script closure never fills the queue),
+`AWaiterOnADatabaseDefaultingToRepeatableRead_StillFindsTheHoldersRecord_AndAppliesNothingAsync` (rule 2),
+`CanElect_InsideATransactionThatBeganBeforeTheObjectsWereCommitted_SeesThemAsync` (rule 1 for the probe), and
+`InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync`, the control that shows
+the server still behaves this way; if it ever stops failing, the reason for the rule is gone.
+
 ### The closure is not what the migration headers say
 
 Three of the four headers are wrong or incomplete, so derive it from the SQL and never the comments:
@@ -661,6 +694,9 @@ is where to look rather than the assertions.
    wait, not skip: the holder may be a sibling's bootstrap or DDL, which does not do your work, and a
    sibling staged as a waiter never will. Test it with two instances, one holding the key in an open
    transaction, and assert something above debug level is logged on the path that did not run.
+0e. **Does it ask whether an object exists after waiting for another session?** Read `pg_class` / `pg_proc` under a
+   read committed snapshot, never `to_regclass` / `to_regprocedure` inside the transaction that waited: the session's
+   cached "missing" outlives the other session's commit (Trap 4, "The recheck under the lock reads the catalog").
 1. **Does it need a connection of its own?** Call `SchemaBoundaryConnections.Resolve`. Never open one
    from `GetConnectionString()`.
 2. **Does one statement depend on another's committed effect?** Ordering is not enough. Emit a

@@ -373,6 +373,38 @@ fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTes
 
 ---
 
+## Pattern 9: A Catalog Lookup Answered From a Cache Older Than Another Session's Commit
+
+### Symptoms
+- A test where one session waits (on an advisory lock, a signal) while another commits DDL, and the waiter then asks
+  whether the new object exists, fails sometimes: the waiter says "missing" and does the work a second time
+- It passes almost every run, and passes more often the more DDL the other session committed
+
+### Root Cause
+`to_regclass`, `to_regprocedure` and every other name lookup are answered from the session's catalog cache, including
+a cached "no such object". A session refreshes that cache when a transaction **starts** and when it **locks a
+relation**. A statement inside an open transaction that touches no relation, such as `SELECT to_regclass(...)` after
+`pg_advisory_xact_lock`, refreshes nothing, so it keeps the answer the session cached before the other commit. It
+passes sometimes only because a commit that fills the shared invalidation queue makes the server signal lagging
+sessions to catch up, and whether the waiter is the one signaled is a race. The bootstrap's recheck under the schema
+lock had exactly this defect (`SchemaBootstrapPhaseTests.AWaiterWhoseHolderAppliedTheClosureMeanwhile_AppliesNothingAsync`
+flaked; see `schema-initialization-connections.md`, Trap 4).
+
+### Fix - CORRECT
+Ask the catalog tables, which a statement reads under its own snapshot, and make sure that snapshot is fresh:
+
+```sql
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c
+                 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE n.nspname = $1 AND c.relname = 'wh_bootstrap_closure')
+```
+
+and begin the transaction as read committed explicitly, since a repeatable read default takes the snapshot at the
+first statement. To reproduce it deterministically, keep the other session's commit small (a table or two) so it
+never fills the queue; then the stale answer comes back every time.
+
+---
+
 ## Files Modified in Flaky Test Fixes (January 2025)
 
 | File | Fix Applied |

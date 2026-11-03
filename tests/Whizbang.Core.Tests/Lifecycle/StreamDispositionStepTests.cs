@@ -56,6 +56,51 @@ public class StreamDispositionStepTests {
       Moved.Add((streamId, due));
       return Task.CompletedTask;
     }
+
+    // #1740: the end-of-life policies.
+    public IReadOnlyList<StreamPolicyCandidate> Candidates { get; init; } = [];
+    public List<(IReadOnlyList<StreamEndOfLifePolicy> Policies, DateTimeOffset Now, int Limit)> CandidateQueries { get; } = [];
+    public StreamDispositionReadiness CandidateReadiness { get; init; } = StreamDispositionReadiness.Ready;
+    public List<IReadOnlyList<Guid>> ReadinessQueries { get; } = [];
+    public bool SealSucceeds { get; init; } = true;
+    public List<(Guid Stream, long LastVersion, string Reason, DateTimeOffset Now)> Seals { get; } = [];
+    public List<(Guid Stream, long Through)> Floors { get; } = [];
+
+    public Task<IReadOnlyList<StreamPolicyCandidate>> GetPolicyCandidatesAsync(
+        IReadOnlyList<StreamEndOfLifePolicy> policies, DateTimeOffset now, int limit, CancellationToken cancellationToken = default) {
+      CandidateQueries.Add((policies, now, limit));
+      return Task.FromResult(Candidates);
+    }
+
+    public Task<IReadOnlyDictionary<Guid, StreamDispositionReadiness>> GetReadinessAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) {
+      ReadinessQueries.Add(streamIds);
+      return Task.FromResult<IReadOnlyDictionary<Guid, StreamDispositionReadiness>>(streamIds.ToDictionary(s => s, _ => CandidateReadiness));
+    }
+
+    public Task<bool> SealIfUnchangedAsync(Guid streamId, long lastVersion, string reason, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      log.Add("seal");
+      Seals.Add((streamId, lastVersion, reason, now));
+      return Task.FromResult(SealSucceeds);
+    }
+
+    public Task SetTruncatedThroughAsync(Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
+      log.Add("floor");
+      Floors.Add((streamId, throughVersion));
+      return Task.CompletedTask;
+    }
+  }
+
+  private sealed class Truncator(List<string> log, string status = "truncated") : IStreamPrefixTruncator {
+    public List<(Guid Stream, long Through, Disposition Disposition, DestructionReason Reason)> Calls { get; } = [];
+
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("a policy names its reason");
+
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default) {
+      log.Add("truncate");
+      Calls.Add((streamId, throughVersion, disposition, reason));
+      return Task.FromResult(new StreamTruncateResult(status, 3));
+    }
   }
 
   private sealed class Store(List<string> log, string status = ArchiveStatus.ARCHIVED) : IArchiveStore {
@@ -143,18 +188,26 @@ public class StreamDispositionStepTests {
     public Task RunAsync() => new StreamDispositionStep(new FakeTimeProvider(_now), Logger).RunAsync(Services, CancellationToken.None);
   }
 
-  private static Harness _harness(StreamDispositionReadiness readiness = StreamDispositionReadiness.Ready, IDestructionHook? hook = null,
+  private static Harness _harness(StreamDispositionReadiness readiness = StreamDispositionReadiness.Ready, StreamLifecycleOptions? lifecycle = null,
+      DueStreamDisposition[]? due = null, IReadOnlyList<StreamPolicyCandidate>? candidates = null, IDestructionHook? hook = null,
       Func<List<string>, IDestructionHook>? hookFor = null, string storeStatus = ArchiveStatus.ARCHIVED, bool withCompactor = false,
-      IPerspectiveRunner? runner = null, IReadOnlyList<StreamCursorPosition>? cursors = null) {
+      IPerspectiveRunner? runner = null, IReadOnlyList<StreamCursorPosition>? cursors = null,
+      StreamDispositionReadiness candidateReadiness = StreamDispositionReadiness.Ready, bool sealSucceeds = true,
+      Func<List<string>, IStreamPrefixTruncator>? truncatorFor = null) {
     var log = new List<string>();
-    var ledger = new Ledger(log, new DueStreamDisposition(_stream, readiness)) { Cursors = cursors ?? [new("Orders", _cursorEvent)] };
+    var ledger = new Ledger(log, due ?? [new DueStreamDisposition(_stream, readiness)]) {
+      Cursors = cursors ?? [new("Orders", _cursorEvent)],
+      Candidates = candidates ?? [],
+      CandidateReadiness = candidateReadiness,
+      SealSucceeds = sealSucceeds,
+    };
     var store = new Store(log, storeStatus);
     var purger = new Purger(log);
     var services = new ServiceCollection();
     services.AddSingleton<IStreamDispositionLedger>(ledger);
     services.AddSingleton<IArchiveStore>(store);
     services.AddSingleton<IStreamPurger>(purger);
-    services.AddSingleton(Options.Create(new StreamLifecycleOptions { FinalizeGrace = TimeSpan.FromDays(2), SweepBatchSize = 25 }));
+    services.AddSingleton(Options.Create(lifecycle ?? new StreamLifecycleOptions { FinalizeGrace = TimeSpan.FromDays(2), SweepBatchSize = 25 }));
     services.AddSingleton(Options.Create(new MaintenanceWorkerOptions { DestructionRetryBackoffSeconds = BACKOFF_SECONDS }));
     services.AddSingleton<IPerspectiveRunnerRegistry>(new Registry(new Dictionary<string, IPerspectiveRunner> { ["Orders"] = runner ?? new Runner(log) }));
     var theHook = hook ?? hookFor?.Invoke(log);
@@ -163,6 +216,9 @@ public class StreamDispositionStepTests {
     }
     if (withCompactor) {
       services.AddSingleton<ICompactionHandler>(new Compactor(log));
+    }
+    if (truncatorFor is not null) {
+      services.AddSingleton(truncatorFor(log));
     }
     return new Harness(log, ledger, store, purger, new ListLogger(), services.BuildServiceProvider());
   }
@@ -382,5 +438,215 @@ public class StreamDispositionStepTests {
     await Assert.That(fromHost.Name).IsEqualTo("stream-disposition");
     await Assert.That(fromNothing.Name).IsEqualTo("stream-disposition");
     await Assert.That(() => StreamDispositionStep.FromServices(null!)).Throws<ArgumentNullException>();
+  }
+  // ===== #1740 (WS-3 S11): the end-of-life policies =====
+
+  private const string POLICY_TYPE = "Shop.Order";
+
+  private static StreamLifecycleOptions _policies(StreamLifecycleAction action = StreamLifecycleAction.Archive, bool enabled = true) {
+    var options = new StreamLifecycleOptions { Enabled = enabled, SweepBatchSize = 25 };
+    options.Types[POLICY_TYPE] = new StreamTypeLifecycleOptions { IdleTtl = TimeSpan.FromDays(30), Action = action };
+    return options;
+  }
+
+  private static StreamPolicyCandidate _candidate(StreamEndOfLifeTrigger trigger = StreamEndOfLifeTrigger.IdleTtl, long? through = null) =>
+    new(_stream, POLICY_TYPE, trigger, 12, through);
+
+  [Test]
+  public async Task Policies_AreNotEvaluated_UntilEnabled_OrWhenNoTypeSetsATrigger_AndAreAskedWithTheClockAndBatchOnceEnabledAsync() {
+    var off = _harness(lifecycle: _policies(enabled: false), due: [], candidates: [_candidate()]);
+    var noTrigger = new StreamLifecycleOptions { Enabled = true };
+    noTrigger.Types[POLICY_TYPE] = new StreamTypeLifecycleOptions { Action = StreamLifecycleAction.Purge };
+    var none = _harness(lifecycle: noTrigger, due: []);
+    var on = _harness(lifecycle: _policies(), due: []);
+
+    await off.RunAsync();
+    await none.RunAsync();
+    await on.RunAsync();
+
+    await Assert.That(off.Ledger.CandidateQueries).IsEmpty()
+      .Because("Enabled is false by default: a policy acts on streams nobody sealed, so it runs only once a host turns it on");
+    await Assert.That(off.Store.Written).IsEmpty();
+    await Assert.That(none.Ledger.CandidateQueries).IsEmpty().Because("with no trigger there is nothing to look for, so the ledger is not read");
+    await Assert.That(on.Ledger.CandidateQueries).Count().IsEqualTo(1);
+    await Assert.That(on.Ledger.CandidateQueries[0].Now).IsEqualTo(_now);
+    await Assert.That(on.Ledger.CandidateQueries[0].Limit).IsEqualTo(25).Because("SweepBatchSize bounds the streams a cycle acts on");
+    await Assert.That(on.Ledger.CandidateQueries[0].Policies).IsEquivalentTo(
+      [new StreamEndOfLifePolicy(POLICY_TYPE, TimeSpan.FromDays(30), null, null, null, StreamLifecycleAction.Archive)]);
+  }
+
+  [Test]
+  [Arguments(StreamEndOfLifeTrigger.IdleTtl, DestructionReason.IdleTtlElapsed)]
+  [Arguments(StreamEndOfLifeTrigger.MaxAge, DestructionReason.MaxAgeReached)]
+  [Arguments(StreamEndOfLifeTrigger.TenantByteCap, DestructionReason.TenantByteCapExceeded)]
+  public async Task APickedStream_GetsItsFinalSnapshot_ThenTheHookWithItsTriggersReason_ThenIsArchivedWhole_AndIsNotSealedAsync(
+      StreamEndOfLifeTrigger trigger, DestructionReason reason) {
+    Hook? hook = null;
+    var h = _harness(lifecycle: _policies(), due: [], candidates: [_candidate(trigger)], hookFor: log => hook = new Hook(log));
+
+    await h.RunAsync();
+
+    await Assert.That(h.Log).IsEquivalentTo([$"snapshot:Orders:{_cursorEvent}", "before", "archive", "clear", "after"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("an archive is reversible and its stream may be appended to again under its AppendToArchived policy, so it is not sealed");
+    await Assert.That(hook!.Seen!.Reason).IsEqualTo(reason);
+    await Assert.That(hook.Seen.DeclaredDefault).IsEqualTo(Disposition.Archive);
+    await Assert.That(hook.Seen.StreamId).IsEqualTo(_stream);
+    await Assert.That(h.Store.Written).IsEquivalentTo([ArchiveBatch.WholeStream(_stream)]);
+    await Assert.That(h.Ledger.ReadinessQueries).Count().IsEqualTo(1);
+    await Assert.That(h.Ledger.ReadinessQueries[0]).IsEquivalentTo([_stream]);
+  }
+
+  [Test]
+  [Arguments(StreamEndOfLifeTrigger.IdleTtl, "IdleTtl")]
+  [Arguments(StreamEndOfLifeTrigger.MaxAge, "MaxAge")]
+  [Arguments(StreamEndOfLifeTrigger.TenantByteCap, "TenantByteCap")]
+  public async Task Purge_TheHookFirst_ThenTheStreamIsSealedIfUnchanged_ThenPurged_SayingWhichTriggerAsync(StreamEndOfLifeTrigger trigger, string named) {
+    var h = _harness(lifecycle: _policies(StreamLifecycleAction.Purge), due: [], candidates: [_candidate(trigger)], hookFor: log => new Hook(log));
+
+    await h.RunAsync();
+
+    await Assert.That(h.Log).IsEquivalentTo([$"snapshot:Orders:{_cursorEvent}", "before", "seal", "purge", "clear", "after"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the seal at the version the policy saw closes the stream to appends, so an append between the pick and the purge is never lost");
+    await Assert.That(h.Ledger.Seals).Count().IsEqualTo(1);
+    await Assert.That(h.Ledger.Seals[0].Stream).IsEqualTo(_stream);
+    await Assert.That(h.Ledger.Seals[0].LastVersion).IsEqualTo(12L);
+    await Assert.That(h.Ledger.Seals[0].Now).IsEqualTo(_now);
+    await Assert.That(h.Ledger.Seals[0].Reason).Contains(named);
+    await Assert.That(h.Purger.Requests[0].StreamIds).IsEquivalentTo([_stream]);
+    await Assert.That(h.Purger.Requests[0].RequestedBy).IsEqualTo(StreamDispositionStep.STEP_NAME);
+    await Assert.That(h.Purger.Requests[0].Reason).Contains(named);
+  }
+
+  [Test]
+  public async Task Purge_OfAStreamAppendedToSinceItWasPicked_IsLeftAlone_AndNothingIsPurgedAsync() {
+    var h = _harness(lifecycle: _policies(StreamLifecycleAction.Purge), due: [], candidates: [_candidate()], hookFor: log => new Hook(log),
+      sealSucceeds: false);
+
+    await h.RunAsync();
+
+    await Assert.That(h.Purger.Requests).IsEmpty().Because("the stream came back to life: purging it would lose the new event");
+    await Assert.That(h.Log).DoesNotContain("after");
+    await Assert.That(h.Ledger.Moved).IsEmpty().Because("nothing is deferred: the next cycle decides afresh whether a trigger still picks it");
+  }
+
+  [Test]
+  public async Task Compact_RunsTheHandlerAfterTheSeal_ThenPurges_AndWithNoHandler_DefersWithoutSealingAsync() {
+    var withHandler = _harness(lifecycle: _policies(StreamLifecycleAction.Compact), due: [], candidates: [_candidate()],
+      hookFor: log => new Hook(log), withCompactor: true);
+    var without = _harness(lifecycle: _policies(StreamLifecycleAction.Compact), due: [], candidates: [_candidate()], hookFor: log => new Hook(log));
+
+    await withHandler.RunAsync();
+    await without.RunAsync();
+
+    await Assert.That(withHandler.Log).IsEquivalentTo([$"snapshot:Orders:{_cursorEvent}", "before", "seal", "compact", "purge", "clear", "after"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(without.Log).DoesNotContain("seal")
+      .Because("a stream that cannot be compacted is kept open: sealing it would refuse its appends for nothing");
+    await Assert.That(without.Purger.Requests).IsEmpty();
+    await Assert.That(without.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+  }
+
+  [Test]
+  [Arguments(StreamDispositionReadiness.Blocked)]
+  [Arguments(StreamDispositionReadiness.Held)]
+  public async Task APickedStreamThatIsBlockedOrHeld_IsDeferredForTheBackoff_AndNothingElseRunsAsync(StreamDispositionReadiness readiness) {
+    var h = _harness(lifecycle: _policies(StreamLifecycleAction.Purge), due: [], candidates: [_candidate()], hookFor: log => new Hook(log),
+      candidateReadiness: readiness);
+
+    await h.RunAsync();
+
+    await Assert.That(h.Log).IsEquivalentTo(["defer"])
+      .Because("a deferred stream has a due time, which keeps it out of the next cycles' picks until the backoff ends");
+    await Assert.That(h.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+  }
+
+  [Test]
+  public async Task AHookThatCancels_DefersAPickedStreamForTheBackoff_AndOneThatDefers_UntilItsInstant_NeitherSealsAsync() {
+    var later = _now.AddDays(3);
+    var canceled = _harness(lifecycle: _policies(StreamLifecycleAction.Purge), due: [], candidates: [_candidate()],
+      hookFor: log => new Hook(log, DestructionResult.Canceled));
+    var deferred = _harness(lifecycle: _policies(StreamLifecycleAction.Purge), due: [], candidates: [_candidate()],
+      hookFor: log => new Hook(log, DestructionResult.Defer(later)));
+
+    await canceled.RunAsync();
+    await deferred.RunAsync();
+
+    await Assert.That(canceled.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(deferred.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)later)]);
+    await Assert.That(canceled.Ledger.Seals).IsEmpty().Because("a veto leaves the stream open: the hook is asked before the seal");
+    await Assert.That(deferred.Ledger.Seals).IsEmpty();
+    await Assert.That(canceled.Purger.Requests).IsEmpty();
+  }
+
+  [Test]
+  [Arguments(StreamLifecycleAction.Archive, Disposition.Archive)]
+  [Arguments(StreamLifecycleAction.Purge, Disposition.Delete)]
+  [Arguments(StreamLifecycleAction.Compact, Disposition.Compact)]
+  public async Task TheVersionCap_TruncatesThePrefixThroughTheTruncator_WithItsReason_AndRecordsTheCutAsync(
+      StreamLifecycleAction action, Disposition disposition) {
+    Truncator? truncator = null;
+    var h = _harness(lifecycle: _policies(action), due: [], candidates: [_candidate(StreamEndOfLifeTrigger.VersionCap, through: 9)],
+      truncatorFor: log => truncator = new Truncator(log));
+
+    await h.RunAsync();
+
+    await Assert.That(truncator!.Calls).IsEquivalentTo([(_stream, 9L, disposition, DestructionReason.VersionCapExceeded)])
+      .Because("the truncator owns the prefix's gates, the hook and the compaction; the hook is told the version cap is why");
+    await Assert.That(h.Log).IsEquivalentTo(["truncate", "floor"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(h.Ledger.Floors).IsEquivalentTo([(_stream, 9L)]);
+    await Assert.That(h.Ledger.ReadinessQueries).IsEmpty().Because("the prefix truncate applies its own consumption gate and holds");
+  }
+
+  [Test]
+  public async Task TheVersionCap_ATruncateThatDidNotHappen_DefersAndLogsItsStatus_AndNoTruncator_DefersAndLogsAsync() {
+    var refused = _harness(lifecycle: _policies(), due: [], candidates: [_candidate(StreamEndOfLifeTrigger.VersionCap, through: 9)],
+      truncatorFor: log => new Truncator(log, "blocked"));
+    var missing = _harness(lifecycle: _policies(), due: [], candidates: [_candidate(StreamEndOfLifeTrigger.VersionCap, through: 9)]);
+
+    await refused.RunAsync();
+    await missing.RunAsync();
+
+    await Assert.That(refused.Ledger.Floors).IsEmpty().Because("only a prefix that left the hot store moves the recorded cut");
+    await Assert.That(refused.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(refused.Logger.Entries.Exists(e => e.Message.Contains("blocked", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(missing.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(missing.Logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains(nameof(IStreamPrefixTruncator), StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task APickedStreamThatFails_IsLoggedAndDeferred_AndTheNextPickStillRunsAsync() {
+    var second = new Guid("0192f1a0-0000-7000-8000-0000000000c2");
+    var h = _harness(lifecycle: _policies(), due: [],
+      candidates: [_candidate(), new StreamPolicyCandidate(second, POLICY_TYPE, StreamEndOfLifeTrigger.VersionCap, 20, 10)],
+      hookFor: log => new Hook(log), runner: new Runner([], new InvalidOperationException("snapshot store down")),
+      truncatorFor: log => new Truncator(log));
+
+    await h.RunAsync();
+
+    await Assert.That(h.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+    await Assert.That(h.Ledger.Floors).IsEquivalentTo([(second, 10L)]).Because("one broken stream never holds back the sweep");
+    await Assert.That(h.Logger.Entries.Exists(e => e.Level == LogLevel.Warning && e.Message.Contains(_stream.ToString(), StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task ASealedStreamsDisposition_IsItsTypesAction_AndArchiveForATypeWithNoneAsync() {
+    Hook? typed = null;
+    Hook? untyped = null;
+    var lifecycle = _policies(StreamLifecycleAction.Purge, enabled: false);
+    var purged = _harness(lifecycle: lifecycle, due: [new DueStreamDisposition(_stream, StreamDispositionReadiness.Ready, POLICY_TYPE)],
+      hookFor: log => typed = new Hook(log));
+    var archived = _harness(lifecycle: lifecycle, due: [new DueStreamDisposition(_stream, StreamDispositionReadiness.Ready, "Shop.Cart")],
+      hookFor: log => untyped = new Hook(log));
+
+    await purged.RunAsync();
+    await archived.RunAsync();
+
+    await Assert.That(typed!.Seen!.DeclaredDefault).IsEqualTo(Disposition.Delete)
+      .Because("finalized plus grace is one of the type's triggers, so it runs the type's action, with or without Enabled");
+    await Assert.That(purged.Purger.Requests).Count().IsEqualTo(1);
+    await Assert.That(untyped!.Seen!.DeclaredDefault).IsEqualTo(Disposition.Archive);
+    await Assert.That(archived.Store.Written).Count().IsEqualTo(1);
   }
 }

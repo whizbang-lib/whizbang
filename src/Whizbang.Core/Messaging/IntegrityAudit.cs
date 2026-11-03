@@ -149,7 +149,7 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 /// driver's built-in receptor reacts by running one full sweep
 /// (<see cref="Whizbang.Core.Workers.IIntegritySweepRunner"/>) — the trust-but-verify pass that
 /// catches exactly the state the epoch seals and audit seals assume is fine. A command (imperative
-/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledStreamClose</c>.
+/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledPrefixTruncate</c>.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>

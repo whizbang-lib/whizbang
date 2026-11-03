@@ -14,8 +14,9 @@ namespace Whizbang.Core.Tests.Archival;
 
 /// <summary>
 /// <c>Whizbang:Archive:ReadThrough</c> and <c>Whizbang:StreamLifecycle:Types:&lt;StreamType&gt;:AppendToArchived</c>
-/// (#1738), and <c>FinalizeGrace</c> and <c>SweepBatchSize</c> (#1734): bound by hand, so a value the framework cannot
-/// use is refused at startup naming the key rather than read as a default.
+/// (#1738), <c>FinalizeGrace</c> and <c>SweepBatchSize</c> (#1734), and <c>Enabled</c> with each type's end-of-life policy
+/// (#1740): bound by hand, so a value the framework cannot use is refused at startup naming the key rather than read as a
+/// default.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
 public class StreamLifecycleOptionsBinderTests {
@@ -154,5 +155,120 @@ public class StreamLifecycleOptionsBinderTests {
     await Assert.That(failure).IsNotNull()
       .Because("a policy that cannot be read fails the host's start, not the first archived write");
     await Assert.That(failure!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:AppendToArchived");
+  }
+  // ===== #1740 (WS-3 S11): the end-of-life policies =====
+
+  [Test]
+  public async Task Enabled_DefaultsToFalse_AndBindsTrue_AndAValueThatIsNotABoolean_IsRefusedNamingTheKeyAsync() {
+    var unset = new StreamLifecycleOptions();
+    ArchiveOptionsBinder.Bind(_config(), unset);
+    var on = new StreamLifecycleOptions();
+    ArchiveOptionsBinder.Bind(_config(("Whizbang:StreamLifecycle:Enabled", "TRUE")), on);
+
+    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(_config(("Whizbang:StreamLifecycle:Enabled", "yes")), new StreamLifecycleOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(unset.Enabled).IsFalse()
+      .Because("a policy archives or purges streams nobody sealed, so nothing is evaluated until a host turns it on");
+    await Assert.That(on.Enabled).IsTrue();
+    await Assert.That(thrown!.Message).Contains("Whizbang:StreamLifecycle:Enabled");
+    await Assert.That(thrown.Message).Contains("yes");
+  }
+
+  [Test]
+  public async Task EachTypesPolicy_BindsItsTriggersAndAction_AndATypeWithNoTrigger_HasNoPolicyAsync() {
+    var options = new StreamLifecycleOptions();
+
+    ArchiveOptionsBinder.Bind(_config(
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:IdleTtl", "90.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:MaxAge", "365.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "purge"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Ledger:KeepTailVersions", "1000"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Ledger:TenantByteCap", "1073741824"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Aged:MaxAge", "30.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Capped:TenantByteCap", "2048"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Cart:AppendToArchived", "AutoRestore")), options);
+
+    await Assert.That(options.Types["Shop.Order"].IdleTtl).IsEqualTo(TimeSpan.FromDays(90));
+    await Assert.That(options.Types["Shop.Order"].MaxAge).IsEqualTo(TimeSpan.FromDays(365));
+    await Assert.That(options.Types["Shop.Order"].Action).IsEqualTo(StreamLifecycleAction.Purge);
+    await Assert.That(options.Types["Shop.Ledger"].KeepTailVersions).IsEqualTo(1000L);
+    await Assert.That(options.Types["Shop.Ledger"].TenantByteCap).IsEqualTo(1073741824L);
+    await Assert.That(options.Types["Shop.Ledger"].Action).IsEqualTo(StreamLifecycleAction.Archive)
+      .Because("the default action archives: it is reversible and keeps the stream readable, as for a sealed stream");
+    await Assert.That(options.Types["Shop.Cart"].IdleTtl).IsNull();
+    await Assert.That(options.EndOfLifePolicies()).IsEquivalentTo([
+      new StreamEndOfLifePolicy("Shop.Aged", null, TimeSpan.FromDays(30), null, null, StreamLifecycleAction.Archive),
+      new StreamEndOfLifePolicy("Shop.Capped", null, null, null, 2048, StreamLifecycleAction.Archive),
+      new StreamEndOfLifePolicy("Shop.Ledger", null, null, 1000, 1073741824, StreamLifecycleAction.Archive),
+      new StreamEndOfLifePolicy("Shop.Order", TimeSpan.FromDays(90), TimeSpan.FromDays(365), null, null, StreamLifecycleAction.Purge),
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task ActionFor_IsTheTypesAction_OrArchive_AndEachActionMapsToItsDispositionAsync() {
+    var options = new StreamLifecycleOptions();
+    options.Types["Shop.Order"] = new StreamTypeLifecycleOptions { Action = StreamLifecycleAction.Compact };
+
+    await Assert.That(options.ActionFor("Shop.Order")).IsEqualTo(StreamLifecycleAction.Compact);
+    await Assert.That(options.ActionFor("Shop.Cart")).IsEqualTo(StreamLifecycleAction.Archive);
+    await Assert.That(options.ActionFor(null)).IsEqualTo(StreamLifecycleAction.Archive);
+    await Assert.That(StreamLifecycleAction.Archive.ToDisposition()).IsEqualTo(Whizbang.Core.Lifecycle.Disposition.Archive);
+    await Assert.That(StreamLifecycleAction.Compact.ToDisposition()).IsEqualTo(Whizbang.Core.Lifecycle.Disposition.Compact);
+    await Assert.That(StreamLifecycleAction.Purge.ToDisposition()).IsEqualTo(Whizbang.Core.Lifecycle.Disposition.Delete);
+  }
+
+  [Test]
+  [Arguments("IdleTtl", "00:00:00")]
+  [Arguments("IdleTtl", "-1.00:00:00")]
+  [Arguments("IdleTtl", "a while")]
+  [Arguments("MaxAge", "00:00:00")]
+  [Arguments("MaxAge", "old")]
+  [Arguments("KeepTailVersions", "0")]
+  [Arguments("KeepTailVersions", "-5")]
+  [Arguments("KeepTailVersions", "lots")]
+  [Arguments("TenantByteCap", "0")]
+  [Arguments("TenantByteCap", "1GB")]
+  [Arguments("Action", "Delete")]
+  [Arguments("Action", "2")]
+  [Arguments("Action", "")]
+  [Arguments("Action", "-1")]
+  [Arguments("Action", "Compact,Purge")]
+  public async Task APolicyValueThatCannotBeUsed_IsRefusedNamingTheKeyAndTheValueAsync(string setting, string value) {
+    var key = $"Whizbang:StreamLifecycle:Types:Shop.Order:{setting}";
+
+    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(_config((key, value)), new StreamLifecycleOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains(key);
+    await Assert.That(thrown.Message).Contains($"'{value}'");
+  }
+
+  [Test]
+  public async Task Action_CloseBooks_IsRefusedUntilClosingTheBooksShips_NamingItsIssueAsync() {
+    var thrown = await Assert.That(() => ArchiveOptionsBinder.Bind(
+        _config(("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "CloseBooks")), new StreamLifecycleOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains("Whizbang:StreamLifecycle:Types:Shop.Order:Action");
+    await Assert.That(thrown.Message).Contains("#1741")
+      .Because("closing the books is a planned action; a host that names it must learn it has not shipped, not have it read as another");
+    await Assert.That(thrown.Message).Contains("Archive, Compact, Purge");
+  }
+
+  [Test]
+  public async Task ThePolicyBoundaries_TheSmallestUsableValues_AreAcceptedAsync() {
+    var options = new StreamLifecycleOptions();
+
+    ArchiveOptionsBinder.Bind(_config(
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:IdleTtl", "00:00:01"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:MaxAge", "00:00:01"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:KeepTailVersions", "1"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:TenantByteCap", "1")), options);
+
+    await Assert.That(options.Types["Shop.Order"].IdleTtl).IsEqualTo(TimeSpan.FromSeconds(1));
+    await Assert.That(options.Types["Shop.Order"].MaxAge).IsEqualTo(TimeSpan.FromSeconds(1));
+    await Assert.That(options.Types["Shop.Order"].KeepTailVersions).IsEqualTo(1L);
+    await Assert.That(options.Types["Shop.Order"].TenantByteCap).IsEqualTo(1L);
   }
 }

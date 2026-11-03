@@ -156,6 +156,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         DefaultRouting: _defaultRouting(typeSymbol),
         // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
         IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
+        // #1740: the end-of-life policy of the streams an event opens. Only an event opens a stream.
+        StreamEndOfLife: kind == EVENT_KIND ? _streamEndOfLife(typeSymbol, clrTypeName) : null,
         IsSuperseding: isSuperseding,
         SupersedingKey: supersedingKey
     );
@@ -197,6 +199,34 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     }
     return false;
   }
+
+  private const string STREAM_END_OF_LIFE_ATTRIBUTE = "global::Whizbang.Core.Attributes.StreamEndOfLifeAttribute";
+  private const string STREAM_LIFECYCLE_ACTION = "global::Whizbang.Core.Archival.StreamLifecycleAction";
+
+  // [StreamEndOfLife] on the type or a base type (the attribute is inherited), rendered as the arguments of a
+  // StreamEndOfLifeDeclaration keyed by the CLR type name the ledger records as the stream type; null when none.
+  private static string? _streamEndOfLife(INamedTypeSymbol typeSymbol, string clrTypeName) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      var attribute = type.GetAttributes().FirstOrDefault(a =>
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, STREAM_END_OF_LIFE_ATTRIBUTE));
+      if (attribute is not null) {
+        var named = attribute.NamedArguments.ToDictionary(a => a.Key, a => a.Value.Value);
+        string text(string name) => named.TryGetValue(name, out var value) && value is string s ? _literal(s) : "null";
+        long number(string name) => named.TryGetValue(name, out var value)
+          ? System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture)
+          : 0L;
+        var action = named.TryGetValue("Action", out var raw)
+          ? System.Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture)
+          : 0;
+        return $"{_literal(clrTypeName)}, {text("IdleTtl")}, {text("MaxAge")}, {number("KeepTailVersions")}L, " +
+          $"{number("TenantByteCap")}L, ({STREAM_LIFECYCLE_ACTION}){action}";
+      }
+    }
+    return null;
+  }
+
+  // A C# string literal of the value.
+  private static string _literal(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
   private const string DEFAULT_ROUTING_ATTRIBUTE = "global::Whizbang.Core.Dispatch.DefaultRoutingAttribute";
   private const string DISPATCH_MODES = "global::Whizbang.Core.Dispatch.DispatchModes";
@@ -365,6 +395,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     foreach (var info in ordered.Where(i => i.IsTerminal)) {
       source.AppendLine($"    global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof({info.TypeName}));");
     }
+    // [StreamEndOfLife] (#1740), registered without DI so the lifecycle options start from it however they were built.
+    foreach (var info in ordered.Where(i => i.StreamEndOfLife is not null)) {
+      source.AppendLine($"    global::Whizbang.Core.Archival.StreamEndOfLifeDeclarations.Register(new global::Whizbang.Core.Archival.StreamEndOfLifeDeclaration({info.StreamEndOfLife}));");
+    }
     // [Superseding] (#1729), with a generated accessor for its [SupersedingKey], so the flag and the key are stamped on
     // every path without reflection.
     foreach (var info in ordered.Where(i => i.IsSuperseding)) {
@@ -469,6 +503,7 @@ internal sealed record MessageTypeCatalogEntryInfo(
     long? MaxPayloadBytes = null,
     string? DefaultRouting = null,
     bool IsTerminal = false,
+    string? StreamEndOfLife = null,
     bool IsSuperseding = false,
     string? SupersedingKey = null
 );

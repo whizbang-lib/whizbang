@@ -387,7 +387,23 @@ Original slice text:
 
 ### S11. B1: policy-driven end-of-life
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S3 and S5.
+**Status (2026-11-02):** implemented on `feat/1740-storage` (#1740), migration `297_StreamEndOfLifePolicies.sql`, by
+configuration only (the attribute and registration builder are an open question for the owner, see below). As built:
+
+- `Whizbang:StreamLifecycle:Enabled` (default `false`) turns on the triggers; per type `IdleTtl`, `MaxAge`,
+  `TenantByteCap`, `KeepTailVersions` and `Action` (`Archive` default, `Compact`, `Purge`; `CloseBooks` refused at start
+  naming #1741). A type's `Action` is also the disposition of its sealed streams (`wh_due_stream_dispositions` now
+  returns the stream type), so finalized plus grace is one of the type's triggers.
+- `wh_stream_policy_candidates` reads only the ledger (no new index): Active, unsealed, unscheduled streams of a
+  policy's type, first trigger of idle (from the end of the newest append's hour), age (exact), tenant byte cap (per type
+  and tenant, null tenant one group, least recently appended go until the newest fit), version cap (above
+  `truncated_through_version`, a new unindexed column written by the step after a cut); least recently appended first,
+  at most `SweepBatchSize`.
+- Whole-stream picks go the S5 way (readiness, final snapshot, hook with `IdleTtlElapsed`, `MaxAgeReached` or
+  `TenantByteCapExceeded`); an archive does not seal; a purge, or a compaction that will run, first seals with
+  `wh_seal_stream_if_unchanged` (append lock, version unchanged), so a stream revived since the pick is left open.
+  The version cap goes through `IStreamPrefixTruncator` with the new `DestructionReason.VersionCapExceeded`.
+- Not built: the "explicit" trigger (finalize and truncate already are), the attribute and builder.
 
 - **Change.** A stream type declares a lifecycle policy (attribute plus a registration builder,
   source-generated), overridable from config. Triggers: sliding idle TTL, absolute age,

@@ -3,9 +3,11 @@
   "types": [
     {
       "pinnedId": "b6f3c2a1-7d84-4e59-9c0b-2a1f8e6d3b70",
-      "clrTypeName": "Whizbang.Core.Archival.ScheduledStreamClose",
+      "clrTypeName": "Whizbang.Core.Archival.ScheduledPrefixTruncate",
       "kind": "command",
-      "formerNames": []
+      "formerNames": [
+        "Whizbang.Core.Archival.ScheduledStreamClose"
+      ]
     },
     {
       "pinnedId": "5b8636e8-5c28-4520-8013-bf1e95b7f783",

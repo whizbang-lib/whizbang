@@ -33,7 +33,19 @@ public enum DestructionReason {
   PeriodClose = 4,
 
   /// <summary>A sealed stream's grace (<c>Whizbang:StreamLifecycle:FinalizeGrace</c>) has passed (#1734).</summary>
-  FinalizeGraceElapsed = 5
+  FinalizeGraceElapsed = 5,
+
+  /// <summary>Nothing has been appended to the stream for its type's <c>IdleTtl</c> (#1740).</summary>
+  IdleTtlElapsed = 6,
+
+  /// <summary>The stream's first append is older than its type's <c>MaxAge</c> (#1740).</summary>
+  MaxAgeReached = 7,
+
+  /// <summary>The open streams of the stream's type in its tenant hold more than the type's <c>TenantByteCap</c> (#1740).</summary>
+  TenantByteCapExceeded = 8,
+
+  /// <summary>The stream holds more hot versions than its type's <c>KeepTailVersions</c>; its prefix goes (#1740).</summary>
+  VersionCapExceeded = 9
 }
 
 /// <summary>

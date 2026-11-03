@@ -45,6 +45,22 @@ public interface IStreamPrefixTruncator {
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// <see cref="TruncateAsync(Guid, long, Disposition, CancellationToken)"/> for a reason other than a period close (#1740):
+  /// the hook and the destruction stages see <paramref name="reason"/>, for example
+  /// <see cref="DestructionReason.VersionCapExceeded"/> when an end-of-life policy's version cap cuts the prefix.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="throughVersion">The last version removed.</param>
+  /// <param name="disposition">What happens to the detail, unless the PreDestruction hook returns another.</param>
+  /// <param name="reason">Why the prefix goes, as the hook sees it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The truncate's outcome.</returns>
+  /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+  Task<StreamTruncateResult> TruncateAsync(
+    Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -69,10 +85,15 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
+  public Task<StreamTruncateResult> TruncateAsync(
+      Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) =>
+    TruncateAsync(streamId, throughVersion, disposition, DestructionReason.PeriodClose, cancellationToken);
+
+  /// <inheritdoc />
   public async Task<StreamTruncateResult> TruncateAsync(
-      Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) {
+      Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default) {
     var context = new DestructionContext {
-      Reason = DestructionReason.PeriodClose,
+      Reason = reason,
       Granularity = DestructionGranularity.Stream,
       StreamId = streamId,
       ThroughVersion = throughVersion,

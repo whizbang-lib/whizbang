@@ -14,7 +14,7 @@ namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// The maintenance step that disposes of sealed streams once their grace has passed (#1734, WS-3 S5), routing on the
-/// disposition (#1735, WS-3 S6).
+/// disposition (#1735, WS-3 S6), and that carries out the end-of-life policies of each stream type (#1740, WS-3 S11).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,10 +28,18 @@ namespace Whizbang.Core.Lifecycle;
 /// snapshots its row at the cursor's event (<see cref="IPerspectiveRunner.BootstrapSnapshotAsync"/>), which is where an
 /// <see cref="AppendToArchivedPolicy.NewGeneration"/> append resumes it. Then the <see cref="IDestructionHook"/> decides:
 /// a cancel defers for the backoff, a defer moves the due time to its instant, a throw defers. Otherwise the disposition
-/// it returns runs, or <see cref="Disposition.Archive"/> when it names none: Archive writes the whole stream through the
-/// <see cref="IArchiveStore"/>; Delete purges it (<see cref="IStreamPurger"/>); Compact runs the registered
-/// <see cref="ICompactionHandler"/> and then purges; CryptoShred, and Compact with no handler, defer and log why. A
-/// disposition that ran clears the schedule and fires the PostDestruction hook; one that did not defers.
+/// it returns runs, or the stream type's <see cref="StreamTypeLifecycleOptions.Action"/> (Archive by default) when it
+/// names none: Archive writes the whole stream through the <see cref="IArchiveStore"/>; Delete purges it
+/// (<see cref="IStreamPurger"/>); Compact runs the registered <see cref="ICompactionHandler"/> and then purges;
+/// CryptoShred, and Compact with no handler, defer and log why. A disposition that ran clears the schedule and fires the
+/// PostDestruction hook; one that did not defers.
+/// </para>
+/// <para>
+/// When <see cref="StreamLifecycleOptions.Enabled"/> is set and a stream type declares a trigger, the run then asks the
+/// ledger which open streams a trigger picks (<see cref="IStreamDispositionLedger.GetPolicyCandidatesAsync"/>). A stream
+/// picked whole (idle, age, tenant byte cap) goes the way a due sealed stream does, with the trigger's reason; a purge or
+/// a compaction first seals it, only if nothing was appended since it was picked. A stream over its version cap has its
+/// prefix cut by the <see cref="IStreamPrefixTruncator"/>, and the cut is recorded.
 /// </para>
 /// <para>
 /// It runs in the maintenance cycle, so under the maintainer duty when role assignment manages it. One stream's failure
@@ -43,6 +51,8 @@ namespace Whizbang.Core.Lifecycle;
 public sealed partial class StreamDispositionStep : IMaintenanceStep {
   /// <summary>The step's name in logs.</summary>
   public const string STEP_NAME = "stream-disposition";
+
+  private static readonly IReadOnlyDictionary<Guid, StreamDispositionReadiness> _noReadiness = new Dictionary<Guid, StreamDispositionReadiness>();
 
   private readonly TimeProvider _timeProvider;
   private readonly ILogger _logger;
@@ -76,70 +86,172 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    var ledger = services.GetRequiredService<IStreamDispositionLedger>();
-    var lifecycle = services.GetRequiredService<IOptions<StreamLifecycleOptions>>().Value;
-    var backoff = TimeSpan.FromSeconds(services.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.DestructionRetryBackoffSeconds);
-    var now = _timeProvider.GetUtcNow();
-    _ = await ledger.ScheduleAsync(lifecycle.FinalizeGrace, lifecycle.SweepBatchSize, now, cancellationToken).ConfigureAwait(false);
-    foreach (var due in await ledger.GetDueAsync(now, lifecycle.SweepBatchSize, cancellationToken).ConfigureAwait(false)) {
-      try {
-        await _disposeAsync(services, ledger, due, now + backoff, cancellationToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogDispositionThrew(_logger, due.StreamId, ex);
-        await ledger.SetDueAsync(due.StreamId, now + backoff, cancellationToken).ConfigureAwait(false);
-      }
+    var run = new Run(
+      services,
+      services.GetRequiredService<IStreamDispositionLedger>(),
+      services.GetRequiredService<IOptions<StreamLifecycleOptions>>().Value,
+      _timeProvider.GetUtcNow(),
+      TimeSpan.FromSeconds(services.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.DestructionRetryBackoffSeconds));
+    _ = await run.Ledger.ScheduleAsync(run.Lifecycle.FinalizeGrace, run.Lifecycle.SweepBatchSize, run.Now, cancellationToken).ConfigureAwait(false);
+    foreach (var due in await run.Ledger.GetDueAsync(run.Now, run.Lifecycle.SweepBatchSize, cancellationToken).ConfigureAwait(false)) {
+      await _guardedAsync(run, due.StreamId, () => _disposeAsync(run, due, cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
+    if (run.Lifecycle.Enabled && run.Lifecycle.EndOfLifePolicies() is { Count: > 0 } policies) {
+      await _applyPoliciesAsync(run, policies, cancellationToken).ConfigureAwait(false);
     }
   }
 
-  // Runs one due stream and writes its next due time: cleared when its disposition ran (or it was done already), before
-  // the PostDestruction hook, so a slow or failing notification never leaves a disposed stream scheduled; otherwise when
-  // to try again.
-  private async Task _disposeAsync(
-      IServiceProvider services, IStreamDispositionLedger ledger, DueStreamDisposition due, DateTimeOffset retryAt, CancellationToken ct) {
-    if (due.Readiness == StreamDispositionReadiness.Done) {
-      await ledger.SetDueAsync(due.StreamId, null, ct).ConfigureAwait(false);
-      return;
-    }
-    if (due.Readiness != StreamDispositionReadiness.Ready) {
-      LogNotReady(_logger, due.StreamId, due.Readiness, retryAt);
-      await ledger.SetDueAsync(due.StreamId, retryAt, ct).ConfigureAwait(false);
-      return;
-    }
-    await _takeFinalSnapshotsAsync(services, ledger, due.StreamId, ct).ConfigureAwait(false);
+  // What one run reads once and every stream shares.
+  private sealed record Run(
+      IServiceProvider Services, IStreamDispositionLedger Ledger, StreamLifecycleOptions Lifecycle, DateTimeOffset Now, TimeSpan Backoff) {
+    public DateTimeOffset RetryAt => Now + Backoff;
+  }
 
+  // A stream an end-of-life policy picked open: it is sealed before a purge or a compaction, only at the version seen.
+  private sealed record OpenStreamGuard(long LastVersion, StreamEndOfLifeTrigger Trigger);
+
+  // One stream's work: a failure is logged and the stream deferred for the backoff; a shutdown propagates.
+  private async Task _guardedAsync(Run run, Guid streamId, Func<Task> work, CancellationToken ct) {
+    try {
+      await work().ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogDispositionThrew(_logger, streamId, ex);
+      await run.Ledger.SetDueAsync(streamId, run.RetryAt, ct).ConfigureAwait(false);
+    }
+  }
+
+  // A due sealed stream: cleared when it is done already, deferred while it cannot go, otherwise destroyed by its type's
+  // declared disposition.
+  private async Task _disposeAsync(Run run, DueStreamDisposition due, CancellationToken ct) {
+    if (due.Readiness == StreamDispositionReadiness.Done) {
+      await run.Ledger.SetDueAsync(due.StreamId, null, ct).ConfigureAwait(false);
+      return;
+    }
     var context = new DestructionContext {
       Reason = DestructionReason.FinalizeGraceElapsed,
       Granularity = DestructionGranularity.Stream,
       StreamId = due.StreamId,
-      DeclaredDefault = Disposition.Archive,
+      DeclaredDefault = run.Lifecycle.ActionFor(due.StreamType).ToDisposition(),
     };
-    var hook = services.GetService<IDestructionHook>();
+    await _destroyAsync(run, context, due.Readiness, guard: null, ct).ConfigureAwait(false);
+  }
+
+  // The end-of-life policies: the streams a trigger picks, whole or by their prefix.
+  private async Task _applyPoliciesAsync(Run run, IReadOnlyList<StreamEndOfLifePolicy> policies, CancellationToken ct) {
+    var candidates = await run.Ledger.GetPolicyCandidatesAsync(policies, run.Now, run.Lifecycle.SweepBatchSize, ct).ConfigureAwait(false);
+    var whole = candidates.Where(c => c.Trigger != StreamEndOfLifeTrigger.VersionCap).Select(c => c.StreamId).ToList();
+    var readiness = whole.Count == 0 ? _noReadiness : await run.Ledger.GetReadinessAsync(whole, ct).ConfigureAwait(false);
+    foreach (var candidate in candidates) {
+      await _guardedAsync(run, candidate.StreamId, () => candidate.Trigger == StreamEndOfLifeTrigger.VersionCap
+        ? _cutPrefixAsync(run, candidate, ct)
+        : _endWholeAsync(run, candidate, readiness.GetValueOrDefault(candidate.StreamId, StreamDispositionReadiness.Blocked), ct), ct)
+        .ConfigureAwait(false);
+    }
+  }
+
+  // A stream a whole-stream trigger picked: the trigger's reason, the type's action, and the seal guard.
+  private Task _endWholeAsync(Run run, StreamPolicyCandidate candidate, StreamDispositionReadiness readiness, CancellationToken ct) {
+    var context = new DestructionContext {
+      Reason = _reasonOf(candidate.Trigger),
+      Granularity = DestructionGranularity.Stream,
+      StreamId = candidate.StreamId,
+      DeclaredDefault = run.Lifecycle.ActionFor(candidate.StreamType).ToDisposition(),
+    };
+    return _destroyAsync(run, context, readiness, new OpenStreamGuard(candidate.LastVersion, candidate.Trigger), ct);
+  }
+
+  // A stream over its version cap: the truncator cuts the prefix (its own gates, hook and compaction), and a cut that
+  // happened is recorded so the next cycle counts only the versions above it.
+  private async Task _cutPrefixAsync(Run run, StreamPolicyCandidate candidate, CancellationToken ct) {
+    if (run.Services.GetService<IStreamPrefixTruncator>() is not { } truncator) {
+      LogNoTruncator(_logger, candidate.StreamId, run.RetryAt);
+      await run.Ledger.SetDueAsync(candidate.StreamId, run.RetryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    var through = candidate.ThroughVersion!.Value;
+    var result = await truncator.TruncateAsync(
+      candidate.StreamId, through, run.Lifecycle.ActionFor(candidate.StreamType).ToDisposition(), DestructionReason.VersionCapExceeded, ct)
+      .ConfigureAwait(false);
+    if (string.Equals(result.Status, "truncated", StringComparison.Ordinal)) {
+      await run.Ledger.SetTruncatedThroughAsync(candidate.StreamId, through, ct).ConfigureAwait(false);
+      return;
+    }
+    LogPrefixNotCut(_logger, candidate.StreamId, through, result.Status, run.RetryAt);
+    await run.Ledger.SetDueAsync(candidate.StreamId, run.RetryAt, ct).ConfigureAwait(false);
+  }
+
+  // Destroys one stream: deferred while it cannot go; otherwise its final snapshot, the PreDestruction hook, the seal
+  // guard of a stream picked open, the disposition, and the PostDestruction hook. The schedule is cleared before the
+  // PostDestruction hook, so a slow or failing notification never leaves a disposed stream scheduled.
+  private async Task _destroyAsync(Run run, DestructionContext context, StreamDispositionReadiness readiness, OpenStreamGuard? guard, CancellationToken ct) {
+    var streamId = context.StreamId!.Value;
+    if (readiness != StreamDispositionReadiness.Ready) {
+      LogNotReady(_logger, streamId, readiness, run.RetryAt);
+      await run.Ledger.SetDueAsync(streamId, run.RetryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    await _takeFinalSnapshotsAsync(run.Services, run.Ledger, streamId, ct).ConfigureAwait(false);
+
+    var hook = run.Services.GetService<IDestructionHook>();
     var decision = hook is null
       ? DestructionResult.Proceed()
       : await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
     if (decision.Cancel || decision.DeferUntil.HasValue) {
-      var until = decision.DeferUntil ?? retryAt;
-      LogVetoed(_logger, due.StreamId, until);
-      await ledger.SetDueAsync(due.StreamId, until, ct).ConfigureAwait(false);
+      var until = decision.DeferUntil ?? run.RetryAt;
+      LogVetoed(_logger, streamId, until);
+      await run.Ledger.SetDueAsync(streamId, until, ct).ConfigureAwait(false);
       return;
     }
-    if (!await _runAsync(services, decision.Disposition ?? context.DeclaredDefault, context, ct).ConfigureAwait(false)) {
-      await ledger.SetDueAsync(due.StreamId, retryAt, ct).ConfigureAwait(false);
+    var disposition = decision.Disposition ?? context.DeclaredDefault;
+    if (guard is not null && !await _sealIfStillUnchangedAsync(run, streamId, disposition, guard, ct).ConfigureAwait(false)) {
       return;
     }
-    await ledger.SetDueAsync(due.StreamId, null, ct).ConfigureAwait(false);
+    if (!await _runAsync(run.Services, disposition, context, ct).ConfigureAwait(false)) {
+      await run.Ledger.SetDueAsync(streamId, run.RetryAt, ct).ConfigureAwait(false);
+      return;
+    }
+    await run.Ledger.SetDueAsync(streamId, null, ct).ConfigureAwait(false);
     if (hook is not null) {
-      try {
-        await hook.OnAfterDestructionAsync(context, ct).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPostHookThrew(_logger, due.StreamId, ex);
-      }
+      await _announceAsync(hook, context, ct).ConfigureAwait(false);
     }
   }
+
+  // PostDestruction: a failure is logged and changes nothing, because the disposition already ran.
+  private async Task _announceAsync(IDestructionHook hook, DestructionContext context, CancellationToken ct) {
+    try {
+      await hook.OnAfterDestructionAsync(context, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPostHookThrew(_logger, context.StreamId!.Value, ex);
+    }
+  }
+
+  // A purge, or a compaction that will run, of a stream picked open seals it first, and only when nothing was appended
+  // since it was picked: an append in between is stored before the seal (which is then refused) or refused by it, so it is
+  // never purged unseen. An archive is reversible and its stream may be appended to again under its AppendToArchived
+  // policy, so it is not sealed. True when the disposition may run.
+  private async Task<bool> _sealIfStillUnchangedAsync(Run run, Guid streamId, Disposition disposition, OpenStreamGuard guard, CancellationToken ct) {
+    var destroysDetail = disposition == Disposition.Delete
+      || (disposition == Disposition.Compact && run.Services.GetService<ICompactionHandler>() is not null);
+    if (!destroysDetail) {
+      return true;
+    }
+    var reason = $"End-of-life policy ({guard.Trigger}): the stream is {(disposition == Disposition.Delete ? "purged" : "compacted")}";
+    if (await run.Ledger.SealIfUnchangedAsync(streamId, guard.LastVersion, reason, run.Now, ct).ConfigureAwait(false)) {
+      return true;
+    }
+    LogAppendedSincePicked(_logger, streamId, guard.Trigger);
+    return false;
+  }
+
+  private static DestructionReason _reasonOf(StreamEndOfLifeTrigger trigger) => trigger switch {
+    StreamEndOfLifeTrigger.MaxAge => DestructionReason.MaxAgeReached,
+    StreamEndOfLifeTrigger.TenantByteCap => DestructionReason.TenantByteCapExceeded,
+    _ => DestructionReason.IdleTtlElapsed,
+  };
 
   // The final snapshot: each perspective with a cursor on the stream that this host can run snapshots its row at the
   // cursor's event. A perspective this host has no runner for, or a cursor at no event, is skipped; a NewGeneration
@@ -170,11 +282,11 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
           return written.Archived;
         }
       case Disposition.Delete:
-        await _purgeAsync(services, streamId, ct).ConfigureAwait(false);
+        await _purgeAsync(services, streamId, context.Reason, ct).ConfigureAwait(false);
         return true;
       case Disposition.Compact when services.GetService<ICompactionHandler>() is { } compactor:
         await compactor.CompactAsync(context, ct).ConfigureAwait(false);
-        await _purgeAsync(services, streamId, ct).ConfigureAwait(false);
+        await _purgeAsync(services, streamId, context.Reason, ct).ConfigureAwait(false);
         return true;
       default:
         LogUnavailable(_logger, streamId, disposition,
@@ -183,28 +295,44 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
     }
   }
 
-  private static Task<StreamPurgeReport> _purgeAsync(IServiceProvider services, Guid streamId, CancellationToken ct) =>
+  private static Task<StreamPurgeReport> _purgeAsync(IServiceProvider services, Guid streamId, DestructionReason reason, CancellationToken ct) =>
     services.GetRequiredService<IStreamPurger>().PurgeAsync(new StreamPurgeRequest {
       StreamIds = [streamId],
       RequestedBy = STEP_NAME,
-      Reason = "The sealed stream's FinalizeGrace passed and its disposition purges it",
+      Reason = _purgeReason(reason),
     }, ct);
 
-  [LoggerMessage(Level = LogLevel.Debug, Message = "Disposition of sealed stream {StreamId} deferred until {RetryAt}: {Readiness}")]
+  private static string _purgeReason(DestructionReason reason) => reason switch {
+    DestructionReason.IdleTtlElapsed => "Nothing was appended to the stream for its type's IdleTtl, and its end-of-life action purges it",
+    DestructionReason.MaxAgeReached => "The stream's first append is older than its type's MaxAge, and its end-of-life action purges it",
+    DestructionReason.TenantByteCapExceeded => "The tenant's streams of the type exceed its TenantByteCap, and its end-of-life action purges it",
+    _ => "The sealed stream's FinalizeGrace passed and its disposition purges it",
+  };
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Disposition of stream {StreamId} deferred until {RetryAt}: {Readiness}")]
   static partial void LogNotReady(ILogger logger, Guid streamId, StreamDispositionReadiness readiness, DateTimeOffset retryAt);
 
-  [LoggerMessage(Level = LogLevel.Information, Message = "Disposition of sealed stream {StreamId} deferred by the PreDestruction hook until {Until}")]
+  [LoggerMessage(Level = LogLevel.Information, Message = "Disposition of stream {StreamId} deferred by the PreDestruction hook until {Until}")]
   static partial void LogVetoed(ILogger logger, Guid streamId, DateTimeOffset until);
 
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Archiving sealed stream {StreamId} was refused ({Status}); its disposition is deferred")]
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Archiving stream {StreamId} was refused ({Status}); its disposition is deferred")]
   static partial void LogArchiveRefused(ILogger logger, Guid streamId, string status);
 
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Sealed stream {StreamId} kept: its disposition is {Disposition}, which cannot run: {Reason}")]
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {StreamId} kept: its disposition is {Disposition}, which cannot run: {Reason}")]
   static partial void LogUnavailable(ILogger logger, Guid streamId, Disposition disposition, string reason);
 
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Disposition of sealed stream {StreamId} failed and is deferred")]
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Disposition of stream {StreamId} failed and is deferred")]
   static partial void LogDispositionThrew(ILogger logger, Guid streamId, Exception exception);
 
-  [LoggerMessage(Level = LogLevel.Warning, Message = "PostDestruction hook threw for sealed stream {StreamId}; its disposition already ran")]
+  [LoggerMessage(Level = LogLevel.Warning, Message = "PostDestruction hook threw for stream {StreamId}; its disposition already ran")]
   static partial void LogPostHookThrew(ILogger logger, Guid streamId, Exception exception);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Stream {StreamId} picked by its {Trigger} trigger was appended to since; it is left open")]
+  static partial void LogAppendedSincePicked(ILogger logger, Guid streamId, StreamEndOfLifeTrigger trigger);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {StreamId} is over its version cap, but no IStreamPrefixTruncator is registered; deferred until {RetryAt}")]
+  static partial void LogNoTruncator(ILogger logger, Guid streamId, DateTimeOffset retryAt);
+
+  [LoggerMessage(Level = LogLevel.Information, Message = "Stream {StreamId} is over its version cap; the cut through {ThroughVersion} did not happen ({Status}) and is deferred until {RetryAt}")]
+  static partial void LogPrefixNotCut(ILogger logger, Guid streamId, long throughVersion, string status, DateTimeOffset retryAt);
 }
