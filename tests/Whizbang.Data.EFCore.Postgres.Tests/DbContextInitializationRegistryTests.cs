@@ -262,6 +262,36 @@ public class DbContextInitializationRegistryTests {
   }
 
   /// <summary>
+  /// The window behind the flake in #2019, held open on purpose: the first call's attempt completes, then the first call
+  /// still logs that initialization is complete before its own task completes. The first call's logger parks in that log
+  /// line, so the window stays open for as long as the test needs.
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsWhenTheInitializationFinishes_NotWhenTheFirstCallReturnsAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      entered.TrySetResult();
+      await release.Task;
+    });
+    var host = new FakeServiceProvider();
+    using var parked = new ParkingLogger("All Whizbang DbContext(s) initialized successfully");
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(host, parked);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host);
+    release.TrySetResult();
+    await parked.Reached;
+
+    await second;
+    await Assert.That(first.IsCompletedSuccessfully).IsTrue()
+      .Because("this is what the flaky test asserted: that the first call had returned when the second did");
+
+    parked.Release();
+    await first;
+  }
+
+  /// <summary>
   /// A second call that waited for a first attempt that failed does not report success: it runs an attempt of its
   /// own, and returns only when that one has finished.
   /// </summary>
@@ -404,6 +434,37 @@ public class DbContextInitializationRegistryTests {
 
   private sealed class FakeServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
+  }
+
+  /// <summary>
+  /// A logger that parks the thread writing <paramref name="message"/> until <see cref="Release"/>, and says when it got
+  /// there, so a window that opens after that log line stays open for as long as a test needs.
+  /// </summary>
+  private sealed class ParkingLogger(string message) : ILogger, IDisposable {
+    private readonly string _message = message;
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ManualResetEventSlim _gate = new();
+
+    /// <summary>Completes when the parked message is being written.</summary>
+    public Task Reached => _reached.Task;
+
+    /// <summary>Lets the parked writer go on.</summary>
+    public void Release() => _gate.Set();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (formatter(state, exception) != _message) {
+        return;
+      }
+      _reached.TrySetResult();
+      _gate.Wait();
+    }
+
+    public void Dispose() {
+      _gate.Set();
+      _gate.Dispose();
+    }
   }
 
   private sealed class ListLogger(List<string> sink) : ILogger {
