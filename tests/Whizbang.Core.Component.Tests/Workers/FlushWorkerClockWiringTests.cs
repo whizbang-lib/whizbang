@@ -21,10 +21,11 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// Each worker is resolved through the library's own registration with a fake clock registered as the host's
-/// <see cref="TimeProvider"/>. One enqueued item opens the flusher's coalesce window: it is armed on the registered
-/// clock, or the wait for it never ends and the test fails at its timeout. The schema gate is never opened, so the
-/// flush that closing the window starts parks on it; stopping the worker then arms the drain bound on the same clock,
-/// and moving the clock past it is what lets the stop finish.
+/// <see cref="TimeProvider"/>. The worker is started first, since its flusher starts with it (#1636). One enqueued
+/// item opens the flusher's coalesce window: it is armed on the registered clock, or the wait for it never ends and
+/// the test fails at its timeout. No coordinator is registered, so the flush that closing the window starts fails into
+/// its retry backoff; stopping the worker then arms the drain bound on the same clock, and moving the clock past it is
+/// what lets the stop finish.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxCompletionFlushWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveCompletionFlushWorker.cs</code-under-test>

@@ -25,9 +25,20 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public sealed class InboxHandlerWorkerQueueDepthTests {
 
-  private sealed class NeverCommits : IWorkCoordinator {
-    public Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) =>
-      throw new InvalidOperationException("the schema gate is never opened in this test, so no flush reaches the coordinator");
+  /// <summary>Holds the first commit open until released, and says when a flush has taken up a batch.</summary>
+  private sealed class HoldsTheFirstCommit : IWorkCoordinator {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+
+    public void Release() => _release.TrySetResult();
+
+    public async Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) {
+      _entered.TrySetResult();
+      await _release.Task.WaitAsync(cancellationToken);
+      return [];
+    }
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -51,13 +62,16 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
     InboxCompletion: new HandlerInboxCompletion(Guid.CreateVersion7(), 2));
 
   [Test]
-  public async Task QueuedHandlerCommits_AreObservableAsAGauge_UntilTheyCommitAsync() {
+  [Timeout(30000)]
+  public async Task QueuedHandlerCommits_AreObservableAsAGauge_UntilTheyCommitAsync(CancellationToken cancellationToken) {
     using var factory = new TestMeterFactory();
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
-    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(new NeverCommits());
+    var coordinator = new HoldsTheFirstCommit();
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator);
     await using var sp = services.BuildServiceProvider();
-    // The gate is never marked ready, so a flush blocks holding its batch: the requests are either still
-    // in the channel or taken up by the flusher, and the gauge must count them either way.
+    // The worker is started, so its flusher runs (#1636: a flusher that never started flushes nothing, and every
+    // request would sit in the channel). The coordinator holds the first commit open, so while it is held the
+    // requests are either taken up by that flush or still in the channel, and the gauge must count them either way.
     var worker = new InboxHandlerWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       failureChannel: new NoFailures(),
@@ -67,12 +81,21 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
       inboxChannelWriter: new InboxChannelWriter(),
       metrics: metrics);
 
-    await worker.EnqueueAsync(_request());
-    await worker.EnqueueAsync(_request());
-    await worker.EnqueueAsync(_request());
+    await worker.StartAsync(cancellationToken);
+    await worker.EnqueueAsync(_request(), cancellationToken);
+    await worker.EnqueueAsync(_request(), cancellationToken);
+    await worker.EnqueueAsync(_request(), cancellationToken);
+    // A flush has taken up a batch and is held in the commit: at least one request is now out of the channel.
+    await coordinator.Entered.WaitAsync(cancellationToken);
 
     var meter = factory.CreatedMeters.Single(m => m.Name == WorkCoordinatorMetrics.METER_NAME);
-    await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.work_coordinator.handler_commits.queued")).IsEqualTo(3)
-      .Because("three handler results are dispatched and uncommitted; a queue that holds work invisibly is how memory climbs with nothing on a dashboard to say where (#740)");
+    var queued = ProbeMeterReader.ReadTotal(meter, "whizbang.work_coordinator.handler_commits.queued");
+    coordinator.Release();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(queued).IsEqualTo(3)
+      .Because("three handler results are dispatched and uncommitted, one batch of them in a commit that has not "
+             + "returned; a queue that holds work invisibly is how memory climbs with nothing on a dashboard to say "
+             + "where (#740)");
   }
 }
