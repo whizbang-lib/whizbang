@@ -1185,6 +1185,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A serial executor's caller is always resumed, and with its own state, when its work completes as it starts
+  waiting.** The pooled value-task source a `SerialExecutor` returns each result through handed completion from the
+  worker thread to the awaiting thread through plain fields: one side wrote the result and looked for a continuation,
+  the other registered a continuation and looked for the result, with no fence between. On arm64 both could read
+  before either write was visible, so nobody resumed the caller and it waited forever (about one in 50,000
+  completions on an arm64 machine), or the continuation ran without its state, an unhandled exception on a pool
+  thread. Completion and registration now meet in one atomic exchange, so exactly one side runs the continuation,
+  once, with its state; a refused second registration leaves the first one's state in place.
 - **Nothing claims work before the instance's row says it is eligible (part of #1636).** The data plane starts only
   once the row records Accept commands: a failed write keeps it waiting until the next accepted heartbeat writes the
   held stage. `IWorkCoordinator.RecordsInstanceTransitions` (false by default, true for the EF Core and Dapper drivers)
