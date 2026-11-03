@@ -8,6 +8,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -17,6 +19,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// unparseable recorded version cannot outrank anything.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresStartupAssessor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/StoredFormSettlement.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
@@ -26,7 +30,7 @@ public class StartupAssessorTests : EFCoreTestBase {
 
   [Test]
   public async Task EmptyLedger_VerdictIsMigrateAsync() {
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("0.9.4", []);
+    var assessment = PostgresStartupAssessment.ComputeVerdict("0.9.4", []);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Migrate)
       .Because("a fresh database is this instance's to migrate — contend for the duty");
   }
@@ -37,7 +41,7 @@ public class StartupAssessorTests : EFCoreTestBase {
   [Arguments("1.0.0", "1.0.0-rc.1")]
   [Arguments("1.0.0-alpha.10", "1.0.0-alpha.2")]
   public async Task OnlyOlderOrSameRecorded_VerdictIsServeAsync(string mine, string recorded) {
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict(mine, [recorded]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict(mine, [recorded]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Serve);
   }
 
@@ -46,7 +50,7 @@ public class StartupAssessorTests : EFCoreTestBase {
   [Arguments("1.0.0-rc.1", "1.0.0")]
   [Arguments("1.0.0-alpha.2", "1.0.0-alpha.10")]
   public async Task AnyNewerRecorded_VerdictIsStandDownAsync(string mine, string recorded) {
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict(mine, ["0.0.1", recorded]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict(mine, ["0.0.1", recorded]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
       .Because("numeric pre-release identifiers compare numerically — alpha.10 is newer than "
              + "alpha.2, and being wrong here means migrating when the instance must stand down");
@@ -58,7 +62,7 @@ public class StartupAssessorTests : EFCoreTestBase {
     // driver now closes on its own; an unparseable value is a genuine ambiguity. Both stand down,
     // but the reason must say which one happened — a hang with "(none) is unreadable" cost a
     // process dump to diagnose (issue #619).
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict(null, ["0.9.4"]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict(null, ["0.9.4"]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
       .Because("with no version to compare, migrating would be a guess — stand down, as before");
     await Assert.That(assessment.Reason).Contains("ILibraryVersionProvider")
@@ -67,7 +71,7 @@ public class StartupAssessorTests : EFCoreTestBase {
 
   [Test]
   public async Task UnparseableOwnVersion_RefusesRatherThanGuessesAsync() {
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("not-a-version", ["0.9.4"]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict("not-a-version", ["0.9.4"]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
       .Because("an unparseable version is not guessed at — every wrong answer here is worse "
              + "than stopping");
@@ -75,7 +79,7 @@ public class StartupAssessorTests : EFCoreTestBase {
 
   [Test]
   public async Task UnparseableRecordedVersion_CannotOutrankAnythingAsync() {
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("0.9.4", ["garbage", "0.9.3"]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict("0.9.4", ["garbage", "0.9.3"]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Serve)
       .Because("unreadable history does not block — the same stance the ledger guard takes");
   }
@@ -84,7 +88,7 @@ public class StartupAssessorTests : EFCoreTestBase {
   public async Task OnlyUnreadableRecordedVersions_ServeAndSayTheHistoryWasUnreadableAsync() {
     // Every recorded version is unreadable, so there is no newest to compare against. That still
     // serves, and the reason must say why rather than naming a recorded version that does not exist.
-    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("0.9.4", ["garbage", "also-garbage"]);
+    var assessment = PostgresStartupAssessment.ComputeVerdict("0.9.4", ["garbage", "also-garbage"]);
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Serve);
     await Assert.That(assessment.Reason).Contains("only unreadable versions recorded");
@@ -113,27 +117,119 @@ public class StartupAssessorTests : EFCoreTestBase {
 
     // And a binary far in the future outranks everything recorded.
     var serve = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
-    await Assert.That(serve.Verdict).IsEqualTo(StartupVerdict.Serve);
+    await Assert.That(serve.Verdict).IsNotEqualTo(StartupVerdict.StandDown);
   }
 
   /// <summary>
-  /// On a fresh database the assessment can read the ledger while the first migration is still creating it:
-  /// the table exists and its <c>owner</c> column does not yet. That failed the step with 42703, and a failed
-  /// blocking step keeps the instance from ever reporting ready. A ledger without the column records no
-  /// framework version, so there is nothing newer to stand down for: migrate.
+  /// #1992: a schema with nothing to apply and nothing left to convert is Current, the verdict that skips the election
+  /// and the migration locks. Two initializations: the first creates and converts, the second settles.
   /// </summary>
   [Test]
+  [Timeout(120000)]
+  public async Task AnUpToDateSchema_IsCurrent_AndOneWithWorkPending_IsServeAsync(CancellationToken cancellationToken) {
+    await _initializeTwiceAsync(cancellationToken);
+
+    var current = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
+    await Assert.That(current.Verdict).IsEqualTo(StartupVerdict.Current)
+      .Because("the same lock-free checks the fast path makes find nothing to do");
+
+    await _execAsync("DELETE FROM wh_schema_migrations WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')", cancellationToken);
+    var pending = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
+    await Assert.That(pending.Verdict).IsEqualTo(StartupVerdict.Serve)
+      .Because("a migration this binary owes is work: the election and the pass run as they always have");
+  }
+
+  [Test]
   [Timeout(60000)]
-  public async Task ALedgerStillBeingCreated_VerdictIsMigrateAsync(CancellationToken cancellationToken) {
-    await using (var conn = new NpgsqlConnection(ConnectionString)) {
-      await conn.OpenAsync(cancellationToken);
-      await using var drop = new NpgsqlCommand("ALTER TABLE wh_schema_migrations DROP COLUMN owner CASCADE", conn);
-      await drop.ExecuteNonQueryAsync(cancellationToken);
-    }
+  public async Task ABrandNewDatabase_HasNoVersionRecord_AndMigratesAsync(CancellationToken cancellationToken) {
+    await _execAsync("DROP TABLE wh_schema_migrations CASCADE", cancellationToken);
 
     var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Migrate)
-      .Because("a ledger that is still being created records nothing newer than this binary");
+      .Because("no version record means nothing newer can exist: the bootstrap that follows is safe");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ALedgerWithNoVersionTable_RecordsNothingNewer_AndMigratesAsync(CancellationToken cancellationToken) {
+    await _execAsync("DROP TABLE wh_schema_versions CASCADE", cancellationToken);
+
+    var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Migrate);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task AVersionRecordThatCannotBeRead_IsNeverTakenForABrandNewDatabaseAsync(CancellationToken cancellationToken) {
+    await _execAsync("ALTER TABLE wh_schema_versions RENAME COLUMN library_version TO lib_version", cancellationToken);
+
+    await Assert.That(async () => await _assessorRunning("1.0.0").AssessAsync(cancellationToken))
+      .Throws<PostgresException>()
+      .Because("the record exists and cannot be read: the source turns that into a loud failure, never a blind migration");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task StoredForms_AreSettledOnlyWhenEveryLedgerSaysSoAsync(CancellationToken cancellationToken) {
+    await _execAsync("""
+      CREATE TABLE wh_per_settle_probe (id uuid PRIMARY KEY, status text, amount integer);
+      INSERT INTO wh_perspective_forms (table_name, temporal_form, applied_at, settled_at) VALUES ('wh_per_settled', 1, now(), now());
+      INSERT INTO wh_perspective_forms (table_name, temporal_form, applied_at, settled_at) VALUES ('wh_per_open', 1, now(), NULL);
+      INSERT INTO wh_stored_form_migrations (name, table_name, kind, first_applied_at, last_applied_at, rows_converted, settled_at)
+        VALUES ('m-settled', 'wh_per_settled', 'generated', now(), now(), 0, now()),
+               ('m-open', 'wh_per_open', 'generated', now(), now(), 0, NULL);
+      """, cancellationToken);
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    async Task<bool> settledAsync(string[] temporal, string[] journal, string[] physical) =>
+      await StoredFormSettlement.IsSettledAsync(connection, "public", temporal, journal, physical, cancellationToken);
+
+    await Assert.That(await settledAsync([], [], [])).IsTrue().Because("a model with nothing to convert has nothing pending");
+    await Assert.That(await settledAsync(["wh_per_settled"], ["m-settled"], ["enum-column:wh_per_settle_probe.amount"])).IsTrue();
+    await Assert.That(await settledAsync(["wh_per_open"], [], [])).IsFalse().Because("a temporal rewrite not yet settled");
+    await Assert.That(await settledAsync(["wh_per_never_seen"], [], [])).IsFalse().Because("a table the rewrite never recorded");
+    await Assert.That(await settledAsync([], ["m-open"], [])).IsFalse().Because("a stored-form migration not yet settled");
+    await Assert.That(await settledAsync([], ["m-never-declared"], [])).IsFalse();
+    await Assert.That(await settledAsync([], [], ["enum-column:wh_per_settle_probe.status"])).IsFalse()
+      .Because("an enum column still stored as text has its conversion pending");
+    await Assert.That(await settledAsync([], [], ["something-else:wh_per_settle_probe.amount"])).IsFalse()
+      .Because("a rewrite whose settledness cannot be read is never assumed settled");
+  }
+
+  private async Task _initializeTwiceAsync(CancellationToken cancellationToken) {
+    for (var i = 0; i < 2; i++) {
+      await using var context = CreateDbContext();
+      await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+    }
+  }
+
+  private async Task _execAsync(string sql, CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var command = new NpgsqlCommand(sql, conn);
+    await command.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// A ledger with no <c>owner</c> column is the Dapper driver's, or one an older library wrote: every row in it was
+  /// recorded by the framework, so every version it records is read (#1992). Before, the assessment took a missing
+  /// column for a ledger still being created and answered Migrate, which on the Dapper driver would have meant a stood-
+  /// down instance migrating.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ALedgerWithoutAnOwnerColumn_IsReadWhole_SoANewerVersionStillStandsDownAsync(CancellationToken cancellationToken) {
+    await _execAsync("""
+      ALTER TABLE wh_schema_migrations DROP COLUMN owner CASCADE;
+      WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v) WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations);
+      """, cancellationToken);
+
+    var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
   }
 }

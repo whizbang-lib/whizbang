@@ -40,6 +40,49 @@ public class DbContextInitializationRegistryTests {
       .Because("a reset that is not undone unregisters every generated schema initializer for the rest of the process");
   }
 
+  // ── #1992: whether the schema is current, asked by the Assess verdict ────────────────────────────────
+
+  [Test]
+  public async Task IsSchemaCurrent_WithNoCheckRegistered_IsNotCurrentAsync() {
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse().Because("a schema nothing can vouch for is never Current: startup takes the full path, as before");
+  }
+
+  [Test]
+  public async Task IsSchemaCurrent_IsCurrentOnlyWhenEveryContextThisHostRegistersIsAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(true));
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextB>((_, _) => Task.FromResult<bool?>(null));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsTrue().Because("a context this host does not register answers null and is passed over, as initialization passes it over");
+
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextB>((_, _) => Task.FromResult<bool?>(false));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse().Because("one context with work to do makes the schema not current");
+  }
+
+  [Test]
+  public async Task IsSchemaCurrent_WhenNoContextIsRegisteredInTheHost_IsNotCurrentAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(null));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse();
+  }
+
+  [Test]
+  public async Task ResetForTesting_AlsoClearsAndPutsBackTheCurrencyChecksAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(true));
+
+    using (DbContextInitializationRegistry.ResetForTesting()) {
+      await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+        .IsFalse();
+    }
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsTrue();
+  }
+
   [Test]
   public async Task Register_AddsInitializer_IncreasesCountAsync() {
     // Arrange & Act

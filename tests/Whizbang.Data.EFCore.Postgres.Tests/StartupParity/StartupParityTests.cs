@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
@@ -53,7 +54,7 @@ public class StartupParityTests {
   /// <summary>Composes one instance of a service on <paramref name="driver"/>; nothing runs until it is started.</summary>
   private ServiceProvider _compose(
       StartupDriver driver, bool blocking = true, ISchemaInitializationObserver? observer = null,
-      string? connectionString = null, params (string Key, string Value)[] config) {
+      string? connectionString = null, Action<IServiceCollection>? configure = null, params (string Key, string Value)[] config) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
@@ -66,6 +67,7 @@ public class StartupParityTests {
       services.AddSingleton(observer);
     }
     driver.Register(services, connectionString ?? _database.ConnectionString);
+    configure?.Invoke(services);
     var provider = services.BuildServiceProvider();
     _instances.Add(provider);
     return provider;
@@ -278,6 +280,156 @@ public class StartupParityTests {
 
     await Assert.That(scope.ServiceProvider.GetServices<IMaintenanceStep>().Count(s => s.Name == "managed-schema-objects"))
       .IsEqualTo(1);
+  }
+
+  // ── #1992: the Assess verdict binds startup, on both drivers ─────────────────────────────────────────────────
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task EachDriver_SuppliesAnAssessor_ThatReadsTheVersionRecordAsync(string driverName) {
+    var instance = _compose(StartupDriver.For(driverName));
+    var assessor = instance.GetRequiredService<IStartupAssessor>();
+
+    await Assert.That(assessor.IsConfigured).IsTrue()
+      .Because("Dapper behaves like EF Core: without an assessor a stood-down Dapper instance would migrate");
+    var fresh = await assessor.AssessAsync(CancellationToken.None);
+    await Assert.That(fresh.Verdict).IsEqualTo(StartupVerdict.Migrate)
+      .Because("a brand-new database has no version record, and nothing newer can exist: migrate");
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task ARestartOnACurrentSchema_TakesNoSchemaLock_AndSkipsElectAndMigrateAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    // Two starts: the first migrates, the second settles what the first converted.
+    await _startAsync(driver);
+    await _startAsync(driver);
+    var stages = new StageLog();
+    var restart = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    await Assert.That((await restart.GetRequiredService<IStartupAssessor>().AssessAsync(cancellationToken)).Verdict)
+      .IsEqualTo(StartupVerdict.Current);
+
+    // Another session holds the schema lock for the whole restart. A start that took it would wait here forever.
+    await using var holder = new NpgsqlConnection(_database.ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand("SELECT pg_advisory_lock($1)", holder)) {
+      take.Parameters.AddWithValue(SchemaInitializationLockKey.Compute("public"));
+      await take.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await _initializer(restart).StartAsync(cancellationToken);
+
+    await Assert.That(restart.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue()
+      .Because("Current skips the election and the migration entirely: no schema lock, so the held one cannot stall it");
+    await Assert.That(stages.Calls).Contains("Skip Elect: the schema is current; no migrator is needed");
+    await Assert.That(stages.Calls).Contains("Skip Migrate: the schema is current");
+    await Assert.That(stages.Calls).Contains("Enter Coordinate: recomputing partitions before the schema-ready gate opens")
+      .Because("Converge and Coordinate still run on a current schema");
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task ANewerSchema_StandsDown_AppliesNothing_AndKeepsTheGateClosed_WhileVisibleAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var stages = new StageLog();
+    var standingDown = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    var initializer = _initializer(standingDown);
+
+    await initializer.StartAsync(cancellationToken);
+    await stages.Registered.Task.WaitAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(standingDown.GetRequiredService<ISchemaReadyGate>().IsReady).IsFalse()
+      .Because("the gate stays closed: no data plane, readiness withheld, the process alive");
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before)
+      .Because("a stood-down instance applies nothing: no bootstrap, no pass, no ledger write");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Preflight: standing down: ", StringComparison.Ordinal)
+      && c.Contains("999.0.0", StringComparison.Ordinal))).IsTrue()
+      .Because("the recorded state names the reason: the schema's version against the binary's");
+    await Assert.That(stages.Calls).Contains("Phase StandingBy");
+    var self = standingDown.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_service_instances WHERE instance_id = $1", self))
+      .IsEqualTo(1L).Because("it registers at once, without a bootstrap: the tables exist because the database is newer");
+  }
+
+  [Test]
+  [Timeout(300000)]
+  public async Task TheTurnkeyCall_OnAStoodDownInstance_IsRefused_AndAppliesNothingAsync(CancellationToken cancellationToken) {
+    var driver = StartupDriver.For("efcore");
+    await _startAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var instance = _compose(driver);
+
+    await Assert.That(async () => await DbContextInitializationRegistry.InitializeAllAsync(instance, null, cancellationToken))
+      .Throws<SchemaStandDownException>()
+      .Because("no start path skips Assess: the direct initialization reads the same verdict and refuses");
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before);
+  }
+
+  /// <summary>Records a release newer than this binary as the writer of one framework migration.</summary>
+  private async Task _recordNewerVersionAsync(string version) => await _execAsync($"""
+    WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{version}') RETURNING id)
+    UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
+      WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang');
+    """);
+
+  /// <summary>Every ledger row, as one string, so "nothing was written" is one comparison.</summary>
+  private Task<string> _ledgerAsync() => _scalarAsync<string>(
+    "SELECT string_agg(file_name || ':' || content_hash || ':' || coalesce(version_id::text, '-') || ':' || status::text "
+    + "|| ':' || coalesce(applied_at::text, '-'), ',' ORDER BY file_name) FROM wh_schema_migrations");
+
+  /// <summary>Every stage call in order, and a signal when the instance's row is first written.</summary>
+  private sealed class StageLog : IStartupStageReporter {
+    private readonly Lock _lock = new();
+    private readonly List<string> _calls = [];
+    private StartupStageSnapshot? _current;
+
+    public TaskCompletionSource Registered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<string> Calls { get { lock (_lock) { return [.. _calls]; } } }
+    public StartupStageSnapshot? Current { get { lock (_lock) { return _current; } } }
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        _calls.Add($"Enter {stage}: {message}");
+        _current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      }
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        _calls.Add($"Skip {stage}: {reason}");
+        _current = new StartupStageSnapshot(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      }
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask EnterPhaseAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        _calls.Add($"Phase {phase}");
+      }
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        _calls.Add("Registered");
+      }
+      Registered.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
   }
 
   /// <summary>Signals the transitions the scenarios wait on; can hold the first failed attempt until released.</summary>
