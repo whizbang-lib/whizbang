@@ -1191,6 +1191,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run and the caller's await ends in `OperationCanceledException`. Running the queue stays `DrainAsync`'s job; call it
   before `StopAsync` for a graceful shutdown. A drain that a stop overlaps now completes normally rather than absorbing
   the worker's cancellation.
+- **A serial executor's drain honors its cancellation token (#2011).** `SerialExecutor.DrainAsync` never read its
+  token, so a drain waited for the whole queue however its caller asked it to stop, and a drain handed a token that was
+  already canceled closed the channel and reported success. A drain canceled while waiting now throws
+  `OperationCanceledException` and the worker keeps running the queue it closed; a drain whose token is already
+  canceled throws before closing the channel, so the executor keeps accepting work.
+- **An enqueue a stop interrupts cancels its caller and returns its pooled state (#2012).** A
+  `SerialExecutor.ExecuteAsync` that passed the running check just before a stop closed the channel, or whose bounded
+  write was waiting for room, failed with `ChannelClosedException` and left its rented execution state out of the
+  pool. The caller now gets `OperationCanceledException`, the same as work the stop found queued, and a caller whose
+  own token cancels the wait gets that cancellation unchanged; either way the state goes back to the pool.
 - **Concurrent drains of a parallel executor cannot deadlock (#2005).** `ParallelExecutor.DrainAsync` took the
   concurrency slots one at a time, so two drains at once could each hold some and wait forever for the rest. Drains
   are now serialized and complete one after another. A drain whose token is canceled gives back the slots it had
