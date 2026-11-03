@@ -19,6 +19,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -206,7 +207,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
 
     // Register background workers
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+    builder.Services.AddWhizbangWorker<ServiceBusConsumerWorker>();
 
     return builder.Build();
   }
@@ -278,7 +279,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+    builder.Services.AddWhizbangWorker<ServiceBusConsumerWorker>();
 
     return builder.Build();
   }

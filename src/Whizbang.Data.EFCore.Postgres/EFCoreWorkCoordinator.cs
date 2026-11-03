@@ -1826,6 +1826,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>This driver keeps instance rows, so a stage counts as recorded only once its write lands (#1636).</remarks>
+  public bool RecordsInstanceTransitions => true;
+
+  /// <inheritdoc />
   public async Task<bool> RecordInstanceTransitionAsync(
       Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(transition);
@@ -4521,17 +4525,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // FOR UPDATE SKIP LOCKED: two shippers folding the same group at the same instant
     // partition the rows instead of colliding (the residual fetch→complete race dedups at the
     // consumer's inbox via identity-preserving composites).
+    // 300 (#1636): a caller whose own row says it may not claim (not eligible for work, and not draining) folds nothing,
+    // as the claims refuse it; one primary-key lookup of the caller's row. A coordinator with no instance identity (or a
+    // caller with no row) folds as before.
+    var callerMayClaim = _instanceProvider is null
+      ? string.Empty
+      : $@"
+        AND NOT EXISTS (
+          SELECT 1 FROM {BuildSchemaQualifiedName(schema, "wh_service_instances")} si
+          WHERE si.instance_id = @{PARAM_INSTANCE_ID} AND NOT {BuildSchemaQualifiedName(schema, "wh_instance_may_claim")}(si))";
     cmd.CommandText = $@"
       SELECT message_id, stream_id, destination, message_type, envelope_type,
              event_data::text, metadata::text, is_event, scheduled_for, priority
       FROM {tableName}
-      WHERE coalesce_group = @p_group AND processed_at IS NULL
+      WHERE coalesce_group = @p_group AND processed_at IS NULL{callerMayClaim}
       ORDER BY created_at
       LIMIT @p_limit
       FOR UPDATE SKIP LOCKED";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
     cmd.Parameters.Add(new NpgsqlParameter(P_LIMIT, limit));
+    if (_instanceProvider is not null) {
+      cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
+    }
 
     var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));

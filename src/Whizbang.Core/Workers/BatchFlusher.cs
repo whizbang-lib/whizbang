@@ -26,7 +26,10 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private readonly ILogger _logger;
   private readonly TimeProvider _timeProvider;
   private readonly CancellationTokenSource _stop = new();
-  private readonly Task _loop;
+  private readonly Lock _startLock = new();
+  // Null until the loop starts; set under _startLock, and only once.
+  private Task? _loop;
+  private bool _startClosed;
   private readonly TaskCompletionSource _stoppedSignal = new();
 
   /// <summary>Total items consumed across all flushes (observability).</summary>
@@ -75,7 +78,26 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     Func<IReadOnlyList<T>, CancellationToken, Task> flush,
     BatchFlusherOptions options,
     ILogger logger,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null) : this(flush, options, logger, timeProvider, started: true) {
+  }
+
+  /// <summary>
+  /// Creates the flusher, starting its loop now or leaving it for <see cref="Start"/> (#1636): a flush worker's flusher
+  /// starts when the host starts the worker, so nothing is flushed before the worker's start point. Items enqueued
+  /// before then wait in the channel.
+  /// </summary>
+  /// <param name="flush">Callback invoked per flush with the coalesced batch.</param>
+  /// <param name="options">Tuning knobs.</param>
+  /// <param name="logger">Logger.</param>
+  /// <param name="timeProvider">The clock; null uses <see cref="TimeProvider.System"/>.</param>
+  /// <param name="started">Whether the loop starts now; false leaves it for <see cref="Start"/>.</param>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherDeferredStartTests.cs</tests>
+  internal BatchFlusher(
+    Func<IReadOnlyList<T>, CancellationToken, Task> flush,
+    BatchFlusherOptions options,
+    ILogger logger,
+    TimeProvider? timeProvider,
+    bool started) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     ArgumentNullException.ThrowIfNull(options);
@@ -90,12 +112,26 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       SingleWriter = false,
     });
 
-    // Start the loop synchronously up to its first `await` (channel.ReadAsync) so the
-    // flusher is "running" by the time the ctor returns — important when callers race
-    // ahead and Writer.WriteAsync immediately. Avoids Task.Run's threadpool-queueing
-    // delay under heavy contention (full-suite test runs at parallelism=10 saturated
-    // the threadpool and starved Task.Run-launched loops for >30s).
-    _loop = _runAsync(_stop.Token);
+    if (started) {
+      Start();
+    }
+  }
+
+  /// <summary>
+  /// Starts the coalescing loop, once; a second call, or a call on a flusher started at construction, changes nothing.
+  /// </summary>
+  /// <remarks>
+  /// The loop runs synchronously up to its first <c>await</c> (the channel read), so the flusher is running by the time
+  /// this returns. That avoids Task.Run's thread-pool queueing delay under heavy contention (full-suite test runs at
+  /// parallelism 10 saturated the pool and starved Task.Run-launched loops for more than 30 s).
+  /// </remarks>
+  internal void Start() {
+    lock (_startLock) {
+      if (!_startClosed) {
+        _startClosed = true;
+        _loop = _runAsync(_stop.Token);
+      }
+    }
   }
 
   private async Task _runAsync(CancellationToken ct) {
@@ -200,6 +236,19 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       await _stoppedSignal.Task.ConfigureAwait(false);
       return;
     }
+    // A flusher whose worker never started (#1636) flushes nothing, not even on the way out: claiming the start here
+    // keeps a late Start from running a loop after this, and what was queued is dropped with the channel.
+    Task? loop;
+    lock (_startLock) {
+      _startClosed = true;
+      loop = _loop;
+    }
+    if (loop is null) {
+      _channel.Writer.TryComplete();
+      _stoppedSignal.TrySetResult();
+      _stop.Dispose();
+      return;
+    }
 
     // Completing the writer is what lets the loop DRAIN: ReadAsync throws ChannelClosedException
     // only once the channel is both completed and empty, so the loop finishes the work already
@@ -213,14 +262,14 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       // CancellationToken.None is deliberate and load-bearing: _stop is what this method cancels
       // *after* the drain gives up, so flowing it in here would let an external cancel abort the
       // drain early and discard the buffered work this whole path exists to flush.
-      await _loop
+      await loop
         .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), _timeProvider, CancellationToken.None)
         .ConfigureAwait(false);
     } catch (TimeoutException) {
       // A flush callback that will not return must not hold host shutdown open forever.
       LogDrainTimeout(_logger, _options.DrainTimeoutMs);
       await _stop.CancelAsync().ConfigureAwait(false);
-      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
+      try { await loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
     }
 
     if (!_stop.IsCancellationRequested) {

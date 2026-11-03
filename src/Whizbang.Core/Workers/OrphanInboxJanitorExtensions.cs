@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
+using Whizbang.Core.Startup;
 
 namespace Whizbang.Core.Workers;
 
@@ -26,15 +27,16 @@ public static class OrphanInboxJanitorExtensions {
   /// — calling twice replaces the snapshot with the latest state.
   /// </remarks>
   public static IServiceCollection AddOrphanInboxJanitor(this IServiceCollection services) {
-    // Self-contained: the janitor waits on schema readiness, so this extension guarantees the
-    // gate rather than assuming a fuller composition registered it first.
+    // Self-contained: the janitor starts at Accept commands, and a host composed without the worker
+    // pipeline (no stage gate) falls back to schema readiness, so this extension guarantees that
+    // gate rather than assuming a fuller composition registered it first (#1636).
     services.AddWhizbangSchemaReadyGate();
     ArgumentNullException.ThrowIfNull(services);
 
     var receptorTypes = _snapshotReceptorMessageTypes(services);
     services.AddSingleton(new HandledReceptorTypeSnapshot(receptorTypes));
     services.TryAddWhizbangDefaults();
-    services.AddHostedService<OrphanInboxJanitor>();
+    services.AddWhizbangWorker<OrphanInboxJanitor>();
     return services;
   }
 

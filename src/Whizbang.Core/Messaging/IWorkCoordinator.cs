@@ -1806,6 +1806,16 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// Whether this coordinator keeps instance rows that <see cref="RecordInstanceTransitionAsync"/> writes to (#1636).
+  /// False (the default) is a store with nothing to record: the stage reporter then treats every stage as recorded, so
+  /// a worker that waits for its instance's row to record an eligible stage starts at once rather than waiting for a
+  /// record that can never come. True: a stage counts as recorded only once a write lands.
+  /// </summary>
+  /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync</tests>
+  bool RecordsInstanceTransitions => false;
+
+  /// <summary>
   /// Records the single fleet-wide standby request: this instance asking live older peers to
   /// drain and stand by before a breaking migration. True when this instance now holds the
   /// active request (first claim or idempotent re-request); false when another instance's

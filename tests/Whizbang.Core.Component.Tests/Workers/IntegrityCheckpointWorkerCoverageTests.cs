@@ -33,33 +33,6 @@ public class IntegrityCheckpointWorkerCoverageTests {
   // regressed to letting the exception escape, a pod stopped while still waiting for migrations
   // would fault its BackgroundService instead of shutting down quietly, and every fast restart
   // during a rolling deploy would log a crash for something that is not one.
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
-      CancellationToken testToken) {
-    var dispatcher = new CaptureDispatcher();
-    // A gate that never opens AND reports when a waiter arrives. A plain never-ready gate could not
-    // say whether the worker had reached the barrier: StartAsync only SCHEDULES ExecuteAsync, so
-    // StopAsync's cancellation can beat the body to the gate entirely and every assertion below
-    // would be answered by a worker that never waited on anything.
-    var gate = new ParkedGate();
-    var worker = _buildWorker(new CheckpointCoordinator(), dispatcher, "origin-svc", gate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.Entered.WaitAsync(testToken);
-    var executeTask = worker.ExecuteTask;
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("a shutdown while still waiting for the schema must read as a clean exit, not a "
-             + "crashed worker — a pod stopped mid-migration is a routine, not exceptional, event");
-    await Assert.That(dispatcher.Published).IsEmpty()
-      .Because("nothing may be dispatched before the tables the checkpoint watermarks live in "
-             + "have been created");
-  }
-
   // Target: line 54 — the break in the the OperationCanceledException handler around
   // `RunCheckpointOnceAsync` inside the main loop. If a spurious cancellation from a cycle were
   // treated like a generic failure (logged and retried) instead of ending the loop, a worker that
@@ -70,8 +43,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   public async Task ExecuteAsync_CycleThrowsOperationCanceled_BreaksTheLoopWithoutRetryingAsync(
       CancellationToken testToken) {
     var coordinator = new ThrowingCoordinator { ThrowOperationCanceled = true };
-    var worker = _loopWorker(coordinator, SchemaReadyGate.AlreadyReady(),
-      new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
+    var worker = _loopWorker(coordinator, new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
     await worker.StartAsync(testToken);
     await coordinator.FirstCall.Task.WaitAsync(TimeSpan.FromSeconds(20), testToken);
@@ -203,8 +175,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   private static IntegrityCheckpointWorker _buildWorker(
       CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, string serviceName,
       CaptureTransport? transport = null, IMessageTypeCatalog? catalog = null,
-      bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
-      ISchemaReadyGate? gate = null) {
+      bool outboxRouting = true, ITopicRegistry? topicRegistry = null) {
     var services = new ServiceCollection();
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(Options.Create(new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -226,7 +197,6 @@ public class IntegrityCheckpointWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? new SchemaReadyGate(),
       Options.Create(new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }
@@ -245,53 +215,9 @@ public class IntegrityCheckpointWorkerCoverageTests {
   // restart in a rolling deploy would log a crash for a routine stop. The second assertion is the
   // load-bearing half: the worker must return, not fall through into the checkpoint loop against a
   // schema that is not there.
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledWhileParkedOnTheSchemaGate_ReturnsBeforeAnyCheckpointCycleAsync(
-      CancellationToken testToken) {
-    var coordinator = new ThrowingCoordinator();
-    var gate = new ParkedGate();
-    var worker = _loopWorker(coordinator, gate, new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Without this the cancellation could beat the worker to the gate and the assertions below
-    // would be answered by a worker that never waited on anything.
-    await gate.Entered.WaitAsync(testToken);
-    var executeTask = worker.ExecuteTask!;
-
-    await cts.CancelAsync();
-    // A task exiting through a cancellation catch settles RanToCompletion or Canceled depending on
-    // thread-pool timing, so suppress and assert completion rather than success.
-    await executeTask.WaitAsync(TimeSpan.FromSeconds(20), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("a shutdown arriving while the worker waits for migrations is an ordinary stop; "
-             + "faulting here reports a crash for something that is not one");
-    await Assert.That(coordinator.Calls).IsEqualTo(0)
-      .Because("the worker must RETURN at the gate — running even one checkpoint cycle would issue "
-             + "SQL against wh_integrity_* tables the migrations had not yet created");
-  }
-
-  /// <summary>A gate that never opens and announces the moment a worker begins waiting on it.</summary>
-  private sealed class ParkedGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-    }
-  }
 
   private static IntegrityCheckpointWorker _loopWorker(
-      ThrowingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
+      ThrowingCoordinator coordinator, StreamIntegrityOptions options) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(new CaptureDispatcher());
@@ -299,7 +225,6 @@ public class IntegrityCheckpointWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }

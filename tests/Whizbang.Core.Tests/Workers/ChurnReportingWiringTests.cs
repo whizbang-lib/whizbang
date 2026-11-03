@@ -84,12 +84,9 @@ public class ChurnReportingWiringTests {
 
   private static InboxDrainWorker _worker(ClaimChurnFeedback? feedback) {
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstance(), new Drain(), new Inbox(), gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      new FakeInstance(), new Drain(), new Inbox(), Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       new JsonSerializerOptions(),
       NullLogger<InboxDrainWorker>.Instance,
       feedback);

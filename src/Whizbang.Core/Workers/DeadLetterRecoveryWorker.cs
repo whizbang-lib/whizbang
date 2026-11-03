@@ -39,7 +39,6 @@ namespace Whizbang.Core.Workers;
 #pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<DeadLetterRecoveryOptions> options,
   IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
@@ -52,7 +51,6 @@ public partial class DeadLetterRecoveryWorker(
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   // #684: the disabled-subsystem discard must run in THIS worker too — quarantine policies
   // like PoisonRedeliveryLoop (MaxAttempts=0) hold before any dispatch, so the inbox-gate
@@ -173,12 +171,6 @@ public partial class DeadLetterRecoveryWorker(
     if (!_options.Enabled) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 

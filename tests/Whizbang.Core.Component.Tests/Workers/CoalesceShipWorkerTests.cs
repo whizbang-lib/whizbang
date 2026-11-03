@@ -286,6 +286,51 @@ public class CoalesceShipWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// A worker built without a clock uses the system clock: with nothing bound it parks on that clock and still ends
+  /// cleanly when the host stops it. The park's log line is the signal that the body ran, since StartAsync returning
+  /// proves only that it was scheduled.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoClockGiven_ParksOnTheSystemClockAndStopsCleanlyAsync(CancellationToken testToken) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new FakeCoalesceCoordinator());
+    var sp = services.BuildServiceProvider();
+    var logger = new ParkedSignalLogger();
+    var worker = new CoalesceShipWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: logger,
+      compositeFactory: new CompositeFactory());
+
+    await worker.StartAsync(testToken);
+    await logger.Parked.WaitAsync(testToken);
+    await worker.StopAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a stop is the normal way out of the park, on the system clock as on any other");
+  }
+
+  /// <summary>Completes when the worker logs that it parked for want of a binding (EventId 2).</summary>
+  private sealed class ParkedSignalLogger : Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker> {
+    private const int PARKED_EVENT_ID = 2;
+    private readonly TaskCompletionSource _parked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Parked => _parked.Task;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == PARKED_EVENT_ID) {
+        _parked.TrySetResult();
+      }
+    }
+  }
+
   #endregion
 
   #region Tick loop (FakeTimeProvider-driven)
@@ -430,11 +475,8 @@ public class CoalesceShipWorkerTests {
     services.AddSingleton(new WorkCoordinatorOptions());
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new CoalesceShipWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       logger: NullLogger<CoalesceShipWorker>.Instance,
       compositeFactory: new CompositeFactory(),
@@ -632,24 +674,6 @@ public class CoalesceShipWorkerTests {
   // there until someone restarts the process. So each step has to survive its own failure and
   // come back on the next tick.
 
-  /// <summary>A coordinator whose coalesce calls fail a fixed number of times, then succeed.</summary>
-  /// <summary>
-  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
-  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   private sealed class FlakyCoalesceCoordinator(int statsFailures, int releaseFailures) : IWorkCoordinator {
     private int _statsLeft = statsFailures;
     private int _releaseLeft = releaseFailures;
@@ -783,53 +807,6 @@ public class CoalesceShipWorkerTests {
     await Assert.That(executeTask!.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("a faulted ExecuteAsync turns an ordinary shutdown into a reported crash");
-  }
-
-  /// <summary>
-  /// Cancellation while waiting on the schema gate returns without touching the coordinator.
-  /// </summary>
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledBeforeSchemaReady_NeverStartsAsync(CancellationToken testToken) {
-    // A host that fails during migration stops everything it built. The shipper must not run
-    // recovery against a schema that is not there.
-    var time = new FakeTimeProvider(_testNow);
-    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 0);
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton(new WorkCoordinatorOptions());
-    var sp = services.BuildServiceProvider();
-
-    // Gate never marked ready, and it reports the moment a waiter arrives.
-    var gate = new BlockingGate();
-    var worker = new CoalesceShipWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      logger: NullLogger<CoalesceShipWorker>.Instance,
-      compositeFactory: new CompositeFactory(),
-      coalesceResolver: _oneGroupResolver(time),
-      timeProvider: time);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Wait for the body to actually park on the gate before stopping. On .NET 10 the base class
-    // dispatches ExecuteAsync through Task.Run, so StartAsync returning proves only that the body
-    // was scheduled — and a work item dequeued after the stopping token is canceled never runs the
-    // delegate at all, settling Canceled, which satisfies IsCompleted && !IsFaulted && zero calls.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    var executeTask = worker.ExecuteTask;
-    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(executeTask.IsCompleted).IsTrue()
-      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("a shutdown before the schema exists is an ordinary deploy, not a crash");
-    await Assert.That(coordinator.StatsAttempts).IsEqualTo(0)
-      .Because("nothing may run before the schema the coalesce tables live in exists");
   }
 
   #endregion

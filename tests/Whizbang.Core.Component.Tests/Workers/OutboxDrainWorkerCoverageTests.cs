@@ -282,8 +282,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var options = Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 50 });
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -291,7 +289,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: drainChannel,
       completionChannel: new CompletionChannel(),
       failureChannel: new FailureChannel(),
-      schemaReadyGate: gate,
       options: options,
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -371,15 +368,12 @@ public partial class OutboxDrainWorkerCoverageTests {
       IReceptorRegistry? runtimeReceptorRegistry = null,
       ILogger<OutboxDrainWorker>? logger = null) {
     sp ??= new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new ServiceInstanceProvider(),
       drainChannel: new DrainChannel(),
       completionChannel: completion ?? new CompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,
@@ -408,8 +402,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -417,7 +409,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: new DrainChannel(),
       completionChannel: new CompletionChannel(),
       failureChannel: new FailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -466,8 +457,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -475,7 +464,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -524,8 +512,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -533,7 +519,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -597,8 +582,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -606,7 +589,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream }),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,

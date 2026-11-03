@@ -12,8 +12,9 @@ public sealed class SchemaInitializationOptions {
   /// <summary>
   /// When <see langword="true"/> (<b>the default — turnkey</b>), initialization runs <b>in the
   /// background</b>: <c>StartAsync</c> returns immediately so the host binds and can answer a liveness
-  /// probe, while <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Gated workers
-  /// (and the managed readiness health that reports "migrating" as ready) hold off until then, so
+  /// probe, while <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Staged workers
+  /// (the host starts each only at its registered start point) and the managed readiness health
+  /// that reports "migrating" as ready hold off until then, so
   /// nothing touches an unmigrated schema and the pod is not rolled back for a long migration. On
   /// failure the gate never opens (fail-closed).
   /// <para>

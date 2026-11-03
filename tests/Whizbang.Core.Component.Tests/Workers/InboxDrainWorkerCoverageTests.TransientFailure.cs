@@ -36,8 +36,6 @@ public partial class InboxDrainWorkerCoverageTests {
 
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new EventIdSignalingLogger<InboxDrainWorker>();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -45,8 +43,7 @@ public partial class InboxDrainWorkerCoverageTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, MaxPerStreamCeiling = 1000 }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, MaxPerStreamCeiling = 1000 }),
       _jsonOpts,
       logger,
       // A clock that never moves: the recovery line's duration then reads exactly zero, which only the injected

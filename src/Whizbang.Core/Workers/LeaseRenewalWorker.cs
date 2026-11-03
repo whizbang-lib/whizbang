@@ -19,7 +19,6 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewalChannel {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly LeaseRenewalWorkerOptions _options;
   private readonly ILogger<LeaseRenewalWorker> _logger;
   private readonly LeaseRegistry? _leaseRegistry;
@@ -31,7 +30,6 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   public LeaseRenewalWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<LeaseRenewalWorkerOptions> options,
     ILogger<LeaseRenewalWorker> logger,
     IPinnedConnectionPool pinnedPool,
@@ -40,8 +38,6 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
@@ -50,7 +46,8 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     _pinnedPool = pinnedPool;
     ArgumentNullException.ThrowIfNull(instanceProvider);
     _instanceProvider = instanceProvider;
-    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger, _timeProvider);
+    // Started when the host starts this worker, at Accept commands (#1636): nothing is flushed before then.
+    _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger, _timeProvider, started: false);
   }
 
   /// <inheritdoc />
@@ -58,6 +55,16 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     => _flusher.Writer.WriteAsync(new CategorizedLeaseRenewal(category, id), cancellationToken);
 
   /// <inheritdoc />
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    // The flusher starts with the worker (#1636), here rather than in ExecuteAsync: the host runs ExecuteAsync on the
+    // thread pool, and a stop that lands before it runs would otherwise find a flusher that never started.
+    _flusher.Start();
+    return base.StartAsync(cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LeaseRenewalWorkerCoverageTests.cs:ExecuteAsync_WhenDisabled_ParksThenStopsCleanlyOnShutdownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LeaseRenewalWorkerCoverageTests.cs:FlushBatchAsync_WhenDisabled_NeverReachesTheCoordinatorAsync</tests>
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.Enabled) {
       LogDisabled(_logger);
@@ -72,7 +79,6 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     if (!_options.Enabled) {
       return;
     }
-    await _schemaReadyGate.WaitForReadyAsync(ct);
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(LeaseRenewalWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();

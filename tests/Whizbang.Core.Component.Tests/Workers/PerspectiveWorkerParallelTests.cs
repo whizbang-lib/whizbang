@@ -294,7 +294,6 @@ public sealed class PerspectiveWorkerParallelTests {
         MaxConcurrentDrainConsumers = 1,
         IdleThresholdPolls = 2
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: NullEventTypeProvider.Instance,

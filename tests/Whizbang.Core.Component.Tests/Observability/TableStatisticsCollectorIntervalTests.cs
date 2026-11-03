@@ -73,7 +73,6 @@ public class TableStatisticsCollectorIntervalTests {
       Collector = new TableStatisticsCollector(
         _container.GetRequiredService<IServiceScopeFactory>(),
         new TableStatisticsMetrics(new WhizbangMetrics(_meters)),
-        SchemaReadyGate.AlreadyReady(),
         NullLogger<TableStatisticsCollector>.Instance,
         options,
         clock);

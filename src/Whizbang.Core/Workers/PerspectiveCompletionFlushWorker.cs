@@ -18,7 +18,6 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService, IPerspectiveCompletionChannel {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly PerspectiveCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<PerspectiveCompletionFlushWorker> _logger;
@@ -31,7 +30,6 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:PerspectiveCompletionFlushWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   public PerspectiveCompletionFlushWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<PerspectiveCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<PerspectiveCompletionFlushWorker> logger,
@@ -39,14 +37,13 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
+    // Started when the host starts this worker, at Accept commands (#1636): nothing is flushed before then.
+    _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger, timeProvider, started: false);
   }
 
   /// <inheritdoc />
@@ -56,6 +53,14 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   /// <inheritdoc />
   public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default)
     => _flusher.Writer.WriteAsync(new PerspectiveCompletionItem(EventWorkId: null, Cursor: cursor), cancellationToken);
+
+  /// <inheritdoc />
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    // The flusher starts with the worker (#1636), here rather than in ExecuteAsync: the host runs ExecuteAsync on the
+    // thread pool, and a stop that lands before it runs would otherwise find a flusher that never started.
+    _flusher.Start();
+    return base.StartAsync(cancellationToken);
+  }
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -71,7 +76,6 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     if (!_options.Enabled) {
       return;
     }
-    await _schemaReadyGate.WaitForReadyAsync(ct);
     var workIds = batch.Where(i => i.EventWorkId.HasValue).Select(i => i.EventWorkId!.Value).ToArray();
     var cursors = batch.Where(i => i.Cursor is not null).Select(i => i.Cursor!).ToArray();
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(PerspectiveCompletionFlushWorker), ct);

@@ -12,6 +12,7 @@ using Whizbang.Core.Commands.System;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -61,7 +62,7 @@ internal static class MultiStreamCommandRegistration {
       return;
     }
     services.AddSingleton<MultiStreamCommandWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<MultiStreamCommandWorker>());
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<MultiStreamCommandWorker>());
   }
 }
 

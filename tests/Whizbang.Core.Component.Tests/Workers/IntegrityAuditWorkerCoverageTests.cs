@@ -74,56 +74,6 @@ public class IntegrityAuditWorkerCoverageTests {
 
   // ── ExecuteAsync lifecycle: the schema-gate exit ────────────────────────
 
-  /// <summary>
-  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
-  /// deterministic "the worker is parked at the barrier" signal: since .NET 10,
-  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
-  /// <c>Task.Run(action, stoppingToken)</c>, so StartAsync returning proves only that the body was
-  /// scheduled, and a token canceled before the work item is dequeued settles the task Canceled
-  /// without ever invoking the delegate. A "nothing was claimed" assertion is satisfied by that
-  /// too, so the wait is what makes the assertion mean anything.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
-  /// <summary>
-  /// If this regressed to running (or faulting) instead of returning, the audit could fire SQL
-  /// against integrity tables migrations haven't created yet, or a routine shutdown-before-ready
-  /// would read as a crash.
-  /// </summary>
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
-    var coordinator = new ClaimCountingCoordinator();
-    // A gate that never opens — a host stopped mid-migration.
-    var gate = new BlockingGate();
-    var worker = _buildWorker(coordinator, new StreamIntegrityOptions { AuditEnabled = true }, gate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await worker.StopAsync(CancellationToken.None);
-
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await Assert.That(executeTask.IsCompleted).IsTrue()
-      .Because("stopping while still waiting on the schema gate must let ExecuteAsync return promptly");
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("a host stopped before the schema exists must shut down cleanly, not report a crash");
-    await Assert.That(coordinator.ClaimCalls).IsEqualTo(0)
-      .Because("nothing may run before the schema the integrity tables live in exists");
-  }
-
   // ── ExecuteAsync's main loop: the two exception exits ───────────────────
 
   /// <summary>
@@ -226,7 +176,6 @@ public class IntegrityAuditWorkerCoverageTests {
   private static IntegrityAuditWorker _buildWorker(
       IWorkCoordinator coordinator,
       StreamIntegrityOptions options,
-      ISchemaReadyGate? gate = null,
       ILogger<IntegrityAuditWorker>? logger = null,
       IntegrityGapTracker? tracker = null,
       IEnvelopeSerializer? serializer = null,
@@ -246,7 +195,6 @@ public class IntegrityAuditWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityAuditWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? SchemaReadyGate.AlreadyReady(),
       Options.Create(options),
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }

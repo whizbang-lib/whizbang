@@ -70,11 +70,8 @@ public class SubscriptionExpansionWorkerPriorityTests {
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }

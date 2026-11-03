@@ -109,11 +109,8 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }),
       NullLogger<SubscriptionExpansionWorker>.Instance);
     return (worker, sp);
@@ -131,7 +128,6 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new SubscriptionExpansionWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         null!,
         NullLogger<SubscriptionExpansionWorker>.Instance))
       .Throws<ArgumentNullException>()
@@ -143,7 +139,6 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new SubscriptionExpansionWorker(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        SchemaReadyGate.AlreadyReady(),
         new NullValueOptions(),
         NullLogger<SubscriptionExpansionWorker>.Instance))
       .Throws<ArgumentNullException>()

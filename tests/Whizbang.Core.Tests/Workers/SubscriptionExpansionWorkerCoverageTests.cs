@@ -87,11 +87,8 @@ public class SubscriptionExpansionWorkerCoverageTests {
   private static SubscriptionExpansionWorker _build(
       IServiceCollection services, StreamIntegrityOptions options, ILogger<SubscriptionExpansionWorker> logger) {
     var sp = services.BuildServiceProvider();
-    var gate = new Whizbang.Core.Workers.SchemaReadyGate();
-    gate.MarkReady();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       logger);
   }

@@ -21,10 +21,11 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// Each worker is resolved through the library's own registration with a fake clock registered as the host's
-/// <see cref="TimeProvider"/>. One enqueued item opens the flusher's coalesce window: it is armed on the registered
-/// clock, or the wait for it never ends and the test fails at its timeout. The schema gate is never opened, so the
-/// flush that closing the window starts parks on it; stopping the worker then arms the drain bound on the same clock,
-/// and moving the clock past it is what lets the stop finish.
+/// <see cref="TimeProvider"/>. The worker is started first, since its flusher starts with it (#1636). One enqueued
+/// item opens the flusher's coalesce window: it is armed on the registered clock, or the wait for it never ends and
+/// the test fails at its timeout. No coordinator is registered, so the flush that closing the window starts fails into
+/// its retry backoff; stopping the worker then arms the drain bound on the same clock, and moving the clock past it is
+/// what lets the stop finish.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxCompletionFlushWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveCompletionFlushWorker.cs</code-under-test>
@@ -111,13 +112,15 @@ public class FlushWorkerClockWiringTests {
     var window = TimeSpan.FromMilliseconds(flusher.CoalesceWindowMs);
     var drainBound = TimeSpan.FromMilliseconds(flusher.DrainTimeoutMs);
 
+    // The flusher starts with the worker (#1636), so the worker is started first; the item waits in the channel until then.
+    await worker.StartAsync(cancellationToken);
     await enqueueOne(sp, cancellationToken);
 
     // One item is below every worker's immediate-flush threshold, so the flusher opens its coalesce window
     await clock.WaitForArmedAsync(window, cancellationToken);
     clock.Advance(window);
 
-    // The flush parks on the schema gate, which nothing opens; the stop's drain bound is what ends it
+    // The flush fails (no coordinator is registered) and parks in its retry backoff; the stop's drain bound is what ends it
     var stop = worker.StopAsync(CancellationToken.None);
     await clock.WaitForArmedAsync(drainBound, cancellationToken);
     clock.Advance(drainBound);

@@ -116,7 +116,6 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
       lifecycle: lifecycle,
       hostLifetime: hostLifetime,
       instanceProvider: pod,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       versionProvider: versionProvider,
       assessor: assessor,
       logger: NullLogger<StandbyWatcher>.Instance,

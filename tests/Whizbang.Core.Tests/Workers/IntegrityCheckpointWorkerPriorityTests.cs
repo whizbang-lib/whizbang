@@ -103,7 +103,6 @@ public class IntegrityCheckpointWorkerPriorityTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }

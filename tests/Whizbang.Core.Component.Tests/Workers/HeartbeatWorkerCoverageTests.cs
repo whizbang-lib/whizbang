@@ -55,37 +55,14 @@ public class HeartbeatWorkerCoverageTests {
     }
   }
 
-  /// <summary>
-  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
-  /// deterministic "the worker is parked at the barrier" signal. It is needed because since .NET 10
-  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
-  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
-  /// scheduled, and a token canceled before the work item is dequeued settles the task Canceled
-  /// without ever invoking the delegate — which satisfies both <c>IsCompleted</c> and
-  /// <c>!IsFaulted</c>, and trivially satisfies "the coordinator was never called" as well.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   private static HeartbeatWorker _buildWorker(
-      IWorkCoordinator coordinator, ISchemaReadyGate gate, HeartbeatWorkerOptions options) {
+      IWorkCoordinator coordinator, HeartbeatWorkerOptions options) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new InstanceProvider("origin-svc"),
-      schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -99,32 +76,6 @@ public class HeartbeatWorkerCoverageTests {
   // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
   // this, a pod stopped while still waiting for the schema would fault its BackgroundService
   // instead of exiting quietly — turning a routine fast restart into a logged crash.
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
-      CancellationToken testToken) {
-    var coordinator = new ThrowingCoordinator();
-    var gate = new BlockingGate();  // never opens
-    var worker = _buildWorker(coordinator, gate, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
-    // Wait until the body is actually parked on the gate. Without this the whole test is
-    // satisfied by a worker whose ExecuteAsync the thread pool never invoked.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await worker.StopAsync(CancellationToken.None);
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(executeTask.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("waiting for the schema is not an error condition, so stopping mid-wait must read "
-             + "as a clean exit rather than a crashed worker");
-    await Assert.That(coordinator.Calls).IsEqualTo(0)
-      .Because("nothing may heartbeat before the schema is ready");
-  }
-
   // Target: line 87 — the break in the the OperationCanceledException handler around
   // `_heartbeatOnceAsync` inside the main loop. A cancellation surfacing from the tick itself
   // (not necessarily stoppingToken) must end the loop immediately rather than being retried —
@@ -137,8 +88,7 @@ public class HeartbeatWorkerCoverageTests {
       ThrowOnCallsUpTo = int.MaxValue,
       ThrowWith = new OperationCanceledException("simulated tick-level cancellation"),
     };
-    var worker = _buildWorker(coordinator, SchemaReadyGate.AlreadyReady(),
-      new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     await worker.StartAsync(testToken);
     var executeTask = worker.ExecuteTask;
@@ -165,8 +115,7 @@ public class HeartbeatWorkerCoverageTests {
       ThrowOnCallsUpTo = 1,
       ThrowWith = new InvalidOperationException("simulated transient heartbeat failure"),
     };
-    var worker = _buildWorker(coordinator, SchemaReadyGate.AlreadyReady(),
-      new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -101,15 +101,12 @@ public class OutboxDrainWorkerLifecycleFailureTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeServiceInstanceProvider(),
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,

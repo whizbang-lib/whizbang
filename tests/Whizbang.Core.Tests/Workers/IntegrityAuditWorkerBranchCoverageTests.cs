@@ -38,7 +38,6 @@ public class IntegrityAuditWorkerBranchCoverageTests {
 
     IntegrityAuditWorker act() => new(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       null!,
       NullLogger<IntegrityAuditWorker>.Instance);
 
@@ -52,7 +51,6 @@ public class IntegrityAuditWorkerBranchCoverageTests {
 
     IntegrityAuditWorker act() => new(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       new NullValueOptions(),
       NullLogger<IntegrityAuditWorker>.Instance);
 
@@ -234,7 +232,6 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityAuditWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(options),
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }

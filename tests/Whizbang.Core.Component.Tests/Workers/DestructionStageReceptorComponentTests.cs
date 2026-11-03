@@ -146,11 +146,8 @@ public class DestructionStageReceptorComponentTests {
     // The generated message-type catalog, which AddWhizbang() registers through this callback
     ServiceRegistrationCallbacks.MessageTypeCatalog?.Invoke(services);
     var provider = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new MaintenanceWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
     return (worker, coordinator, store);

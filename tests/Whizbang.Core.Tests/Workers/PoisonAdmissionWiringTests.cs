@@ -38,12 +38,9 @@ public partial class PoisonAdmissionWiringTests {
   private static InboxDrainWorker _worker() {
     var services = new ServiceCollection();
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstance(), new Drain(), new Inbox(), gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      new FakeInstance(), new Drain(), new Inbox(), Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       new JsonSerializerOptions(),
       NullLogger<InboxDrainWorker>.Instance);
   }

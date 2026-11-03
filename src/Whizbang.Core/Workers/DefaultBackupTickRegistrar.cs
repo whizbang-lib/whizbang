@@ -35,12 +35,10 @@ namespace Whizbang.Core.Workers;
 public sealed partial class DefaultBackupTickRegistrar(
   IBackupTickRegistry registry,
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   ILogger<DefaultBackupTickRegistrar> logger
 ) : IHostedService {
   private readonly IBackupTickRegistry _registry = ArgumentGuard.NotNull(registry);
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly ILogger<DefaultBackupTickRegistrar> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
@@ -57,9 +55,6 @@ public sealed partial class DefaultBackupTickRegistrar(
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   private async Task _scheduledRetryTickAsync(CancellationToken ct) {
-    if (!_schemaReadyGate.IsReady) {
-      return;
-    }
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var streams = await coordinator.NotifyScheduledRetryDueAsync(ct).ConfigureAwait(false);

@@ -171,8 +171,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var dlq = new FakeDeadLetterStore();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -180,7 +178,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions {
         Enabled = true,
         MaxOutboxAttempts = maxOutboxAttempts,
@@ -365,8 +362,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var dlq = new FakeDeadLetterStore();
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -374,7 +369,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
@@ -428,7 +422,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),

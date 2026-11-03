@@ -18,7 +18,6 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOutboxCompletionChannel {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly OutboxCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<OutboxCompletionFlushWorker> _logger;
@@ -31,7 +30,6 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:OutboxCompletionFlushWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   public OutboxCompletionFlushWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<OutboxCompletionFlushWorker> logger,
@@ -39,19 +37,26 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
+    // Started when the host starts this worker, at Accept commands (#1636): nothing is flushed before then.
+    _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger, timeProvider, started: false);
   }
 
   /// <inheritdoc />
   public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default)
     => _flusher.Writer.WriteAsync(outboxMessageId, cancellationToken);
+
+  /// <inheritdoc />
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    // The flusher starts with the worker (#1636), here rather than in ExecuteAsync: the host runs ExecuteAsync on the
+    // thread pool, and a stop that lands before it runs would otherwise find a flusher that never started.
+    _flusher.Start();
+    return base.StartAsync(cancellationToken);
+  }
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -64,17 +69,12 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   }
 
   private async Task _flushBatchAsync(IReadOnlyList<Guid> ids, CancellationToken ct) {
-    // Killswitch is honored here too — the inner BatchFlusher loop starts in the ctor and
-    // runs independently of ExecuteAsync, so the ExecuteAsync short-circuit alone isn't
-    // enough to suppress flushes. Drop the batch silently when disabled.
+    // Killswitch is honored here too: the inner BatchFlusher loop runs independently of
+    // ExecuteAsync once started, so the ExecuteAsync short-circuit alone isn't enough to
+    // suppress flushes. Drop the batch silently when disabled.
     if (!_options.Enabled) {
       return;
     }
-    // Defense-in-depth: hold flush calls until schema is ready. Producers normally gate
-    // themselves, so this rarely matters in practice — but if a custom producer enqueues
-    // before the initializer completes, this prevents firing SQL against an unmigrated DB.
-    await _schemaReadyGate.WaitForReadyAsync(ct);
-
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(OutboxCompletionFlushWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();

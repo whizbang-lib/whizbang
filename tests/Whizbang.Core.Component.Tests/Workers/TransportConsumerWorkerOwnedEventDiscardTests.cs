@@ -303,7 +303,6 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: instanceProvider,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

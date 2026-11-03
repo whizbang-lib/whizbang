@@ -31,7 +31,6 @@ public class ScheduleWorkerBranchCoverageTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: options,
       logger: NullLogger<ScheduleWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       loggerFactory: NullLoggerFactory.Instance,
       signalBus: NullSignalBus.Instance,
       timeProvider: clock);

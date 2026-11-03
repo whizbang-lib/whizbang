@@ -41,7 +41,6 @@ public sealed partial class OutboxPublishWorker(
   IWorkChannelWriter workChannelWriter,
   IOutboxCompletionChannel outboxCompletionChannel,
   IFailureChannel failureChannel,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<OutboxPublishWorkerOptions> options,
   ILogger<OutboxPublishWorker> logger,
   IServiceInstanceProvider instanceProvider,
@@ -77,7 +76,6 @@ public sealed partial class OutboxPublishWorker(
   // the publish loop (one flow of control), so a plain dictionary; an entry is dropped when its row next
   // reaches a ready transport.
   private readonly Dictionary<Guid, DateTimeOffset> _holdRenewedAt = [];
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly OutboxPublishWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<OutboxPublishWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
@@ -135,12 +133,6 @@ public sealed partial class OutboxPublishWorker(
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 

@@ -193,6 +193,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(await c.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
       instanceId, Whizbang.Core.Startup.StartupStage.Running, "serving", Whizbang.Core.RunControl.LifecyclePhase.Running,
       "1.0.0"))).IsTrue();
+    await Assert.That(c.RecordsInstanceTransitions).IsTrue()
+      .Because("the Dapper driver keeps instance rows, so the data plane waits for the row to record Accept commands");
 
     // Queues empty here — ClaimWorkAsync's gate branch plus the empty-batch path.
     var emptyBatch = await c.ClaimWorkAsync(new ClaimWorkRequest(

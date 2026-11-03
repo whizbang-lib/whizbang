@@ -418,15 +418,19 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Register shutdown service BEFORE workers (LIFO: stops AFTER workers)");
-    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work");
-    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.WhizbangShutdownService>();");
+    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work. Hosted to start when the");
+    source.AppendLine("    // schema-ready gate opens (#1991): an instance stopped before then is not deregistered, so a stop during");
+    source.AppendLine("    // Preflight or Migrate runs nothing against instance tables that may not exist yet.");
+    source.AppendLine("    global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<global::Whizbang.Core.Workers.WhizbangShutdownService>(services);");
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
     source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");
     // Singleton + hosted forward so the SAME instance is resolvable by type — the read-model
     // barrier waits on its StartupScanComplete.
     source.AppendLine("    global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<global::Whizbang.Core.Workers.PerspectiveWorker>(services);");
-    source.AppendLine("    services.AddHostedService(sp => global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<global::Whizbang.Core.Workers.PerspectiveWorker>(sp));");
+    // Hosted the way the core pipeline hosts it (#1636), so the two registrations deduplicate and the worker starts at
+    // Accept commands, never with the host.
+    source.AppendLine("    global::Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker(services, global::Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<global::Whizbang.Core.Workers.PerspectiveWorker>(sp));");
     source.AppendLine();
     source.AppendLine("    return services;");
     source.AppendLine("  }");

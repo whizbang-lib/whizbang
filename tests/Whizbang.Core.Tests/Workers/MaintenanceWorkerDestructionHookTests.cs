@@ -103,11 +103,8 @@ public class MaintenanceWorkerDestructionHookTests {
       services.AddSingleton(hook);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
       NullLogger<MaintenanceWorker>.Instance);
   }

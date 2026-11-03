@@ -68,8 +68,6 @@ public partial class OutboxDrainWorkerCoverageTests {
     var row = _row((Guid)TrackedGuid.New(), streamId);
     var coord = new OneRowThenEmptyCoordinator(row);
     var drain = new DrainChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new EventIdSignalingLogger<OutboxDrainWorker>();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -83,7 +81,6 @@ public partial class OutboxDrainWorkerCoverageTests {
       drainChannel: drain,
       completionChannel: new CompletionChannel(),
       failureChannel: new FailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: _jsonOpts,
       logger: logger,

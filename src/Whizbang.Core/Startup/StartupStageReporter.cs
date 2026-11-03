@@ -104,7 +104,7 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
       _phase = phase;
       // A phase is not a stage: no stage line, and no stage observer has anything new to see. The row records it with
       // the stage the instance is in, in the one write a transition makes.
-      _held = !(_registered && await _writeAsync(cancellationToken).ConfigureAwait(false));
+      _held = !await _recordAsync(cancellationToken).ConfigureAwait(false);
     } finally {
       _serialize.Release();
     }
@@ -121,7 +121,7 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
     try {
       _registered = true;
       if (_held) {
-        var recorded = await _writeAsync(cancellationToken).ConfigureAwait(false);
+        var recorded = await _recordAsync(cancellationToken).ConfigureAwait(false);
         _held = !recorded;
         if (_current is { } current) {
           await _tellAsync(current, recorded, cancellationToken).ConfigureAwait(false);
@@ -156,7 +156,7 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
       } else {
         LogShutdownStage(_logger, snapshot.Name, message);
       }
-      var recorded = _registered && await _writeAsync(cancellationToken).ConfigureAwait(false);
+      var recorded = await _recordAsync(cancellationToken).ConfigureAwait(false);
       _held = !recorded;
       await _tellAsync(snapshot, recorded, cancellationToken).ConfigureAwait(false);
     } finally {
@@ -193,19 +193,28 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   }
 
   /// <summary>
-  /// Writes what the instance is in now, in one update (#1636): the current stage and its message, the phase (an
+  /// Records what the instance is in now, in one update (#1636): the current stage and its message, the phase (an
   /// off-ladder phase in force, else the stage's own) and the library version. With no stage yet, the stage is left as
   /// the row records it.
   /// </summary>
-  private async Task<bool> _writeAsync(CancellationToken cancellationToken) {
+  /// <returns>
+  /// Whether the row records it now, which is also true when there is no row to record on: a host with no storage, or a
+  /// coordinator that keeps no instance rows, has nothing to wait for. False before the row exists (nothing is written
+  /// until the instance registers) and when the write did not land; the state is then held for the next registration
+  /// signal.
+  /// </returns>
+  private async Task<bool> _recordAsync(CancellationToken cancellationToken) {
     var current = _current;
     var transition = new InstanceTransition(_instanceProvider.InstanceId, current?.Stage, current?.Message,
       _phase ?? StartupStages.LifecyclePhaseOf(current!.Stage), _libraryVersion);
     try {
       await using var scope = _scopeFactory.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
-      if (coordinator is null) {
-        return false;   // no storage in this host: nothing reads instance rows either
+      if (coordinator?.RecordsInstanceTransitions != true) {
+        return true;    // no instance rows in this host: nothing to record, and nothing reads them either
+      }
+      if (!_registered) {
+        return false;   // the row does not exist yet: held until the instance registers
       }
       using var timeout = new CancellationTokenSource(_writeTimeout, _time);
       using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);

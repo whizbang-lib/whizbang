@@ -49,7 +49,8 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
-public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
+  Whizbang.Core.Startup.IStartAbandonedObserver {
   /// <summary>
   /// The active body cleanups this worker started and that are still running. Its stop waits for them, so they finish
   /// while the services they resolve are still alive (#1721). Replaces a bag nothing ever added to.
@@ -72,7 +73,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly IEphemeralModeResolver _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IEventMarkerResolver _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
@@ -113,6 +113,14 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <inheritdoc />
   Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <summary>
+  /// The host stopped before Accept commands, so this worker never started (#1636): <see cref="SubscriptionsReady"/> is
+  /// settled as canceled, so a waiter on it observes an outcome rather than hanging on subscriptions that never come.
+  /// </summary>
+  /// <param name="stoppingToken">The host's stopping token.</param>
+  void Whizbang.Core.Startup.IStartAbandonedObserver.OnStartAbandoned(CancellationToken stoppingToken)
+    => _subscriptionsReadyTcs.TrySetCanceled(stoppingToken);
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
@@ -163,10 +171,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
     IServiceInstanceProvider serviceInstanceProvider,
-    // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
-    // database work against a schema that may not exist yet on a first boot. Optional only so
-    // existing fixtures construct unchanged; DI always supplies it.
-    ISchemaReadyGate schemaReadyGate,
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions> routingOptions,
     IWorkChannelWriter workChannelWriter,
     Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions> claimWorkerOptions,
@@ -213,7 +217,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;
-    _schemaReadyGate = schemaReadyGate;
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
@@ -300,23 +303,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Executes the worker, creating subscriptions for all configured destinations.
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate and then, per destination, checks readiness, provisions the owned domains, applies the manifest and subscribes, with an explicit level check in front of each diagnostic so a disabled level costs nothing.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup, per destination, checks readiness, provisions the owned domains, applies the manifest and subscribes, with an explicit level check in front of each diagnostic so a disabled level costs nothing.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    // Startup barrier: nothing below may run before migrations complete — subscribing lets the
-    // broker deliver, and delivery lands in the inbox tables the migration creates.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        // Settle readiness before leaving, for the same reason the catch further down surfaces a
-        // startup failure: a waiter on SubscriptionsReady must observe an outcome rather than hang
-        // forever on a signal that can never arrive. This return is the one exit that used to
-        // leave it unsettled, so a host shutting down while migrations were still pending parked
-        // every readiness waiter — including any that gate shutdown itself — indefinitely.
-        _subscriptionsReadyTcs.TrySetCanceled(stoppingToken);
-        return;
-      }
-    }
+    // Subscribing lets the broker deliver, and delivery lands in the inbox tables the migration
+    // creates: the host starts this worker at Accept commands (#1636), after migrations complete.
 
     // Receive-path flag-derivation wiring diagnostic: a missing resolver or a host-only index count
     // means every flag-bearing event received over the transport silently loses its flags — surface

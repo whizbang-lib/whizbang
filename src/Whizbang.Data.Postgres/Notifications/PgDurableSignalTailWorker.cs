@@ -38,7 +38,6 @@ public sealed partial class PgDurableSignalTailWorker(
   ILogger<PgDurableSignalTailWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   ProbeCadenceMetrics? probeMetrics = null,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
@@ -49,7 +48,6 @@ public sealed partial class PgDurableSignalTailWorker(
   private readonly ILogger<PgDurableSignalTailWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   private readonly ProbeCadenceMetrics? _probeMetrics = probeMetrics;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   // Initializers run in declaration order, so the _options initializer above has already refused a null.
@@ -85,14 +83,7 @@ public sealed partial class PgDurableSignalTailWorker(
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // The very first act below is INSERTing this pod's cursor into wh_signal_cursors —
-    // a table the migration creates. Hold at the schema gate before any of it.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
+    // a table the migration creates. The host starts this worker at Accept commands (#1636).
 
     _wireNameToEntry = _buildWireMap();
 

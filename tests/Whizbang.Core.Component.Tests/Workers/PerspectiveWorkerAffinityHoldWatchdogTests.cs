@@ -278,7 +278,6 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
             MaxWait = TimeSpan.Zero
           }
         }),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),

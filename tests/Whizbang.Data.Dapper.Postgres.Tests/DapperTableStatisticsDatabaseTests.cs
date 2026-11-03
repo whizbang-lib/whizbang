@@ -13,6 +13,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -99,7 +100,7 @@ public class DapperTableStatisticsDatabaseTests {
     var hosted = provider.GetServices<IHostedService>().ToList();
     await hosted.OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(cancellationToken);
 
-    var collector = hosted.OfType<TableStatisticsCollector>().Single();
+    var collector = provider.GetHostedWorkers().OfType<TableStatisticsCollector>().Single();
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     collector.CycleCompleted += () => cycled.TrySetResult();
     using var stop = new CancellationTokenSource();

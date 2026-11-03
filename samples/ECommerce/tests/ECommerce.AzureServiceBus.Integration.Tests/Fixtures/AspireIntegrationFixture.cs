@@ -23,6 +23,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -426,15 +427,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
@@ -565,21 +565,20 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Azure Service Bus consumer with actual topic names matching BFF.API
     var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-bff-products"));
     consumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-bff-inventory"));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),

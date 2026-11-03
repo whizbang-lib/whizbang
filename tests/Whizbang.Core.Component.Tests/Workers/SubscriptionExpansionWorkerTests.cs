@@ -124,57 +124,10 @@ public class SubscriptionExpansionWorkerTests {
              + "stops the host from ever serving");
   }
 
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_ShutdownBeforeSchemaReady_TouchesNothingAsync(
-      CancellationToken testToken) {
-    // A host that fails during migration stops everything it built. This worker reads registry
-    // tables that may not exist yet, so it waits on the schema gate -- and a shutdown arriving
-    // during that wait must not be reported as a reconcile failure.
-    var coordinator = new RegistryCoordinator();
-    var gate = new BlockingGate();
-    var worker = _buildWorker(coordinator, transport: null, gate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Without waiting for the worker to actually reach the gate, everything below is answered by
-    // a worker that never ran -- the registry is untouched either way.
-    await gate.WaitEntered.WaitAsync(testToken);
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("shutdown during the schema wait is an ordinary stop, not an error to report");
-    await Assert.That(coordinator.Registry).IsEmpty()
-      .Because("nothing may be written before the schema those tables live in is ready");
-  }
-
-  private static SchemaReadyGate _readyGate() {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    return gate;
-  }
-
-  /// <summary>A gate that never opens, and reports when the worker began waiting on it.</summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waitEntered =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task WaitEntered => _waitEntered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static SubscriptionExpansionWorker _buildWorker(
-      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null,
-      ISchemaReadyGate? gate = null) {
+      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEventTypeProvider>(new TypeProvider());
@@ -189,7 +142,6 @@ public class SubscriptionExpansionWorkerTests {
     var sp = services.BuildServiceProvider();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? _readyGate(),
       Options.Create(options ?? new StreamIntegrityOptions()),
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }

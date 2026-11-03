@@ -471,8 +471,6 @@ public class OutboxDrainWorkerStreamRunTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var channel = new DrainChannel();
     var completion = new CountingCompletionChannel();
     var failure = new RecordingFailureChannel();
@@ -482,7 +480,6 @@ public class OutboxDrainWorkerStreamRunTests {
       drainChannel: channel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: _jsonOpts,
       logger: NullLogger<OutboxDrainWorker>.Instance,

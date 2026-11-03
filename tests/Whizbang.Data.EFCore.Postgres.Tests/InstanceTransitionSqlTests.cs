@@ -41,6 +41,8 @@ public class InstanceTransitionSqlTests : EFCoreTestBase {
       instance, StartupStage.AcceptingCommands, "accepting", LifecyclePhase.AcceptingCommands, "3.2.1"));
 
     await Assert.That(recorded).IsTrue();
+    await Assert.That(_coordinator(dbContext).RecordsInstanceTransitions).IsTrue()
+      .Because("the EF Core driver keeps instance rows, so the data plane waits for the row to record Accept commands");
     var row = await _rowAsync(conn, instance);
     await Assert.That($"{row.Stage} {row.Message} {row.Phase} {row.Version}")
       .IsEqualTo("60 accepting AcceptingCommands 3.2.1");

@@ -103,7 +103,6 @@ public class IntegrityAuditWorkerLoopTests {
 
   private static IntegrityAuditWorker _worker(IServiceScopeFactory scopeFactory, StreamIntegrityOptions options) =>
     new(scopeFactory,
-        SchemaReadyGate.AlreadyReady(),
         Options.Create(options),
         NullLogger<IntegrityAuditWorker>.Instance);
 

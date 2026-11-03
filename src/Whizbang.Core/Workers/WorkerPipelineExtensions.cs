@@ -13,6 +13,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Routing;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.Startup;
 
 namespace Whizbang.Core.Workers;
 
@@ -332,12 +333,13 @@ public static class WorkerPipelineExtensions {
     // Whizbang:Redelivery, Whizbang:Perspectives:* and the rest). This also registers the bound
     // StandbyWatcherOptions instance the watcher below resolves.
     Whizbang.Core.Configuration.ProcessWideOptionsBinding.AddProcessWideOptionsBinding(services);
-    services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
+    // Hosted to start when the schema-ready gate opens (#1636), as it always has: it watches the fleet while this
+    // instance is alive and not yet eligible for work.
+    services.AddWhizbangWorkerAtSchemaReady(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-      sp.GetRequiredService<ISchemaReadyGate>(),
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
@@ -393,7 +395,6 @@ public static class WorkerPipelineExtensions {
     // TimeProvider are optional dependencies.
     services.TryAddSingleton(sp => new CoalesceShipWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: sp.GetRequiredService<ISchemaReadyGate>(),
       instanceProvider: sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       compositeFactory: sp.GetRequiredService<Whizbang.Core.Minting.ICompositeFactory>(),
@@ -588,34 +589,38 @@ public static class WorkerPipelineExtensions {
     // be spawned. Singleton construction is the side-effect we want — StartAsync just
     // resolves the singleton from DI and returns.
     services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
-    services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<PerspectiveWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<CoalesceShipWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<RepairDrainWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<InboxDrainWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
+    // Each worker is hosted with the point it starts at (#1636); none holds a gate of its own. The heartbeat starts when
+    // the schema-ready gate opens, so the instance is alive while it is not yet eligible for work; the data plane starts
+    // at Accept commands, once the instance's row records that it is eligible, so nothing claims, drains, flushes or
+    // sweeps before then.
+    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<HeartbeatWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<ClaimWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<FailureFlushWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<LeaseRenewalWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxHandlerWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<CoalesceShipWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityAuditWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<RepairDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxPublishWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDispatchWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
-    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
+    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
     // AND its touch-hook binder so the subscriptions wire up at startup. The
     // binder runs StartAsync once to subscribe Touch on ClaimWorker /
     // HeartbeatWorker / IWorkNotificationListener — no per-request work.
-    services.AddHostedService(sp => sp.GetRequiredService<BackupTickCoordinator>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<BackupTickCoordinator>());
     services.AddHostedService<IdleActivityTouchHookBinder>();
     services.AddHostedService<DefaultBackupTickRegistrar>();
 

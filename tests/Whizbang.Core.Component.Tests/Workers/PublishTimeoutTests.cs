@@ -186,8 +186,6 @@ public class PublishTimeoutTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -195,7 +193,6 @@ public class PublishTimeoutTests {
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -254,8 +251,6 @@ public class PublishTimeoutTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -263,7 +258,6 @@ public class PublishTimeoutTests {
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -318,8 +312,6 @@ public class PublishTimeoutTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -327,7 +319,6 @@ public class PublishTimeoutTests {
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
