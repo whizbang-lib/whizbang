@@ -26,6 +26,8 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_TwoDrainsOverlap_BothCompleteAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledAfterTakingSlots_GivesThemBackAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledBeforeTakingAnySlot_LeavesTheExecutorWholeAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorDrainTests.cs:DrainAsync_CanceledWaitingForTheGate_LeavesTheRunningDrainWholeAsync</tests>
 public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 

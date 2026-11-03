@@ -33,9 +33,13 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
-/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_AfterStop_ReturnsWithoutDrainingAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_StopLandsWhileTheDrainAwaitsTheWorker_BothCompleteAndQueuedWorkIsCanceledAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorStopTests.cs:StopAsync_ItemQueuedBehindRunningWork_IsCanceledWithoutRunningAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_CanceledWhileWaiting_StopsWaitingAndTheQueueStillRunsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_TokenAlreadyCanceled_LeavesTheExecutorAcceptingWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_StopClosesTheChannelWhileTheWriteWaits_CallerIsCanceledAndStateReturnedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_CallerCancelsWhileTheWriteWaits_CallerSeesItsCancellationAndStateReturnedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
@@ -93,6 +97,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// bounded write waiting for room), and the caller's own cancellation when its token cancels that
   /// wait. In both cases the pooled execution state is returned (#2012).
   /// </remarks>
+  /// <docs>operations/workers/execution-lifecycle</docs>
   /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_StopClosesTheChannelWhileTheWriteWaits_CallerIsCanceledAndStateReturnedAsync</tests>
   /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_CallerCancelsWhileTheWriteWaits_CallerSeesItsCancellationAndStateReturnedAsync</tests>
   public async ValueTask<TResult> ExecuteAsync<TResult>(
