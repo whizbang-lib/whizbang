@@ -77,12 +77,12 @@ public class IntegrityDeliverySqlTests : EFCoreTestBase {
     var leased = await coordinator.LeaseIntegrityDeliveriesAsync(2, _lease);
     var rest = await coordinator.LeaseIntegrityDeliveriesAsync(10, _lease);
 
-    await Assert.That(leased.Select(d => d.DeliveryId).ToList()).IsEquivalentTo(new List<Guid> { first, second });
+    await Assert.That(leased.Select(d => d.DeliveryId).ToList()).IsEquivalentTo([first, second]);
     await Assert.That(leased[0].DeliveryId).IsEqualTo(first).Because("the drain works in arrival order");
     await Assert.That(leased[0].DeliveryType).IsEqualTo(TYPE);
     await Assert.That(leased[0].Payload).Contains(first.ToString());
     await Assert.That(leased[0].Attempts).IsEqualTo(0);
-    await Assert.That(rest.Select(d => d.DeliveryId).ToList()).IsEquivalentTo(new List<Guid> { third })
+    await Assert.That(rest.Select(d => d.DeliveryId).ToList()).IsEquivalentTo([third])
       .Because("a leased delivery is not due again until its lease runs out, so a second drain cannot take it");
   }
 
@@ -107,7 +107,7 @@ public class IntegrityDeliverySqlTests : EFCoreTestBase {
     var leased = await coordinator.LeaseIntegrityDeliveriesAsync(10, _lease);
     await tx.RollbackAsync();
 
-    await Assert.That(leased.Select(d => d.DeliveryId).ToList()).IsEquivalentTo(new List<Guid> { free })
+    await Assert.That(leased.Select(d => d.DeliveryId).ToList()).IsEquivalentTo([free])
       .Because("a row another drain holds is skipped, never waited on");
   }
 

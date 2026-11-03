@@ -237,7 +237,7 @@ public class IntegrityDeliveryRegistryTests {
     _ = registry.TryGetHandler("t", out var handler);
     await handler!("{}", new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
 
-    await Assert.That(calls).IsEquivalentTo(new List<string> { "first" })
+    await Assert.That(calls).IsEquivalentTo(["first"])
       .Because("registrars may start more than once; a host that registers its own handler first keeps it");
   }
 

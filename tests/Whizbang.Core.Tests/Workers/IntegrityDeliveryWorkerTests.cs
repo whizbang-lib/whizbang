@@ -128,12 +128,12 @@ public class IntegrityDeliveryWorkerTests {
 
     var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
 
-    await Assert.That(fx.Handled.Select(h => h.Payload).ToList()).IsEquivalentTo(new List<string> { "first", "second", "third" });
+    await Assert.That(fx.Handled.Select(h => h.Payload).ToList()).IsEquivalentTo(["first", "second", "third"]);
     await Assert.That(fx.Handled[0].Payload).IsEqualTo("first");
     await Assert.That(fx.Handled[2].Payload).IsEqualTo("third");
     await Assert.That(fx.Handled.All(h => h.InsideTheDrain)).IsTrue()
       .Because("a receptor the drain runs must run for real, not record itself again");
-    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo(new List<Guid> { _id(3), _id(1), _id(2) });
+    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo([_id(3), _id(1), _id(2)]);
     await Assert.That(pass.Processed).IsEqualTo(3);
     await Assert.That(IntegrityDrainContext.IsActive).IsFalse().Because("the drain context ends with each delivery");
   }
@@ -245,7 +245,7 @@ public class IntegrityDeliveryWorkerTests {
 
     await Assert.That(pass.Dropped).IsEqualTo(1);
     await Assert.That(fx.Coordinator.Failed).IsEmpty();
-    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo(new List<Guid> { _id(1) })
+    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo([_id(1)])
       .Because("control-plane traffic is dropped at its bound, not dead-lettered");
     var warning = fx.Logger.Entries.Single(e => e.Level == LogLevel.Warning);
     await Assert.That(warning.Message).Contains(TYPE);
@@ -260,7 +260,7 @@ public class IntegrityDeliveryWorkerTests {
     var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
 
     await Assert.That(pass.Dropped).IsEqualTo(1);
-    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo(new List<Guid> { _id(1) });
+    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo([_id(1)]);
     await Assert.That(fx.Logger.Entries.Single(e => e.Level == LogLevel.Warning).Message).Contains("a-type-from-another-version");
   }
 
@@ -276,7 +276,7 @@ public class IntegrityDeliveryWorkerTests {
 
     var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
 
-    await Assert.That(fx.Coordinator.LeaseSizes).IsEquivalentTo(new List<int> { 2, 2, 1 });
+    await Assert.That(fx.Coordinator.LeaseSizes).IsEquivalentTo([2, 2, 1]);
     await Assert.That(pass.Processed).IsEqualTo(5);
     await Assert.That(fx.Coordinator.Pending.Count).IsEqualTo(5).Because("the rest waits for the next pass");
   }
@@ -288,7 +288,7 @@ public class IntegrityDeliveryWorkerTests {
 
     _ = await fx.Worker.RunPassAsync(CancellationToken.None);
 
-    await Assert.That(fx.Coordinator.LeaseSizes).IsEquivalentTo(new List<int> { 4 })
+    await Assert.That(fx.Coordinator.LeaseSizes).IsEquivalentTo([4])
       .Because("a short lease means the queue is empty; asking again would be a wasted round trip");
   }
 

@@ -67,12 +67,14 @@ public class IntegrityReceptorRegistrationEnforcementTests {
                             || (pi.ParameterType.IsGenericType
                                 && pi.ParameterType.GetGenericTypeDefinition() == typeof(Microsoft.Extensions.Logging.ILogger<>))))
       .ToList();
+    object _argument(Type parameterType) {
+      if (parameterType == typeof(IServiceProvider)) {
+        return sp;
+      }
+      return parameterType == typeof(IServiceScopeFactory) ? scopeFactory : sp.GetRequiredService(parameterType);
+    }
     foreach (var (_, ctor) in registrars) {
-      var args = ctor!.GetParameters()
-        .Select(pi => pi.ParameterType == typeof(IServiceProvider) ? sp
-                    : pi.ParameterType == typeof(IServiceScopeFactory) ? scopeFactory
-                    : sp.GetRequiredService(pi.ParameterType))
-        .ToArray();
+      var args = ctor!.GetParameters().Select(pi => _argument(pi.ParameterType)).ToArray();
       await ((IHostedService)ctor.Invoke(args)).StartAsync(CancellationToken.None);
     }
 

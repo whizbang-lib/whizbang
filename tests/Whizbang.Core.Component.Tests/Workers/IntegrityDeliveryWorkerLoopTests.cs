@@ -126,8 +126,8 @@ public class IntegrityDeliveryWorkerLoopTests {
     await worker.StopAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(handled).IsEquivalentTo(new List<string> { "payload" });
-    await Assert.That(coordinator.Completed).IsEquivalentTo(new List<Guid> { id });
+    await Assert.That(handled).IsEquivalentTo(["payload"]);
+    await Assert.That(coordinator.Completed).IsEquivalentTo([id]);
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
   }
 
@@ -154,7 +154,7 @@ public class IntegrityDeliveryWorkerLoopTests {
     await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(logger.Warnings.Count).IsEqualTo(1).Because("the failed pass is reported, never swallowed");
-    await Assert.That(handled).IsEquivalentTo(new List<string> { "after-recovery" })
+    await Assert.That(handled).IsEquivalentTo(["after-recovery"])
       .Because("one failed pass must not stop the drain");
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
   }
