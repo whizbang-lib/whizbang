@@ -53,6 +53,15 @@ public class DapperSchemaCurrencyTests {
   }
 
   [Test]
+  public async Task WithNoPerspectivesAtAll_AnInitializedSchemaIsCurrentAsync() {
+    var initializer = new PostgresSchemaInitializer(_database.ConnectionString);
+    await initializer.InitializeSchemaAsync();
+
+    await Assert.That(await initializer.IsCurrentAsync()).IsTrue()
+      .Because("a service with no perspective tables owes only the framework's migrations");
+  }
+
+  [Test]
   public async Task WithTheCallersOwnMigrations_AnInitializedSchemaIsCurrentAsync() {
     var initializer = new PostgresSchemaInitializer(_database.ConnectionString, _entries, new PostgresMigrationProvider());
     await initializer.InitializeSchemaAsync();

@@ -195,6 +195,7 @@ public sealed class PostgresSchemaInitializer {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns><see langword="true"/> when nothing is owed.</returns>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaCurrencyTests.cs:WithNoPerspectivesAtAll_AnInitializedSchemaIsCurrentAsync</tests>
   public async Task<bool> IsCurrentAsync(CancellationToken cancellationToken = default) {
     if (_perspectiveEntries is null && !string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       return false;
