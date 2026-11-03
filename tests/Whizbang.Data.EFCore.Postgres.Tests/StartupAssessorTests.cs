@@ -197,6 +197,7 @@ public class StartupAssessorTests : EFCoreTestBase {
       .Because("an enum column still stored as text has its conversion pending");
     await Assert.That(await settledAsync([], [], ["something-else:wh_per_settle_probe.amount"])).IsFalse()
       .Because("a rewrite whose settledness cannot be read is never assumed settled");
+    await Assert.That(await settledAsync([], [], ["enum-column:no_column_named"])).IsFalse();
   }
 
   private async Task _initializeTwiceAsync(CancellationToken cancellationToken) {
