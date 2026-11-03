@@ -219,6 +219,46 @@ public class PerspectiveWorkerInjectedClockTests {
   }
 
   // ============================================================
+  // Fixture contract
+  // ============================================================
+
+  // A test waits for a wait to be armed and then advances the clock past it. That is only sound if the clock reports a
+  // wait as armed once an advance would end it; reported any earlier, the test's advance can land between the report
+  // and the registration and be lost, and the worker then waits for a time that never comes (#2020). Each test below
+  // advances the clock from inside the report itself, the earliest a test could, so the losing order is the one taken.
+
+  [Test]
+  public async Task ArmingClock_ReportsATimerCreatedWithADueTimeOnlyOnceAnAdvanceFiresItAsync() {
+    var due = TimeSpan.FromMilliseconds(150);
+    var clock = new ArmingClock();
+    var fired = 0;
+    clock.WhenArmed = armed => clock.Advance(armed);
+
+    await using var timer = clock.CreateTimer(_ => Interlocked.Increment(ref fired), null, due, Timeout.InfiniteTimeSpan);
+
+    await Assert.That(Volatile.Read(ref fired)).IsEqualTo(1)
+      .Because("an advance made the moment the clock reports the timer armed must fire it, so the report follows the registration");
+    await Assert.That(clock.FiredCount(due)).IsEqualTo(1)
+      .Because("the clock counts the wait that the advance ended");
+  }
+
+  [Test]
+  public async Task ArmingClock_ReportsATimerMovedToADueTimeOnlyOnceAnAdvanceFiresItAsync() {
+    var due = TimeSpan.FromMilliseconds(150);
+    var clock = new ArmingClock();
+    var fired = 0;
+    await using var timer = clock.CreateTimer(_ => Interlocked.Increment(ref fired), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    clock.WhenArmed = armed => clock.Advance(armed);
+
+    timer.Change(due, Timeout.InfiniteTimeSpan);
+
+    await Assert.That(Volatile.Read(ref fired)).IsEqualTo(1)
+      .Because("an advance made the moment the clock reports the moved timer armed must fire it, so the report follows the change");
+    await Assert.That(clock.FiredCount(due)).IsEqualTo(1)
+      .Because("the clock counts the wait that the advance ended");
+  }
+
+  // ============================================================
   // Fixture
   // ============================================================
 
@@ -311,6 +351,12 @@ public class PerspectiveWorkerInjectedClockTests {
       }
     }
 
+    /// <summary>
+    /// Runs on the arming thread each time a wait is reported armed, after the report. A fixture-contract test uses it to
+    /// advance the clock at the earliest moment a test waiting on <see cref="Armed"/> could.
+    /// </summary>
+    public Action<TimeSpan>? WhenArmed { get; set; }
+
     /// <summary>How many waits of <paramref name="due"/> have elapsed.</summary>
     public int FiredCount(TimeSpan due) {
       lock (_lock) {
@@ -339,6 +385,7 @@ public class PerspectiveWorkerInjectedClockTests {
           waiter.Signal.TrySetResult();
         }
       }
+      WhenArmed?.Invoke(dueTime);
     }
 
     private void _onFired(TimeSpan dueTime) {
