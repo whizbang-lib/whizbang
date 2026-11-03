@@ -15,21 +15,21 @@ using Whizbang.Core.Temporal;
 namespace Whizbang.Core.Tests.Archival;
 
 /// <summary>
-/// Locks the A1 increment-5 schedule builder: <see cref="StreamCloseSchedule"/> builds a
+/// Locks the A1 increment-5 schedule builder: <see cref="PrefixTruncateSchedule"/> builds a
 /// <see cref="ScheduleDefinition"/> whose occurrence type + payload round-trip back to
-/// <see cref="ScheduledStreamClose"/> when the F2 engine fires it. (The receptor + registrar wiring is
+/// <see cref="ScheduledPrefixTruncate"/> when the F2 engine fires it. (The receptor + registrar wiring is
 /// covered in the EFCore.Postgres test project, where the receptor lives.)
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public class StreamCloseScheduleTests {
+public class PrefixTruncateScheduleTests {
   [Test]
   public async Task Recurring_BuildsIntervalDefinition_PayloadRoundTripsAsync() {
     var target = Guid.NewGuid();
     var scheduler = Guid.NewGuid();
     var authority = Guid.NewGuid();
 
-    var def = StreamCloseSchedule.Recurring(
-      "close-account-123", scheduler, new ScheduledStreamClose(target, 900, true),
+    var def = PrefixTruncateSchedule.Recurring(
+      "close-account-123", scheduler, new ScheduledPrefixTruncate(target, 900, true),
       TimeSpan.FromDays(30), authority);
 
     await Assert.That(def.Key).IsEqualTo("close-account-123");
@@ -38,12 +38,12 @@ public class StreamCloseScheduleTests {
     await Assert.That(def.Kind).IsEqualTo(RecurrenceKind.Interval);
     await Assert.That(def.Interval).IsEqualTo(TimeSpan.FromDays(30));
     await Assert.That(def.AuthorityPrincipalId).IsEqualTo(authority);
-    await Assert.That(def.EventType).IsEqualTo(TypeNameFormatter.Format(typeof(ScheduledStreamClose)))
+    await Assert.That(def.EventType).IsEqualTo(TypeNameFormatter.Format(typeof(ScheduledPrefixTruncate)))
       .Because("The occurrence's routing type must be the assembly-qualified form GetTypeInfoByName resolves.");
 
     var options = JsonContextRegistry.CreateCombinedOptions();
-    var back = (ScheduledStreamClose?)JsonSerializer.Deserialize(
-      def.EventDataJson!, options.GetTypeInfo(typeof(ScheduledStreamClose)));
+    var back = (ScheduledPrefixTruncate?)JsonSerializer.Deserialize(
+      def.EventDataJson!, options.GetTypeInfo(typeof(ScheduledPrefixTruncate)));
     await Assert.That(back!.StreamId).IsEqualTo(target);
     await Assert.That(back.ThroughVersion).IsEqualTo(900L);
     await Assert.That(back.Archive).IsTrue()
@@ -52,13 +52,13 @@ public class StreamCloseScheduleTests {
 
   [Test]
   public async Task RecurringCron_BuildsCronDefinitionAsync() {
-    var def = StreamCloseSchedule.RecurringCron(
-      "close-month", Guid.NewGuid(), new ScheduledStreamClose(Guid.NewGuid(), 100, false),
+    var def = PrefixTruncateSchedule.RecurringCron(
+      "close-month", Guid.NewGuid(), new ScheduledPrefixTruncate(Guid.NewGuid(), 100, false),
       "0 0 1 * *", Guid.NewGuid(), timeZone: "America/New_York");
 
     await Assert.That(def.Kind).IsEqualTo(RecurrenceKind.Cron);
     await Assert.That(def.Cron).IsEqualTo("0 0 1 * *");
     await Assert.That(def.TimeZone).IsEqualTo("America/New_York");
-    await Assert.That(def.EventType).IsEqualTo(TypeNameFormatter.Format(typeof(ScheduledStreamClose)));
+    await Assert.That(def.EventType).IsEqualTo(TypeNameFormatter.Format(typeof(ScheduledPrefixTruncate)));
   }
 }

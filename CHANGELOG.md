@@ -96,6 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generator registers it without reflection, inherited, events only. Configuration under
   `Whizbang:StreamLifecycle:Types:<StreamType>` wins key by key; a declared value that cannot be used fails the start
   naming the type.
+- **The scheduled prefix-truncate types are named for what they do (#1760).** `ScheduledStreamClose`,
+  `StreamCloseSchedule` and `ScheduledStreamCloseReceptor` are now `ScheduledPrefixTruncate`, `PrefixTruncateSchedule`
+  and `ScheduledPrefixTruncateReceptor`, leaving "close" to closing the books. The former occurrence name is kept in
+  the pinned-type ledger, so a schedule stored before the rename still fires. **Breaking:** code that names the old types
+  must use the new names.
 - **A sealed stream is archived once its grace has passed, after a final snapshot (#1734, WS-3 S5).** The new
   `stream-disposition` maintenance step (both Postgres drivers, maintainer duty) schedules each sealed stream for
   `Whizbang:StreamLifecycle:FinalizeGrace` (default 7 days) after the later of its seal and the cycle that first sees

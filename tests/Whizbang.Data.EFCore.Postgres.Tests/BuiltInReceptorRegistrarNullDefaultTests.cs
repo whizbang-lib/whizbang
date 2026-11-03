@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// binding its port, so the platform saw only a refused connection on the startup probe.
 /// </para>
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledStreamCloseReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
@@ -55,10 +55,10 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   }
 
   [Test]
-  public async Task ScheduledStreamClose_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
+  public async Task ScheduledPrefixTruncate_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
-    var registrar = new ScheduledStreamCloseReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+    var registrar = new ScheduledPrefixTruncateReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
   }
@@ -211,8 +211,8 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
     // A real built-in receptor rather than a local fake: the receptor-discovery generator registers
     // every IReceptor<> it finds in an assembly, so declaring one here would change this very test
     // project from "declares no receptors" into one that does.
-    var receptor = new ScheduledStreamCloseReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+    var receptor = new ScheduledPrefixTruncateReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
 
     await Assert.That(() => NullReceptorRegistry.Instance.Register(receptor, LifecycleStage.LocalImmediateInline))
       .Throws<InvalidOperationException>()

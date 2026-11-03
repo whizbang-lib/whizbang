@@ -11,8 +11,8 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// Registers <see cref="ScheduledStreamCloseReceptor"/> with <see cref="IReceptorRegistry"/> at startup.
-/// <see cref="ScheduledStreamClose"/> is a framework command defined in <c>Whizbang.Core</c>, and
+/// Registers <see cref="ScheduledPrefixTruncateReceptor"/> with <see cref="IReceptorRegistry"/> at startup.
+/// <see cref="ScheduledPrefixTruncate"/> is a framework command defined in <c>Whizbang.Core</c>, and
 /// source-generated receptor discovery only sees the consumer's own syntax, so a built-in receptor needs
 /// runtime registration to join the dispatch pipeline. Registered at the three stages a framework receptor needs: <see cref="LifecycleStage.LocalImmediateInline"/>, where local
 /// dispatch finds a runtime handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an
@@ -23,10 +23,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
-internal sealed class ScheduledStreamCloseReceptorRegistrar(
+internal sealed class ScheduledPrefixTruncateReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
-    ILogger<ScheduledStreamCloseReceptor> receptorLogger) : IHostedService {
+    ILogger<ScheduledPrefixTruncateReceptor> receptorLogger) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
@@ -36,10 +36,10 @@ internal sealed class ScheduledStreamCloseReceptorRegistrar(
     if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
-    var receptor = new ScheduledStreamCloseReceptor(scopeFactory, receptorLogger);
-    registry.Register<ScheduledStreamClose>(receptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<ScheduledStreamClose>(receptor, LifecycleStage.PreOutboxInline);
-    registry.Register<ScheduledStreamClose>(receptor, LifecycleStage.PostInboxInline);
+    var receptor = new ScheduledPrefixTruncateReceptor(scopeFactory, receptorLogger);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.LocalImmediateInline);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.PreOutboxInline);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.PostInboxInline);
     return Task.CompletedTask;
   }
 

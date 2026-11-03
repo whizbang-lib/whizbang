@@ -10,15 +10,15 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Coverage for <see cref="ScheduledStreamCloseReceptorRegistrar.StopAsync"/> — no existing test
+/// Coverage for <see cref="ScheduledPrefixTruncateReceptorRegistrar.StopAsync"/> — no existing test
 /// in this project drives the registrar's <c>IHostedService.StopAsync</c> path (only
 /// <c>StartAsync</c> is exercised elsewhere). Mirrors the sibling
 /// <c>IntegrityCheckpointReceptorRegistrarCoverageTests.StopAsync_ReturnsAnAlreadyCompletedTaskAsync</c>
 /// pattern for the same registrar shape.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledStreamCloseReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 [Category("Shard1")]
-public class ScheduledStreamCloseReceptorRegistrarCoverageTests {
+public class ScheduledPrefixTruncateReceptorRegistrarCoverageTests {
 
   // IHostedService.StopAsync runs for EVERY registered hosted service during host shutdown. This
   // registrar carries no unregister logic, so it must be a genuine no-op that actually completes —
@@ -28,8 +28,8 @@ public class ScheduledStreamCloseReceptorRegistrarCoverageTests {
   public async Task StopAsync_ReturnsAnAlreadyCompletedTaskAsync() {
     var services = new ServiceCollection();
     await using var sp = services.BuildServiceProvider();
-    var registrar = new ScheduledStreamCloseReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+    var registrar = new ScheduledPrefixTruncateReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
 
     var stopTask = registrar.StopAsync(CancellationToken.None);
 

@@ -114,7 +114,7 @@ public sealed class StartupHostedServiceAuditTests {
     "CapabilityVerdictEnforcer",
     // In-memory registrations: receptors, backup ticks (run by BackupTickCoordinator), event hooks.
     "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar", "IntegrityManifestReceptorRegistrar",
-    "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar", "ScheduledStreamCloseReceptorRegistrar",
+    "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar", "ScheduledPrefixTruncateReceptorRegistrar",
     "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar", "DefaultBackupTickRegistrar",
     "IdleActivityTouchHookBinder",
     // Subscriptions on the notification connection, which starts at Elect.
