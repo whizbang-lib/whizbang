@@ -126,6 +126,71 @@ public sealed class EvictionUnretainedPerspective : IPerspectiveFor<EvictionUnre
   }
 }
 
+/// <summary>Folded by the perspectives whose rows leave when their stream is archived whole (#1739).</summary>
+public sealed record ArchivedRowsAdded : IEvent {
+  [StreamId]
+  public Guid StreamId { get; init; }
+  public int Delta { get; init; }
+}
+
+public sealed class ArchivedRowsDroppedModel {
+  [StreamId]
+  public Guid Id { get; set; }
+  public int Total { get; set; }
+}
+
+/// <summary>Its rows are dropped when their stream is archived whole, and no row retention is declared.</summary>
+[ArchivedStreamRows(Whizbang.Core.Archival.ArchivedStreamRowPolicy.Drop)]
+public sealed class ArchivedRowsDroppedPerspective : IPerspectiveFor<ArchivedRowsDroppedModel, ArchivedRowsAdded> {
+  public ArchivedRowsDroppedModel Apply(ArchivedRowsDroppedModel currentData, ArchivedRowsAdded @event) {
+    currentData.Total += @event.Delta;
+    return currentData;
+  }
+}
+
+/// <summary>Folded by <see cref="ArchivedRowsArchivedPerspective"/> only.</summary>
+public sealed record ArchivedRowsMoved : IEvent {
+  [StreamId]
+  public Guid StreamId { get; init; }
+  public int Delta { get; init; }
+}
+
+public sealed class ArchivedRowsArchivedModel {
+  [StreamId]
+  public Guid Id { get; set; }
+  public int Total { get; set; }
+}
+
+/// <summary>Its rows move beside the archived events when their stream is archived whole.</summary>
+[ArchivedStreamRows(Whizbang.Core.Archival.ArchivedStreamRowPolicy.Archive)]
+public sealed class ArchivedRowsArchivedPerspective : IPerspectiveFor<ArchivedRowsArchivedModel, ArchivedRowsMoved> {
+  public ArchivedRowsArchivedModel Apply(ArchivedRowsArchivedModel currentData, ArchivedRowsMoved @event) {
+    currentData.Total += @event.Delta;
+    return currentData;
+  }
+}
+
+/// <summary>Folded by <see cref="ArchivedRowsConfiguredPerspective"/> only.</summary>
+public sealed record ArchivedRowsConfiguredAdded : IEvent {
+  [StreamId]
+  public Guid StreamId { get; init; }
+  public int Delta { get; init; }
+}
+
+public sealed class ArchivedRowsConfiguredModel {
+  [StreamId]
+  public Guid Id { get; set; }
+  public int Total { get; set; }
+}
+
+/// <summary>Declares nothing: only configuration gives it a policy for rows of archived streams.</summary>
+public sealed class ArchivedRowsConfiguredPerspective : IPerspectiveFor<ArchivedRowsConfiguredModel, ArchivedRowsConfiguredAdded> {
+  public ArchivedRowsConfiguredModel Apply(ArchivedRowsConfiguredModel currentData, ArchivedRowsConfiguredAdded @event) {
+    currentData.Total += @event.Delta;
+    return currentData;
+  }
+}
+
 /// <summary>
 /// Issue #1483 over the real generated runners: after row retention evicts a row, the next event on its
 /// stream rebuilds the whole row from the latest snapshot plus the history after it, whatever evicted the
@@ -290,6 +355,78 @@ public class EvictedRowRebuildTests {
 
     await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(4);
     await Assert.That(logs.Any(l => l.Level == LogLevel.Warning && l.Message.Contains("starting it fresh", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task DroppedRowsPerspective_ARowDroppedWithItsArchivedStream_IsRebuiltFromHistoryAsync() {
+    // #1739: a Drop perspective's row left with its stream's archive. When the stream comes back (a restore, or a new
+    // generation), the next event must rebuild the whole row from the kept snapshot and the history, not start over.
+    var streamId = Guid.NewGuid();
+    var store = new HistoryEventStore { HandledHistory = true };
+    var b1 = _envelope(new ArchivedRowsAdded { StreamId = streamId, Delta = 1 });
+    var b2 = _envelope(new ArchivedRowsAdded { StreamId = streamId, Delta = 2 });
+    var b3 = _envelope(new ArchivedRowsAdded { StreamId = streamId, Delta = 3 });
+    store.Stream.AddRange([b1, b2, b3]);
+    var rows = new InMemoryRows<ArchivedRowsDroppedModel>();
+    var runner = _runner<ArchivedRowsDroppedPerspective, ArchivedRowsDroppedModel>(store, rows, snapshots: null, logs: null);
+
+    await runner.RunWithEventsAsync(streamId, _name<ArchivedRowsDroppedPerspective>(), null, [b3], CancellationToken.None);
+
+    await Assert.That(store.TypedProbes).IsEqualTo(1)
+      .Because("a perspective whose rows an archive removes probes a missing row, though it declares no row retention");
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(6)
+      .Because("the dropped row is rebuilt from its history, not started over from the incoming event");
+  }
+
+  [Test]
+  public async Task ArchivedRowsPerspective_AMissingRow_IsRebuiltFromHistoryAsync() {
+    // An Archive perspective's row comes back with its stream; when it cannot (its table was replaced meanwhile), the
+    // probe still rebuilds it rather than folding the incoming event onto nothing.
+    var streamId = Guid.NewGuid();
+    var store = new HistoryEventStore { HandledHistory = true };
+    var b1 = _envelope(new ArchivedRowsMoved { StreamId = streamId, Delta = 4 });
+    var b2 = _envelope(new ArchivedRowsMoved { StreamId = streamId, Delta = 5 });
+    store.Stream.AddRange([b1, b2]);
+    var rows = new InMemoryRows<ArchivedRowsArchivedModel>();
+    var runner = _runner<ArchivedRowsArchivedPerspective, ArchivedRowsArchivedModel>(store, rows, snapshots: null, logs: null);
+
+    await runner.RunWithEventsAsync(streamId, _name<ArchivedRowsArchivedPerspective>(), null, [b2], CancellationToken.None);
+
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(9);
+  }
+
+  [Test]
+  [NotInParallel("ArchivedStreamRowPoliciesRuntimeConfig")]
+  public async Task AConfiguredPolicy_OnAPerspectiveThatDeclaresNone_TurnsTheProbeOn_AndWithoutItTheRowStartsFreshAsync() {
+    // The override is configuration, applied at startup: the probe must read it, or a row dropped by a configured
+    // policy would restart from the incoming event. The control run without the override shows the other outcome.
+    var name = _name<ArchivedRowsConfiguredPerspective>();
+    var streamId = Guid.NewGuid();
+    var b1 = _envelope(new ArchivedRowsConfiguredAdded { StreamId = streamId, Delta = 10 });
+    var b2 = _envelope(new ArchivedRowsConfiguredAdded { StreamId = streamId, Delta = 1 });
+    var unconfiguredStore = new HistoryEventStore { HandledHistory = true };
+    unconfiguredStore.Stream.AddRange([b1, b2]);
+    var unconfiguredRows = new InMemoryRows<ArchivedRowsConfiguredModel>();
+    await _runner<ArchivedRowsConfiguredPerspective, ArchivedRowsConfiguredModel>(unconfiguredStore, unconfiguredRows, snapshots: null, logs: null)
+      .RunWithEventsAsync(streamId, name, null, [b2], CancellationToken.None);
+
+    var configuredStore = new HistoryEventStore { HandledHistory = true };
+    configuredStore.Stream.AddRange([b1, b2]);
+    var configuredRows = new InMemoryRows<ArchivedRowsConfiguredModel>();
+    Whizbang.Core.Archival.ArchivedStreamRowPolicies.ApplyRuntimeConfiguration(
+      new Dictionary<string, Whizbang.Core.Archival.ArchivedStreamRowPolicy> { [name] = Whizbang.Core.Archival.ArchivedStreamRowPolicy.Drop });
+    try {
+      await _runner<ArchivedRowsConfiguredPerspective, ArchivedRowsConfiguredModel>(configuredStore, configuredRows, snapshots: null, logs: null)
+        .RunWithEventsAsync(streamId, name, null, [b2], CancellationToken.None);
+    } finally {
+      Whizbang.Core.Archival.ArchivedStreamRowPolicies.ApplyRuntimeConfiguration(null);
+    }
+
+    await Assert.That(unconfiguredStore.TypedProbes).IsEqualTo(0).Because("control: Keep never probes, so it pays nothing");
+    await Assert.That((await unconfiguredRows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(1);
+    await Assert.That(configuredStore.TypedProbes).IsEqualTo(1);
+    await Assert.That((await configuredRows.GetByStreamIdAsync(streamId))!.Total).IsEqualTo(11)
+      .Because("with the configured Drop the missing row is rebuilt from its history");
   }
 
   [Test]

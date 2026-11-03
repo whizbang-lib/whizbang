@@ -65,6 +65,9 @@ internal static class ArchiveOptionsBinder {
     }
   }
 
+  /// <summary>Stub (RED, #1739).</summary>
+  internal static void Bind(IConfiguration configuration, ArchivedStreamRowsOptions options) => throw new NotImplementedException("#1739");
+
   private static AppendToArchivedPolicy _policy(string key, string value) {
     // Names only: a number would bind a policy by position.
     if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
