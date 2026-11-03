@@ -125,6 +125,24 @@ public class RedeliveryReconcileDeferralTests {
   }
 
   [Test]
+  public async Task TheDrain_ReconcilesWithTheHostsLoggerAndClockAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (bundle, children) = _bundle(origin, 1);
+    var coordinator = new InMemoryIntegrityDeliveryCoordinator();
+    var services = new ServiceCollection()
+      .AddScoped<IWorkCoordinator>(_ => coordinator)
+      .AddSingleton<IntegrityDeliveryRegistry>()
+      .AddSingleton<TimeProvider>(new Microsoft.Extensions.Time.Testing.FakeTimeProvider(_now))
+      .AddLogging();
+    await using var provider = services.BuildServiceProvider();
+    _ = await RedeliveryReconciler.ReconcileAsync(bundle, children, provider, NullLogger.Instance, _now, "orders-service");
+
+    await RedeliveryReconciler.HandleDeferredAsync(coordinator.Pending[0].Payload, provider, CancellationToken.None);
+
+    await Assert.That(coordinator.Adoptions.Single().Origin).IsEqualTo(origin);
+  }
+
+  [Test]
   public async Task TheDrain_WithoutACoordinator_DoesNothingAsync() {
     await using var services = new ServiceCollection().BuildServiceProvider();
     var payload = """{"originServiceId":"00000000-0000-0000-0000-000000000001","originServiceName":null,"eventIds":[],"commitSequences":[]}""";
