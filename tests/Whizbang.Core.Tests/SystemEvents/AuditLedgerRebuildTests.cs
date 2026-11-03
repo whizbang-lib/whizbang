@@ -45,6 +45,10 @@ public class AuditLedgerRebuildTests {
   [AuditEvent(IncludeBody = true)]
   internal sealed record RebuildPresenceKept : IEphemeralEvent;
 
+  /// <summary>Loaded, so <c>Type.GetType</c> finds it by name, but outside the catalog both audit paths resolve through.</summary>
+  [AuditEvent(Exclude = true, Reason = "outside the catalog")]
+  internal sealed record RebuildOutsideTheCatalog : IEvent;
+
   private sealed class Catalog : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
       _entry(typeof(RebuildOrderPlaced)), _entry(typeof(RebuildHeartbeat)), _entry(typeof(RebuildPaymentTaken)),
@@ -378,6 +382,38 @@ public class AuditLedgerRebuildTests {
     await Assert.That(live is null).IsEqualTo(rebuilt is null)
       .Because("a rebuilt ledger must hold exactly the records the live path wrote for the same events");
     await Assert.That(live is null).IsEqualTo(mode == AuditMode.OptIn);
+  }
+
+  /// <summary>
+  /// The live outbox path and the rebuild resolve an event type through the same catalog (#2040), so they agree on
+  /// whether it is audited where <c>Type.GetType</c> and the catalog disagree: a loaded type outside the catalog, which
+  /// <c>Type.GetType</c> found and the rebuild did not, and a catalog type stored by its full name alone, which the
+  /// rebuild found and <c>Type.GetType</c> did not. Each mode has one disagreement under the old live path. Design
+  /// choice documented at fundamentals/security/audit-logging#one-type-resolution.
+  /// </summary>
+  [Test]
+  [Arguments(AuditMode.OptIn)]
+  [Arguments(AuditMode.OptOut)]
+  public async Task LiveAndRebuild_AgreeWhereTypeGetTypeAndTheCatalogDisagree_UnderEitherModeAsync(AuditMode mode) {
+    var outsideTheCatalog = _stored(typeof(RebuildOutsideTheCatalog));
+    var byFullNameAlone = _stored(typeof(RebuildPaymentTaken)) with { EventType = typeof(RebuildPaymentTaken).FullName! };
+    var options = _options();
+    options.AuditMode = mode;
+    var eventTypes = new AuditTypeResolver(new Catalog());
+    var rebuild = _rebuild(o => o.AuditMode = mode);
+
+    var liveOutside = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(outsideTheCatalog), options, eventTypes: eventTypes);
+    var rebuiltOutside = rebuild.Rederive(outsideTheCatalog);
+    var liveByName = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(byFullNameAlone), options, eventTypes: eventTypes);
+    var rebuiltByName = rebuild.Rederive(byFullNameAlone);
+
+    await Assert.That(liveOutside is null).IsEqualTo(rebuiltOutside is null)
+      .Because("a type outside the catalog is unresolvable on both paths, whatever Type.GetType can load");
+    await Assert.That(liveOutside is null).IsEqualTo(mode == AuditMode.OptIn)
+      .Because("an unresolvable type is audited under OptOut and not under OptIn (#1980)");
+    await Assert.That(liveByName is null).IsEqualTo(rebuiltByName is null)
+      .Because("a catalog type is resolved on both paths, however its name is written");
+    await Assert.That(liveByName).IsNotNull().Because("the type is marked [AuditEvent], which both modes audit");
   }
 
   private static OutboxMessage _liveMessageOf(RedeliveryEvent stored) => new() {
