@@ -77,8 +77,9 @@ public sealed record IntegrityRepairBacklogProbe(long Backlog, IReadOnlyList<boo
 public interface IIntegrityRepairLedger {
   /// <summary>
   /// True when this divergence should be REPORTED now: first sighting, a changed signature
-  /// (either side's digest moved — progress or fresh damage, which also resets the repair
-  /// budget), or the cooldown elapsed since the last report. Records the sighting either way.
+  /// (either side's digest moved), or the cooldown elapsed since the last report. Records the sighting either way.
+  /// Only a change in the LOCAL digest resets the repair ladder (#2030): the attempt budget, the unhealable and
+  /// exhausted marks and a pending answer.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A divergence is identified by both sides' commit-sequence bounds, so the four longs are one comparison rather than four settings. The clock and the cooldown are passed in so the ledger holds no ambient time.")]
   ValueTask<bool> TryBeginReportAsync(
@@ -88,7 +89,8 @@ public interface IIntegrityRepairLedger {
   /// <summary>
   /// True when a repair request should be SENT now: the first attempt goes immediately, each later
   /// attempt waits base × 2^(n-1), and past <paramref name="maxAttempts"/> the requester stops
-  /// asking until the bucket's signature changes. Records the attempt when true.
+  /// asking until a reset (#2029). Never while the answer to the last request is pending, and never on the type lane
+  /// while per-stream requests of its type await their answers (#2034). Records the attempt when true.
   /// </summary>
   ValueTask<bool> TryBeginRepairAsync(
     IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
@@ -158,6 +160,44 @@ public interface IIntegrityRepairLedger {
     await MarkHealedBatchAsync(keys, cancellationToken).ConfigureAwait(false);
     return [];
   }
+
+  /// <summary>
+  /// Records that repair requests for <paramref name="keys"/> left (#2029): neither grant path asks again until
+  /// <paramref name="timeout"/> passes or the answer lands (<see cref="MarkAnsweredAsync"/>). A type-lane key (an empty
+  /// stream id: a bulk or checkpoint request for the whole type) also covers the tracked per-stream buckets of its type
+  /// whose compared window lies inside [<paramref name="windowFrom"/>, <paramref name="windowUntil"/>], or every one of
+  /// them when either bound is null (#2034). Only buckets the ledger tracks are marked. The default remembers nothing.
+  /// </summary>
+  /// <param name="keys">The requested buckets.</param>
+  /// <param name="windowFrom">A type-lane request's first origin commit sequence, in the ledger's window units.</param>
+  /// <param name="windowUntil">A type-lane request's last origin commit sequence, in the ledger's window units.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="timeout">How long the answer may take before the bucket may be asked for again.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The tracked buckets marked.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerContractTests.cs:Repair_WhileTheAnswerIsPending_IsRefused_UntilTheAnswerTimeoutAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The keys, the type-lane window's two bounds, the clock and the timeout are one record of a request that left; the window bounds only mean something together.")]
+  ValueTask<int> MarkAnswerPendingAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil, DateTimeOffset now,
+    TimeSpan timeout, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(0);
+
+  /// <summary>
+  /// Records that a redelivery bundle answered these buckets (#2029): a pending answer clears, so only the backoff
+  /// governs the next ask. The durable ledger records this when the bundle's children commit, by event id
+  /// (<see cref="IWorkCoordinator.IntegrityRecordBundleAnswerAsync"/>), so its implementation asks nothing here; a ledger
+  /// only the reconcile reaches learns it from this call. The default remembers nothing.
+  /// </summary>
+  /// <param name="keys">The answered buckets.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the answer is recorded.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTests.cs:MarkAnswered_ClearsThePendingAnswer_SoOnlyTheBackoffGovernsTheNextAskAsync</tests>
+  ValueTask MarkAnsweredAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
 
   /// <summary>
   /// Records that repair cannot change these buckets: a redelivery answered for them and every event it carried

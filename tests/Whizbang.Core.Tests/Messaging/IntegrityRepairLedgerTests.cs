@@ -137,6 +137,26 @@ public class IntegrityRepairLedgerTests {
   }
 
   [Test]
+  public async Task TypeLane_StandsDownOnlyForItsOwnOriginAndTenant_AndANullTenantIsTheEmptyOneAsync() {
+    var ledger = new IntegrityRepairLedger();
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+    var origin = TrackedGuid.New().Value;
+    var otherOrigin = new IntegrityRepairLedger.DivergenceKey(TrackedGuid.New().Value, null, "Contracts.TypeX", TrackedGuid.New().Value);
+    var otherTenant = new IntegrityRepairLedger.DivergenceKey(origin, "tenant-b", "Contracts.TypeX", TrackedGuid.New().Value);
+    var emptyTenant = new IntegrityRepairLedger.DivergenceKey(origin, "", "Contracts.TypeY", TrackedGuid.New().Value);
+    foreach (var key in new[] { otherOrigin, otherTenant, emptyTenant }) {
+      _ = ledger.TryBeginReport(key, 11, 21, 0, 0, now, _cooldown);
+    }
+    _ = await ledger.MarkAnswerPendingAsync([otherOrigin, otherTenant, emptyTenant], null, null, now, TimeSpan.FromHours(3));
+
+    var lane = ledger.TryBeginRepair(new IntegrityRepairLedger.DivergenceKey(origin, null, "Contracts.TypeX", Guid.Empty), now, _backoff, MAX_ATTEMPTS);
+    var nullTenantLane = ledger.TryBeginRepair(new IntegrityRepairLedger.DivergenceKey(origin, null, "Contracts.TypeY", Guid.Empty), now, _backoff, MAX_ATTEMPTS);
+
+    await Assert.That(lane).IsTrue().Because("the pending rows of TypeX belong to another origin or another tenant");
+    await Assert.That(nullTenantLane).IsFalse().Because("no tenant and an empty tenant are the same bucket, as the durable ledger keys it");
+  }
+
+  [Test]
   public async Task MarkAnswered_ABucketTheLedgerDoesNotTrack_IsNotAddedAsync() {
     var ledger = new IntegrityRepairLedger();
 
@@ -163,7 +183,7 @@ public class IntegrityRepairLedgerTests {
   [Test]
   public async Task ReportBatch_RecordsEachDeficitsSize_AndASizeOnlyTheBatchCarriesAsync() {
     // The batch carries the deficit size the single-key report cannot; an unknown size keeps the recorded one.
-    IIntegrityRepairLedger ledger = new IntegrityRepairLedger();
+    var ledger = new IntegrityRepairLedger();
     var key = _key();
     var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
     _ = await ledger.TryBeginReportBatchAsync([new IntegrityReportObservation(key, 11, 21, 0, 0, true, 3)], now, _cooldown);

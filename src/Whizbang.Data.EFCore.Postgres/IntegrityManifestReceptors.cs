@@ -921,8 +921,8 @@ public sealed partial class IntegrityManifestReceptor(
         if (sent) {
           // #2034: the bulk request answers the type lane and every per-stream drain row of the type inside its window,
           // so those wait for it instead of re-shipping the same window beside it.
-          await coordinator.IntegrityMarkAnswerPendingAsync(
-            message.OriginServiceId, [keys[i]], message.SinceSequence ?? 0, message.ComputedThrough,
+          _ = await ledger.MarkAnswerPendingAsync(
+            [keys[i]], message.SinceSequence ?? 0, message.ComputedThrough,
             now, TimeSpan.FromMinutes(options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
         }
         LogBulkBackfillRequested(logger, origin.EventType, origin.TenantScope, deficit, message.OriginServiceName);

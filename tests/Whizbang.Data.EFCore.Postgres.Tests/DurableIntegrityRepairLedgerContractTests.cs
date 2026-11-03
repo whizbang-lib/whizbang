@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard5")]
 [NotInParallel("EFCorePostgresTests")]
 [InheritsTests]
-public class DurableIntegrityRepairLedgerContractTests : IntegrityRepairLedgerContractTests {
+public sealed class DurableIntegrityRepairLedgerContractTests : IntegrityRepairLedgerContractTests, IAsyncDisposable {
   private readonly Database _database = new();
   private readonly List<WorkCoordinationDbContext> _contexts = [];
   private ServiceProvider? _services;
@@ -28,15 +28,15 @@ public class DurableIntegrityRepairLedgerContractTests : IntegrityRepairLedgerCo
   [Before(Test)]
   public Task SetupDatabaseAsync() => _database.SetupAsync();
 
-  [After(Test)]
-  public async Task TeardownDatabaseAsync() {
+  /// <summary>Disposes the test's services and contexts, then drops its database (TUnit disposes each test's instance).</summary>
+  public async ValueTask DisposeAsync() {
     if (_services is not null) {
       await _services.DisposeAsync();
     }
     foreach (var ctx in _contexts) {
       await ctx.DisposeAsync();
     }
-    await _database.TeardownAsync();
+    await _database.DisposeAsync();
   }
 
   /// <inheritdoc />

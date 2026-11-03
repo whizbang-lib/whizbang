@@ -330,11 +330,16 @@ public static partial class RedeliveryReconciler {
       List<RedeliveredBucketPresence> unchanged = adopted == 0 && storedNothing
         ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
         : [];
-      if (refusedBuckets.Count + unchanged.Count == 0) {
-        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
-      }
       var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
       if (ledger is null) {
+        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
+      }
+      // #2029: the bundle answered these buckets. The durable store recorded that at commit; a ledger only the
+      // reconcile reaches (the in-memory fallback) learns it here, and its pending answers clear.
+      await ledger.MarkAnsweredAsync(
+        [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
+        now, cancellationToken).ConfigureAwait(false);
+      if (refusedBuckets.Count + unchanged.Count == 0) {
         return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
       }
       var marked = await _markAsync(ledger, origin, refusedBuckets, now,

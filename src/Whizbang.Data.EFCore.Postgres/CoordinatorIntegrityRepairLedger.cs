@@ -209,6 +209,41 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  /// <remarks>One store round trip per origin. Best-effort: a mark that cannot reach the store is logged and answers 0,
+  /// and the requested buckets wait out their backoff only.</remarks>
+  public async ValueTask<int> MarkAnswerPendingAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+      DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is null) {
+        return 0;
+      }
+      var marked = 0;
+      foreach (var byOrigin in keys.GroupBy(k => k.OriginServiceId)) {
+        marked += await coordinator.IntegrityMarkAnswerPendingAsync(
+          byOrigin.Key, [.. byOrigin], windowFrom, windowUntil, now, timeout, cancellationToken).ConfigureAwait(false);
+      }
+      return marked;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("answer-pending mark", fallback: false, ex);
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Asks nothing: the store records a bundle's answer when its children commit, by event id
+  /// (<see cref="IWorkCoordinator.IntegrityRecordBundleAnswerAsync"/>), before the reconcile that calls this runs.</remarks>
+  public ValueTask MarkAnsweredAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
+
+  /// <inheritdoc />
   public async ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
     try {
       using var scope = scopeFactory.CreateScope();
