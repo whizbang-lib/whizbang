@@ -165,6 +165,6 @@ public class ScheduledPrefixTruncateReceptorTests {
     await registrar.StopAsync(CancellationToken.None);
 
     await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull()
-      .Because("the registrar must leave a registry-less host registry-less — it may not conjure one to register into");
+      .Because("the registrar must leave a registry-less host registry-less: it may not conjure one to register into");
   }
 }
