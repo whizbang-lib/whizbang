@@ -37,15 +37,18 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 [Category("Shard4")]
 public class TtlReapDrivesFromRegistryTests {
 
+  // 300 (#1999) moved the maintenance tasks into wh_perform_maintenance; perform_maintenance() only calls it.
+  private const string MAINTENANCE_FUNCTION = "FUNCTION __SCHEMA__.wh_perform_maintenance";
+
   private static string _maintenanceBody() {
     var sql = new Whizbang.Data.Postgres.PostgresMigrationProvider(
         typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__")
       .GetMigrations()
-      .Where(m => m.Sql.Contains("FUNCTION __SCHEMA__.perform_maintenance", StringComparison.Ordinal))
+      .Where(m => m.Sql.Contains(MAINTENANCE_FUNCTION, StringComparison.Ordinal))
       .OrderBy(m => m.Name, StringComparer.Ordinal)
       .Last().Sql;
 
-    var start = sql.IndexOf("FUNCTION __SCHEMA__.perform_maintenance", StringComparison.Ordinal);
+    var start = sql.IndexOf(MAINTENANCE_FUNCTION, StringComparison.Ordinal);
     var end = sql.IndexOf("$$ LANGUAGE plpgsql", start, StringComparison.Ordinal);
     return sql[start..(end > start ? end : sql.Length)];
   }
