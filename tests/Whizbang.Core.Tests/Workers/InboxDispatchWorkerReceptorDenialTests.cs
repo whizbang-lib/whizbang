@@ -177,15 +177,12 @@ public class InboxDispatchWorkerReceptorDenialTests {
       var services = new ServiceCollection();
       services.AddSingleton(invoker);
       var sp = services.BuildServiceProvider();
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
       Worker = new InboxDispatchWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         instanceProvider: new FakeInstanceProvider(),
         inboxChannelWriter: Inbox,
         handlerCommitChannel: Commits,
         failureChannel: Failures,
-        schemaReadyGate: gate,
         options: Options.Create(new InboxDispatchWorkerOptions()),
         coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
         logger: NullLogger<InboxDispatchWorker>.Instance,
