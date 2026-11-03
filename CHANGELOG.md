@@ -744,6 +744,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Repository-internal build checks take WHIZ IDs, and one registry lists every diagnostic ID (contributors).**
+  The checks that never ship in a package are renumbered into the WHIZ600 block: WHZ0001 to WHIZ600 (test project
+  without `WhizbangTestTags`), WHZ0002 to WHIZ601 (no `WhizbangTestType`), WHZ0003 to WHIZ602 (unknown
+  `WhizbangTestType`), WHZ0004 to WHIZ603 (`IsNotNull()` on a `Nullable<T>`), WHZ0005 to WHIZ604 (undisposed
+  `JsonDocument`). No shipped package changes an ID. `diagnostic-ids.txt` lists every ID with its owner and meaning,
+  and `Test-DiagnosticIds.ps1` now reads `tools/` and the MSBuild checks as well as `src/`, and fails an ID that is
+  unlisted, listed but undefined, under the wrong owner, or outside the WHIZ form (the legacy `EFCORE` and `WSAGA`
+  IDs that shipped before it are a frozen exception). A `NoWarn` or `#pragma` naming an old WHZ ID no longer applies.
+- **A test class a sharded CI run would skip is a build error (WHIZ605, contributors).** In a test project that sets
+  `WhizbangShardedTests=true` (today `Whizbang.Data.EFCore.Postgres.Tests`), a test class without exactly one
+  `Shard*` category, or with one beside `Benchmark`, fails to compile instead of running in no `[Category=ShardN]`
+  slice, or in two. `ShardCoverageGuardTests` stays as the runtime check for generated classes.
 - **Every worker is hosted with the point it starts at, and none holds a gate of its own (part of #1636).**
   `AddWhizbangWorker<TWorker>(stage)` (Accept commands unless another stage is named) and
   `AddWhizbangWorkerAtSchemaReady<TWorker>()` host a worker that the host starts at that point and stops normally on
