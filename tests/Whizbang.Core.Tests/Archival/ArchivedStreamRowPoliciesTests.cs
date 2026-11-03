@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
+using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core.Tests.Archival;
 
@@ -21,6 +22,17 @@ namespace Whizbang.Core.Tests.Archival;
 [NotInParallel("ArchivedStreamRowPoliciesRuntimeConfig")]
 public class ArchivedStreamRowPoliciesTests {
   private static string _name(string suffix) => $"Tests.ArchivedRows.{suffix}+{Guid.NewGuid():N}";
+
+  [Test]
+  [Arguments(ArchivedStreamRowPolicy.Keep)]
+  [Arguments(ArchivedStreamRowPolicy.Drop)]
+  [Arguments(ArchivedStreamRowPolicy.Archive)]
+  public async Task TheAttribute_CarriesThePolicyItIsGivenAsync(ArchivedStreamRowPolicy policy) {
+    var attribute = new ArchivedStreamRowsAttribute(policy);
+
+    await Assert.That(attribute.Policy).IsEqualTo(policy)
+      .Because("the generator reads the policy from the attribute's constructor argument, which Policy exposes");
+  }
 
   [Test]
   public async Task Resolve_APerspectiveThatDeclaresNothing_KeepsItsRowsAsync() {
