@@ -75,8 +75,11 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_service_instances (
-        instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
-      VALUES (@id, 'utest-svc', 'utest-host', 1, @started, @last)
+        instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, liveness_window_seconds,
+        connection_mode)
+      -- #2027: a default-cadence direct instance, as its heartbeat registers it: the 150 s window the one liveness rule
+      -- judges it by, and the direct connection whose alive-lock the rule reads.
+      VALUES (@id, 'utest-svc', 'utest-host', 1, @started, @last, 150, 'direct')
       ON CONFLICT (instance_id) DO UPDATE
         SET last_heartbeat_at = EXCLUDED.last_heartbeat_at;", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
@@ -244,7 +247,8 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // stall is still holding its session lock, which is the primary liveness signal. Judging by
     // the timestamp alone announced it dead while it was running, and its work was handed away.
     var stuckId = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(stuckId, DateTimeOffset.UtcNow.AddMinutes(-10));
+    // Past its 150 s window, inside the rule's five-minute definitive-dead cutoff, where only the lock keeps it live.
+    await _insertHeartbeatAsync(stuckId, DateTimeOffset.UtcNow.AddMinutes(-4));
     await using var lockHolder = await _holdAliveLockAsync(stuckId, cancellationToken);
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -252,7 +256,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     await monitor.TickForTestsAsync(cancellationToken);
 
     await Assert.That(bus.Published.Contains(typeof(InstanceDiedSignal))).IsFalse()
-      .Because("a held session lock means the process is alive whatever its last timestamp says; the monitor must ask is_instance_alive, not compare timestamps");
+      .Because("a held session lock means the process is alive whatever its last timestamp says; the monitor must ask the one liveness rule, not compare timestamps");
     await Assert.That(monitor.AnnouncedDeaths.Contains(stuckId)).IsFalse();
   }
 

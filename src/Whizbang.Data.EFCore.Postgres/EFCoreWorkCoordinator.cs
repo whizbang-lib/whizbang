@@ -405,7 +405,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
-    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode)";
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode, @applicationVersion)";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
     cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
@@ -422,6 +422,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("connectionMode", NpgsqlTypes.NpgsqlDbType.Text) {
       Value = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : DBNull.Value
     });
+    // 316 (#2027): the application version, recorded at registration like the library version.
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("applicationVersion", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.ApplicationVersion ?? DBNull.Value });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IsTrue(result);
@@ -1963,19 +1965,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
-    var instances = BuildSchemaQualifiedName(schema, "wh_service_instances");
-    var aliveFn = BuildSchemaQualifiedName(schema, "is_instance_alive");
+    var liveFn = BuildSchemaQualifiedName(schema, "wh_instance_is_live");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified names built from validated schema constant
     cmd.CommandText = $@"
-      SELECT r.requested_by, r.requested_version, r.requested_at, i.last_heartbeat_at,
-             -- #1286: the requester's alive-lock alone (055, zero heartbeat threshold); read before migrations run.
-             {aliveFn}(r.requested_by, 0) AS alive_lock_held
-      FROM {requests} r
-      LEFT JOIN {instances} i ON i.instance_id = r.requested_by";
+      SELECT r.requested_by, r.requested_version, r.requested_at,
+             -- #2027: the one liveness rule (Preflight's, so present before migrations run); no row is not live.
+             {liveFn}(r.requested_by) AS is_live
+      FROM {requests} r";
 #pragma warning restore S2077
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -1985,10 +1985,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       reader.GetGuid(0),
       reader.GetString(1),
       await reader.GetFieldValueAsync<DateTime>(2, cancellationToken) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
-      await reader.IsDBNullAsync(3, cancellationToken)
-        ? null
-        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3, cancellationToken), DateTimeKind.Utc)),
-      reader.GetBoolean(4));
+      reader.GetBoolean(3));
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared

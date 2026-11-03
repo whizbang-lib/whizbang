@@ -159,18 +159,6 @@ public class InstanceLivenessRuleSqlTests : EFCoreTestBase {
       .Because("one process runs one version; only a new process under the same id records another");
   }
 
-  [Test]
-  public async Task Transition_RecordsTheApplicationVersion_AndANullKeepsItAsync() {
-    var instance = (Guid)TrackedGuid.New();
-    await using var conn = await _openAsync();
-    await _registerAsync(conn, instance, InstanceConnectionModes.POOLED, TimeSpan.Zero, windowSeconds: 150);
-
-    await _scalarAsync<bool>(conn, $"SELECT wh_record_instance_transition('{instance}'::uuid, 10::smallint, 'x', 'Starting', '1.0.0', 'deploy:7')");
-    await _scalarAsync<bool>(conn, $"SELECT wh_record_instance_transition('{instance}'::uuid, 20::smallint, 'y', 'Starting', NULL, NULL)");
-
-    await Assert.That(await _columnAsync(conn, instance, "application_version")).IsEqualTo("deploy:7");
-  }
-
   // --- the reap ----------------------------------------------------------------------------------
 
   [Test]

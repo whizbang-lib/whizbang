@@ -286,10 +286,10 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
-    await _beatAsync(coordinator, instance, LifecyclePhase.Migrating);
+    await _legacyBeatAsync(instance, LifecyclePhase.Migrating);
     await _stageAsync(coordinator, instance, StartupStage.Migrate, "migrating");
 
-    await _beatAsync(coordinator, instance, LifecyclePhase.AcceptingCommands);
+    await _legacyBeatAsync(instance, LifecyclePhase.AcceptingCommands);
 
     await using var conn = await _openAsync();
     await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands))
@@ -304,11 +304,11 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
-    await _beatAsync(coordinator, instance, LifecyclePhase.Running);
+    await _legacyBeatAsync(instance, LifecyclePhase.Running);
     await _stageAsync(coordinator, instance, StartupStage.Running, "serving");
     await _phaseOnlyAsync(coordinator, instance, recorded);
 
-    await _beatAsync(coordinator, instance, beat);
+    await _legacyBeatAsync(instance, beat);
 
     await using var conn = await _openAsync();
     await Assert.That(await _phaseAsync(conn, instance)).IsEqualTo(beat.ToString())
@@ -321,7 +321,7 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     var instance = Guid.CreateVersion7();
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
-    await _beatAsync(coordinator, instance, LifecyclePhase.Running);
+    await _legacyBeatAsync(instance, LifecyclePhase.Running);
 
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LifecyclePhase: "Hibernating"));
 
@@ -337,6 +337,24 @@ public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
 
   /// <summary>A beat from this test's one process, carrying <paramref name="phase"/>, as the heartbeat worker sends it.</summary>
+  /// <summary>
+  /// A beat as an older release sends it: 244's nine arguments, by SQL. The coordinator of this release passes the
+  /// application version as well (#2027), which only the definitions from 316 on accept.
+  /// </summary>
+  private async Task _legacyBeatAsync(Guid instance, LifecyclePhase phase) {
+    await using var conn = await _openAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT record_heartbeat(@id, @service, @host, @process, '{}'::jsonb, @phase, NULL, NULL, NULL)";
+    cmd.Parameters.AddWithValue("id", instance);
+    cmd.Parameters.AddWithValue("service", SERVICE);
+    cmd.Parameters.AddWithValue("host", HOST);
+    cmd.Parameters.AddWithValue("process", PROCESS);
+    cmd.Parameters.AddWithValue(nameof(phase), phase.ToString());
+    if (await cmd.ExecuteScalarAsync() is not true) {
+      throw new InvalidOperationException($"the beat of {instance} was refused");
+    }
+  }
+
   private static async Task _beatAsync(IWorkCoordinator coordinator, Guid instance, LifecyclePhase phase) {
     var accepted = await coordinator.RecordHeartbeatAsync(
       new HeartbeatRequest(instance, SERVICE, HOST, PROCESS, LifecyclePhase: phase.ToString()));

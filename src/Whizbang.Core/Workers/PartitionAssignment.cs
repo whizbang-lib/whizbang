@@ -126,12 +126,15 @@ public static class InstanceConnectionModes {
 /// <param name="Mode">How it reaches the database, as it registered.</param>
 /// <param name="AliveLockHeld">Whether its alive-lock is held; only ever true in <see cref="InstanceConnectionMode.Direct"/>.</param>
 /// <param name="HeartbeatAge">How long ago it last beat, by the database clock.</param>
+/// <param name="IsLive">Whether the one liveness rule (#2027, <c>wh_instance_liveness</c>) calls it live. The assigner
+/// reads this and judges nothing itself; the lock and the heartbeat's age are carried for diagnostics only.</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 public sealed record PartitionAssignmentCandidate(
   Guid InstanceId,
   InstanceConnectionMode Mode,
   bool AliveLockHeld,
-  TimeSpan HeartbeatAge);
+  TimeSpan HeartbeatAge,
+  bool IsLive);
 
 /// <summary>A read of the published assignment, with the lease left on it by the database clock.</summary>
 /// <param name="Assignment">The assignment.</param>

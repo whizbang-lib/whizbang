@@ -135,6 +135,7 @@ public static class ServiceCollectionExtensions {
         ManagedObjectSettings = ManagedSchemaSettings.Read(sp.GetService<IConfiguration>()),
         Logger = sp.GetRequiredService<ILogger<PostgresSchemaInitializer>>(),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
     if (initializeSchema && managedObjects is not null) {
@@ -292,6 +293,7 @@ public static class ServiceCollectionExtensions {
         DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
           Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
 

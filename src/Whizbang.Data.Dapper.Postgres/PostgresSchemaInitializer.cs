@@ -125,6 +125,12 @@ public sealed class PostgresSchemaInitializer {
   public IServiceInstanceProvider? Instance { get; init; }
 
   /// <summary>
+  /// The application version the migration ledger records beside the library version (#2027), as recorded on the
+  /// instance rows; null falls back to the constructor's application version, else <c>unknown</c>.
+  /// </summary>
+  public string? LedgerApplicationVersion { get; init; }
+
+  /// <summary>
   /// The perspective tables whose stored keys are brought to their declared spelling once the tables exist (#1874):
   /// what each table's model declares, read from the serializer's metadata. Null or empty checks nothing.
   /// </summary>
@@ -1014,7 +1020,8 @@ public sealed class PostgresSchemaInitializer {
       ON CONFLICT (library_version, application_version) DO UPDATE SET notes = EXCLUDED.notes
       RETURNING id";
     cmd.Parameters.AddWithValue("version", _migrationProvider.Version);
-    cmd.Parameters.AddWithValue("appVersion", (object?)_applicationVersion ?? DBNull.Value);
+    // #2027: the ledger records the application version; never NULL, which would add a row on every pass.
+    cmd.Parameters.AddWithValue("appVersion", LedgerApplicationVersion ?? _applicationVersion ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN);
     cmd.Parameters.AddWithValue("notes", (object?)_migrationProvider.ReleaseNotes ?? DBNull.Value);
     cmd.CommandTimeout = 10;
 
