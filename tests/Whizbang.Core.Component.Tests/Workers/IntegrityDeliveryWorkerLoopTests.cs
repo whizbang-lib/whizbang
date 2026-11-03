@@ -37,7 +37,8 @@ public class IntegrityDeliveryWorkerLoopTests {
 
     private async Task<IReadOnlyList<IntegrityDelivery>> _blockedLeaseAsync(CancellationToken cancellationToken) {
       LeaseEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken);
+      // Never completes on its own: only the cancellation ends the wait, so no clock is involved.
+      await new TaskCompletionSource().Task.WaitAsync(cancellationToken);
       return [];
     }
 

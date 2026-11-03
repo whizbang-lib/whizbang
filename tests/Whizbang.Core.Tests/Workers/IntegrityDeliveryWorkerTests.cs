@@ -368,7 +368,7 @@ public class IntegrityDeliveryWorkerTests {
     coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 };
     var worker = new IntegrityDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new StreamIntegrityOptions()), new IntegrityDeliveryRegistry(), Microsoft.Extensions.Logging.Abstractions.NullLogger<IntegrityDeliveryWorker>.Instance);
-    var before = TimeProvider.System.GetUtcNow();
+    var before = TimeProvider.System.GetUtcNow(); // review-checks:allow: the subject is the system-clock default; only a lower bound is asserted
 
     var pass = await worker.RunPassAsync(CancellationToken.None);
 
