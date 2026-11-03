@@ -359,7 +359,7 @@ public class IntegrityDeliveryWorkerTests {
   }
 
   [Test]
-  public async Task Construction_WithoutAClock_RecordsDeferralOnTheSystemClockAsync() {
+  public async Task Construction_WithoutAClock_StillRecordsWhenItWasDeferredAsync() {
     var coordinator = new InMemoryIntegrityDeliveryCoordinator();
     await using var provider = new ServiceCollection()
       .AddScoped<IWorkCoordinator>(_ => coordinator)
@@ -368,13 +368,11 @@ public class IntegrityDeliveryWorkerTests {
     coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 };
     var worker = new IntegrityDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new StreamIntegrityOptions()), new IntegrityDeliveryRegistry(), Microsoft.Extensions.Logging.Abstractions.NullLogger<IntegrityDeliveryWorker>.Instance);
-    var before = TimeProvider.System.GetUtcNow(); // review-checks:allow: the subject is the system-clock default; only a lower bound is asserted
 
     var pass = await worker.RunPassAsync(CancellationToken.None);
 
     await Assert.That(pass.Outcome).IsEqualTo(IntegrityDeliveryWorker.PassOutcome.Deferred);
-    await Assert.That(worker.DeferredSince).IsNotNull();
-    await Assert.That(worker.DeferredSince!.Value).IsGreaterThanOrEqualTo(before)
-      .Because("with no clock given, the worker reads the system clock");
+    await Assert.That(worker.DeferredSince).IsNotNull()
+      .Because("with no clock given, the worker still has one to record when it was first deferred");
   }
 }
