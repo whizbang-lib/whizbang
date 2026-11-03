@@ -1130,13 +1130,14 @@ public class IntegrityManifestReceptorTests {
     };
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
+    var ledger = new RecordingIntegrityRepairLedger();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions {
         RepairMode = IntegrityRepairMode.AutoRepairCapped,
         PublishReportEvents = false,
         BulkBackfillThresholdEvents = 1000,
         RepairAnswerTimeoutMinutes = 77,
-      }, tracker: tracker);
+      }, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1147,8 +1148,8 @@ public class IntegrityManifestReceptorTests {
       ChunkCount = 1,
     });
 
-    var mark = coordinator.PendingMarks.Single();
-    await Assert.That(mark.Origin).IsEqualTo(coordinator.OriginId);
+    var mark = ledger.PendingMarks.Single();
+    await Assert.That(mark.Keys.Single().OriginServiceId).IsEqualTo(coordinator.OriginId);
     await Assert.That(mark.Keys.Single().StreamId).IsEqualTo(Guid.Empty).Because("the type lane covers every stream of the type");
     await Assert.That(mark.Keys.Single().EventType).IsEqualTo("Contracts.BigType");
     await Assert.That(mark.WindowFrom).IsEqualTo(100L);
@@ -1158,13 +1159,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_ABulkBackfillTheLedgerRefuses_MarksNothingPendingAsync() {
+    var refusing = new RecordingIntegrityRepairLedger { RefuseRepairs = true };
     var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 },
     };
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
-      tracker: tracker, ledger: new RefusingLedger());
+      tracker: tracker, ledger: refusing);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1175,7 +1177,7 @@ public class IntegrityManifestReceptorTests {
       ChunkCount = 1,
     });
 
-    await Assert.That(coordinator.PendingMarks).IsEmpty();
+    await Assert.That(refusing.PendingMarks).IsEmpty();
   }
 
   [Test]
@@ -1184,9 +1186,10 @@ public class IntegrityManifestReceptorTests {
       WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 },
     };
     var transport = new CaptureTransport();
+    var ledger = new RecordingIntegrityRepairLedger();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
-      tracker: new IntegrityGapTracker());
+      tracker: new IntegrityGapTracker(), ledger: ledger);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -1197,16 +1200,7 @@ public class IntegrityManifestReceptorTests {
     });
 
     await Assert.That(transport.Published).IsEmpty().Because("no checkpoint taught the origin's request topic");
-    await Assert.That(coordinator.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
-  }
-
-  private sealed class RefusingLedger : IIntegrityRepairLedger {
-    public ValueTask<bool> TryBeginReportAsync(IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) => ValueTask.FromResult(true);
-    public ValueTask<bool> TryBeginRepairAsync(IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now,
-        TimeSpan baseBackoff, int maxAttempts, CancellationToken cancellationToken = default) => ValueTask.FromResult(false);
-    public ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
-      ValueTask.CompletedTask;
+    await Assert.That(ledger.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
   }
 
   private sealed class CountingLedger : IIntegrityRepairLedger {
@@ -2523,15 +2517,6 @@ public class IntegrityManifestReceptorTests {
   }
 
   private sealed class AuditCoordinator : IWorkCoordinator {
-    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, long? WindowFrom, long? WindowUntil, TimeSpan Timeout)> PendingMarks { get; } = [];
-
-    public Task<int> IntegrityMarkAnswerPendingAsync(
-        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
-        DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
-      PendingMarks.Add((originServiceId, keys, windowFrom, windowUntil, timeout));
-      return Task.FromResult(keys.Count);
-    }
-
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public Guid OriginId { get; } = TrackedGuid.New().Value;
     public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, long From, long Until)> StampedWindows { get; } = [];

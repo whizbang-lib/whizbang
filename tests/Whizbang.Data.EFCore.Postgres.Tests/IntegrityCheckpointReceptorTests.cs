@@ -346,6 +346,7 @@ public class IntegrityCheckpointReceptorTests {
     public required CaptureTransport Transport { get; init; }
     public required IntegrityCheckpointReceptor Receptor { get; init; }
     public required Whizbang.Core.Messaging.IntegrityRepairLedger Ledger { get; init; }
+    public required RecordingIntegrityRepairLedger Recorder { get; init; }
     public Guid OriginId { get; } = TrackedGuid.New().Value;
   }
 
@@ -358,8 +359,7 @@ public class IntegrityCheckpointReceptorTests {
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
 
-    var mark = fx.Coordinator.PendingMarks.Single();
-    await Assert.That(mark.Origin).IsEqualTo(fx.OriginId);
+    var mark = fx.Recorder.PendingMarks.Single();
     await Assert.That(mark.Keys.Single()).IsEqualTo(
       new Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey(fx.OriginId, "tenant-a", _verifiedType, Guid.Empty));
     await Assert.That(mark.WindowFrom).IsEqualTo(11L)
@@ -377,7 +377,7 @@ public class IntegrityCheckpointReceptorTests {
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true));
 
     await Assert.That(fx.Transport.Published).IsEmpty();
-    await Assert.That(fx.Coordinator.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
+    await Assert.That(fx.Recorder.PendingMarks).IsEmpty().Because("no request left, so no answer is on its way");
   }
 
   [Test]
@@ -443,8 +443,8 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
-    var ledger = new Whizbang.Core.Messaging.IntegrityRepairLedger();
-    services.AddSingleton(ledger);
+    var ledger = new RecordingIntegrityRepairLedger();
+    services.AddSingleton<IIntegrityRepairLedger>(ledger);
     // A fresh policy per fixture: its window state is the subject under test, and the receptor's
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
@@ -461,7 +461,8 @@ public class IntegrityCheckpointReceptorTests {
       Coordinator = coordinator,
       Dispatcher = dispatcher,
       Transport = transport,
-      Ledger = ledger,
+      Ledger = ledger.Inner,
+      Recorder = ledger,
       Receptor = new IntegrityCheckpointReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), logger ?? NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
@@ -574,15 +575,6 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private sealed class VerifyCoordinator : IWorkCoordinator {
-    public List<(Guid Origin, IReadOnlyList<Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey> Keys, long? WindowFrom, long? WindowUntil, TimeSpan Timeout)> PendingMarks { get; } = [];
-
-    public Task<int> IntegrityMarkAnswerPendingAsync(
-        Guid originServiceId, IReadOnlyList<Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom,
-        long? windowUntil, DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
-      PendingMarks.Add((originServiceId, keys, windowFrom, windowUntil, timeout));
-      return Task.FromResult(keys.Count);
-    }
-
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
     public ServiceBacklog? Backlog { get; set; }

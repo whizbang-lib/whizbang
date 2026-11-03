@@ -221,6 +221,27 @@ public class RedeliveryReconcileCommitTimeTests {
     await Assert.That(result.MarkedUnhealable).IsEqualTo(1).Because("the store marked it at commit; no ledger is registered to mark it again");
   }
 
+  [Test]
+  public async Task Reconcile_MarksTheReconciledBucketsAnswered_OnTheLedger_SoTheirPendingAnswerClearsAsync() {
+    // The durable store records the answer when the children commit; a ledger that only the reconcile reaches (the
+    // in-memory fallback) learns it here.
+    var origin = TrackedGuid.New().Value;
+    var (bundle, children, stream) = _bundle(origin, 1);
+    var ledger = _ledgerTracking(origin, stream);
+    _ = await ledger.TryBeginRepairAsync(_key(origin, stream), _now, TimeSpan.FromSeconds(1), 3);
+    _ = await ledger.MarkAnswerPendingAsync([_key(origin, stream)], null, null, _now, TimeSpan.FromHours(3));
+    var coordinator = new InMemoryIntegrityDeliveryCoordinator {
+      Supported = false,
+      AdoptionAnswer = [new RedeliveredBucketPresence(stream, null, EVENT_TYPE, Present: 1, Adopted: 1)],
+    };
+    await using var services = _services(coordinator, ledger, withDeliveries: false);
+
+    _ = await RedeliveryReconciler.ReconcileAsync(bundle, children, services, NullLogger.Instance, _now);
+
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(origin, stream), _now.AddSeconds(1), TimeSpan.FromSeconds(1), 3)).IsTrue()
+      .Because("the answer landed, so the answer timeout no longer holds the bucket back");
+  }
+
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin, Guid stream) => new(origin, null, EVENT_TYPE, stream);
 
   private static IntegrityRepairLedger _ledgerTracking(Guid origin, Guid stream) {
