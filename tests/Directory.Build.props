@@ -22,9 +22,10 @@
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 
-  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): assertions that cannot fail are build
-       errors here, starting with WHZ0004 (IsNotNull() on a Nullable<T> subject passes on null under the pinned
-       TUnit; ai-docs/testing-tunit.md). Loaded as an analyzer only, so nothing reaches a test's references or
+  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): test code that cannot verify anything is a
+       build error here: WHIZ603 (IsNotNull() on a Nullable<T> subject passes on null under the pinned TUnit;
+       ai-docs/testing-tunit.md) and, in a sharded project, WHIZ605 (a test class CI would run in no slice or two;
+       ai-docs/test-sharding.md). Loaded as an analyzer only, so nothing reaches a test's references or
        its lock file. Its own test project references it directly, as an assembly and as an analyzer. -->
   <ItemGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.TestAnalyzers.Tests'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)../src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj"

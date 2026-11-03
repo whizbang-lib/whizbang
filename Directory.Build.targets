@@ -109,7 +109,7 @@
   <Target Name="ValidateWhizbangTestTags"
           BeforeTargets="Build"
           Condition="'$(IsTestProject)' == 'true' AND '$(WhizbangTestTags)' == ''">
-    <Error Code="WHZ0001"
+    <Error Code="WHIZ600"
            Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestTags&gt;. Tag-based selection (Run-Tests.ps1 -Tag, and the CI integration jobs built on it) would skip it silently. Add a kind tag (Unit, Component or Integration), plus Docker and the infrastructure it needs (Postgres, RabbitMQ, AzureServiceBus, AzureBlob, InMemory) when it uses containers." />
   </Target>
 
@@ -129,10 +129,10 @@
   <Target Name="ValidateWhizbangTestType"
           BeforeTargets="Build"
           Condition="'$(IsTestProject)' == 'true' OR '$(WhizbangTestType)' != ''">
-    <Error Code="WHZ0002"
+    <Error Code="WHIZ601"
            Condition="'$(WhizbangTestType)' == ''"
            Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestType&gt;. Every test runner selects projects by it, so this project's tests would never run. Declare one of: $(WhizbangKnownTestTypes) (docs/TEST-PROJECTS.md)." />
-    <Error Code="WHZ0003"
+    <Error Code="WHIZ602"
            Condition="'$(WhizbangTestType)' != '' AND !$([System.String]::new(';$(WhizbangKnownTestTypes);').Contains(';$(WhizbangTestType);'))"
            Text="$(MSBuildProjectName) declares &lt;WhizbangTestType&gt;$(WhizbangTestType)&lt;/WhizbangTestType&gt;, which no test runner knows, so its tests would never run. Use one of: $(WhizbangKnownTestTypes), or add the type to every reader (docs/TEST-PROJECTS.md, &quot;Adding a test type&quot;)." />
   </Target>

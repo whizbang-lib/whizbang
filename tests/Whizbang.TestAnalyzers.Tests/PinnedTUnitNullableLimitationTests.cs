@@ -6,7 +6,7 @@ using TUnit.Assertions.Exceptions;
 namespace Whizbang.TestAnalyzers.Tests;
 
 /// <summary>
-/// The TUnit limitation WHZ0004 exists for, pinned so that the day it lifts is visible
+/// The TUnit limitation WHIZ603 exists for, pinned so that the day it lifts is visible
 /// (ai-docs/testing-tunit.md, "Pinning a limitation that justified a decision").
 /// </summary>
 /// <remarks>
@@ -21,14 +21,14 @@ public class PinnedTUnitNullableLimitationTests {
     int? missing = null;
 
     await Assert.That(async () => {
-#pragma warning disable WHZ0004 // The call the rule forbids, made on purpose: this test pins its behavior.
+#pragma warning disable WHIZ603 // The call the rule forbids, made on purpose: this test pins its behavior.
       await Assert.That(missing).IsNotNull();
-#pragma warning restore WHZ0004
+#pragma warning restore WHIZ603
     }).ThrowsNothing()
       .Because("the pinned TUnit lets IsNotNull() pass on a null Nullable<T>, which is the entire reason "
-        + "WHZ0004 (Whizbang.TestAnalyzers) rejects that call in every test project. IF THIS ASSERTION FAILS "
+        + "WHIZ603 (Whizbang.TestAnalyzers) rejects that call in every test project. IF THIS ASSERTION FAILS "
         + "BECAUSE IsNotNull() NOW THROWS, TUnit has been moved past 1.13.8, where the check was fixed, and "
-        + "WHZ0004 can be retired or kept as a style rule; decide which, then invert or delete this test.");
+        + "WHIZ603 can be retired or kept as a style rule; decide which, then invert or delete this test.");
   }
 
   [Test]
@@ -37,6 +37,6 @@ public class PinnedTUnitNullableLimitationTests {
 
     await Assert.That(async () => await Assert.That(missing.HasValue).IsTrue())
       .Throws<AssertionException>()
-      .Because("the replacement WHZ0004 asks for has to be able to fail, or the rule only moves the hole");
+      .Because("the replacement WHIZ603 asks for has to be able to fail, or the rule only moves the hole");
   }
 }

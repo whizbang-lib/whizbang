@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis;
 namespace Whizbang.TestAnalyzers.Tests;
 
 /// <summary>
-/// WHZ0004: <c>IsNotNull()</c> on a <c>Nullable&lt;T&gt;</c> subject passes when the value is null under
+/// WHIZ603: <c>IsNotNull()</c> on a <c>Nullable&lt;T&gt;</c> subject passes when the value is null under
 /// the TUnit this repository pins, so the rule reports every such call.
 /// </summary>
 public class NullableIsNotNullAnalyzerTests {
@@ -19,7 +19,7 @@ public class NullableIsNotNullAnalyzerTests {
     """;
 
   [Test]
-  public async Task IsNotNull_OnNullableInt_ReportsWhz0004Async() {
+  public async Task IsNotNull_OnNullableInt_ReportsWhiz603Async() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), USINGS + """
       public static class Subject {
         public static async Task RunAsync(int? count) {
@@ -29,7 +29,7 @@ public class NullableIsNotNullAnalyzerTests {
       """);
 
     await Assert.That(diagnostics).Count().IsEqualTo(1);
-    await Assert.That(diagnostics[0].Id).IsEqualTo("WHZ0004");
+    await Assert.That(diagnostics[0].Id).IsEqualTo("WHIZ603");
     await Assert.That(diagnostics[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
   }
 
@@ -66,7 +66,7 @@ public class NullableIsNotNullAnalyzerTests {
   }
 
   [Test]
-  public async Task IsNotNull_AfterAndContinuation_OnNullableSubject_ReportsWhz0004Async() {
+  public async Task IsNotNull_AfterAndContinuation_OnNullableSubject_ReportsWhiz603Async() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), USINGS + """
       public static class Subject {
         public static async Task RunAsync(int? count) {
@@ -79,7 +79,7 @@ public class NullableIsNotNullAnalyzerTests {
   }
 
   [Test]
-  public async Task IsNotNull_ResultUsedAsValue_ReportsWhz0004Async() {
+  public async Task IsNotNull_ResultUsedAsValue_ReportsWhiz603Async() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), USINGS + """
       public static class Subject {
         public static async Task<int> RunAsync(int? count) {
@@ -93,7 +93,7 @@ public class NullableIsNotNullAnalyzerTests {
   }
 
   [Test]
-  public async Task IsNotNull_OnGenericNullableSubject_ReportsWhz0004Async() {
+  public async Task IsNotNull_OnGenericNullableSubject_ReportsWhiz603Async() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), USINGS + """
       public static class Subject {
         public static async Task RunAsync<T>(T? value) where T : struct {
@@ -181,7 +181,7 @@ public class NullableIsNotNullAnalyzerTests {
   }
 
   [Test]
-  public async Task IsNotNull_CalledInStaticForm_ReportsWhz0004Async() {
+  public async Task IsNotNull_CalledInStaticForm_ReportsWhiz603Async() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), USINGS + """
       public static class Subject {
         public static async Task RunAsync(int? count) {
@@ -210,7 +210,7 @@ public class NullableIsNotNullAnalyzerTests {
   public async Task Descriptor_CarriesTheRuleAndTheReplacementAsync() {
     var descriptor = NullableIsNotNullAnalyzer.IsNotNullOnNullable;
 
-    await Assert.That(descriptor.Id).IsEqualTo("WHZ0004");
+    await Assert.That(descriptor.Id).IsEqualTo("WHIZ603");
     await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(descriptor.IsEnabledByDefault).IsTrue();
     await Assert.That(descriptor.Description.ToString(System.Globalization.CultureInfo.InvariantCulture)).Contains(".HasValue");
