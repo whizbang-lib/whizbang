@@ -20,8 +20,13 @@
 --                 index lookup. stream_id never changes after insert, so digest updates (one per stored event)
 --                 remain heap-only and pay nothing for the index; a new bucket pays one more index entry.
 --              2. wh_reconcile_redelivered_bundle_by_first_hop, redefined whole from 253 with one change: the
---                 emptied local buckets are deleted by (tenant, type, stream) from the rows the bundle moved, a
---                 primary-key lookup each, instead of by stream alone.
+--                 statements that move digests out of the local lane (the subtracting update and the delete of
+--                 emptied buckets) name the streams the bundle moved, as an array (stream_id = ANY(...)). Before,
+--                 the update joined the digests only to the function's temporary rows, which carry no statistics,
+--                 and the delete named only the lane and stream; measured plans reached the digests through the
+--                 primary key's leading column and read every bucket of the local lane, once per bundle. With the
+--                 streams named, idx_stream_digests_stream finds only the buckets the bundle changes, and the delete
+--                 also matches the full key.
 --
 --              The index is built inside the runner's transaction, which holds writes to wh_stream_digests for the
 --              build (seconds for a few million rows). It runs at the Migrate stage, before workers start.
@@ -73,6 +78,7 @@ DECLARE
   v_min BIGINT;
   v_max BIGINT;
   v_width BIGINT;
+  v_leaving_streams UUID[];
 BEGIN
   IF cardinality(p_event_ids) IS DISTINCT FROM cardinality(p_commit_sequences) THEN
     RAISE EXCEPTION 'wh_reconcile_redelivered_bundle_by_first_hop: % event ids but % commit sequences',
@@ -157,6 +163,14 @@ BEGIN
   FROM _wh_adopt_first_hop_rows r
   WHERE es.event_id = r.event_id AND r.adopted;
 
+  -- 301 (#2000): the local-lane statements below are driven by the streams the bundle moved, as an array the planner
+  -- can see. Joined only against the temporary rows (which carry no statistics), the planner reached the digests
+  -- through the primary key's leading column, which matches the whole local lane, and read every local bucket on
+  -- every bundle. With the streams named, idx_stream_digests_stream finds the handful of buckets the bundle changes.
+  SELECT array_agg(DISTINCT r.stream_id) INTO v_leaving_streams
+  FROM _wh_adopt_first_hop_rows r
+  WHERE r.adopted AND r.digested AND r.left_local_lane;
+
   -- Digests: XOR is self-inverse, so an adopted event's hash leaves the local bucket and joins the origin's.
   WITH leaving AS (
     SELECT r.tenant_scope, r.event_type, r.stream_id,
@@ -170,15 +184,15 @@ BEGIN
   SET digest_lo = d.digest_lo # l.lo, digest_hi = d.digest_hi # l.hi, event_count = d.event_count - l.n, updated_at = NOW()
   FROM leaving l
   WHERE d.origin_service_id = __EMPTY_UUID__::uuid AND d.scope_tenant = l.tenant_scope
-    AND d.event_type = l.event_type AND d.stream_id = l.stream_id;
-  -- 301 (#2000): the emptied buckets are removed by their full key. Keyed by stream alone, the delete could use only the
-  -- primary key's leading column, which matches the whole local lane, and read every local bucket once per bundle.
+    AND d.event_type = l.event_type AND d.stream_id = l.stream_id
+    AND d.stream_id = ANY(v_leaving_streams);
   DELETE FROM __SCHEMA__.wh_stream_digests d
   USING (SELECT DISTINCT r.tenant_scope, r.event_type, r.stream_id
          FROM _wh_adopt_first_hop_rows r
          WHERE r.adopted AND r.digested AND r.left_local_lane) l
   WHERE d.origin_service_id = __EMPTY_UUID__::uuid
     AND d.scope_tenant = l.tenant_scope AND d.event_type = l.event_type AND d.stream_id = l.stream_id
+    AND d.stream_id = ANY(v_leaving_streams)
     AND d.event_count <= 0;
 
   INSERT INTO __SCHEMA__.wh_stream_digests AS d
@@ -237,4 +251,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_by_first_hop(UUID, TEXT, UUID[], BIGINT[]) IS
-'301 (#2000): emptied local buckets are removed by full key. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';
+'301 (#2000): the local-lane digest update and delete are driven by the moved streams through idx_stream_digests_stream. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';

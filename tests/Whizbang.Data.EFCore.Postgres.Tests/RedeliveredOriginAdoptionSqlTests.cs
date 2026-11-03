@@ -252,6 +252,12 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       seed.Parameters.Add(new NpgsqlParameter { Value = bystanders });
       await seed.ExecuteNonQueryAsync();
     }
+    // A real store's statistics know the local lane is half the table; stale ones would tell the planner it is
+    // three rows and hide the lane-wide read this test exists to catch.
+    await using (var analyze = conn.CreateCommand()) {
+      analyze.CommandText = "ANALYZE wh_stream_digests";
+      await analyze.ExecuteNonQueryAsync();
+    }
 
     await using var tx = await conn.BeginTransactionAsync();
     await using (var off = conn.CreateCommand()) {
