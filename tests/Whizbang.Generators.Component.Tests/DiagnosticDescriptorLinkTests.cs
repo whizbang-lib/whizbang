@@ -19,6 +19,9 @@ namespace Whizbang.Generators.Tests;
 public partial class DiagnosticDescriptorLinkTests {
   private static readonly string _repoRoot = _findRepoRoot();
 
+  /// <summary>src/ holds the shipped and test analyzers, tools/ the repository analyzers; both declare descriptors.</summary>
+  private static readonly string[] _scannedRoots = ["src", "tools"];
+
   /// <summary>Each descriptor carries the docs link to its own page and at least one tests link.</summary>
   [Test]
   public async Task EveryDescriptor_LinksItsPageAndATestAsync() {
@@ -54,7 +57,9 @@ public partial class DiagnosticDescriptorLinkTests {
   // the /// comment (and attribute) lines directly above it.
   private static List<Declared> _descriptors() {
     var found = new List<Declared>();
-    foreach (var file in Directory.EnumerateFiles(Path.Combine(_repoRoot, "src"), "*.cs", SearchOption.AllDirectories)) {
+    var files = _scannedRoots
+      .SelectMany(root => Directory.EnumerateFiles(Path.Combine(_repoRoot, root), "*.cs", SearchOption.AllDirectories));
+    foreach (var file in files) {
       if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
           || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)) {
         continue;

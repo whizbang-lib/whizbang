@@ -49,6 +49,7 @@ public sealed class ShardCategoryAnalyzer : DiagnosticAnalyzer {
   /// WHIZ605: Error. A test class in a sharded project carries no Shard category, more than one, or one beside
   /// Benchmark.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz605</docs>
   /// <tests>tests/Whizbang.TestAnalyzers.Tests/ShardCategoryAnalyzerTests.cs:TestClass_WithNoShardCategory_ReportsWhiz605Async</tests>
   public static readonly DiagnosticDescriptor ShardCategoryMismatch = new(
     id: "WHIZ605",

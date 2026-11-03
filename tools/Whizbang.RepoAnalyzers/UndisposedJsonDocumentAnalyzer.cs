@@ -26,6 +26,9 @@ namespace Whizbang.RepoAnalyzers;
 /// <tests>tests/Whizbang.RepoAnalyzers.Tests/UndisposedJsonDocumentAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class UndisposedJsonDocumentAnalyzer : DiagnosticAnalyzer {
+  /// <summary>WHIZ604: Error. A <c>JsonDocument</c> is created and dropped without being disposed.</summary>
+  /// <docs>operations/diagnostics/whiz604</docs>
+  /// <tests>tests/Whizbang.RepoAnalyzers.Tests/UndisposedJsonDocumentAnalyzerTests.cs:Parse_RootElement_ReportsAsync</tests>
   private static readonly DiagnosticDescriptor _rule = new(
     id: "WHIZ604",
     title: "A JsonDocument is created and dropped without being disposed",

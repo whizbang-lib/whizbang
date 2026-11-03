@@ -40,6 +40,7 @@ public sealed class NullableIsNotNullAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ603: Error. <c>IsNotNull()</c> on a <c>Nullable&lt;T&gt;</c> subject cannot fail under the pinned TUnit.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz603</docs>
   /// <tests>tests/Whizbang.TestAnalyzers.Tests/NullableIsNotNullAnalyzerTests.cs:IsNotNull_OnNullableInt_ReportsWhiz603Async</tests>
   public static readonly DiagnosticDescriptor IsNotNullOnNullable = new(
     id: "WHIZ603",
