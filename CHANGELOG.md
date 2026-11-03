@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Each perspective chooses what happens to its rows of a stream archived whole (#1739, WS-3 S10).**
+  `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]` on a perspective, overridden per perspective by
+  `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>`. `Keep` (the default) changes nothing; `Drop` deletes the
+  row with the companions a row eviction removes (the parked cursors and every snapshot but the latest), and the
+  stream's next event after a restore or a new generation rebuilds it; `Archive` moves the row into
+  `wh_event_archive_rows` beside the archived events and a restore or a new generation puts it back. When the
+  perspectives of one model disagree, the least destructive policy wins. Migration 299 (redefines `wh_archive_stream`,
+  `wh_restore_archived_stream`, `wh_delete_stream_archive` and `_wh_start_new_generations`).
 - **Event bodies compress with lz4 (#1728, WS-2 S11).** Migration 290 sets `lz4` on both `wh_event_body` columns
   (each only when it is not lz4 already; a server built without lz4 keeps pglz and logs a warning). Measured on copies
   of the table, lz4 at the default target was 1.1% smaller, 26% faster to write and 11% faster to read in full than
