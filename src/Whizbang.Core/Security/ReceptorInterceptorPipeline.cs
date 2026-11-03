@@ -9,8 +9,8 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Runs every registered <see cref="IReceptorInterceptor"/> in sequence, short-circuiting
 /// on the first denial and surfacing the strictest <see cref="DeniedAction"/> encountered.
-/// Use this from receptor wrappers, custom dispatchers, or anywhere a consumer wants to
-/// apply Whizbang's receptor permission gate without modifying the core invoker.
+/// The framework registers one as a singleton and runs it before every receptor invocation;
+/// custom dispatch code can use it the same way.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,6 +31,13 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
   private readonly IReadOnlyList<IReceptorInterceptor> _interceptors = [.. interceptors];
 
   /// <summary>
+  /// True when no interceptor is registered. The dispatcher and the receptor invoker read this once, when they are
+  /// built, and skip the gate entirely for an empty pipeline, so a host without interceptors pays nothing per message.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorGateTests.cs:Active_NoInterceptorsRegistered_IsNullAsync</tests>
+  public bool IsEmpty => _interceptors.Count == 0;
+
+  /// <summary>
   /// Runs interceptors in order, short-circuiting on the first denial. Fastest path —
   /// use this when you just need to know whether to invoke and what to do on denial.
   /// </summary>
@@ -46,6 +53,33 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
       }
     }
     return InterceptorResult.Allowed;
+  }
+
+  /// <summary>
+  /// Asks the interceptors whether <paramref name="receptorType"/> may handle the message, and applies the answer the
+  /// way every framework invocation path does: true to invoke; false for a <see cref="DeniedAction.DropQuiet"/> denial,
+  /// logged as a warning; and <see cref="Exceptions.ReceptorInvocationDeniedException"/> for every other denial. Use it
+  /// from code that invokes a receptor outside the dispatcher and the receptor invoker.
+  /// </summary>
+  /// <param name="receptorType">The receptor about to be invoked.</param>
+  /// <param name="envelope">The message's envelope.</param>
+  /// <param name="context">The scope context the receptor would see.</param>
+  /// <param name="logger">Where a quiet drop is logged; null logs nothing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True to invoke the receptor; false when it was dropped quietly.</returns>
+  /// <exception cref="Exceptions.ReceptorInvocationDeniedException">An interceptor denied the receptor with an action
+  /// other than <see cref="DeniedAction.DropQuiet"/>.</exception>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusRawReceptorInterceptorTests.cs</tests>
+  public async ValueTask<bool> AdmitAsync(
+      Type receptorType,
+      IMessageEnvelope envelope,
+      IScopeContext? context,
+      Microsoft.Extensions.Logging.ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(receptorType);
+    ArgumentNullException.ThrowIfNull(envelope);
+    var result = await EvaluateFirstDenialAsync(receptorType, envelope, context, cancellationToken).ConfigureAwait(false);
+    return ReceptorInterceptorGate.Decide(result, receptorType, envelope, logger);
   }
 
   /// <summary>

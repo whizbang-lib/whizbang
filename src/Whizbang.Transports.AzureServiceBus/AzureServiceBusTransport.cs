@@ -46,6 +46,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   /// </remarks>
   internal AsbReceiveDecisionMaker DecisionMaker { get; init; } = new();
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
+  private readonly Whizbang.Core.Security.ReceptorInterceptorPipeline? _receptorInterceptors;
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly Whizbang.Core.Routing.IPoisonMessageDetector? _poisonDetector;
 
@@ -115,8 +116,11 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     IMessageDiscardPolicy? discardPolicy = null,
     IReadOnlySet<string>? absorbedNamespaces = null,
     TimeProvider? timeProvider = null,
-    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null
+    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
+    Whizbang.Core.Security.ReceptorInterceptorPipeline? receptorInterceptors = null
   ) {
+    // #1996: held only when an interceptor is registered, so a raw receptor otherwise costs one null check
+    _receptorInterceptors = receptorInterceptors is { IsEmpty: false } ? receptorInterceptors : null;
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
     ArgumentNullException.ThrowIfNull(client);
@@ -292,10 +296,44 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   /// Runs the raw receptor the decision names, if any, with the envelope's payload: once the handler has stored the
   /// message, so a raw receptor never replaces storing it (#1720).
   /// </summary>
-  private static Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) =>
-    decision.RawReceptor is { } receptor && decision.RawPayload is { } payload
-      ? receptor.HandleAsync(payload, cancellationToken)
-      : Task.CompletedTask;
+  /// <remarks>
+  /// The registered receptor interceptors are asked first (#1996), with the message's envelope and the scope it carries.
+  /// A quiet drop skips the raw receptor and the message completes; any other denial throws
+  /// <see cref="Whizbang.Core.Security.Exceptions.ReceptorInvocationDeniedException"/>, which the settlement step turns
+  /// into a broker dead-letter (dead-letter, quarantine) or a redelivery (throw).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusRawReceptorInterceptorTests.cs</tests>
+  private async Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) {
+    if (decision.RawReceptor is not { } receptor) {
+      return;
+    }
+    // The decision maker sets the payload whenever it names a raw receptor
+    var payload = decision.RawPayload!.Value;
+    if (_receptorInterceptors is not null) {
+      // The decision maker sets the received envelope whenever it names a raw receptor
+      var envelope = decision.Envelope!;
+      if (!await _receptorInterceptors.AdmitAsync(receptor.GetType(), envelope, envelope.GetCurrentScope(), _logger, cancellationToken)) {
+        return;
+      }
+    }
+    await receptor.HandleAsync(payload, cancellationToken);
+  }
+
+  /// <summary>
+  /// A raw receptor an interceptor denied with dead-letter or quarantine (#1996): dead-lettered at the broker under the
+  /// action's own reason, without redelivery, where the dead-letter drain takes it into custody. Returns false for any
+  /// other failure, which keeps the redelivery policy.
+  /// </summary>
+  private static bool _isDeadLetteringDenial(Exception ex, out string reason) {
+    reason = ex is Whizbang.Core.Security.Exceptions.ReceptorInvocationDeniedException denied
+      ? denied.Action switch {
+        Whizbang.Core.Security.Attributes.DeniedAction.DeadLetter => nameof(Whizbang.Core.Messaging.MessageFailureReason.ReceptorDenied),
+        Whizbang.Core.Security.Attributes.DeniedAction.Quarantine => nameof(Whizbang.Core.Messaging.MessageFailureReason.ReceptorQuarantined),
+        _ => string.Empty,
+      }
+      : string.Empty;
+    return reason.Length > 0;
+  }
 
   /// <summary>
   /// Logs a message handed on as received (one this service cannot read as its typed envelope) at Information, so the
@@ -1879,6 +1917,12 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
+    if (_isDeadLetteringDenial(ex, out var deniedReason)) {
+      _logger.LogWarning(ex, "DEAD-LETTER reason: {Reason} for session message {MessageId}: a receptor interceptor denied its raw receptor",
+        deniedReason, args.Message.MessageId);
+      await _safeDeadLetterAsync(args, deniedReason, ex.Message);
+      return;
+    }
     // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
     // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
     _logger.LogWarning(
@@ -1903,6 +1947,12 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
+    if (_isDeadLetteringDenial(ex, out var deniedReason)) {
+      _logger.LogWarning(ex, "DEAD-LETTER reason: {Reason} for message {MessageId}: a receptor interceptor denied its raw receptor",
+        deniedReason, args.Message.MessageId);
+      await _safeDeadLetterAsync(args, deniedReason, ex.Message);
+      return;
+    }
     // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
     // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
     _logger.LogWarning(

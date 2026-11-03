@@ -389,6 +389,10 @@ public sealed class DeadLetterRecoveryOptions {
     [MessageFailureReason.OutboxStoreFailed] = new(AGGRESSIVE_RETRY, 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
     // #1885: the same for a message the inbox batcher could not store; recovery stores it through the inbox store.
     [MessageFailureReason.InboxStoreFailed] = new(AGGRESSIVE_RETRY, 5, TimeSpan.FromMinutes(1), HoldForReviewAfterExhaustion: true),
+    // #1996: a receptor interceptor denied the message, and the same message under the same scope is denied the same
+    // way on every re-drive. Both wait for an operator: a quarantined message is held for review by definition.
+    [MessageFailureReason.ReceptorDenied] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.ReceptorQuarantined] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 

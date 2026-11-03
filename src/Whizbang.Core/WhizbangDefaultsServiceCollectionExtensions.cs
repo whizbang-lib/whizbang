@@ -37,6 +37,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
     services.TryAddSingleton<Observability.IEnvelopeRegistry, Observability.EnvelopeRegistry>();
+    // The receptor interceptors, composed once: every receptor invocation path reads this pipeline, and an empty one
+    // (no interceptor registered) is skipped without any per-message work.
+    services.TryAddSingleton(sp => new Security.ReceptorInterceptorPipeline(sp.GetServices<Security.IReceptorInterceptor>()));
     services.TryAddSingleton<Messaging.IEnvelopeSerializer>(sp =>
       new Messaging.EnvelopeSerializer(sp.GetService<System.Text.Json.JsonSerializerOptions>()));
     services.TryAddSingleton<Messaging.ILifecycleMessageDeserializer>(sp =>

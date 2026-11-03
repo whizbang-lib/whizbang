@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Security
+- **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
+  singleton `ReceptorInterceptorPipeline`) are asked immediately before every receptor invocation: `SendAsync`,
+  `LocalInvokeAsync` and `PublishAsync` through the generated dispatcher, the receptors of a message a receptor
+  returned, receptors registered at runtime, and every lifecycle stage the receptor invoker runs, inbox delivery
+  included. The interceptor sees the scope context the receptor reads through `IScopeContextAccessor`. A denied receptor
+  does not run, so nothing it would have returned is appended or cascaded. `DeniedAction.DropQuiet` skips the receptor
+  with a warning; on a local dispatch every other action throws the new `ReceptorInvocationDeniedException` (an
+  `UnauthorizedAccessException`). Inbox delivery asks before it completes the row (`IReceptorInvoker.EvaluateAdmissionAsync`):
+  `DeadLetter` moves the row to the dead-letter store (new reason `ReceptorDenied`, 28) and `Quarantine` holds it there
+  (new reason `ReceptorQuarantined`, 29), neither retried and both held for review by the default recovery policy;
+  `Throw` fails the attempt so the attempts bound retries it; `DropQuiet` completes the row. With no interceptor
+  registered no path does any interceptor work. `ReceptorInfo` gains `ReceptorType`, which generated entries set.
+  The Service Bus consumer worker asks before it runs a message's inbox stages and honors the same actions (a denied
+  `Throw` fails the delivery for the broker's redelivery). Raw receptors (`IRawReceptor`) are gated with the message's
+  envelope and scope: `DeadLetter` and `Quarantine` dead-letter the message at the broker under the reasons
+  `ReceptorDenied` and `ReceptorQuarantined`. A control-class message whose comparison is denied is dropped, as a failed
+  comparison is. `ReceptorInterceptorPipeline.AdmitAsync` applies the same decision for custom invocation code.
+  **Upgrade note:** registering `DefaultRequirePermissionInterceptor` now enforces every `[RequirePermission]` on every
+  path, where the attribute was inert before; grant the permissions those receptors declare before registering it.
+  An interceptor that applies to an `ISyncReceptor` must complete synchronously.
+
 #### Rebuilds
 - **A rebuild reads archived data only when it opts in (#1931).** `RebuildArchivedData` on `RebuildOrigin` and
   `RebuildPerspectiveCommand`: `Skip` (the default) never reads the archive, starting a stream archived through a

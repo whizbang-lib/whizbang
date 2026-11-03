@@ -22,12 +22,17 @@ namespace Whizbang.Core.Security;
 /// a "must dead-letter" requirement isn't silently downgraded by a peer attribute that
 /// would have dropped quiet.
 /// </para>
+/// <para>
+/// It is not registered by default. Register it to enforce <see cref="RequirePermissionAttribute"/> on every
+/// receptor invocation path: <c>services.AddSingleton&lt;IReceptorInterceptor, DefaultRequirePermissionInterceptor&gt;()</c>.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionPresent_AllowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_DeniesWithDeadLetterDefaultAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:NoAttributes_AlwaysAllowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs:RequirePermission_MissingPermission_DeniesEndToEndAsync</tests>
 public sealed class DefaultRequirePermissionInterceptor : IReceptorInterceptor {
   /// <inheritdoc />
   public ValueTask<InterceptorResult> CanInvokeAsync(
