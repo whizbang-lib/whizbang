@@ -298,28 +298,52 @@ public class AuditLedgerRebuildTests {
   [Test]
   public async Task Rederive_ARecordTheLiveWriterMinted_IsTheSameRecordAsync() {
     var stored = _stored(typeof(RebuildOrderPlaced));
-    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(new OutboxMessage {
-      MessageId = stored.EventId,
-      Envelope = new Whizbang.Core.Observability.MessageEnvelope<JsonElement> {
-        MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId),
-        Payload = JsonElement.Parse(stored.EventData),
-        Hops = [],
-        DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
-          Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
-          Source = MessageSource.Outbox,
-        },
-      },
-      Metadata = new Whizbang.Core.Observability.EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId), Hops = [] },
-      EnvelopeType = "MessageEnvelope",
-      IsEvent = true,
-      MessageType = stored.EventType,
-    }, _options());
+    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(stored), _options());
 
     var rebuilt = _rebuild().Rederive(stored)!;
 
     await Assert.That(_record(rebuilt).GetProperty("Id").GetGuid()).IsEqualTo(_record(live!).GetProperty("Id").GetGuid())
       .Because("a re-derived record deduplicates against the one the event produced when it was first written");
   }
+
+  /// <summary>
+  /// The live outbox path and the rebuild decide a type this build cannot resolve the same way under both modes
+  /// (#1980): audited under OptOut, not audited under OptIn. Documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>; a rebuilt ledger missing a record the
+  /// live path wrote, or holding one it did not, fails this test.
+  /// </summary>
+  [Test]
+  [Arguments(AuditMode.OptIn)]
+  [Arguments(AuditMode.OptOut)]
+  public async Task LiveAndRebuild_AgreeOnAnUnresolvableType_UnderEitherModeAsync(AuditMode mode) {
+    var stored = _stored(typeof(RebuildOrderPlaced)) with { EventType = "Gone.Renamed, Gone" };
+    var options = _options();
+    options.AuditMode = mode;
+
+    var live = AuditOutboxMessageBuilder.TryBuildAuditMessage(_liveMessageOf(stored), options);
+    var rebuilt = _rebuild(o => o.AuditMode = mode).Rederive(stored);
+
+    await Assert.That(live is null).IsEqualTo(rebuilt is null)
+      .Because("a rebuilt ledger must hold exactly the records the live path wrote for the same events");
+    await Assert.That(live is null).IsEqualTo(mode == AuditMode.OptIn);
+  }
+
+  private static OutboxMessage _liveMessageOf(RedeliveryEvent stored) => new() {
+    MessageId = stored.EventId,
+    Envelope = new Whizbang.Core.Observability.MessageEnvelope<JsonElement> {
+      MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId),
+      Payload = JsonElement.Parse(stored.EventData),
+      Hops = [],
+      DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+        Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox,
+        Source = MessageSource.Outbox,
+      },
+    },
+    Metadata = new Whizbang.Core.Observability.EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(stored.EventId), Hops = [] },
+    EnvelopeType = "MessageEnvelope",
+    IsEvent = true,
+    MessageType = stored.EventType,
+  };
 
   private static SystemEventOptions _options() {
     var options = new SystemEventOptions();

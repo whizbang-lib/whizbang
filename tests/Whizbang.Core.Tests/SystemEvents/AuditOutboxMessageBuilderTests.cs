@@ -761,6 +761,51 @@ public class AuditOutboxMessageBuilderTests {
     await Assert.That(result).IsNull();
   }
 
+  /// <summary>
+  /// Under OptIn an event type the live path cannot resolve is not audited, as the ledger rebuild decides it (#1980):
+  /// OptIn audits only marked types, and a type that cannot be resolved carries no mark. The choice is documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>; this test fails if the live path goes back
+  /// to auditing it.
+  /// </summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptInMode_UnresolvableType_IsNotAuditedAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn));
+
+    await Assert.That(result).IsNull()
+      .Because("OptIn audits only marked types, and the rebuild skips the same type; the two paths must agree");
+  }
+
+  /// <summary>
+  /// The skip is never silent (#1980): a type that could not be resolved looks, in the ledger, exactly like one nobody
+  /// opted in, so every skip warns naming the type.
+  /// </summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptInMode_UnresolvableType_WarnsThatItWasNotAuditedNamingTheTypeAsync() {
+    var captured = new CapturingLogger();
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn), captured);
+
+    await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("NonExistent.FakeEvent, NonExistent.Assembly", StringComparison.Ordinal)
+        && e.Message.Contains("was not audited", StringComparison.Ordinal))).IsTrue()
+      .Because("a record not written because its type could not be resolved must say so, and name the type");
+  }
+
+  /// <summary>Under OptOut nothing changes: a type that cannot be resolved is audited, and the skip warning is not logged.</summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptOutMode_UnresolvableType_IsAuditedWithoutTheSkipWarningAsync() {
+    var captured = new CapturingLogger();
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut), captured);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(captured.Entries.Any(e => e.Message.Contains("was not audited", StringComparison.Ordinal))).IsFalse();
+  }
+
   [Test]
   public async Task TryBuildAuditMessage_ADurableEventOfAnUnresolvableType_IsStillAuditedAsync() {
     // The control for the test above: without the flag an unresolvable type is audited, as it always was.
