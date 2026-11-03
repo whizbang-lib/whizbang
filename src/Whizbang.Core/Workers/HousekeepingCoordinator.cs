@@ -31,9 +31,18 @@ namespace Whizbang.Core.Workers;
 /// store for that reason.
 /// </para>
 /// <para>
-/// The two housekeeping activities are prioritized rather than merely serialized. Integrity work is
+/// The housekeeping activities are prioritized rather than merely serialized. Integrity work is
 /// correctness-bearing and runs on a far tighter cadence, so it is never held back by a cleanup
 /// sweep; a sweep deferred behind it simply runs on the next tick.
+/// </para>
+/// <para>
+/// Integrity work is idle-gated like dead-letter recovery (#2001): deferred while the service is
+/// busy or cooling down, forced through after <see cref="Settings.MaxDeferral"/>. Its receive side
+/// (reconciling a redelivery bundle, comparing a manifest chunk, building a redelivery for another
+/// service) is the expensive part of the feature, and running it alongside the service's ordinary
+/// traffic held a shared database's CPU at its ceiling. Checkpoint publishing is the one integrity
+/// activity that does not ask: a consumer reads a missing checkpoint as its liveness alarm, so the
+/// checkpoint must keep its cadence under load.
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
@@ -59,9 +68,28 @@ public sealed class HousekeepingCoordinator {
     DeadLetterRecovery,
 
     /// <summary>
-    /// Stream-integrity work. Correctness-bearing and on a tight cadence, so it is not deferred
-    /// behind cleanup.
+    /// Stream-integrity work: draining queued integrity deliveries, the deep audit and the paced
+    /// repair drain. Ranked above cleanup, so it is never deferred behind a sweep, and below
+    /// dead-letter recovery.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Gated on settledness with the same rule as <see cref="DeadLetterRecovery"/> (#2001, reversing
+    /// the earlier rule that integrity was not gated): deferred while the service is busy or cooling
+    /// down, and forced through once it has been deferred for <see cref="Settings.MaxDeferral"/>.
+    /// Integrity work verifies and repairs history; none of it has a deadline measured in seconds,
+    /// and the expensive part of it (reconciling redelivery bundles, comparing manifests, building
+    /// redeliveries) competes for the same database as the traffic it verifies. Each requester
+    /// spends and re-arms its own deferral budget (see <see cref="TryBegin(Activity, ServiceBacklog?, string)"/>).
+    /// </para>
+    /// <para>
+    /// Checkpoint publishing does not ask for this slot and is not gated: a consumer reads a missing
+    /// checkpoint as its liveness alarm, so deferring checkpoints under load would raise that alarm
+    /// on every busy service.
+    /// </para>
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs</tests>
     Integrity,
 
     /// <summary>The heavy cleanup sweep: reaping, pruning, and stale-row collection.</summary>
@@ -199,6 +227,11 @@ public sealed class HousekeepingCoordinator {
   private bool _maintenanceRunning;
   private readonly DeferralBudget _maintenanceDeferrals = new();
   private readonly DeferralBudget _recoveryDeferrals = new();
+  // One budget per integrity requester (#2001). The requesters share one slot; with one shared
+  // budget, whichever asked first after the ceiling would take the forced pass and re-arm the
+  // ceiling for all of them, starving a requester on a slower tick for as long as the load lasts.
+  private readonly Dictionary<string, DeferralBudget> _integrityDeferrals = new(StringComparer.Ordinal);
+  private string? _integrityHolder;
 
   // One activity's run of consecutive deferrals: how many, and when the first one happened. Both
   // re-arm only when a pass of that activity actually completes.
@@ -341,13 +374,32 @@ public sealed class HousekeepingCoordinator {
   /// Service-wide settledness from the shared store, or null when the backend cannot report it.
   /// </param>
   /// <returns>Whether to proceed, and why.</returns>
-  public Decision TryBegin(Activity activity, ServiceBacklog? backlog) {
-    var decision = _tryBeginCore(activity, backlog);
+  public Decision TryBegin(Activity activity, ServiceBacklog? backlog) =>
+    TryBegin(activity, backlog, requester: string.Empty);
+
+  /// <summary>
+  /// Requests permission to start <paramref name="activity"/> on behalf of <paramref name="requester"/>.
+  /// </summary>
+  /// <param name="activity">The housekeeping activity about to run.</param>
+  /// <param name="backlog">
+  /// Service-wide settledness from the shared store, or null when the backend cannot report it.
+  /// </param>
+  /// <param name="requester">
+  /// Who is asking, for <see cref="Activity.Integrity"/>: each integrity requester spends and re-arms
+  /// its own deferral budget, so one requester's forced pass never re-arms another's ceiling. Ignored
+  /// for the other activities, which have one requester each.
+  /// </param>
+  /// <returns>Whether to proceed, and why.</returns>
+  /// <docs>operations/workers/housekeeping-arbitration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs:Integrity_EachRequesterSpendsAndRearmsItsOwnBudgetAsync</tests>
+  public Decision TryBegin(Activity activity, ServiceBacklog? backlog, string requester) {
+    ArgumentNullException.ThrowIfNull(requester);
+    var decision = _tryBeginCore(activity, backlog, requester);
     _metrics?.RecordDecision(activity, decision.Reason, decision.Granted);
     return decision;
   }
 
-  private Decision _tryBeginCore(Activity activity, ServiceBacklog? backlog) {
+  private Decision _tryBeginCore(Activity activity, ServiceBacklog? backlog, string requester) {
     lock (_gate) {
       // Every reading feeds the dwell, including the ones that go on to be refused for an unrelated
       // reason: settledness is a property of the service, not of this admission request.
@@ -371,16 +423,25 @@ public sealed class HousekeepingCoordinator {
         return new Decision(false, Verdict.HigherPriorityRunning);
       }
 
+      // Recovery, integrity and cleanup ask the same question of the service and differ only in
+      // which budget they spend and which slot they take, so they share one admission rule rather
+      // than copies of it that can drift.
       if (activity == Activity.Integrity) {
-        // Integrity is not gated on settledness here — the checkpoint path applies its own, which
-        // distinguishes a lagging consumer from a genuine deficit.
-        _integrityRunning = true;
-        return new Decision(true, Verdict.Proceed);
+        // Gated since #2001, with the rule recovery uses: the receive-side integrity work competes
+        // for the same database as the traffic it verifies. The checkpoint path keeps its own
+        // second rule on top (a lagging consumer is not a deficit).
+        if (!_integrityDeferrals.TryGetValue(requester, out var budget)) {
+          budget = new DeferralBudget();
+          _integrityDeferrals[requester] = budget;
+        }
+        var integrity = _admitWhenQuiet(backlog, budget);
+        if (integrity.Granted) {
+          _integrityRunning = true;
+          _integrityHolder = requester;
+        }
+        return integrity;
       }
 
-      // Recovery and cleanup ask the same question of the service and differ only in which budget
-      // they spend and which slot they take, so they share one admission rule rather than two
-      // copies of it that can drift.
       if (activity == Activity.DeadLetterRecovery) {
         var recovery = _admitWhenQuiet(backlog, _recoveryDeferrals);
         if (recovery.Granted) {
@@ -398,7 +459,7 @@ public sealed class HousekeepingCoordinator {
   }
 
   /// <summary>
-  /// The settledness rule both deferrable activities apply, over the caller's own deferral budget.
+  /// The settledness rule every deferrable activity applies, over the caller's own deferral budget.
   /// Decides only whether to admit; the caller claims its own slot.
   /// </summary>
   /// <remarks>
@@ -440,13 +501,21 @@ public sealed class HousekeepingCoordinator {
   }
 
   /// <summary>
-  /// Claims the slot for integrity work for the lifetime of the returned scope.
+  /// Claims the slot for integrity work for the lifetime of the returned scope, without a
+  /// settledness reading.
   /// </summary>
   /// <remarks>
   /// Exclusion only exists if the higher-priority activity actually announces itself, and a manual
   /// begin/end pair around a cycle that can throw is a slot leak waiting to happen — a leaked slot
   /// disables the cleanup sweep for the life of the process. Disposing a REFUSED scope is a no-op,
   /// so a second concurrent cycle cannot hand away the slot the first one still holds.
+  /// <para>
+  /// It passes no reading, so it is admitted as <see cref="Verdict.ProceedUnmeasured"/> whenever the
+  /// slot is free: it is a hold, not an admission. Since #2001 the idle gate is asked by the caller
+  /// that schedules integrity work (the integrity delivery drain, the audit, the repair drain), and a
+  /// receptor invoked inside that drain finds the slot already held, so its scope is refused and its
+  /// dispose a no-op.
+  /// </para>
   /// </remarks>
   /// <returns>A scope that releases the slot on dispose.</returns>
   public IntegrityScope BeginIntegrityScope() {
@@ -510,7 +579,13 @@ public sealed class HousekeepingCoordinator {
       }
 
       if (activity == Activity.Integrity) {
-        _integrityRunning = false;
+        if (_integrityRunning) {
+          _integrityRunning = false;
+          // As for maintenance: only a pass that actually ran re-arms its requester's ceiling, so a
+          // stray release cannot re-open the forced-through branch every cycle.
+          _integrityDeferrals[_integrityHolder!].Reset();
+          _integrityHolder = null;
+        }
         return;
       }
 
