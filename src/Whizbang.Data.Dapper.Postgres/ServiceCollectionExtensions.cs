@@ -443,6 +443,10 @@ public static class ServiceCollectionExtensions {
       IServiceCollection services, string connectionString, PostgresOptions options, bool initializeSchema,
       Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) {
     services.AddWhizbangInstanceIdentity();
+    // #1992: the Assess verdict, as the EF Core driver gives it, so a Dapper instance stands down rather than migrate a
+    // newer schema, and skips the election and the migration on a current one.
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
+      new DapperPostgresStartupAssessor(connectionString, () => createInitializer(sp)));
     if (initializeSchema) {
       services.AddSingleton<ISchemaInitializationRunner>(sp => new DapperSchemaInitializationRunner(
         connectionString,

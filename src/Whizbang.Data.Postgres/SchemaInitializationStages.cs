@@ -54,6 +54,33 @@ public static class SchemaInitializationStages {
   public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure is in place; registering this instance", cancellationToken);
 
+  /// <summary>
+  /// The <c>Assess</c> verdict is Current (#1992): nothing is bootstrapped and this instance registers, the last step of
+  /// Preflight.
+  /// </summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once the progress is reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
+  public static Task RegisteringOnACurrentSchemaAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
+    _preflightAsync(services, "the schema is current; registering this instance", cancellationToken);
+
+  /// <summary>
+  /// The <c>Assess</c> verdict is Current (#1992): the election and the migration are skipped, and no schema lock is
+  /// taken. Converge and Coordinate follow as on any start.
+  /// </summary>
+  /// <param name="services">Where the reporter is registered; null reports nothing.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <returns>A task that completes once both skips are reported.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
+  public static async Task SchemaCurrentAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.SkipAsync(StartupStage.Elect, "the schema is current; no migrator is needed", cancellationToken)
+        .ConfigureAwait(false);
+      await stages.SkipAsync(StartupStage.Migrate, "the schema is current", cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   /// <summary>This instance has joined the registry, at the end of Preflight, and votes for the migrator duty.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>

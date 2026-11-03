@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
@@ -77,8 +78,10 @@ public class DapperStartupAssessorTests {
   public async Task AfterAStart_TheSchemaIsCurrentAsync() {
     await _startAsync();
 
-    await Assert.That(await _verdictAsync()).IsEqualTo(StartupVerdict.Current)
-      .Because("every migration and perspective table this binary carries is recorded, at this binary's version");
+    await using var provider = _compose();
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current)
+      .Because("every migration and perspective table this binary carries is recorded, at this binary's version: " + assessment.Reason);
   }
 
   [Test]

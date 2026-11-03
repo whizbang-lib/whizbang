@@ -3,6 +3,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.Dapper.Postgres;
@@ -49,6 +50,9 @@ public abstract class StartupDriver {
         .UseNpgsql(connectionString)
         .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
       _ = new WhizbangPerspectiveBuilder(services).WithEFCore<DocumentIndexesDbContext>().WithDriver.Postgres;
+      // What the turnkey registration adds and a self-registered context's host supplies itself: the coordinator a
+      // stood-down instance registers through needs it.
+      services.TryAddSingleton(JsonContextRegistry.CreateCombinedOptions());
     }
   }
 

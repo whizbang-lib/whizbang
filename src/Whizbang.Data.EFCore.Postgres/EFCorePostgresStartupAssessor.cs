@@ -7,7 +7,7 @@ using Npgsql;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
-using Whizbang.Core.Versioning;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -18,13 +18,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// instance doing it costs nothing.
 /// </summary>
 /// <remarks>
-/// Ordering is SemVer precedence on <c>wh_schema_versions.library_version</c>: pre-release
-/// precedence is the common path (everything before 1.0 ships with a pre-release label), numeric
-/// identifiers compare numerically (<c>alpha.10</c> is newer than <c>alpha.2</c>), build metadata
-/// is ignored. An unparseable own version is not guessed at — the verdict is
-/// <see cref="StartupVerdict.StandDown"/>, because every wrong answer at this point is worse than
-/// stopping. An unparseable recorded version cannot outrank anything (the same stance
-/// <c>MigrationVersionGuard</c> takes: unreadable history does not block).
+/// Ordering is SemVer precedence on <c>wh_schema_versions.library_version</c>, shared with the Dapper driver
+/// (<see cref="PostgresStartupAssessment"/>). The verdict is read once per host, through
+/// <see cref="StartupAssessmentSource"/>, by every reader of it.
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs</tests>
@@ -45,94 +41,21 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// The version comparison and the ledger read are the Postgres drivers' shared <see cref="PostgresStartupAssessment"/>.
+  /// When nothing newer is recorded, the schema is Current if every DbContext this host registers answers that it needs
+  /// nothing applied and nothing converted (#1992), read without a lock.
+  /// </remarks>
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
-    IReadOnlyList<string> recorded;
-    try {
-      recorded = await _readRecordedVersionsAsync(cancellationToken).ConfigureAwait(false);
-    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable) {
-      // No ledger at all — the fresh-database verdict, not an error.
-      return new StartupAssessment(StartupVerdict.Migrate, "fresh database — no migration ledger yet");
-    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn) {
-      // A ledger without its owner column: the first migration is still creating it (the assessment can run
-      // beside it on a fresh database), or an older library wrote it. Either way it records no version newer
-      // than this binary. Failing here kept the instance from ever reporting ready.
-      return new StartupAssessment(StartupVerdict.Migrate, "migration ledger is still being created — nothing recorded yet");
-    }
-    return ComputeVerdict(_versionProvider?.LibraryVersion, recorded);
-  }
-
-  /// <summary>
-  /// The verdict table as a pure function: this binary's version against every recorded one.
-  /// Exposed for exhaustive unit coverage — the IO around it is a single SELECT.
-  /// </summary>
-  internal static StartupAssessment ComputeVerdict(string? mine, IReadOnlyList<string> recorded) {
-    if (mine is null) {
-      // Absent and unreadable are different facts (issue #619): nobody registered a provider, which
-      // the Postgres driver now always does — a host that bypasses the driver must register
-      // LibraryVersionProvider itself. Naming the registration is what makes the stand-down diagnosable.
-      return new StartupAssessment(StartupVerdict.StandDown,
-        "no ILibraryVersionProvider is registered, so this binary's own library version is unknown — "
-        + "refusing to migrate; every wrong answer here is worse than stopping. The Postgres driver "
-        + "registers one; a host that bypasses it must register LibraryVersionProvider itself");
-    }
-    if (!SemanticVersion.TryParse(mine, out var myVersion)) {
-      return new StartupAssessment(StartupVerdict.StandDown,
-        $"own library version '{mine}' is unreadable — refusing to migrate; every wrong answer here is worse than stopping");
-    }
-
-    if (recorded.Count == 0) {
-      return new StartupAssessment(StartupVerdict.Migrate, "fresh database — nothing recorded in the ledger");
-    }
-
-    string? newest = null;
-    var newestParsed = default(SemanticVersion);
-    var hasNewest = false;
-    foreach (var version in recorded) {
-      if (!SemanticVersion.TryParse(version, out var parsed)) {
-        continue;   // unreadable history cannot outrank anything — same stance as the ledger guard
-      }
-      if (!hasNewest || parsed.CompareTo(newestParsed) > 0) {
-        newest = version;
-        newestParsed = parsed;
-        hasNewest = true;
-      }
-    }
-
-    if (hasNewest && newestParsed.CompareTo(myVersion) > 0) {
-      return new StartupAssessment(StartupVerdict.StandDown,
-        $"the ledger records version {newest}, newer than this binary's {mine} — standing down: never apply anything, hold the data plane, report not-ready-while-alive");
-    }
-
-    return new StartupAssessment(StartupVerdict.Serve,
-      hasNewest
-        ? $"schema recorded at {newest}; this binary runs {mine} — nothing newer recorded"
-        : $"only unreadable versions recorded; this binary runs {mine} — unreadable history does not block");
-  }
-
-  private async Task<IReadOnlyList<string>> _readRecordedVersionsAsync(CancellationToken cancellationToken) {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
-    await using var cmd = connectionScope.Connection.CreateCommand();
-#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
-    cmd.CommandText = $@"
-      SELECT DISTINCT v.library_version
-      FROM {prefix}wh_schema_migrations m
-      JOIN {prefix}wh_schema_versions v ON v.id = m.version_id
-      WHERE m.owner = 'whizbang'";
-#pragma warning restore S2077
-
-    var versions = new List<string>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      if (!await reader.IsDBNullAsync(0, cancellationToken)) {
-        versions.Add(reader.GetString(0));
-      }
-    }
-    return versions;
+    return await PostgresStartupAssessment.AssessAsync(
+      connectionScope.Connection, schema, _versionProvider?.LibraryVersion,
+      ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(scope.ServiceProvider, ct),
+      cancellationToken).ConfigureAwait(false);
   }
 }

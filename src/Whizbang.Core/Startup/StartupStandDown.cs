@@ -141,13 +141,13 @@ public sealed partial class StartupStandDown {
 
   /// <summary>One beat: whether it was accepted, or null when beating should end.</summary>
   private async Task<bool?> _beatAsync(CancellationToken stop) {
-    await using var scope = _scopes.CreateAsyncScope();
-    var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
-    if (coordinator?.RecordsInstanceTransitions != true) {
-      return null;   // this host keeps no instance rows: there is nothing to be visible in
-    }
     bool accepted;
     try {
+      await using var scope = _scopes.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator?.RecordsInstanceTransitions != true) {
+        return null;   // this host keeps no instance rows: there is nothing to be visible in
+      }
       accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
         _instance.InstanceId, _instance.ServiceName, _instance.HostName, _instance.ProcessId,
         LibraryVersion: _libraryVersion), stop).ConfigureAwait(false);

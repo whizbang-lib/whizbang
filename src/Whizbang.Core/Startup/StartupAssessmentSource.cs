@@ -4,6 +4,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Workers;
@@ -157,6 +159,29 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
       + "past Preflight on this attempt, because an instance that cannot tell whether the schema is newer than its binary "
       + "must not migrate it")]
   static partial void LogFailed(ILogger logger, Exception ex);
+}
+
+/// <summary>Registers the one <see cref="StartupAssessmentSource"/> of a host (#1992).</summary>
+/// <docs>operations/startup/rolling-upgrades#assess</docs>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupAssessmentSourceTests.cs:TheDefaults_RegisterOneSourceOverTheRegisteredAssessor_AndTheAssessStepReadsThroughItAsync</tests>
+public static class StartupAssessmentSourceServiceCollectionExtensions {
+  /// <summary>
+  /// Registers the source over whichever assessor the host registers (the framework's null default when none),
+  /// resolved at first use so a driver registering after this call still wins. Idempotent: the defaults and the schema
+  /// initializer both call it, and the Assess step and the initializer read one source.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The same collection, for chaining.</returns>
+  public static IServiceCollection TryAddStartupAssessmentSource(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.TryAddSingleton<IStartupAssessor>(NullStartupAssessor.Instance);
+    services.TryAddSingleton(sp => new StartupAssessmentSource(
+      sp.GetRequiredService<IStartupAssessor>(),
+      sp.GetService<IStartupStageReporter>() ?? NullStartupStageReporter.Instance,
+      sp.GetService<TimeProvider>() ?? TimeProvider.System,
+      sp.GetService<ILogger<StartupAssessmentSource>>()!));
+    return services;
+  }
 }
 
 /// <summary>

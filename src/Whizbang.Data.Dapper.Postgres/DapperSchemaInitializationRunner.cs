@@ -30,8 +30,16 @@ internal sealed class DapperSchemaInitializationRunner(
 
   /// <inheritdoc />
   public async Task RunAsync(CancellationToken cancellationToken) {
+    // #1992: the host's one Assess verdict is this pass's input; a stand-down is refused before anything is applied.
+    var assessment = await StartupVerdictBinding.ReadAsync(services, cancellationToken).ConfigureAwait(false);
     var retry = new PostgresConnectionRetry(options, logger);
     await retry.WaitForConnectionAsync(connectionString, cancellationToken).ConfigureAwait(false);
+    if (StartupVerdictBinding.IsCurrent(assessment)) {
+      // Current: no schema lock and no pass; this instance registers and the schema converges, as on every start.
+      await SchemaInitializationStages.SchemaCurrentAsync(services, cancellationToken).ConfigureAwait(false);
+      await createInitializer().ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
+      return;
+    }
     // #1636: this driver holds no election, so Preflight ends here, once the database answers, and Elect is reported
     // skipped; what waits for the end of Preflight (the notification connection and its alive-lock) starts now.
     await SchemaInitializationStages.ElectedAsync(

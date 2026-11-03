@@ -17,6 +17,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <docs>data/turnkey-initialization</docs>
 public static class DbContextInitializationRegistry {
   private static readonly List<DbContextInitializer> _initializers = [];
+  // #1992: whether each DbContext's schema needs nothing applied, keyed by its type, registered beside its initializer.
+  private static readonly Dictionary<Type, Func<IServiceProvider, CancellationToken, Task<bool?>>> _currencyChecks = [];
   private static readonly Lock _lock = new();
 
   /// <summary>
@@ -72,6 +74,50 @@ public static class DbContextInitializationRegistry {
       _initializers.RemoveAll(i => i.DbContextType == typeof(TDbContext));
       _initializers.Add(new DbContextInitializer(typeof(TDbContext), callback));
     }
+  }
+
+  /// <summary>
+  /// Registers how to tell whether a DbContext's schema is current (#1992): nothing to apply and nothing left to convert,
+  /// read without a lock. Called by the source-generated module initializer beside <see cref="Register{TDbContext}"/>;
+  /// a later registration for the same type replaces the earlier one.
+  /// </summary>
+  /// <typeparam name="TDbContext">The DbContext type.</typeparam>
+  /// <param name="check">Answers for one host: true when current, false when not, null when the host does not register
+  /// the context (it is passed over, as initialization passes it over).</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:IsSchemaCurrent_IsCurrentOnlyWhenEveryContextThisHostRegistersIsAsync</tests>
+  public static void RegisterSchemaCurrencyCheck<TDbContext>(Func<IServiceProvider, CancellationToken, Task<bool?>> check)
+      where TDbContext : class {
+    ArgumentNullException.ThrowIfNull(check);
+    lock (_lock) {
+      _currencyChecks[typeof(TDbContext)] = check;
+    }
+  }
+
+  /// <summary>
+  /// Whether the schema of every DbContext this host registers is current (#1992), which is what makes the
+  /// <c>Assess</c> verdict Current. A host with no context to answer for is not current: nothing vouches for it, so
+  /// startup takes the full path, as it always has.
+  /// </summary>
+  /// <param name="serviceProvider">The host's services, from which each check resolves its context.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> only when at least one context answered and every one answered current.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:IsSchemaCurrent_WithNoCheckRegistered_IsNotCurrentAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupAssessorTests.cs:AnUpToDateSchema_IsCurrent_AndOneWithWorkPending_IsServeAsync</tests>
+  public static async Task<bool> IsSchemaCurrentAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(serviceProvider);
+    Func<IServiceProvider, CancellationToken, Task<bool?>>[] checks;
+    lock (_lock) {
+      checks = [.. _currencyChecks.Values];
+    }
+    var answered = false;
+    foreach (var check in checks) {
+      var answer = await check(serviceProvider, cancellationToken).ConfigureAwait(false);
+      if (answer == false) {
+        return false;
+      }
+      answered |= answer == true;
+    }
+    return answered;
   }
 
   /// <summary>
@@ -180,16 +226,23 @@ public static class DbContextInitializationRegistry {
   internal static IDisposable ResetForTesting() {
     lock (_lock) {
       var saved = _initializers.ToArray();
+      var savedChecks = _currencyChecks.ToArray();
       _initializers.Clear();
-      return new InitializerRestore(saved);
+      _currencyChecks.Clear();
+      return new InitializerRestore(saved, savedChecks);
     }
   }
 
-  private sealed class InitializerRestore(DbContextInitializer[] saved) : IDisposable {
+  private sealed class InitializerRestore(
+      DbContextInitializer[] saved, KeyValuePair<Type, Func<IServiceProvider, CancellationToken, Task<bool?>>>[] savedChecks) : IDisposable {
     public void Dispose() {
       lock (_lock) {
         _initializers.Clear();
         _initializers.AddRange(saved);
+        _currencyChecks.Clear();
+        foreach (var (type, check) in savedChecks) {
+          _currencyChecks[type] = check;
+        }
       }
     }
   }

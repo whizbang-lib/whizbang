@@ -131,7 +131,7 @@ public class StartupAssessorTests : EFCoreTestBase {
 
     var current = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
     await Assert.That(current.Verdict).IsEqualTo(StartupVerdict.Current)
-      .Because("the same lock-free checks the fast path makes find nothing to do");
+      .Because("the same lock-free checks the fast path makes find nothing to do: " + current.Reason);
 
     await _execAsync("DELETE FROM wh_schema_migrations WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')", cancellationToken);
     var pending = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
@@ -175,6 +175,8 @@ public class StartupAssessorTests : EFCoreTestBase {
   public async Task StoredForms_AreSettledOnlyWhenEveryLedgerSaysSoAsync(CancellationToken cancellationToken) {
     await _execAsync("""
       CREATE TABLE wh_per_settle_probe (id uuid PRIMARY KEY, status text, amount integer);
+      CREATE TABLE wh_per_settled (id uuid PRIMARY KEY);
+      CREATE TABLE wh_per_open (id uuid PRIMARY KEY);
       INSERT INTO wh_perspective_forms (table_name, temporal_form, applied_at, settled_at) VALUES ('wh_per_settled', 1, now(), now());
       INSERT INTO wh_perspective_forms (table_name, temporal_form, applied_at, settled_at) VALUES ('wh_per_open', 1, now(), NULL);
       INSERT INTO wh_stored_form_migrations (name, table_name, kind, first_applied_at, last_applied_at, rows_converted, settled_at)
@@ -184,15 +186,19 @@ public class StartupAssessorTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
 
-    async Task<bool> settledAsync(string[] temporal, string[] journal, string[] physical) =>
+    async Task<bool> settledAsync(string[] temporal, (string Name, string Table)[] journal, string[] physical) =>
       await StoredFormSettlement.IsSettledAsync(connection, "public", temporal, journal, physical, cancellationToken);
 
     await Assert.That(await settledAsync([], [], [])).IsTrue().Because("a model with nothing to convert has nothing pending");
-    await Assert.That(await settledAsync(["wh_per_settled"], ["m-settled"], ["enum-column:wh_per_settle_probe.amount"])).IsTrue();
+    await Assert.That(await settledAsync(["wh_per_settled"], [("m-settled", "wh_per_settled")], ["enum-column:wh_per_settle_probe.amount"]))
+      .IsTrue();
     await Assert.That(await settledAsync(["wh_per_open"], [], [])).IsFalse().Because("a temporal rewrite not yet settled");
-    await Assert.That(await settledAsync(["wh_per_never_seen"], [], [])).IsFalse().Because("a table the rewrite never recorded");
-    await Assert.That(await settledAsync([], ["m-open"], [])).IsFalse().Because("a stored-form migration not yet settled");
-    await Assert.That(await settledAsync([], ["m-never-declared"], [])).IsFalse();
+    await Assert.That(await settledAsync(["wh_per_settle_probe"], [], [])).IsFalse()
+      .Because("a table that exists and that the rewrite never recorded has not been checked yet");
+    await Assert.That(await settledAsync(["wh_per_not_created"], [("m-never-declared", "wh_per_not_created")], [])).IsTrue()
+      .Because("a conversion waits for its table: with no table there is nothing to convert");
+    await Assert.That(await settledAsync([], [("m-open", "wh_per_open")], [])).IsFalse().Because("a stored-form migration not yet settled");
+    await Assert.That(await settledAsync([], [("m-never-declared", "wh_per_settle_probe")], [])).IsFalse();
     await Assert.That(await settledAsync([], [], ["enum-column:wh_per_settle_probe.status"])).IsFalse()
       .Because("an enum column still stored as text has its conversion pending");
     await Assert.That(await settledAsync([], [], ["something-else:wh_per_settle_probe.amount"])).IsFalse()

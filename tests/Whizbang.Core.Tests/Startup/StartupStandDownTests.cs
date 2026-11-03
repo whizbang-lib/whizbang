@@ -105,6 +105,24 @@ public class StartupStandDownTests {
   }
 
   [Test]
+  public async Task KeepVisible_ACoordinatorThatCannotBeResolved_IsABeatThatFailed_AndRetriedAsync() {
+    var clock = new FakeTimeProvider();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => throw new InvalidOperationException("a dependency is not registered"));
+    var provider = services.BuildServiceProvider();
+    var standDown = new StartupStandDown(provider.GetRequiredService<IServiceScopeFactory>(), _instance, new RecordingStageReporter(),
+      "1.0.0", TimeSpan.FromSeconds(5), clock, NullLogger<StartupStandDown>.Instance);
+    var beats = new BeatSignals(standDown);
+    using var stop = new CancellationTokenSource();
+
+    var visible = standDown.KeepVisibleAsync(stop.Token);
+    await Assert.That(await beats.NextAsync()).IsFalse()
+      .Because("the beat is logged as failed and tried again; keeping visible never faults");
+    await stop.CancelAsync();
+    await visible;
+  }
+
+  [Test]
   public async Task KeepVisible_WithNoInstanceRowsToKeep_DoesNothingAsync() {
     var coordinator = new BeatingCoordinator { Records = false };
     var standDown = _create(coordinator, new RecordingStageReporter(), new FakeTimeProvider());

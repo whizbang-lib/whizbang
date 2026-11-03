@@ -89,6 +89,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // The managed-object reconcile's settings, read before anything touches the database: a setting that is not one
     // fails the start here, before this instance registers itself or migrates, as on the Dapper driver.
     var reconcileSettings = Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Settings(serviceProvider);
+    // #1992: Assess is the first stage. The host's one verdict is this pass's input, never a second read of the version
+    // record: a stand-down is refused before anything is applied (a direct call on a stood-down host fails loudly), and
+    // a Current schema skips the bootstrap, the election, the stored-form rewrite and the pass, so no schema lock is
+    // taken. Converge still runs.
+    var schemaIsCurrent = Whizbang.Data.Postgres.StartupVerdictBinding.IsCurrent(
+      await Whizbang.Data.Postgres.StartupVerdictBinding.ReadAsync(serviceProvider, cancellationToken));
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
@@ -151,7 +157,23 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var staging = new Whizbang.Data.Postgres.SchemaStaging(
       Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
 
-    if (segmentConnectionFactory is not null) {
+    if (schemaIsCurrent) {
+      // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
+      // instance starting after it sees it running, and Elect and Migrate are reported skipped.
+      if (segmentConnectionFactory is not null
+          && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+             is Whizbang.Core.Observability.IServiceInstanceProvider currentInstance) {
+        await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteringOnACurrentSchemaAsync(serviceProvider, cancellationToken);
+        await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
+          async ct => {
+            await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
+              segmentConnectionFactory, "__SCHEMA__", currentInstance, cancellationToken: ct);
+            await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
+          },
+          "__SCHEMA__", logger, cancellationToken);
+      }
+      await Whizbang.Data.Postgres.SchemaInitializationStages.SchemaCurrentAsync(serviceProvider, cancellationToken);
+    } else if (segmentConnectionFactory is not null) {
       // Phase 0: the bootstrap. Reports whether an election is actually possible now rather
       // than whether the scripts appeared to work.
       var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
@@ -197,8 +219,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
-    // #1636: the election's outcome, or Elect skipped when no election was held.
-    await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
+    // #1636: the election's outcome, or Elect skipped when no election was held (Current reported its own skip).
+    if (!schemaIsCurrent) {
+      await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
+    }
 
     // Released when this method returns, however it returns. A duty still held by an instance that
     // has finished, or failed, would leave every other instance waiting on it indefinitely.
@@ -308,7 +332,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // way it ended: a schema brought up to date under it makes the rewrite a settled no-op and the
     // fast path an exit, and a lock released over a schema still behind makes this the instance that
     // does the work. The loop below then contends for the lock as it always did.
-    if (segmentConnectionFactory is not null) {
+    if (segmentConnectionFactory is not null && !schemaIsCurrent) {
       var isWaiter = staging.Stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
       var doesTheWork = staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter;
       try {
@@ -362,7 +386,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter.
     var retryAttempt = 0;
     TimeSpan? plannedRetryDelay = null;
-    while (true) {
+    // A Current schema has no pass to run (#1992): the loop, its fast path and its lock are skipped whole.
+    while (!schemaIsCurrent) {
       cancellationToken.ThrowIfCancellationRequested();
 
       // Open connection explicitly. EF Core's ExecuteSqlRawAsync opens/closes connections per call
@@ -871,6 +896,48 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     _schemaCommandTimeout.Value ?? Whizbang.Data.Postgres.SchemaCommandTimeout.DEFAULT_SECONDS;
 
   private static string _renderFormatBraces(string sql) => sql.Replace("{{", "{").Replace("}}", "}");
+
+  /// <summary>
+  /// Whether this context's schema is current (#1992): nothing to apply and nothing left to convert, asked without a lock
+  /// and without a transaction. The <c>Assess</c> verdict is Current only when this answers true, and a Current start
+  /// takes no schema lock at all.
+  /// </summary>
+  /// <remarks>
+  /// The fast path's questions (the ledger hashes, a stale duplicate overload, a function an out-of-order replay
+  /// reverted), every object the model declares being present, and every stored-form conversion the model declares
+  /// having settled: the stored-form rewrite takes the schema lock whenever the model declares one, even when each
+  /// would find nothing to do. A failure to answer is raised; the assessment reads it as "not shown current".
+  /// </remarks>
+  /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> when the schema needs nothing from this binary.</returns>
+  public static async Task<bool> IsWhizbangSchemaCurrentAsync(
+      this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default) {
+    await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+      (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken);
+    var connection = connectionScope.Connection;
+    if (!await _isSchemaCurrentAsync(connection, cancellationToken)) {
+      return false;
+    }
+    if ((await Whizbang.Data.Postgres.Schema.ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+        connection, "__SCHEMA__", GetManagedSchemaObjects(), cancellationToken)).Count > 0) {
+      return false;
+    }
+    var documentOptions = Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options;
+    return await global::Whizbang.Data.Postgres.StoredFormSettlement.IsSettledAsync(
+      connection,
+      "__SCHEMA__",
+      System.Linq.Enumerable.Select(
+        Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
+        r => r.Name),
+      System.Linq.Enumerable.Concat(
+        System.Linq.Enumerable.Select(GetStoredFormMigrations(), m => (m.Name, m.Table)),
+        System.Linq.Enumerable.Select(
+          Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
+          t => (t.JournalName, t.Table))),
+      System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
+      cancellationToken);
+  }
 
   /// <summary>
   /// Whether the schema needs nothing applied to it, asked without taking a lock.

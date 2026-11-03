@@ -310,8 +310,8 @@ public class StartupParityTests {
     await _startAsync(driver);
     var stages = new StageLog();
     var restart = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
-    await Assert.That((await restart.GetRequiredService<IStartupAssessor>().AssessAsync(cancellationToken)).Verdict)
-      .IsEqualTo(StartupVerdict.Current);
+    var assessment = await restart.GetRequiredService<IStartupAssessor>().AssessAsync(cancellationToken);
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current).Because(assessment.Reason);
 
     // Another session holds the schema lock for the whole restart. A start that took it would wait here forever.
     await using var holder = new NpgsqlConnection(_database.ConnectionString);
@@ -382,7 +382,7 @@ public class StartupParityTests {
   private async Task _recordNewerVersionAsync(string version) => await _execAsync($"""
     WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{version}') RETURNING id)
     UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
-      WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang');
+      WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
     """);
 
   /// <summary>Every ledger row, as one string, so "nothing was written" is one comparison.</summary>
