@@ -169,11 +169,14 @@ public sealed class UnknownConfigurationKeyCheckTests {
       ("Whizbang:PostgresExtensions:ProbeOnStartup", ["Whizbang:Capabilities:ProbeOnStartup"]),
       .. _inboxBatch("AzureServiceBus"),
       .. _inboxBatch("RabbitMQ"),
+      // #2027: the standby watcher's own liveness window; the one liveness rule judges the requester by the window
+      // each instance declares from its heartbeat cadence.
+      ("Whizbang:StandbyWatcher:RequesterLivenessWindow", ["Whizbang:Workers:Heartbeat:IntervalSeconds"]),
     ];
 
     var declared = _coreRemovedKeys();
 
-    await Assert.That(declared.Count).IsEqualTo(8).Because("the table held eight entries");
+    await Assert.That(declared.Count).IsEqualTo(9).Because("the table held eight entries, and #2027 removed one more");
     foreach (var (key, replacedBy) in expected) {
       var entry = declared.SingleOrDefault(d => d.Key == key);
       await Assert.That(entry).IsNotNull().Because($"{key} was in the table");

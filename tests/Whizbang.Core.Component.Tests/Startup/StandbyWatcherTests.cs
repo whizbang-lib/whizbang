@@ -201,9 +201,9 @@ public class StandbyWatcherTests {
     return new Harness(watcher, lifecycle, host, coordinator, sp);
   }
 
-  private static StandbyRequest _request(
-      Guid? by = null, string version = "2.0.0", int heartbeatSecondsAgo = 1) =>
-    new(by ?? _peer, version, _now, _now.AddSeconds(-heartbeatSecondsAgo));
+  // #2027: whether the requester is live is the database's one liveness rule; the request carries its answer.
+  private static StandbyRequest _request(Guid? by = null, string version = "2.0.0", bool live = true) =>
+    new(by ?? _peer, version, _now, RequesterIsLive: live);
 
   // ============================================================
   // Standing by
@@ -236,7 +236,7 @@ public class StandbyWatcherTests {
     // A migrator that crashed mid-deploy leaves its request behind. Honoring it would drain the
     // fleet on behalf of a process that is not coming back.
     using var h = _harness(
-      _request(version: "2.0.0", heartbeatSecondsAgo: 600), ourVersion: "1.0.0");
+      _request(version: "2.0.0", live: false), ourVersion: "1.0.0");
 
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
@@ -245,38 +245,17 @@ public class StandbyWatcherTests {
   }
 
   [Test]
-  public async Task ARequesterHoldingItsAliveLock_BindsUs_BetweenItsSlowBeatsAsync() {
-    // #1286: a migrator holding its alive-lock beats on the slow cadence, so its heartbeat is past the
-    // liveness window for half of every beat. It is alive; voiding its request would resume this
-    // instance in the middle of the migration it asked us to make way for.
-    var request = _request(version: "2.0.0", heartbeatSecondsAgo: 45) with { RequesterAliveLockHeld = true };
-    using var h = _harness(request, ourVersion: "1.0.0");
+  public async Task ARequesterTheRuleCallsLive_BindsUs_AndOneItCallsDead_IsVoidAsync() {
+    // #2027: the watcher keeps no liveness window of its own (it once compared the requester's heartbeat with the host's
+    // clock); it takes the rule's answer, which also counts a migrator holding its alive-lock between slow beats.
+    using var live = _harness(_request(version: "2.0.0", live: true), ourVersion: "1.0.0");
+    using var dead = _harness(_request(version: "2.0.0", live: false), ourVersion: "1.0.0");
 
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await live.Watcher.TickForTestsAsync(CancellationToken.None);
+    await dead.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy)
-      .Because("a requester live by its lock is alive, whatever its heartbeat's age");
-  }
-
-  [Test]
-  public async Task ARequesterPastTheWindowWithoutItsLock_IsVoidAsync() {
-    using var h = _harness(_request(version: "2.0.0", heartbeatSecondsAgo: 45), ourVersion: "1.0.0");
-
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
-
-    await Assert.That(h.Lifecycle.Advanced).IsEmpty()
-      .Because("without its lock a requester is judged by its heartbeat, which is past the window");
-  }
-
-  [Test]
-  public async Task ARequestWithNoHeartbeatAtAll_IsVoidAsync() {
-    using var h = _harness(
-      new StandbyRequest(_peer, "2.0.0", _now, RequesterLastHeartbeatAt: null),
-      ourVersion: "1.0.0");
-
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
-
-    await Assert.That(h.Lifecycle.Advanced).IsEmpty();
+    await Assert.That(live.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy);
+    await Assert.That(dead.Lifecycle.Advanced).IsEmpty();
   }
 
   [Test]
@@ -415,7 +394,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
     h.Lifecycle.Advanced.Clear();
 
-    h.Coordinator!.Request = _request(version: "2.0.0", heartbeatSecondsAgo: 600);
+    h.Coordinator!.Request = _request(version: "2.0.0", live: false);
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.Running)

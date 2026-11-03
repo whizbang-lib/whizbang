@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 [Category("Shard4")]
 public class FleetVersionsTests : IAsyncDisposable {
   private static readonly Guid _self = Guid.CreateVersion7();
-  private static readonly TimeSpan _window = TimeSpan.FromMinutes(2);
 
   private string _databaseName = null!;
   private string _connectionString = null!;
@@ -95,7 +94,28 @@ public class FleetVersionsTests : IAsyncDisposable {
   private async Task<IReadOnlyList<string>> _othersAsync() {
     await using var db = new NpgsqlConnection(_connectionString);
     await db.OpenAsync();
-    return await FleetVersions.OtherLiveVersionsAsync(db, "public", _self, "2.0.0", _window);
+    return await FleetVersions.OtherLiveVersionsAsync(db, "public", _self, "2.0.0");
+  }
+
+  /// <summary>
+  /// #2027: an older release live only by its held alive-lock (a direct instance between slow beats) is reported: the
+  /// fleet is read through the one liveness rule, not through a heartbeat window of this reader's own.
+  /// </summary>
+  [Test]
+  public async Task AnOlderReleaseLiveOnlyByItsAliveLock_IsReportedAsync() {
+    var older = Guid.CreateVersion7();
+    await _heartbeatAsync(_self, "2.0.0", TimeSpan.Zero);
+    await _heartbeatAsync(older, "1.7.0", TimeSpan.FromMinutes(4));
+    await _executeAsync($"UPDATE public.wh_service_instances SET connection_mode = 'direct' WHERE instance_id = '{older}'");
+    await using var holder = new NpgsqlConnection(_connectionString);
+    await holder.OpenAsync();
+    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock(hashtext('wh_instance_alive:{older}'))", holder)) {
+      await take.ExecuteNonQueryAsync();
+    }
+
+    var others = await _othersAsync();
+
+    await Assert.That(others).IsEquivalentTo(["1.7.0"]);
   }
 
   /// <summary>An older release still heartbeating is reported, once per release.</summary>
@@ -124,7 +144,8 @@ public class FleetVersionsTests : IAsyncDisposable {
   /// <summary>An instance whose last heartbeat is older than the window is gone, not other.</summary>
   [Test]
   public async Task AStaleInstanceIsNotReportedAsync() {
-    await _heartbeatAsync(Guid.CreateVersion7(), "1.9.0", _window + TimeSpan.FromSeconds(30));
+    // Past the 30 seconds a row that records no window is judged by (#2027, the one liveness rule).
+    await _heartbeatAsync(Guid.CreateVersion7(), "1.9.0", TimeSpan.FromMinutes(2));
 
     await Assert.That((await _othersAsync()).Count).IsEqualTo(0)
       .Because("a row nobody has refreshed within the window is an instance that is no longer there");

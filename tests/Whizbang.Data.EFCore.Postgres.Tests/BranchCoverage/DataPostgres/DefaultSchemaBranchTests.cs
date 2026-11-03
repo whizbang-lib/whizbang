@@ -40,7 +40,7 @@ public class DefaultSchemaBranchTests : EFCoreTestBase {
     }
 
     var others = await FleetVersions.OtherLiveVersionsAsync(
-      conn, schema, Guid.NewGuid(), "1.0.0", TimeSpan.FromMinutes(5), cancellationToken);
+      conn, schema, Guid.NewGuid(), "1.0.0", cancellationToken);
 
     await Assert.That(others.Count).IsEqualTo(1);
     await Assert.That(others[0]).IsEqualTo("9.9.9");

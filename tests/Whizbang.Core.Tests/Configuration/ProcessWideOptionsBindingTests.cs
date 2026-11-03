@@ -188,14 +188,12 @@ public sealed class ProcessWideOptionsBindingTests {
     await using var provider = _workers(new() {
       ["Whizbang:StandbyWatcher:PollInterval"] = "00:00:07",
       ["Whizbang:StandbyWatcher:ObsolescenceInterval"] = "00:02:00",
-      ["Whizbang:StandbyWatcher:RequesterLivenessWindow"] = "00:00:45",
     });
 
     var options = provider.GetRequiredService<IOptions<StandbyWatcherOptions>>().Value;
 
     await Assert.That(options.PollInterval).IsEqualTo(TimeSpan.FromSeconds(7));
     await Assert.That(options.ObsolescenceInterval).IsEqualTo(TimeSpan.FromMinutes(2));
-    await Assert.That(options.RequesterLivenessWindow).IsEqualTo(TimeSpan.FromSeconds(45));
     await Assert.That(provider.GetRequiredService<StandbyWatcherOptions>()).IsSameReferenceAs(options)
       .Because("the watcher takes the plain instance, so it must be the bound one");
   }

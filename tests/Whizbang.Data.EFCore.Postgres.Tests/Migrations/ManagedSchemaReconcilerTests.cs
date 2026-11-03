@@ -6,6 +6,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Testing.Containers;
@@ -81,12 +82,18 @@ public class ManagedSchemaReconcilerTests {
 
   private static ManagedSchemaSettings _gated => new(ReconcileMode.Apply, [], [], DropAfterFleetConverged: true);
 
-  /// <summary>The instance registry's shape the fleet gate reads: an id and a heartbeat.</summary>
+  /// <summary>
+  /// The instance registry the fleet gate reads, and the one liveness rule it reads it through (#2027): the bootstrap
+  /// subset, which creates both ahead of any migration, as a starting instance's Preflight does.
+  /// </summary>
   private async Task _registryAsync(params (Guid Id, TimeSpan Ago)[] instances) {
     await using var db = await _openAsync();
-    await _execAsync(db, "CREATE TABLE IF NOT EXISTS wh_service_instances (instance_id uuid PRIMARY KEY, last_heartbeat_at timestamptz NOT NULL)");
+    foreach (var (_, sql) in WorkCoordinationDbContextSchemaExtensions.GetBootstrapScripts()) {
+      await _execAsync(db, sql);
+    }
     foreach (var (id, ago) in instances) {
-      await _execAsync(db, $"INSERT INTO wh_service_instances VALUES ('{id}', now() - interval '{(int)ago.TotalSeconds} seconds')");
+      await _execAsync(db, "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at) "
+        + $"VALUES ('{id}', 'svc', 'host', 1, now() - interval '{(int)ago.TotalSeconds} seconds')");
     }
   }
 
