@@ -37,10 +37,12 @@ namespace Whizbang.Core.Workers;
 public sealed partial class IntegrityCheckpointWorker(
   IServiceScopeFactory scopeFactory,
   IOptions<StreamIntegrityOptions> options,
-  ILogger<IntegrityCheckpointWorker> logger) : BackgroundService {
+  ILogger<IntegrityCheckpointWorker> logger,
+  TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityCheckpointWorker> _logger = ArgumentGuard.NotNull(logger);
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -143,7 +145,7 @@ public sealed partial class IntegrityCheckpointWorker(
     // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
     var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
     if (tracker is not null) {
-      var now = DateTimeOffset.UtcNow;
+      var now = _time.GetUtcNow();
       var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
       // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a
       // live origin's checkpoint is late by as long as the deferral. Widen the bound by it rather than raise the alarm.
