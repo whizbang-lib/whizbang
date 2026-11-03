@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// CPU at its ceiling. Every elapsed-time assertion runs on a fake clock; nothing here waits.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/HousekeepingCoordinator.cs</code-under-test>
-/// <docs>operations/workers/housekeeping-arbitration</docs>
+/// <docs>operations/workers/housekeeping-arbitration#integrity-is-idle-gated</docs>
 [Category("Workers")]
 public class HousekeepingIntegrityAdmissionTests {
   private static readonly DateTimeOffset _origin = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

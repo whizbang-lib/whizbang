@@ -15,6 +15,7 @@ namespace Whizbang.Core.Tests.Startup;
 /// duty) every instance does, because there is no holder to defer to.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Startup/MaintainerDuty.cs</code-under-test>
+/// <docs>operations/startup/capabilities-and-duties#the-maintainer-duty-governs-fleet-wide-work</docs>
 public class MaintainerDutyTests {
   [Test]
   [Arguments(true)]

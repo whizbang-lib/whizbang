@@ -106,14 +106,14 @@ public class RedeliveryReconcileDeferralTests {
 
     await Assert.That(inline.Adoptions.Count).IsEqualTo(1).Because("a coordinator without the queue reconciles inline, as before");
     await Assert.That(deferring.Adoptions.Count).IsEqualTo(1);
-    var drained = deferring.Adoptions[0];
-    var direct = inline.Adoptions[0];
-    await Assert.That(drained.Origin).IsEqualTo(direct.Origin);
-    await Assert.That(drained.Name).IsEqualTo("orders-service");
-    await Assert.That(drained.EventIds).IsEquivalentTo(direct.EventIds);
-    await Assert.That(drained.Sequences).IsEquivalentTo(new long?[] { 1, null, 3 })
+    var (drainedOrigin, drainedName, drainedEventIds, drainedSequences) = deferring.Adoptions[0];
+    var (directOrigin, _, directEventIds, directSequences) = inline.Adoptions[0];
+    await Assert.That(drainedOrigin).IsEqualTo(directOrigin);
+    await Assert.That(drainedName).IsEqualTo("orders-service");
+    await Assert.That(drainedEventIds).IsEquivalentTo(directEventIds);
+    await Assert.That(drainedSequences).IsEquivalentTo(new long?[] { 1, null, 3 })
       .Because("a zero sequence is 'not stamped yet' on both paths");
-    await Assert.That(direct.Sequences).IsEquivalentTo(drained.Sequences);
+    await Assert.That(directSequences).IsEquivalentTo(drainedSequences);
   }
 
   [Test]
