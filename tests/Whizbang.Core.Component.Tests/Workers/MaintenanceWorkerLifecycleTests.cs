@@ -118,7 +118,9 @@ public class MaintenanceWorkerLifecycleTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // The wait is on the failure log itself; the bound is only a hang guard. Five seconds read as a timing
+    // assertion on a loaded runner (the first tick had not been scheduled yet when it expired).
+    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(60));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
