@@ -7,6 +7,8 @@ ConnectionPool:MinPoolSize
 ConnectionPool:Timeout
 ConnectionStrings:*
 ServiceName
+Whizbang:Application:DeployNumber
+Whizbang:Application:Version
 Whizbang:Archive:AzureBlob:AccessTier
 Whizbang:Archive:AzureBlob:CompressionLevel
 Whizbang:Archive:AzureBlob:ConnectionString
@@ -274,7 +276,6 @@ Whizbang:SignalBus:ProbeTimeoutMilliseconds
 Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
-Whizbang:StandbyWatcher:RequesterLivenessWindow
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes

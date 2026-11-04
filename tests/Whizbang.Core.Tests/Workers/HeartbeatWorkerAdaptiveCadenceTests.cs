@@ -136,6 +136,7 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
+      applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: source ?? NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance);

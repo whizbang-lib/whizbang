@@ -400,6 +400,9 @@ public static class ServiceCollectionExtensions {
       return new ServiceInstanceProvider(configuration);
     });
 
+    // #2027: the application version every instance records beside its library version.
+    Versioning.ApplicationVersionRegistration.TryAddWhizbangApplicationVersion(services);
+
     services.AddWhizbangMessageSecurity();
 
     // The event mint (topology arc phase 4): the composite splitter + the family facade.

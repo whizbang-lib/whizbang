@@ -71,6 +71,7 @@ public class HeartbeatConnectionModeTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: new Lifecycle(),
       libraryVersion: new Version(),
+      applicationVersion: new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,

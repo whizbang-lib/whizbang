@@ -46,6 +46,31 @@ public class HeartbeatWorkerRequestFieldsTests {
   }
 
   [Test]
+  public async Task BuildRequest_CarriesTheApplicationVersionAsync() {
+    // #2027: both versions are recorded on every instance row; either can be part of a rollout.
+    var app = new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Resolve(null, 12, null));
+    var worker = _worker(HeartbeatTestDependencies.LifecycleState, HeartbeatTestDependencies.Version, applicationVersion: app);
+
+    var request = worker.BuildRequest();
+
+    await Assert.That(request.ApplicationVersion).IsEqualTo("deploy:12");
+  }
+
+  [Test]
+  public async Task BuildRequest_AnUnknownApplicationVersion_IsNotRecordedAsync() {
+    var worker = _worker(HeartbeatTestDependencies.LifecycleState, HeartbeatTestDependencies.Version,
+      applicationVersion: new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown));
+
+    await Assert.That(worker.BuildRequest().ApplicationVersion).IsNull();
+  }
+
+  [Test]
+  public async Task Constructor_WithoutAnApplicationVersionProvider_ThrowsAsync() {
+    await Assert.That(() => _worker(HeartbeatTestDependencies.LifecycleState, HeartbeatTestDependencies.Version, nullApplicationVersion: true))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task BuildRequest_DuringATransition_CarriesThePhaseBeingEnteredAsync() {
     // #1638: a beat built while a transition's acks are awaited must not write the phase before it over the one the
     // transition just recorded, or a ready instance reads as still migrating and is not eligible for work.
@@ -114,7 +139,9 @@ public class HeartbeatWorkerRequestFieldsTests {
       IWhizbangLifecycleState? lifecycle,
       ILibraryVersionProvider? version,
       HeartbeatWorkerOptions? options = null,
-      IServiceInstanceProvider? provider = null) {
+      IServiceInstanceProvider? provider = null,
+      Whizbang.Core.Versioning.IApplicationVersionProvider? applicationVersion = null,
+      bool nullApplicationVersion = false) {
     var services = new ServiceCollection();
     services.AddSingleton(provider ?? new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
@@ -126,6 +153,7 @@ public class HeartbeatWorkerRequestFieldsTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: lifecycle!,
       libraryVersion: version!,
+      applicationVersion: nullApplicationVersion ? null! : applicationVersion ?? HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,

@@ -83,7 +83,6 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
   private static StandbyWatcherOptions _fastOptions() => new() {
     PollInterval = TimeSpan.FromMilliseconds(50),
     ObsolescenceInterval = TimeSpan.FromDays(1),   // handshake tests drive obsolescence explicitly
-    RequesterLivenessWindow = TimeSpan.FromSeconds(30),
   };
 
   /// <summary>A complete simulated instance: real coordinator, assessor, lifecycle machine (with

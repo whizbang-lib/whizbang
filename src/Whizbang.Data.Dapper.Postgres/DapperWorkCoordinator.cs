@@ -986,7 +986,7 @@ public partial class DapperWorkCoordinator(
     // Migration 147: phase, version and the writer's stale threshold ride along; nulls keep the
     // SQL defaults.
     return await connection.ExecuteScalarAsync<bool>(
-      $"SELECT {prefix}record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb, @LifecyclePhase, @LibraryVersion, @StaleThresholdSeconds, @ConnectionMode)",
+      $"SELECT {prefix}record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb, @LifecyclePhase, @LibraryVersion, @StaleThresholdSeconds, @ConnectionMode, @ApplicationVersion)",
       new {
         request.InstanceId,
         request.ServiceName,
@@ -997,7 +997,9 @@ public partial class DapperWorkCoordinator(
         request.LibraryVersion,
         request.StaleThresholdSeconds,
         // 203 (#1254): how this instance reaches the database; null keeps the recorded mode.
-        ConnectionMode = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : null
+        ConnectionMode = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : null,
+        // 316 (#2027): the application version, recorded at registration like the library version.
+        request.ApplicationVersion
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }

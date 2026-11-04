@@ -359,6 +359,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(static _ =>
       new Whizbang.Core.Observability.LibraryVersionProvider(
         Whizbang.Core.Observability.AssemblyVersionText.Of(typeof(HeartbeatWorker).Assembly)));
+    // #2027: the application version beside the library version, resolved once per process.
+    Whizbang.Core.Versioning.ApplicationVersionRegistration.TryAddWhizbangApplicationVersion(services);
     services.TryAddSingleton<HeartbeatWorker>();
     // The claim window's churn signal lives here: the claim returns stream ids and never sees a
     // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the

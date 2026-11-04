@@ -103,8 +103,9 @@ public class PgInstanceLifecycleMonitorBranchTests : EFCoreTestBase {
     await conn.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_service_instances (
-        instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
-      VALUES (@id, 'branch-svc', 'branch-host', 1, NOW() - make_interval(secs => @age), NOW() - make_interval(secs => @age))
+        instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, liveness_window_seconds)
+      -- #2027: the window a default-cadence heartbeat declares (150 s), which the one liveness rule judges the row by.
+      VALUES (@id, 'branch-svc', 'branch-host', 1, NOW() - make_interval(secs => @age), NOW() - make_interval(secs => @age), 150)
       ON CONFLICT (instance_id) DO UPDATE
         SET last_heartbeat_at = EXCLUDED.last_heartbeat_at;", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
