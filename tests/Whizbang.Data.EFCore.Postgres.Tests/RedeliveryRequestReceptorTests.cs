@@ -554,6 +554,19 @@ public class RedeliveryRequestReceptorTests {
   }
 
   [Test]
+  public async Task Receptor_ARequestThisServiceMadeItself_IsIgnored_OnAHostWithoutMetricsAsync() {
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    var transport = new CaptureTransport();
+    await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "orders-svc", Topic = "inbox", StateOnly = true });
+
+    await Assert.That(coordinator.Requests).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
   public async Task Receptor_AsksTheSelectionForEventsThisServiceAuthoredAsync() {
     var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
     await using var sp = _buildOwningProvider(coordinator, new CaptureTransport(), new CaptureSerializer(), "orders-svc");

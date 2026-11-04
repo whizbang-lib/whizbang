@@ -77,7 +77,7 @@ public class OriginReattributionWorkerTests {
   }
 
   private static async Task<Host> _hostAsync(
-      bool? maintainer = true, string[]? ownedDomains = null, StreamIntegrityMetrics? metrics = null) {
+      bool? maintainer = true, string[]? ownedDomains = null, StreamIntegrityMetrics? metrics = null, bool routing = true) {
     var clock = new FakeTimeProvider(_origin);
     var coordinator = new WalkingCoordinator();
     var housekeeping = new HousekeepingCoordinator(
@@ -85,7 +85,9 @@ public class OriginReattributionWorkerTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton(housekeeping);
-    services.AddSingleton(Options.Create(new RoutingOptions().OwnDomains(ownedDomains ?? ["App.Contracts.Orders"])));
+    if (routing) {
+      services.AddSingleton(Options.Create(new RoutingOptions().OwnDomains(ownedDomains ?? ["App.Contracts.Orders"])));
+    }
     if (metrics is not null) {
       services.AddSingleton(metrics);
     }
@@ -203,6 +205,16 @@ public class OriginReattributionWorkerTests {
     await Assert.That(await _worker(host).RunPassAsync(CancellationToken.None)).IsEqualTo(0);
     await Assert.That(host.Coordinator.WindowReads).IsEmpty()
       .Because("a service with no owned domains keeps the local lane it always had; there is nothing to re-attribute");
+  }
+
+  [Test]
+  public async Task Pass_OnAHostWithNoRoutingOptions_LeavesTheStoreAsItWasAsync() {
+    await using var host = await _hostAsync(routing: false);
+    host.Coordinator.Windows.Enqueue(_window(0, 10, BILLING_TYPE));
+
+    await Assert.That(await _worker(host).RunPassAsync(CancellationToken.None)).IsEqualTo(0);
+    await Assert.That(host.Coordinator.WindowReads).IsEmpty()
+      .Because("a host that never configured routing owns no domains, so every event without an origin is its own");
   }
 
   [Test]

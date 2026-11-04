@@ -432,7 +432,8 @@ public class IntegrityCheckpointReceptorTests {
       StreamIntegrityOptions? options = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegrityRepairPolicy? policy = null,
-      Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null,
+      bool withMetrics = true) {
     var coordinator = new VerifyCoordinator();
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
@@ -440,8 +441,10 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton(metrics
-      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
+    if (withMetrics) {
+      services.AddSingleton(metrics
+        ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
+    }
     services.AddSingleton(new IntegrityGapTracker());
     // A fresh warn-once memory per fixture: the receptor's process-wide fallback would leak between tests.
     services.AddSingleton(new IntegrityOwnershipConflicts());
@@ -918,5 +921,22 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(fx.Dispatcher.Published).IsEmpty()
       .Because("the deficit was recorded before the owner was known; once it is, the pending gap is not confirmed against this origin");
     await Assert.That(fx.Transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task Checkpoint_AContestedDomain_OnAHostWithoutMetrics_IsStillWarnedAsync() {
+    var logger = new CaptureLogger();
+    var fx = _fixture(logger: logger, withMetrics: false);
+    fx.Coordinator.Conflicts = [new IntegrityDomainClaim {
+      Domain = "app.contracts.orders",
+      OwnerServiceId = Guid.Parse("0f000000-0000-0000-0000-00000000000f"),
+      OwnerServiceName = "rival-svc",
+    }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true) with { OwnedDomains = ["app.contracts.orders"] });
+
+    await Assert.That(logger.Entries.Count(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                                             && e.Message.Contains("rival-svc", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the warning does not depend on the meter being registered");
   }
 }

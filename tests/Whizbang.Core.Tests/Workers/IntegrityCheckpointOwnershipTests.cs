@@ -161,6 +161,32 @@ public class IntegrityCheckpointOwnershipTests {
     await Assert.That(dispatcher.Published).Count().IsEqualTo(1);
   }
 
+  [Test]
+  public async Task RunCheckpointOnce_OwnedTypesWithNoTopic_FallsBackToTheDispatcherAsync() {
+    var coordinator = new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 1, ToCommitSequence = 2 },
+    };
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, dispatcher, s => {
+      _addTransportInfrastructure(s, transport, new Catalog(_ordersType));
+      // Registry-routed host whose registry knows no topic for the owned type: nothing to ride.
+      s.AddSingleton<ITopicRegistry>(new NoTopicRegistry());
+      s.AddSingleton<IOptions<RoutingOptions>>(Options.Create(new RoutingOptions().OwnDomains(ORDERS_NAMESPACE)));
+    });
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("an owned type with no resolvable topic gives the checkpoint no destination");
+    await Assert.That(dispatcher.Published).Count().IsEqualTo(1)
+      .Because("the liveness beat still goes out, through the dispatcher");
+  }
+
+  private sealed class NoTopicRegistry : ITopicRegistry {
+    public string? GetBaseTopic(Type messageType) => null;
+  }
+
   private static IntegrityCheckpointWorker _buildWorker(
       CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, Action<IServiceCollection> configure) {
     var services = new ServiceCollection();

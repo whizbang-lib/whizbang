@@ -150,4 +150,22 @@ public class IntegrityDomainOwnershipTests {
 
     await Assert.That(ownership.FindOwner("App.Contracts.Archive.Archived, App.Contracts")!.OwnerServiceId).IsEqualTo(_archive);
   }
+
+  [Test]
+  public async Task Fingerprint_AContestedDomain_IsPartOfIt_AndDiffersFromTheUncontestedMapAsync() {
+    var uncontested = new IntegrityDomainOwnership([_claim("app.orders", _orders, "orders-svc")]);
+    var contested = new IntegrityDomainOwnership([
+      _claim("app.orders", _orders, "orders-svc"),
+      _claim("app.orders", _billing, "billing-svc"),
+    ]);
+    var otherContested = new IntegrityDomainOwnership([
+      _claim("app.billing", _orders, "orders-svc"),
+      _claim("app.billing", _billing, "billing-svc"),
+    ]);
+
+    await Assert.That(contested.Fingerprint(["app.own"])).IsNotEqualTo(uncontested.Fingerprint(["app.own"]))
+      .Because("a domain becoming contested changes who owns it, so the re-attribution walk must restart");
+    await Assert.That(contested.Fingerprint(["app.own"])).IsNotEqualTo(otherContested.Fingerprint(["app.own"]))
+      .Because("which domain is contested is part of the fingerprint, not only that one is");
+  }
 }
