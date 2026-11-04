@@ -13,6 +13,7 @@ using TUnit.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.EFCore.Postgres.Tests.TestSupport;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -168,6 +169,104 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue();
     await Assert.That(elector.Released).IsEqualTo(1).Because("stopping ends the tenure, and the grant goes back");
     await Assert.That(worker.IsLeader).IsFalse();
+  }
+
+  /// <summary>
+  /// Two services sharing one database, each in its own schema, each get a stamper. Stamping is per schema (each
+  /// service's <c>wh_event_store</c> is stamped by that service's leader). When the stamper held a database-wide lock,
+  /// one key for every schema let the first service to elect a stamper exclude every other service's, whose events
+  /// then reached their perspectives only through the unstamped-row grace window. The stamper now leads on its role
+  /// (#2044), and the role table is per schema, so each service elects its own; this locks that end to end.
+  /// </summary>
+  [Test]
+  public async Task Worker_TwoServiceSchemasInOneDatabase_EachElectsItsOwnStamperAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    const string otherSchema = NamedSchemaDbContext.SCHEMA;
+    await _bootstrapSchemaAsync(otherSchema, cts.Token);
+
+    var serviceA = _newWorker(ConnectionString, searchPath: "public", elector: await _registeredElectorAsync("public", cts.Token));
+    var logB = new MessageCapturingLogger();
+    var serviceB = _newWorker(ConnectionString, searchPath: otherSchema, logger: logB, elector: await _registeredElectorAsync(otherSchema, cts.Token));
+    var leaderA = await _whenBecomesLeaderAsync(serviceA);
+    var leaderB = await _whenBecomesLeaderAsync(serviceB);
+
+    await serviceA.StartAsync(cts.Token);
+    await leaderA.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await serviceB.StartAsync(cts.Token);
+
+    try {
+      await leaderB.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(serviceA.IsLeader && serviceB.IsLeader).IsTrue()
+        .Because("each service's stamper leads for its own schema; neither may exclude the other");
+      await Assert.That(await _roleHolderAsync("public")).IsNotNull();
+      await Assert.That(await _roleHolderAsync(otherSchema)).IsNotNull()
+        .Because("each schema's role table records its own stamper. B logged: " + string.Join(" | ", logB.Messages));
+    } finally {
+      await serviceA.StopAsync(CancellationToken.None);
+      await serviceB.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// What a second service's schema needs for its stamper to be voted and to probe for work: the bootstrap closure (the
+  /// registry, the role table and the vote, as migration bootstraps a schema) and an event store with the column the
+  /// stamper's pending-work probe reads (the bootstrap may create the table without it).
+  /// </summary>
+  private async Task _bootstrapSchemaAsync(string schema, CancellationToken ct) {
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(ct);
+      await using var create = new NpgsqlCommand($"CREATE SCHEMA IF NOT EXISTS {schema}", setup);
+      _ = await create.ExecuteNonQueryAsync(ct);
+    }
+    var bootstrapped = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
+      () => new NpgsqlConnection(ConnectionString), Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute(schema),
+      NamedSchemaDbContextSchemaExtensions.GetBootstrapScripts(), schema, 60, cancellationToken: ct);
+    await Assert.That(bootstrapped).IsTrue().Because("the second schema can hold an election");
+    await using var store = new NpgsqlConnection(ConnectionString);
+    await store.OpenAsync(ct);
+    await using var table = new NpgsqlCommand(
+      $"CREATE TABLE IF NOT EXISTS {schema}.wh_event_store (commit_sequence BIGINT); "
+        + $"ALTER TABLE {schema}.wh_event_store ADD COLUMN IF NOT EXISTS commit_sequence BIGINT", store);
+    _ = await table.ExecuteNonQueryAsync(ct);
+  }
+
+  /// <summary>A role elector for an instance registered in <paramref name="schema"/>, voting in that schema's role table.</summary>
+  private async Task<PgRoleElector> _registeredElectorAsync(string schema, CancellationToken ct) {
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider((Guid)TrackedGuid.New(), $"{schema}-svc", "stamper-host", 1);
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync(ct);
+      await using var register = new NpgsqlCommand(
+        $"INSERT INTO {schema}.wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at) "
+          + "VALUES (@id, @svc, 'stamper-host', 1, now(), now())", conn);
+      register.Parameters.AddWithValue("id", instance.InstanceId);
+      register.Parameters.AddWithValue("svc", instance.ServiceName);
+      _ = await register.ExecuteNonQueryAsync(ct);
+    }
+    return new PgRoleElector(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString, SearchPath = schema }),
+      Options.Create(new RoleAssignmentOptions()),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      instance,
+      NullLogger<PgRoleElector>.Instance,
+      libraryVersion: null);
+  }
+
+  private sealed class MessageCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _messages = new();
+    public IReadOnlyCollection<string> Messages => [.. _messages];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) => _messages.Enqueue(formatter(state, exception));
+  }
+
+  private async Task<object?> _roleHolderAsync(string schema) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var read = new NpgsqlCommand($"SELECT holder_instance_id FROM {schema}.wh_role_assignments WHERE role = @role", conn);
+    read.Parameters.AddWithValue("role", CommitOrderStamperOptions.ROLE);
+    var holder = await read.ExecuteScalarAsync();
+    return holder is DBNull ? null : holder;
   }
 
   /// <summary>
