@@ -32,8 +32,8 @@ internal sealed class CatalogMessageKinds {
   }
 
   /// <summary>
-  /// True when the catalog declares the type an event, false when it declares it something else, and null when it does
-  /// not declare it.
+  /// True when the catalog declares the type an event, false when it declares it something else (a command, a plain
+  /// message, a perspective), and null when it does not declare it.
   /// </summary>
   /// <param name="messageTypeName">The message type name (assembly-qualified, version details allowed).</param>
   /// <returns>The declared kind's answer, or null.</returns>

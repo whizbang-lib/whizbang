@@ -124,7 +124,13 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // registry/rename-tool comparison instead of the C# '.' display form.
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(typeSymbol);
 
-    var messageKind = isCommand ? COMMAND_KIND : EVENT_KIND;
+    // #2074: a message that is neither a command nor an event is a plain "message", never an event, so the receive path
+    // never classifies it as one (and never stores it). The pinned-type ledger already uses the same four kinds.
+    var messageKind = (isCommand, isEvent) switch {
+      (true, _) => COMMAND_KIND,
+      (_, true) => EVENT_KIND,
+      _ => MESSAGE_KIND,
+    };
     var kind = isPerspective ? "perspective" : messageKind;
 
     var pinnedId = _pinnedId(typeSymbol);
@@ -172,6 +178,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // The two kinds the catalog records, spelled as they appear in the emitted metadata.
   private const string COMMAND_KIND = "command";
   private const string EVENT_KIND = "event";
+  private const string MESSAGE_KIND = "message";
 
   private const string MAX_PAYLOAD_SIZE_ATTRIBUTE = "global::Whizbang.Core.Attributes.MaxPayloadSizeAttribute";
 
