@@ -163,6 +163,7 @@ public class StandbyWatcherTests {
 
   private sealed record Harness(
     StandbyWatcher Watcher,
+    WhizbangRunController RunControl,
     RecordingLifecycle Lifecycle,
     RecordingHostLifetime Host,
     StandbyCoordinator? Coordinator,
@@ -186,9 +187,10 @@ public class StandbyWatcherTests {
     var lifecycle = new RecordingLifecycle();
     var host = new RecordingHostLifetime();
 
+    var runControl = _path(lifecycle);
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: lifecycle,
+      runControl: runControl,
       hostLifetime: host,
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider(ourVersion),
@@ -198,8 +200,12 @@ public class StandbyWatcherTests {
       pipelineRunner: null,
       options: options ?? new StandbyWatcherOptions());
 
-    return new Harness(watcher, lifecycle, host, coordinator, sp);
+    return new Harness(watcher, runControl, lifecycle, host, coordinator, sp);
   }
+
+  /// <summary>The one run-control path (#2045), reporting through the recording lifecycle.</summary>
+  private static WhizbangRunController _path(RecordingLifecycle lifecycle) => new(
+    new WhizbangRunPermit(), lifecycle, [], [], new WhizbangLifecycleOptions(), null, NullLogger<WhizbangRunController>.Instance);
 
   // #2027: whether the requester is live is the database's one liveness rule; the request carries its answer.
   private static StandbyRequest _request(Guid? by = null, string version = "2.0.0", bool live = true) =>
@@ -217,6 +223,20 @@ public class StandbyWatcherTests {
 
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy)
       .Because("a newer binary is migrating the schema this instance is serving against");
+  }
+
+  [Test]
+  public async Task ANewerLivePeersRequest_StandsDownThroughTheRunControlPathAsync() {
+    // #2045: standing by is the same path as a pause or a stop: the permit closes, held work and roles are released, and
+    // StandingBy confirms it. The phase alone, without the permit, would leave every worker claiming.
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0");
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
+    await Assert.That(h.RunControl.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo([LifecyclePhase.Pausing, LifecyclePhase.StandingBy],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
@@ -365,6 +385,10 @@ public class StandbyWatcherTests {
     await Assert.That(h.Host.StopCalls).IsEqualTo(0);
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.Running)
       .Because("a rollback resumes the instance rather than costing the fleet its capacity");
+    await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo([LifecyclePhase.Resuming, LifecyclePhase.Running],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("revival is the run-control path's resume (#2045): the permit reopens before Running is written");
+    await Assert.That(h.RunControl.Permit.IsRunning).IsTrue();
   }
 
   [Test]
@@ -495,7 +519,7 @@ public class StandbyWatcherTests {
     var clock = new ArmedTimerClock();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
+      runControl: _path(new RecordingLifecycle()),
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider("1.0.0"),
@@ -537,7 +561,7 @@ public class StandbyWatcherTests {
     var lifecycle = new RecordingLifecycle();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: lifecycle,
+      runControl: _path(lifecycle),
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: null!,
       versionProvider: new StubVersionProvider("1.0.0"),
@@ -573,7 +597,7 @@ public class StandbyWatcherTests {
 
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
+      runControl: _path(new RecordingLifecycle()),
       hostLifetime: new RecordingHostLifetime(),
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider("1.0.0"),

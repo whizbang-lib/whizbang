@@ -107,7 +107,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(unmanaged.Grant!.Epoch).IsEqualTo(1L).Because("#2044: every duty is a role assignment, a host's own too");
     await unmanaged.Grant.DisposeAsync();
 
-    await Assert.That(provider.GetServices<IReleasesDutiesOnShutdown>().Single()).IsSameReferenceAs(elector);
+    await Assert.That(provider.GetServices<Whizbang.Core.RunControl.IReleasesHeldRoles>().Single()).IsSameReferenceAs(elector);
     await Assert.That(provider.GetRequiredService<IRoleAssignmentReader>()).IsSameReferenceAs(elector);
     await Assert.That(provider.GetRequiredService<IPendingDutyWorkStore>()).IsTypeOf<PgPendingDutyWorkStore>();
     // Registered through a factory (it reads through a deferred reader), so the descriptor names the type by
@@ -124,13 +124,12 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
       .Because("a duty-bound startup step becomes owed work for its role; an every-instance step does not");
     await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
         && d.Lifetime == ServiceLifetime.Singleton)).IsGreaterThan(0);
-    await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService)
-        && d.ImplementationType == typeof(DutyShutdownReleaseService))).IsEqualTo(1);
-    var release = new DutyShutdownReleaseService(
-      provider.GetServices<IReleasesDutiesOnShutdown>(), NullLogger<DutyShutdownReleaseService>.Instance);
-    await release.StopAsync(cancellationToken);
+    // #2045: roles are released by the one run-control path, not by a hosted service of their own on stop.
+    await Assert.That(services.Any(d => d.ServiceType == typeof(IHostedService)
+        && d.ImplementationType?.Name == "DutyShutdownReleaseService")).IsFalse();
+    await provider.GetServices<Whizbang.Core.RunControl.IReleasesHeldRoles>().Single().ReleaseAllAsync(cancellationToken);
     await Assert.That(await maintainer.Grant.VerifyStillHeldAsync(cancellationToken)).IsFalse()
-      .Because("stopping the host released the role");
+      .Because("the run-control path's role step released the role");
   }
 
   [Test]
