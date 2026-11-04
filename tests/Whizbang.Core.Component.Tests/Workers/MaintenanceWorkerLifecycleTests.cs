@@ -113,7 +113,7 @@ public class MaintenanceWorkerLifecycleTests {
       logger,
       metrics: null,
       housekeeping: housekeeping) {
-      DelayAsync = delay ?? ((d, ct) => Task.Delay(d, ct)),
+      DelayAsync = delay ?? MaintenanceWorker.RealDelayAsync,
     };
     return (worker, logger);
   }
@@ -128,7 +128,7 @@ public class MaintenanceWorkerLifecycleTests {
     var waits = 0;
     var (worker, logger) = _build(coord, delay: (_, ct) => {
       if (Interlocked.Increment(ref waits) > 1) {
-        return Task.Delay(Timeout.Infinite, ct);   // after the released wait, idle until stopped
+        return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);   // after the released wait, idle until stopped
       }
       waiting.TrySetResult();
       return release.Task.WaitAsync(ct);
