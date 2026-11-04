@@ -60,7 +60,8 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
     var coordinator = _coordinator();
     await _executeAsync("UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'table_rewrite_bloat_threshold'");
     await _executeAsync("UPDATE wh_settings SET setting_value = '1' WHERE setting_key = 'table_rewrite_min_rows'");
-    await _executeAsync("ANALYZE");
+    await _executeAsync("ANALYZE wh_settings");
+    await _executeAsync("ANALYZE wh_outbox");
 
     await coordinator.RequestTableRewriteAsync("wh_outbox");
     await coordinator.RequestTableRewriteAsync("wh_outbox");
@@ -250,7 +251,7 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
     await Assert.That(survey.Select(s => s.TableName).Distinct().Order(StringComparer.Ordinal))
       .IsEquivalentTo(_queueTables.Order(StringComparer.Ordinal));
     await Assert.That(survey.Single(s => s.IndexName == PKEY + "_ccnew").Valid).IsFalse();
-    await Assert.That(size).IsNotNull();
+    await Assert.That(size.HasValue).IsTrue();
     await Assert.That(await _fileNodeAsync(PKEY)).IsNotEqualTo(before).Because("REINDEX builds the index into a new file");
     await Assert.That(refusedValid).IsFalse();
     await Assert.That(refusedRebuild).IsNull();

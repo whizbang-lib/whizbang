@@ -104,6 +104,7 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
     var eventId = Guid.NewGuid();
     await _commitAsync(eventId, stream, EVENT_TYPE, flags: 0);
     await _cursorAsync(stream, eventId, status: 32, trigger: eventId);
+    await _executeAsync("UPDATE wh_event_store SET commit_sequence = 7 WHERE event_id = @eventId", new { eventId });
 
     var none = await coordinator.GetPerspectiveCursorsBatchAsync([]);
     var batch = await coordinator.GetPerspectiveCursorsBatchAsync([stream]);
@@ -113,7 +114,7 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
     await Assert.That(batch.Count).IsEqualTo(1);
     await Assert.That(batch[0].PerspectiveName).IsEqualTo(PERSPECTIVE);
     await Assert.That(batch[0].LastEventId).IsEqualTo(eventId);
-    await Assert.That(batch[0].LastCommitSequence.HasValue).IsTrue()
+    await Assert.That(batch[0].LastCommitSequence).IsEqualTo(7L)
       .Because("the commit sequence of the cursor's last event warms the cursor cache's inversion check");
     await Assert.That(rewinds).IsEquivalentTo([new RewindCursorInfo(stream, PERSPECTIVE, eventId, eventId)]);
   }
@@ -162,6 +163,29 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
       new Dictionary<string, IReadOnlyList<string>> { [EVENT_TYPE] = [PERSPECTIVE] }, TimeSpan.FromHours(1));
 
     await Assert.That(orphaned).IsEmpty();
+  }
+
+  [Test]
+  public async Task OrphanedLifecycles_AnUnreadableBodyIsSkipped_AndAnUnreadableScopeReplaysUnscopedAsync() {
+    var coordinator = new DapperWorkCoordinator(
+      ConnectionString, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<DapperWorkCoordinator>.Instance);
+    var bodiless = Guid.NewGuid();
+    var badScope = Guid.NewGuid();
+    foreach (var eventId in new[] { bodiless, badScope }) {
+      var stream = Guid.NewGuid();
+      await _commitAsync(eventId, stream, EVENT_TYPE, flags: 0);
+      await _cursorAsync(stream, eventId, status: 0);
+    }
+    await _executeAsync("DELETE FROM wh_event_body WHERE event_id = @bodiless", new { bodiless });
+    await _executeAsync("UPDATE wh_event_store SET scope = '[1, 2]' WHERE event_id = @badScope", new { badScope });
+
+    var orphaned = await coordinator.GetOrphanedLifecycleEventsAsync(
+      new Dictionary<string, IReadOnlyList<string>> { [EVENT_TYPE] = [PERSPECTIVE] }, TimeSpan.FromHours(1));
+
+    await Assert.That(orphaned.Select(o => o.EventId)).IsEquivalentTo([badScope])
+      .Because("an event whose body cannot be read is logged and skipped, and one whose scope cannot be read replays without it");
+    await Assert.That(orphaned[0].Envelope.Hops).IsEmpty();
   }
 
   private Task _commitAsync(Guid eventId, Guid streamId, string eventType, int flags) =>

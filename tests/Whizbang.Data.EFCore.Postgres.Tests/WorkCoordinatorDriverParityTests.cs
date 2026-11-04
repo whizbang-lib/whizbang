@@ -46,11 +46,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.AdoptRedeliveredOriginAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.AdvanceIntegrityCheckpointAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.AdvanceIntegritySealAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.CleanupLifecycleCompletionsAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ClearStandbyRequestAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ClearTableRewriteRequestAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.CloseDigestEpochsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.CompleteCoalesceFoldAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.CompleteIntegrityDeliveryAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ComputeStreamDigestsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ComputeStreamDigestsForChunkAsync)] = INTEGRITY,
@@ -58,38 +54,18 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.ComputeTypeDigestsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ComputeTypeDigestsWindowedAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.CountReceivedFromOriginAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.CountServiceBacklogAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.CountSourcedEventsForTypesAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.DropInvalidQueueIndexAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.EnqueueIntegrityDeliveryAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.EnsureIntegritySealGenerationAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.EvictInstanceAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.FailIntegrityDeliveryAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.FetchPendingCoalesceAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.FindStuckInboxRowsAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.FindStuckOutboxRowsAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.FoldSettledApplyPathsAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetConsumedTypeRegistrationsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.GetCursorsRequiringRewindAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetEphemeralPairsNeedingSnapshotAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetExpiredOffloadClaimsAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetIntegrityLedgerSummaryAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegrityOriginGenerationAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegritySealAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegritySettledMaxAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.GetLocalServiceIdAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetOrphanedLifecycleEventsAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetOwnAuditedEventTypesAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.GetPendingCoalesceGroupStatsAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetPerspectiveCoverageGapsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.GetPerspectiveCursorsBatchAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetQueueIndexBloatAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetStandbyRequestAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetStreamDigestsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.GetTablesNeedingRewriteAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.GetTypeDefinitionsAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.GetTypeDigestsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.ImportBrokerDeadLetterAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.IntegrityClaimRepairDrainAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkAnswerPendingAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkHealedAsync)] = INTEGRITY,
@@ -105,33 +81,9 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.IntegrityTryBeginReportBatchAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.LeaseIntegrityDeliveriesAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.MarkConsumedTypeBackfillRequestedAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.MeasureTableBloatAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.PruneAncientEphemeralPointersAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReapExhaustedOrphanedPerspectiveRowsAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReclassifyEventsEphemeralAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RecordDefinitionLineageAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RecordLifecycleCompletionAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RecordOffloadClaimAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.RegisterConsumedTypesAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.RegisterTypeDefinitionAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReindexQueueIndexAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReleaseMaturedCoalesceAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReleaseUnprocessedInboxAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.ReleaseUnstartedLeasesAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RemoveOffloadClaimsAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RequestMeasuredTableRewriteAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RequestStandbyAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RequestTableRewriteAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RewriteTableAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.RewriteTableWithAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.SelectRedeliveryEventsAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.SqueezeTableAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.SyncEphemeralTypeGraceAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.TryClaimIntegrityAuditCycleAsync)] = INTEGRITY,
-    [nameof(IWorkCoordinator.TryClaimOffloadSweepAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.TryClaimSettledFoldSweepAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.TryClaimTypeDefinitionReconcileAsync)] = UNDECIDED,
-    [nameof(IWorkCoordinator.VacuumWorkTablesAsync)] = UNDECIDED,
     [nameof(IWorkCoordinator.VerifyDigestEpochsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.VerifyDigestTableAsync)] = INTEGRITY,
   };
@@ -142,8 +94,16 @@ public class WorkCoordinatorDriverParityTests {
   /// </summary>
   private const string INTEGRITY = "integrity is EF Core only until the integrity rework lands (#2052)";
 
-  /// <summary>Found unimplemented on Dapper by #2051 and not yet decided; each entry leaves this reason as it is decided.</summary>
-  private const string UNDECIDED = "not yet implemented on the Dapper driver; decision pending in #2051";
+  /// <summary>
+  /// Convenience overloads whose default body forwards to another overload of the same name (the one taking
+  /// <c>debugMode</c>), which both drivers implement. Such a default runs the driver's own implementation, so it is not a
+  /// gap; <see cref="EveryForwardingOverload_ReachesAnOverloadTheDriverImplementsAsync"/> holds each driver to that.
+  /// </summary>
+  private static readonly string[] _forwardingOverloads = [
+    nameof(IWorkCoordinator.CompleteOutboxPublishedAsync),
+    nameof(IWorkCoordinator.CompletePerspectiveAsync),
+    nameof(IWorkCoordinator.CompletePerspectiveEventsAsync),
+  ];
 
   /// <summary>
   /// Members that may never be allow-listed: the prefix truncate's (#2043). A hook is told data is about to be destroyed
@@ -186,6 +146,23 @@ public class WorkCoordinatorDriverParityTests {
   }
 
   [Test]
+  [MethodDataSource(nameof(Drivers))]
+  public async Task EveryForwardingOverload_ReachesAnOverloadTheDriverImplementsAsync(Type driver) {
+    var map = driver.GetInterfaceMap(typeof(IWorkCoordinator));
+    var unreached = _forwardingOverloads.Where(name => !Enumerable.Range(0, map.InterfaceMethods.Length).Any(i =>
+      map.InterfaceMethods[i].Name == name && map.TargetMethods[i].DeclaringType == driver)).ToList();
+
+    await Assert.That(unreached).IsEmpty()
+      .Because($"{driver.Name} implements no overload of [{string.Join(", ", unreached)}], so the forwarding default reaches the inert one");
+  }
+
+  /// <summary>The shipped Postgres coordinators.</summary>
+  public static IEnumerable<Func<Type>> Drivers() {
+    yield return () => typeof(DapperWorkCoordinator);
+    yield return () => typeof(EFCoreWorkCoordinator<WorkCoordinationDbContext>);
+  }
+
+  [Test]
   public async Task EveryDefaultBodiedMember_IsImplementedByEFCoreAsync() {
     var defaulted = _servedByTheDefault(typeof(EFCoreWorkCoordinator<WorkCoordinationDbContext>)).Distinct(StringComparer.Ordinal).ToList();
 
@@ -197,14 +174,24 @@ public class WorkCoordinatorDriverParityTests {
   private static List<MethodInfo> _defaultBodiedMembers() =>
     [.. typeof(IWorkCoordinator).GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => !m.IsAbstract)];
 
-  /// <summary>The names of the default-bodied members the driver leaves at the interface default (overloads repeat).</summary>
+  /// <summary>
+  /// The names of the default-bodied members the driver leaves at the interface default (overloads repeat), other than a
+  /// forwarding overload whose target the driver implements.
+  /// </summary>
   private static List<string> _servedByTheDefault(Type driver) {
     var map = driver.GetInterfaceMap(typeof(IWorkCoordinator));
     var names = new List<string>();
     for (var i = 0; i < map.InterfaceMethods.Length; i++) {
-      if (!map.InterfaceMethods[i].IsAbstract && map.TargetMethods[i].DeclaringType == typeof(IWorkCoordinator)) {
-        names.Add(map.InterfaceMethods[i].Name);
+      var member = map.InterfaceMethods[i];
+      if (member.IsAbstract || map.TargetMethods[i].DeclaringType != typeof(IWorkCoordinator)) {
+        continue;
       }
+      // A forwarding overload's default runs the overload the driver implements (checked separately).
+      if (_forwardingOverloads.Contains(member.Name, StringComparer.Ordinal)
+          && Enumerable.Range(0, map.InterfaceMethods.Length).Any(j => map.InterfaceMethods[j].Name == member.Name && map.TargetMethods[j].DeclaringType == driver)) {
+        continue;
+      }
+      names.Add(member.Name);
     }
     return names;
   }

@@ -130,7 +130,7 @@ public class DapperCoalesceTests : PostgresTestBase {
 
   private async Task<Guid> _seedPendingAsync(
       string group, int createdAgoSeconds, string? scheduledForSql = null, string? eventDataJson = null, string metadataJson = "{}") {
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     await _executeAsync($@"
       INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts,
@@ -139,7 +139,9 @@ public class DapperCoalesceTests : PostgresTestBase {
         NOW() - make_interval(secs => @createdAgoSeconds), gen_random_uuid(), 0, @group,
         {scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"})",
       new {
-        messageId, group, createdAgoSeconds,
+        messageId,
+        group,
+        createdAgoSeconds,
         data = eventDataJson ?? $"{{\"id\":\"{messageId}\",\"p\":{{\"record\":\"data\"}},\"h\":[]}}",
         meta = metadataJson
       });
