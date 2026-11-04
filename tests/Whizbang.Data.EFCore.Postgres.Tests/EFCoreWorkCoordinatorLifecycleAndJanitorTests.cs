@@ -583,8 +583,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await _insertInboxRowAsync(connection, Guid.NewGuid(), "Other.Type", Guid.NewGuid());
     await _insertInboxRowAsync(connection, Guid.NewGuid(), "Leased.Type", Guid.NewGuid(), instanceId: Guid.NewGuid());
 
-    Whizbang.Core.Messaging.IWorkCoordinator coordinator = _createCoordinator(dbContext);
-    var types = await coordinator.GetPendingInboxMessageTypesAsync();
+    var types = await _createCoordinator(dbContext).GetPendingInboxMessageTypesAsync();
 
     await Assert.That(types).IsEquivalentTo(["Other.Type", "Pending.Type"])
       .Because("the rows the purge may delete: pending and unleased, each type once (a leased row is in-flight work)");

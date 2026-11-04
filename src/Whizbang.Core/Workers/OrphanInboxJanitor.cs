@@ -81,7 +81,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
         return;
       }
 
-      var handledTypeNames = _collectHandledTypeNames(scope.ServiceProvider);
+      var handledTypeNames = await _collectHandledTypeNamesAsync(scope.ServiceProvider, coordinator, stoppingToken);
       if (handledTypeNames.Count == 0) {
         _logger.LogInformation("OrphanInboxJanitor skipped: no locally-handled types — refusing to purge to avoid emptying the inbox during cold start");
         return;
@@ -102,7 +102,8 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     }
   }
 
-  private List<string> _collectHandledTypeNames(IServiceProvider scopedProvider) {
+  private async Task<List<string>> _collectHandledTypeNamesAsync(
+      IServiceProvider scopedProvider, IWorkCoordinator coordinator, CancellationToken cancellationToken) {
     var names = new HashSet<string>(StringComparer.Ordinal);
 
     foreach (var t in _receptorSnapshot.ReceptorMessageTypes) {
@@ -126,6 +127,15 @@ public sealed class OrphanInboxJanitor : BackgroundService {
       foreach (var name in rawRegistry.RegisteredTypeNames) {
         names.Add(name);
       }
+    }
+
+    // #2066: a pending type the receive boundary keeps with no consumer (an absorbed namespace, stored so a later
+    // perspective can rebuild from it) is not an orphan. Asked only when something is already handled, so the caller's
+    // cold-start guard still refuses to purge on an empty registry.
+    if (names.Count > 0) {
+      var keeps = ConsumedMessageTypes.Keeps(scopedProvider);
+      var pending = await coordinator.GetPendingInboxMessageTypesAsync(cancellationToken);
+      names.UnionWith(pending.Where(type => keeps(type)));
     }
 
     return [.. names];

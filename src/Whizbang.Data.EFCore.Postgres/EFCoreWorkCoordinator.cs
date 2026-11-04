@@ -6100,6 +6100,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default) {
+    var schema = _resolveSchema(typeof(InboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var command = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified table names built from a validated schema constant.
+    command.CommandText = Whizbang.Data.Postgres.PendingInboxTypesSql.Query($"\"{schema}\".");
+#pragma warning restore S2077
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var types = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      types.Add(reader.GetString(0));
+    }
+    return types;
+  }
+
+  /// <inheritdoc />
   public Task<long> DiscardPendingInboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)

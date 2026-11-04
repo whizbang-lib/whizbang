@@ -832,6 +832,21 @@ public partial class DapperWorkCoordinator(
     PerformMaintenanceAsync(null, cancellationToken);
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
+    command.CommandText = Whizbang.Data.Postgres.PendingInboxTypesSql.Query(prefix);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var types = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      types.Add(reader.GetString(0));
+    }
+    return types;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<PurgedOrphanInboxRow>> PurgeOrphanInboxAsync(
       IReadOnlyList<string> handledTypeNames,
       CancellationToken cancellationToken = default) {

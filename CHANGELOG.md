@@ -1444,6 +1444,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscriptions discovered perspectives and `IReceptor<TEvent>` only, so an event consumed by a synchronous receptor, a
   notification tag or the collective sink had no subscription for its namespace and was never delivered. A service
   consuming such an event may create one more subscription on its next start.
+- **The orphan-inbox janitor keeps absorbed events (#2066).** It purged every pending inbox row whose type had no
+  consumer, including events in an absorbed namespace, which are stored on purpose so a later perspective can rebuild
+  from them. The janitor now asks the receive boundary's keep decision about each pending type
+  (`IWorkCoordinator.GetPendingInboxMessageTypesAsync`).
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The
