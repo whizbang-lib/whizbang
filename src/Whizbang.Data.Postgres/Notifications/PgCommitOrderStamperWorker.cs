@@ -494,7 +494,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   static partial void LogReleasedLeader(ILogger logger);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker iteration failed: {Reason}. Resolved connection from {ResolutionSource} for key '{ConnectionStringKey}'. " +
-    "If Source=PooledKeyFallback, the connection routes through pgbouncer — set ConnectionStrings:{ConnectionStringKey}-direct with a direct (non-pgbouncer) Postgres string.")]
+    "The stamper votes for its role and stamps in single transactions, so a pooled connection serves it; check that the connection is reachable and its credentials are valid. It votes again after its retry interval.")]
   static partial void LogIterationError(ILogger logger, string reason, NotificationConnectionStringResolver.ResolutionSource resolutionSource, string connectionStringKey);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Information,
