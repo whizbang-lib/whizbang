@@ -41,14 +41,14 @@ internal static class CoordinatorRetentionSql {
 
   /// <summary>The description written with <see cref="OFFLOAD_SWEEP_KEY"/>.</summary>
   internal const string OFFLOAD_SWEEP_DESCRIPTION =
-    "Last claimed offload-claim sweep — first instance to CAS this watermark drains the expired ledger; siblings skip.";
+    "Last claimed offload-claim sweep: the first instance to CAS this watermark drains the expired ledger; siblings skip.";
 
   /// <summary>The <c>wh_settings</c> watermark the settled apply-path fold is claimed through.</summary>
   internal const string SETTLED_FOLD_KEY = "settled_fold_last_run";
 
   /// <summary>The description written with <see cref="SETTLED_FOLD_KEY"/>.</summary>
   internal const string SETTLED_FOLD_DESCRIPTION =
-    "Last claimed settled apply-path fold — first instance to CAS this watermark folds idle streams; siblings skip.";
+    "Last claimed settled apply-path fold: the first instance to CAS this watermark folds idle streams; siblings skip.";
 
   private const string OFFLOAD_CLAIMS = "wh_offload_claims";
 

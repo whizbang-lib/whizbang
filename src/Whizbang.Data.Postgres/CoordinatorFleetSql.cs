@@ -177,7 +177,7 @@ internal static class CoordinatorFleetSql {
   /// settle at the broker, so a failure reported as false would lose the message.
   /// </summary>
   internal static InvalidOperationException ImportFailed(BrokerDeadLetterImport import, Exception inner) =>
-    new($"ImportBrokerDeadLetterAsync failed for message {import.MessageId} from {import.Destination} — the message stays on the broker DLQ for the next drain pass", inner);
+    new($"ImportBrokerDeadLetterAsync failed for message {import.MessageId} from {import.Destination}; the message stays on the broker DLQ for the next drain pass", inner);
 
   /// <summary>Runs one of the standby or eviction functions, whose arguments are all values, and returns its scalar.</summary>
   internal static async Task<object?> ScalarFunctionAsync(

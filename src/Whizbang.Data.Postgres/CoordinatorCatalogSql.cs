@@ -36,7 +36,7 @@ internal static class CoordinatorCatalogSql {
 
   /// <summary>The description written with <see cref="TYPE_DEFINITION_RECONCILE_KEY"/>.</summary>
   internal const string TYPE_DEFINITION_RECONCILE_DESCRIPTION =
-    "Last claimed type-definition reconcile — first instance to CAS this watermark walks the catalog; siblings skip.";
+    "Last claimed type-definition reconcile: the first instance to CAS this watermark walks the catalog; siblings skip.";
 
   /// <summary>Every registered type definition with its fingerprints in hex.</summary>
   internal static async Task<IReadOnlyList<TypeDefinitionInfo>> TypeDefinitionsAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
