@@ -44,7 +44,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
 /// <docs>fundamentals/dispatcher/dispatch-policy#decision-table</docs>
 [Category("Integration")]
-[Category("Shard4")]
+[Category("Shard3")]
 public class DispatchExecutionIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned";
   private const string TENANT = "tenant-dispatch-execution";

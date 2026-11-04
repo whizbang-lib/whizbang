@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#storage-moves</docs>
 [Category("Integration")]
-[Category("Shard5")]
+[Category("Shard2")]
 public class PhysicalColumnFormsTests {
   private const string TABLE = "wh_forms_probe";
 

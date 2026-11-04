@@ -38,7 +38,7 @@ public partial class ParallelismPolicyGuardTests {
   /// <remarks>
   /// Sampled from <c>pg_stat_activity</c> every second through full runs of every shard on the build servers: most
   /// test databases hold 2 to 6 connections, a few hosts with every worker running reach 65, and two shards sharing
-  /// one container never held more than 98 between them. Twenty per test is the sum's budget, not any one test's
+  /// one container never held more than 102 between them. Twenty per test is the sum's budget, not any one test's
   /// ceiling (see <c>ai-docs/efcore-test-parallelism.md</c>).
   /// </remarks>
   internal const int CONNECTIONS_PER_TEST = 20;

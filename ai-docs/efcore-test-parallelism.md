@@ -78,7 +78,7 @@ connections.
 
 **Connections.** `pg_stat_activity` was sampled once a second through full runs of every shard on the build servers.
 Most test databases hold 2 to 6 connections; a few tests that start a host with every worker reach 65; two shards
-sharing one container never held more than 98 between them. The budget is 20 per running test, two processes per
+sharing one container never held more than 102 between them. The budget is 20 per running test, two processes per
 container and 100 spare: 8 x 20 x 2 + 100 = 420 of the container's 500. `EFCorePostgresParallelism` explains the
 limit, and `ParallelismPolicyGuardTests.TheContainer_HasTheConnectionsTheLimitNeedsAsync` checks the sum against the
 live container, so a container made by hand or before the rule fails loudly instead of throttling the run.
@@ -109,5 +109,7 @@ syncing to disk. After: parallel, durability off, two runs each.
 | 4 | 61.4 min | 34.2 min (one test out of time) | 16.4, 14.9 min |
 | 5 | 51.6 min | 30.5 min (two tests out of time) | 15.2, 13.9 min |
 
-The shards were then rebalanced on the after runs (`scripts/Measure-TestShards.ps1`'s cost model, which since
+After the first rebalance (three moves), one more run of every shard took 15.6, 13.3, 11.3, 14.5 and 14.2 minutes,
+all green, and a second rebalance on the three runs together (two more moves) brings the attributed loads to 12.1 to
+12.9 minutes. The shards were rebalanced on the after runs (`scripts/Measure-TestShards.ps1`'s cost model, which since
 #2069 shares each moment among the tests running then).
