@@ -1314,6 +1314,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
+  with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
+  answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The
+  scheduled prefix truncate was not registered on Dapper at all. `DapperWorkCoordinator` now implements the truncate,
+  its targets, the archive read, the consuming perspective names, the event version and the apply-path fold through
+  `StreamPrefixTruncateSql`, which EF Core calls too, and both drivers register the scheduled prefix truncate through
+  `AddScheduledPrefixTruncate()`. **Upgrade note:** `ScheduledPrefixTruncateReceptor` moved from the
+  `Whizbang.Data.EFCore.Postgres` namespace to `Whizbang.Data.Postgres`.
 - **The live audit path resolves event types through the same catalog as the audit ledger rebuild (#2040).** The
   outbox audit builder resolved an event's type with `Type.GetType` (under an IL2057 suppression) while the rebuild
   resolved through the message-type catalog, so a loaded type outside the catalog was audited by its attribute live and

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -16,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>IntegrityCheckpointReceptorRegistrarCoverageTests.StopAsync_ReturnsAnAlreadyCompletedTaskAsync</c>
 /// pattern for the same registrar shape.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 [Category("Shard1")]
 public class ScheduledPrefixTruncateReceptorRegistrarCoverageTests {
 

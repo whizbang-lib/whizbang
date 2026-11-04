@@ -221,6 +221,30 @@ public class DapperWorkCoordinatorNamedSchemaTests {
     await Assert.That(results).IsNotEmpty();
   }
 
+  /// <summary>The prefix truncate's statements (#2043) reach the configured schema too.</summary>
+  /// <docs>fundamentals/events/event-streams#prefix-truncate-on-every-data-layer</docs>
+  [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Deliberate: the interface is what the truncator calls through.")]
+  public async Task PrefixTruncate_RunsInTheConfiguredSchemaAsync() {
+    var stream = Guid.NewGuid();
+    var ids = new Guid[3];
+    for (var i = 0; i < ids.Length; i++) {
+      ids[i] = Guid.NewGuid();
+      await _executeAsync($"SELECT {SCHEMA}.commit_handler_result(@Req::jsonb)",
+        new { Req = DapperStreamPrefixTruncateTests.Commit(ids[i], stream, i == 2 ? "Named.Closed" : "Named.Entry") });
+    }
+    IWorkCoordinator coordinator = _build();
+
+    await Assert.That(await coordinator.GetEventVersionAsync(ids[1])).IsEqualTo(2L);
+    await Assert.That((await coordinator.GetStreamTruncateTargetsAsync(stream, 2)).Select(t => t.EventId))
+      .IsEquivalentTo([ids[0], ids[1]], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await coordinator.GetConsumingPerspectiveNamesAsync(stream, 2)).IsEmpty();
+    await Assert.That(await coordinator.FoldStreamApplyPathsAsync([stream])).IsEqualTo(1);
+    await Assert.That((await coordinator.TruncateStreamPrefixAsync(stream, 2, archive: true)).Status).IsEqualTo("truncated");
+    await Assert.That(await coordinator.GetArchivedEventsAsync(stream)).Count().IsEqualTo(2);
+    await Assert.That(await _countAsync("wh_event_store", "stream_id = @s", new { s = stream })).IsEqualTo(1L);
+  }
+
   [Test]
   public async Task RowRetention_RunsInTheConfiguredSchemaAsync() {
     // The Dapper driver does not write the perspective registry itself, so the row a host's perspective would have
