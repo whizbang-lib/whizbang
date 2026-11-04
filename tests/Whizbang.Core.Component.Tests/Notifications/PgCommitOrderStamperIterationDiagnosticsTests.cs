@@ -159,6 +159,12 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
 
     await Assert.That(logger.PooledFallbackWarningTcs.Task.IsCompleted).IsFalse();
     await Assert.That(logger.LastPooledFallbackMessage).IsNull();
+    // Nor does the iteration failure send the operator to a direct connection the stamper does not need.
+    var failure = logger.LastIterationFailedMessage;
+    await Assert.That(failure).IsNotNull();
+    await Assert.That(failure!).Contains("PooledKeyFallback").Because("the failure still names where the connection came from");
+    await Assert.That(failure).DoesNotContain("-direct");
+    await Assert.That(failure).DoesNotContain("pgbouncer");
   }
 
   private sealed class StamperCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
