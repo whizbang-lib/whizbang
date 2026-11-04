@@ -7,15 +7,18 @@ namespace Whizbang.Core.RunControl;
 
 /// <summary>
 /// The one run-control path (#2045): see <see cref="IWhizbangRunController"/>. Halts and resumes are serialized, so a
-/// stand-down and a host stop that arrive together run one after the other, and a stop always wins: once stopped, a later
-/// pause or stand-down changes nothing and a resume is refused.
+/// stand-down and a host stop that arrive together run one after the other. The permit stays closed while ANY reason
+/// holds: a resume lifts only its own reason, and the reported phase follows the strongest reason that remains (a stop,
+/// then a stand-down, then a pause). A stop always wins: once stopped, a later pause or stand-down changes nothing and a
+/// resume is refused.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every step after the permit closes is best-effort and logged: an obeyer that fails to act on the close, a releaser
-/// that cannot reach the database, or work that is still in hand when <see cref="WhizbangLifecycleOptions.HeldWorkTimeout"/>
-/// runs out does not stop the path, because the instance must still confirm where it stands. What could not be released
-/// is taken over by a peer when its lease lapses, as after a crash.
+/// The caller's token bounds every step (host shutdown passes its stop token), and every step after the permit closes is
+/// best-effort and logged: an obeyer that fails to act on the close, a releaser that cannot reach the database, a step the
+/// caller's token cuts short, or work that is still in hand when <see cref="WhizbangLifecycleOptions.HeldWorkTimeout"/>
+/// runs out does not stop the path, because the instance must still confirm where it stands. The phases are written on a
+/// token of their own. What could not be released is taken over by a peer when its lease lapses, as after a crash.
 /// </para>
 /// <para>
 /// The phases are written through <see cref="IWhizbangLifecycleState"/>, whose participant records them on the
@@ -33,7 +36,7 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
   private readonly TimeProvider _time;
   private readonly ILogger<WhizbangRunController> _logger;
   private readonly SemaphoreSlim _serialize = new(1, 1);
-  private RunHaltReason? _haltedFor;
+  private readonly HashSet<RunHaltReason> _reasons = [];
 
   /// <summary>Creates the path.</summary>
   /// <param name="permit">The instance's one run permit.</param>
@@ -71,22 +74,42 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
   public WhizbangRunPermit Permit { get; }
 
   /// <inheritdoc />
-  public RunHaltReason? HaltedFor => _haltedFor;
+  public RunHaltReason? HaltedFor {
+    get {
+      lock (_reasons) {
+        return _strongest();
+      }
+    }
+  }
+
+  /// <inheritdoc />
+  public IReadOnlyCollection<RunHaltReason> HaltedReasons {
+    get {
+      lock (_reasons) {
+        return [.. _reasons.Order()];
+      }
+    }
+  }
 
   /// <inheritdoc />
   public async Task HaltAsync(RunHaltReason reason, CancellationToken cancellationToken) {
-    await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
+    // Not the caller's token: a host stop whose budget is already spent still closes the permit and writes the phase.
+    await _serialize.WaitAsync(CancellationToken.None).ConfigureAwait(false);
     try {
-      if (_haltedFor == RunHaltReason.Stop && reason != RunHaltReason.Stop) {
-        return;   // a stop is final: a later pause or stand-down is not a step back
+      LifecyclePhase settled;
+      lock (_reasons) {
+        if (_reasons.Contains(RunHaltReason.Stop) && reason != RunHaltReason.Stop) {
+          return;   // a stop is final: a later pause or stand-down is not a step back
+        }
+        _reasons.Add(reason);
+        settled = _settledPhaseOf(_strongest()!.Value);
       }
       var stopping = reason == RunHaltReason.Stop;
-      _haltedFor = reason;
       LogHalting(_logger, reason);
 
       // 1. Close the permit: no new work is taken from here on, and every obeyer has acted on it.
-      await _closeAsync(stopping ? RunState.Stopped : RunState.Paused, cancellationToken).ConfigureAwait(false);
-      await _lifecycle.AdvanceToAsync(stopping ? LifecyclePhase.Stopping : LifecyclePhase.Pausing, cancellationToken)
+      await _changeAsync(stopping ? RunState.Stopped : RunState.Paused, cancellationToken).ConfigureAwait(false);
+      await _lifecycle.AdvanceToAsync(stopping ? LifecyclePhase.Stopping : LifecyclePhase.Pausing, CancellationToken.None)
         .ConfigureAwait(false);
 
       // 2. Finish what is in hand, then release what is still held.
@@ -100,8 +123,8 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
         await _bestEffortAsync(releaser.ReleaseAllAsync, "roles", cancellationToken).ConfigureAwait(false);
       }
 
-      // 4. Confirm by writing the settled phase.
-      await _lifecycle.AdvanceToAsync(_settledPhaseOf(reason), cancellationToken).ConfigureAwait(false);
+      // 4. Confirm by writing the settled phase of the strongest reason that holds, on a token of its own.
+      await _lifecycle.AdvanceToAsync(settled, CancellationToken.None).ConfigureAwait(false);
       LogHalted(_logger, reason);
     } finally {
       _serialize.Release();
@@ -109,26 +132,36 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
   }
 
   /// <inheritdoc />
-  public async Task ResumeAsync(CancellationToken cancellationToken) {
+  public async Task ResumeAsync(RunHaltReason reason, CancellationToken cancellationToken) {
     await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
-      switch (_haltedFor) {
-        case null:
-          return;
-        case RunHaltReason.Stop:
+      LifecyclePhase? stillHalted;
+      lock (_reasons) {
+        if (_reasons.Contains(RunHaltReason.Stop)) {
           throw new InvalidOperationException("The instance was stopped; a stop is final and the instance does not resume.");
-        default:
-          await _lifecycle.AdvanceToAsync(LifecyclePhase.Resuming, cancellationToken).ConfigureAwait(false);
-          await _closeAsync(RunState.Running, cancellationToken).ConfigureAwait(false);
-          _haltedFor = null;
-          await _lifecycle.AdvanceToAsync(LifecyclePhase.Running, cancellationToken).ConfigureAwait(false);
-          LogResumed(_logger);
-          break;
+        }
+        if (!_reasons.Remove(reason)) {
+          return;   // that reason does not hold: nothing to lift
+        }
+        stillHalted = _strongest() is { } remaining ? _settledPhaseOf(remaining) : null;
       }
+      if (stillHalted is { } phase) {
+        // Another reason still holds the permit closed: only the reported phase follows the strongest of them.
+        await _lifecycle.AdvanceToAsync(phase, cancellationToken).ConfigureAwait(false);
+        LogStillHalted(_logger, reason, HaltedFor!.Value);
+        return;
+      }
+      await _lifecycle.AdvanceToAsync(LifecyclePhase.Resuming, cancellationToken).ConfigureAwait(false);
+      await _changeAsync(RunState.Running, cancellationToken).ConfigureAwait(false);
+      await _lifecycle.AdvanceToAsync(LifecyclePhase.Running, cancellationToken).ConfigureAwait(false);
+      LogResumed(_logger);
     } finally {
       _serialize.Release();
     }
   }
+
+  /// <summary>The strongest reason that holds (a stop over a stand-down over a pause), or null when none does.</summary>
+  private RunHaltReason? _strongest() => _reasons.Count == 0 ? null : _reasons.Max();
 
   /// <inheritdoc />
   public void Dispose() => _serialize.Dispose();
@@ -139,13 +172,12 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
     _ => LifecyclePhase.Stopped,
   };
 
-  private async Task _closeAsync(RunState state, CancellationToken cancellationToken) {
+  private async Task _changeAsync(RunState state, CancellationToken cancellationToken) {
     try {
       await Permit.ChangeAsync(state, cancellationToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-      throw;
     } catch (Exception ex) {
-      // The permit itself has changed; an obeyer (a transport consumer) failed to act on it, and says why.
+      // The permit itself has changed; an obeyer (a transport consumer) failed to act on it, or was cut short by the
+      // caller's token, and says why.
       LogObeyerFailed(_logger, ex, state);
     }
   }
@@ -154,7 +186,7 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
     try {
       await Permit.WhenNothingHeldAsync(cancellationToken)
         .WaitAsync(_options.HeldWorkTimeout, _time, cancellationToken).ConfigureAwait(false);
-    } catch (TimeoutException) {
+    } catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) {
       LogHeldWorkOutlastedTheBound(_logger, Permit.Held, _options.HeldWorkTimeout);
     }
   }
@@ -162,9 +194,8 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
   private async Task _bestEffortAsync(Func<CancellationToken, Task> release, string what, CancellationToken cancellationToken) {
     try {
       await release(cancellationToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-      throw;
     } catch (Exception ex) {
+      // A failure, or the caller's token cutting the step short: either way the halt goes on to confirm itself.
       LogReleaseFailed(_logger, ex, what);
     }
   }
@@ -180,14 +211,18 @@ public sealed partial class WhizbangRunController : IWhizbangRunController, IDis
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "Run control: resumed; the run permit is open")]
   static partial void LogResumed(ILogger logger);
 
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "Run control: {Lifted} is lifted, but the instance stays halted for {Remaining}; the run permit stays closed")]
+  static partial void LogStillHalted(ILogger logger, RunHaltReason lifted, RunHaltReason remaining);
+
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
     Message = "Run control: an obeyer of the run permit failed to act on the change to {State}; the permit has changed, "
       + "and the halt goes on")]
   static partial void LogObeyerFailed(ILogger logger, Exception exception, RunState state);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
-    Message = "Run control: {Held} unit(s) of work were still in hand after {Bound}; the halt goes on, and what they hold "
-      + "is taken over by a peer when its lease lapses")]
+    Message = "Run control: {Held} unit(s) of work were still in hand when the wait ended (bound {Bound}, or the caller's "
+      + "stop budget ran out); the halt goes on, and what they hold is taken over by a peer when its lease lapses")]
   static partial void LogHeldWorkOutlastedTheBound(ILogger logger, int held, TimeSpan bound);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning,

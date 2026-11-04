@@ -25,7 +25,8 @@ public enum RunHaltReason {
 /// The one run-control path (#2045). Stand-down, pause and stop all take it, with a reason: close the run permit (no new
 /// work is taken), write the transitional phase, wait for the work in hand to finish, release the work still held so
 /// peers take it over promptly, release the roles this instance holds, and confirm by writing the settled phase on the
-/// instance's row. A resume reopens the permit after a pause or a stand-down, never after a stop.
+/// instance's row. Several reasons can hold at once (an operator's pause during a stand-down); the permit stays closed
+/// until every one is lifted. A resume lifts a pause or a stand-down, never a stop.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs</tests>
@@ -33,20 +34,33 @@ public interface IWhizbangRunController {
   /// <summary>The permit this path closes and reopens: the one every claiming worker obeys.</summary>
   WhizbangRunPermit Permit { get; }
 
-  /// <summary>Why the instance is halted, or <see langword="null"/> while it runs.</summary>
+  /// <summary>
+  /// The strongest reason the instance is halted for (a stop, then a stand-down, then a pause), or <see langword="null"/>
+  /// while it runs. The reported phase follows it.
+  /// </summary>
   RunHaltReason? HaltedFor { get; }
+
+  /// <summary>Every reason that holds the permit closed; empty while the instance runs.</summary>
+  IReadOnlyCollection<RunHaltReason> HaltedReasons { get; }
 
   /// <summary>Halts the instance for <paramref name="reason"/>. Returns once the settled phase is written.</summary>
   /// <param name="reason">Why.</param>
-  /// <param name="cancellationToken">Ends the wait for held work, and the path with it.</param>
+  /// <param name="cancellationToken">
+  /// Bounds every step (host shutdown passes its stop token). A step it cuts short is logged, and the halt still
+  /// completes and writes its phases.
+  /// </param>
   /// <returns>A task that completes when the halt is confirmed.</returns>
   Task HaltAsync(RunHaltReason reason, CancellationToken cancellationToken);
 
-  /// <summary>Reopens the permit after a pause or a stand-down. Does nothing while running.</summary>
+  /// <summary>
+  /// Lifts <paramref name="reason"/>. The permit reopens only when no other reason holds; otherwise the reported phase
+  /// follows the strongest reason that remains. Does nothing for a reason that does not hold.
+  /// </summary>
+  /// <param name="reason">The reason to lift: a pause (the operator's resume) or a stand-down (a revival).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>A task that completes when Running is written.</returns>
+  /// <returns>A task that completes when the phase is written.</returns>
   /// <exception cref="InvalidOperationException">The instance was stopped; a stop is final.</exception>
-  Task ResumeAsync(CancellationToken cancellationToken);
+  Task ResumeAsync(RunHaltReason reason, CancellationToken cancellationToken);
 }
 
 /// <summary>

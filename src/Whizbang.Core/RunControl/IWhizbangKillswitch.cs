@@ -18,7 +18,10 @@ public interface IWhizbangKillswitch {
   /// <summary>Pause everything through the run-control path: Pausing, then Paused once held work and roles are released.</summary>
   ValueTask PauseAsync(CancellationToken cancellationToken = default);
 
-  /// <summary>Resume after a pause or a stand-down: Resuming, then Running once the permit is open. Refused after a stop.</summary>
+  /// <summary>
+  /// Lift the operator's pause: Resuming, then Running once the permit is open. A stand-down that still holds keeps the
+  /// instance standing by (only its revival lifts it). Refused after a stop.
+  /// </summary>
   ValueTask ResumeAsync(CancellationToken cancellationToken = default);
 
   /// <summary>Stop everything for good through the run-control path: Stopping, then Stopped once held work and roles are released.</summary>
@@ -58,7 +61,7 @@ public sealed class WhizbangKillswitch : IWhizbangKillswitch {
 
   /// <inheritdoc />
   public async ValueTask ResumeAsync(CancellationToken cancellationToken = default) =>
-    await _runControl.ResumeAsync(cancellationToken).ConfigureAwait(false);
+    await _runControl.ResumeAsync(RunHaltReason.Pause, cancellationToken).ConfigureAwait(false);
 
   /// <inheritdoc />
   public async ValueTask StopAsync(CancellationToken cancellationToken = default) =>

@@ -58,7 +58,9 @@ public class StartupPipelineRunnerHaltedDutyTests {
     private int _executions;
     public int Executions => Volatile.Read(ref _executions);
     public StartupStepDescriptor Descriptor { get; } = new() {
-      Name = "Migrate2", RequiredCapability = "migrator", NonHolderBehavior = NonHolderBehavior.Await,
+      Name = "Migrate2",
+      RequiredCapability = "migrator",
+      NonHolderBehavior = NonHolderBehavior.Await,
     };
     public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
       Interlocked.Increment(ref _executions);

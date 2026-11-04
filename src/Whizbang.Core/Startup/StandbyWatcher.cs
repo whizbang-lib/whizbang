@@ -232,7 +232,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     if (_pipelineRunner is not null) {
       _ = await _pipelineRunner.RunAsync(cancellationToken).ConfigureAwait(false);
     }
-    await _runControl.ResumeAsync(cancellationToken).ConfigureAwait(false);
+    await _runControl.ResumeAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
     _standingByForHandshake = false;
   }
 

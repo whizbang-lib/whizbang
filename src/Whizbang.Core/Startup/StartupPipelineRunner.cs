@@ -261,7 +261,25 @@ public sealed class StartupPipelineRunner {
             + $"{transientFailures} consecutive failures — last was {transient.GetType().Name}: "
             + $"{transient.Message}. Failing the step rather than waiting on it indefinitely.");
         }
-      } else if (attempt!.Refusal is not DutyRefusal.Contended) {
+      } else if (attempt!.Refusal is DutyRefusal.Halted && _dutyElector is Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {
+        // #2045: the instance's run permit is closed (paused or standing down). Not permanent: a resume reopens it, and
+        // the permit's own signal says when, so the step waits on it and votes again. The run's token bounds the wait;
+        // a stopped permit is final.
+        transientFailures = 0;
+        await _notifyAsync(o => o.OnStepWaitingAsync(
+          new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, attempt.Detail),
+          cancellationToken)).ConfigureAwait(false);
+        try {
+          await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
+        } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+          return new StartupStepReport(StartupStepOutcome.Failed,
+            $"duty '{descriptor.RequiredCapability}' was refused while this instance's run permit was closed, and the "
+            + "permit was then stopped: the instance is stopping, so the step cannot run");
+        }
+        (attempt, transient) =
+          await _tryAcquireAsync(descriptor.RequiredCapability, cancellationToken).ConfigureAwait(false);
+        continue;
+      } else if (attempt.Refusal is not (DutyRefusal.Contended or DutyRefusal.Halted)) {
         return new StartupStepReport(StartupStepOutcome.Failed,
           $"duty '{descriptor.RequiredCapability}' is unacquirable ({attempt.Refusal}): "
           // A refusal always carries its detail: DutyAttempt.Lost requires one, and a grant ends the loop.

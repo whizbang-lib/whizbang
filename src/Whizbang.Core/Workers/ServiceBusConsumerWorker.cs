@@ -145,7 +145,7 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   public async Task ResumeAllSubscriptionsAsync() {
     if (_runControl() is { } path) {
-      await path.ResumeAsync(CancellationToken.None).ConfigureAwait(false);
+      await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None).ConfigureAwait(false);
       return;
     }
     await _applyAsync(pause: false).ConfigureAwait(false);
