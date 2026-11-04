@@ -16,8 +16,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// and every test process on a machine shares it: two build-server slots, or a CI shard plus nothing else.
 /// </para>
 /// <para>
-/// TUnit's default is eight tests per processor, 96 on a twelve-core build server, which would ask the one
-/// container for more connections than it has and spend most of the run in lock and checkpoint waits.
+/// The budget: a test holds at most 20 connections at its peak (the busiest measured held 19; most hold 2 to 6), two
+/// processes share a container at most, and 100 are left for the server and other projects' setup, so
+/// 8 x 20 x 2 + 100 = 420 of 500. <c>ParallelismPolicyGuardTests</c> checks that sum against the live container. The
+/// measured peak across a whole build server, two shards at once, was 55.
+/// </para>
+/// <para>
+/// Eight rather than more because the tests wait on PostgreSQL, which runs on the same machine: a CI runner has four
+/// processors, a build-server slot six, and two tests per processor keeps the database busy without queuing every
+/// statement behind a lock or a checkpoint. TUnit's default is eight tests per processor, 96 on a twelve-core build
+/// server.
 /// </para>
 /// </remarks>
 public sealed class EFCorePostgresParallelism : IParallelLimit {
