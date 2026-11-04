@@ -430,13 +430,12 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
     var runner = await CreateRunnerAsync(stamped, ps);
-    ActionTestPerspective.ResetUpdatesApplied();
 
     var result = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, updatedId, 200, CancellationToken.None);
 
     await Assert.That(result.EventsProcessed).IsEqualTo(3).Because("the skipped events still count as processed");
     await Assert.That(result.LastEventId).IsEqualTo(purgedId);
-    await Assert.That(ActionTestPerspective.UpdatesApplied).IsEqualTo(0)
+    await Assert.That(ActionTestPerspective.UpdatesAppliedTo(streamId)).IsEqualTo(0)
       .Because("the replay ends in a purge, so folding the update before it is work the purge throws away");
     await using var check = CreateDbContext();
     await Assert.That(await check.Set<PerspectiveRow<ActionTestModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();

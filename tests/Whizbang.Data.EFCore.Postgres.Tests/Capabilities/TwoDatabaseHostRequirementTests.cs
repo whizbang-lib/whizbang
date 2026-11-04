@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Capabilities;
 /// <code-under-test>src/Whizbang.Core/Capabilities/CapabilityVerdict.cs</code-under-test>
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class TwoDatabaseHostRequirementTests : IAsyncDisposable {
   private const string VECTORS = "vectors";

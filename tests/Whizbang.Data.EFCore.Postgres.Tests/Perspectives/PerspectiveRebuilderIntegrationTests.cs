@@ -2756,7 +2756,6 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
     }
     await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
-    RebuildBalancePerspective.ResetCreditsApplied();
 
     var rebuilder = new PerspectiveRebuilder(
         sp.GetRequiredService<IServiceScopeFactory>(),
@@ -2765,7 +2764,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(result.StreamsPurged).IsEqualTo(1);
-    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(0)
+    await Assert.That(RebuildBalancePerspective.CreditsAppliedTo(streamId)).IsEqualTo(0)
       .Because("the stream ends in a purge, so folding its credits is work the last apply throws away");
     await using var check = CreateDbContext();
     await Assert.That(await check.Set<PerspectiveRow<RebuildBalanceModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();
@@ -2782,7 +2781,6 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
       await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
     }
-    RebuildBalancePerspective.ResetCreditsApplied();
 
     var rebuilder = new PerspectiveRebuilder(
         sp.GetRequiredService<IServiceScopeFactory>(),
@@ -2791,7 +2789,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(result.StreamsPurged).IsEqualTo(1).Because("the row still ends purged: a later credit does not resurrect it");
-    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(2)
+    await Assert.That(RebuildBalancePerspective.CreditsAppliedTo(streamId)).IsEqualTo(2)
       .Because("the purge was not the last event, so the stream is replayed as before: the first credit is folded "
              + "and the one after the purge is offered to Apply to see whether it resurrects the row");
   }

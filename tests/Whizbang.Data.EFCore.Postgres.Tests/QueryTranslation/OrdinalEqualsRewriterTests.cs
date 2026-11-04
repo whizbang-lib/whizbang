@@ -45,7 +45,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 // static. The matrix selects a mechanism per case, so a class running beside it would have the
 // mode changed underneath it and would assert the other mechanism's output. One key for all of
 // them rather than a key per concern, because a second key is exactly how this went wrong.
-[NotInParallel("EFCorePostgresTests")]
 public class OrdinalEqualsRewriterTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=ordinal;Username=u;Password=p";
 

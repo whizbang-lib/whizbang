@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// supported set the documentation lists is exactly the one compiled.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-filters</docs>
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "Captured on purpose: a const local is inlined as a literal and the parameterized path would go untested.")]

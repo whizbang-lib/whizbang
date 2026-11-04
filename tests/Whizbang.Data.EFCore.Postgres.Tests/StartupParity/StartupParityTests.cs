@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.StartupParity;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class StartupParityTests {
   private PerTestDatabase _database;
@@ -255,11 +254,18 @@ public class StartupParityTests {
       await observer.AttemptFailed.Task;
       await Assert.That(gate.IsReady).IsFalse().Because("the database is not there, so nothing is migrated");
 
-      await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-        await admin.OpenAsync();
-        await using var create = new NpgsqlCommand($"CREATE DATABASE {late.Name}", admin);
-        await create.ExecuteNonQueryAsync();
-      }
+      // Under the factory's retry: other tests create databases at the same time, and a create that loses the race
+      // for the template fails outright (55006).
+      await PerTestDatabaseFactory.RunWithRetryAsync(
+        async () => {
+          await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await admin.OpenAsync();
+          await using var create = new NpgsqlCommand($"CREATE DATABASE {late.Name}", admin);
+          await create.ExecuteNonQueryAsync();
+        },
+        PerTestDatabaseFactory.IsAlreadyCreated,
+        TimeProvider.System,
+        CancellationToken.None);
       observer.ReleaseFailure();
 
       await gate.WaitForReadyAsync(CancellationToken.None);

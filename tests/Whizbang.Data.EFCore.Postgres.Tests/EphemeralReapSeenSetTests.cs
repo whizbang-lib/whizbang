@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>fundamentals/events/ephemeral-events#reap-deletes-what-the-hook-saw</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class EphemeralReapSeenSetTests : EFCoreTestBase {
   private const string EVENT_TYPE = "Whizbang.Tests.SeenSetEvent";

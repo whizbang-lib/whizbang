@@ -40,7 +40,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_action_test";

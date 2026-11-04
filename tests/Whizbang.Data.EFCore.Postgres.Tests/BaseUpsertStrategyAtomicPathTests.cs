@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// race is structurally impossible: ON CONFLICT (id) DO UPDATE collapses both attempts
 /// into a single round-trip — the second arrival becomes an UPDATE in the same statement.
 /// </remarks>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   [Test]

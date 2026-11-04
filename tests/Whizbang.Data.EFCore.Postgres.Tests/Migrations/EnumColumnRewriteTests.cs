@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/physical-fields#enum-text-columns</docs>
 /// <tests>src/Whizbang.Data.Postgres/EnumColumnRewriteSql.cs</tests>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class EnumColumnRewriteTests : IAsyncDisposable {
   private const long LOCK_ID = 987654322;

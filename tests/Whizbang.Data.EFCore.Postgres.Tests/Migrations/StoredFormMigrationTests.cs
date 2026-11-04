@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <tests>src/Whizbang.Data.Postgres/StoredFormStep.cs</tests>
 /// <tests>src/Whizbang.Data.Postgres/StoredFormMigrationJournal.cs</tests>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class StoredFormMigrationTests : IAsyncDisposable {
   private const string MIGRATION = "176_StoredFormMigrations";

@@ -10,25 +10,31 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.TestIsolation;
 
 /// <summary>
 /// A test that resets or clears one of the process-wide registries the database tests read (the model registrars,
-/// the physical field and hydrator registries, the DbContext registration and initialization registries) holds the
-/// <c>EFCorePostgresTests</c> key, so the reset never overlaps a test that relies on what it removes (#1903).
+/// the physical field and hydrator registries, the DbContext registration and initialization registries, the data
+/// coalescers, the stream groups) runs alone, under a <c>[NotInParallel]</c> with no key, so the reset never overlaps
+/// a test that relies on what it removes (#1903, #2069).
 /// </summary>
 /// <remarks>
+/// <para>
 /// The GraphQL jsonb containment test failed in a full shard run and passed alone: a sibling under the shared key
 /// had emptied the physical field registry, the test's own context build refills it through the model registrars,
 /// and a registrar test under a different key had emptied those for the length of each of its tests. The query then
-/// had no physical column to translate to and failed with an execution error in milliseconds. A registry reset under
-/// any other key leaves the same window open for every database test that runs beside it.
+/// had no physical column to translate to and failed with an execution error in milliseconds.
+/// </para>
+/// <para>
+/// Every database test reads these registries and, since #2069, runs in parallel, so no key is narrow enough: a key
+/// only orders the tests that hold it. A test with no key runs after every other test has finished, one at a time,
+/// which is the one placement that cannot overlap a reader.
+/// </para>
 /// </remarks>
 [Category("Shard1")]
 public partial class SharedRegistryResetIsolationTests {
-  private const string SHARED_KEY = "EFCorePostgresTests";
-
-  [GeneratedRegex(@"\b\w+Registry\.(ResetForTesting|Clear)\(")]
+  [GeneratedRegex(@"\b\w+(Registry|Coalescer|Hydrator|TestSeam)\.(ResetForTesting|Clear)\(")]
   private static partial Regex _resetsARegistry();
 
-  [GeneratedRegex(@"\[NotInParallel\((""EFCorePostgresTests""|\[[^\]]*""EFCorePostgresTests""[^\]]*\])\)\]")]
-  private static partial Regex _holdsTheSharedKey();
+  /// <summary>The attribute with no key, which TUnit runs after everything else and one test at a time.</summary>
+  [GeneratedRegex(@"^\s*\[NotInParallel\]", RegexOptions.Multiline)]
+  private static partial Regex _runsAlone();
 
   // The build maps source paths (CallerFilePath reads "/_/..." in CI), so the project is found from the test
   // assembly's location instead: walk up to the repository root, then into this project's folder.
@@ -45,7 +51,7 @@ public partial class SharedRegistryResetIsolationTests {
   }
 
   [Test]
-  public async Task EveryTestThatResetsASharedRegistry_HoldsTheDatabaseTestsKeyAsync() {
+  public async Task EveryTestThatResetsASharedRegistry_RunsAloneAsync() {
     var projectDirectory = _projectDirectory();
     var sources = Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
       .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
@@ -59,11 +65,12 @@ public partial class SharedRegistryResetIsolationTests {
       .Because("the scan must find the registrar reset that raced the GraphQL test, or it proves nothing");
 
     var offenders = sources
-      .Where(source => !_holdsTheSharedKey().IsMatch(source.Text))
+      .Where(source => !_runsAlone().IsMatch(source.Text))
       .Select(source => Path.GetRelativePath(projectDirectory, source.Path))
       .Order(StringComparer.Ordinal)
       .ToList();
     await Assert.That(offenders).IsEmpty()
-      .Because($"these reset a registry the database tests read without holding the {SHARED_KEY} key: {string.Join(", ", offenders)}");
+      .Because("these reset a registry the database tests read without running alone ([NotInParallel] with no key): "
+        + string.Join(", ", offenders));
   }
 }

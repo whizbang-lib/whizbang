@@ -55,6 +55,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </para>
 /// </remarks>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class PerspectiveProbeCostScenarioTests : EFCoreTestBase {
   /// <summary>Streams carrying a pending perspective backlog, which is what makes the misestimate.</summary>

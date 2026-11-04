@@ -22,12 +22,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </para>
 /// </summary>
 /// <remarks>
-/// Registers only test-local model types, so it never disturbs another class's mappings. It still
-/// joins the "EFCorePostgresTests" group with the other registry-touching classes, whose
-/// <c>Clear()</c> calls would otherwise wipe these registrations mid-test.
+/// Registers only test-local model types, so it never disturbs another class's mappings, and runs in parallel: the
+/// classes that <c>Clear()</c> the registry run alone, after every parallel test, so they cannot wipe these
+/// registrations mid-test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/QueryTranslation/PhysicalFieldExpressionVisitor.cs</code-under-test>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalFieldExpressionVisitorTests {
 

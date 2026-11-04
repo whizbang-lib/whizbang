@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.StartupParity;
 /// <code-under-test>src/Whizbang.Data.Postgres/WhizbangDatabaseInitializerService.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public sealed partial class StartupMigrationStepsTests {
   private static readonly StartupDriver _driver = StartupDriver.For("efcore");

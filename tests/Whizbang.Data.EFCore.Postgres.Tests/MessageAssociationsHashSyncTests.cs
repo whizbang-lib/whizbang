@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// test assembly are fixed at compile time.
 /// </para>
 /// </summary>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
 [Category("Shard2")]
 public class MessageAssociationsHashSyncTests : EFCoreTestBase {

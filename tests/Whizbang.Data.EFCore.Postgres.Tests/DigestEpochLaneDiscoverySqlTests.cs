@@ -40,7 +40,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
 [Category("Shard2")]
-[NotInParallel("EFCorePostgresTests")]
 public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
   private const string ZERO = "00000000-0000-0000-0000-000000000000";
   private const string LANE_A = "0a000000-0000-0000-0000-00000000000a";

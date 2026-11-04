@@ -34,7 +34,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextNotificationConnectionStringFallback.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class DutyElectionByoDataSourceE2ETests : EFCoreTestBase {
   private sealed class Pod : IServiceInstanceProvider {

@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>operations/dead-letter-queue/recovery</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/241_RecoveredWorkReentersThroughItsStore.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
   private const string TOPIC = "recovered-work-topic";

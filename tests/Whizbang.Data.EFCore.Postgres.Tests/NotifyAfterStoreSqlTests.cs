@@ -571,7 +571,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
         // signal here, not wall-clock time.
         await using (var lockProbe = holderConn.CreateCommand()) {
           lockProbe.Transaction = holderTx;
-          lockProbe.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.query ILIKE '%store_inbox_messages%')";
+          lockProbe.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database() AND a.query ILIKE '%store_inbox_messages%')";
           while (!storeTask.IsCompleted && !(bool)(await lockProbe.ExecuteScalarAsync() ?? false)) {
             await Task.Yield();
           }

@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class PartitionAssignmentClaimCostScenarioTests : EFCoreTestBase {
   /// <summary>The refresh read's ceiling: one keyed read of a one-row table, an index page and a heap page.</summary>

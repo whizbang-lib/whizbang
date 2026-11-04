@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.SecondPass;
 /// conjunction whose first term is anything else is left exactly as written. No database.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/QueryTranslation/PhysicalJsonbContainmentRewriter.cs</code-under-test>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Unit")]
 [Category("Shard2")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",

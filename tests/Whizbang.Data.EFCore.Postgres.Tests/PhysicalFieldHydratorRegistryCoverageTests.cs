@@ -16,12 +16,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// wrapper, leaving this overload's own null guards and assignment unexercised.
 /// </summary>
 /// <remarks>
-/// The registry is process-wide static, so these tests clear it around themselves and serialize
-/// against the sibling test class under the SAME constraint key: a registration left behind by
-/// either class would change what the other's materialization produces.
+/// The registry is process-wide static, so these tests clear it around themselves and run alone, as the
+/// sibling test class does: a registration left behind by either class would change what the other's
+/// materialization produces.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PhysicalFieldHydratorRegistry.cs</code-under-test>
-[NotInParallel(["PhysicalFieldHydratorRegistry", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 public class PhysicalFieldHydratorRegistryCoverageTests {
 

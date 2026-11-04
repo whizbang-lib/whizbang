@@ -22,7 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Shard3")]
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 public class OutboxInboxFailureReasonSqlTests : EFCoreTestBase {
   private const int LEASE_EXPIRED = 6;
 

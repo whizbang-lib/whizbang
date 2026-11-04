@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
   private const string COLLECTIVE_EVENT_TYPE = "Whizbang.Tests.FlipCollectiveEvent, Whizbang.Tests";

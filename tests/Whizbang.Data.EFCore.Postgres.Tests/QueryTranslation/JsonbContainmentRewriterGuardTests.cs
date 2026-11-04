@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>contributors/perspective-query-pipeline</docs>
 [Category("Shard1")]
 // Serialized with every other class that touches the containment switch, which is process static.
-[NotInParallel("EFCorePostgresTests")]
 public class JsonbContainmentRewriterGuardTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=guards;Username=u;Password=p";
 

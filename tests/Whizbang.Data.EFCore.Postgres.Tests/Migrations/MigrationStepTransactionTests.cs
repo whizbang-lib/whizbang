@@ -37,7 +37,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public partial class MigrationStepTransactionTests {
   private PerTestDatabase _database;

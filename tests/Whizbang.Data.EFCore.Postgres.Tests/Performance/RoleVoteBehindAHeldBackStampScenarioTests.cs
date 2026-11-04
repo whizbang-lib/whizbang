@@ -43,6 +43,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class RoleVoteBehindAHeldBackStampScenarioTests : EFCoreTestBase {
   private const string STAMPER_ROLE = "commit-stamper";

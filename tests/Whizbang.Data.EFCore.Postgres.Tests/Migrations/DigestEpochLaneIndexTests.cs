@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Shard1")]
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 public class DigestEpochLaneIndexTests : EFCoreTestBase {
   private const string INDEX = "idx_event_store_origin_lane";
 

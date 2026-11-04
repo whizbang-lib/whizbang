@@ -25,15 +25,27 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// causing 60+ simultaneous container startups and Docker resource exhaustion.
 /// </summary>
 /// <remarks>
-/// Uses NotInParallel to prevent database contention when multiple tests
-/// compete for the shared PostgreSQL container connections.
+/// <para>
+/// Parallel by default (#2069). Every test gets a database of its own, so the shared container is not shared state:
+/// what bounds how many run at once is <see cref="EFCorePostgresParallelism"/>, sized to the container's connections.
+/// A test class serializes only on what it really shares with other tests (a process-wide static, a registry it
+/// resets, a cluster-wide object), with a key named for that resource and a comment saying why; see
+/// <c>ai-docs/efcore-test-parallelism.md</c> for the classification and <c>TestIsolation/ParallelismPolicyGuardTests</c>
+/// for the rules a build enforces.
+/// </para>
+/// <para>
+/// The database is created and dropped through <see cref="PerTestDatabaseFactory"/>: with many tests creating
+/// databases at once, a <c>CREATE DATABASE</c> can lose the race for the template (55006), which the factory retries.
+/// </para>
 /// </remarks>
-[NotInParallel("EFCorePostgresTests")]
 public abstract class EFCoreTestBase : IAsyncDisposable {
   static EFCoreTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
   }
+
+  /// <summary>Names the scratch databases this base creates, so a leftover one is traceable to it.</summary>
+  private const string DATABASE_PREFIX = "ef";
 
   private string? _testDatabaseName;
   private NpgsqlDataSource? _dataSource;
@@ -48,17 +60,12 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // Initialize shared container (only starts once, subsequent calls return immediately)
       await SharedPostgresContainer.InitializeAsync();
 
-      // Create unique database for THIS test
-      _testDatabaseName = $"test_{Guid.NewGuid():N}";
-
-      // Connect to main database to create the test database
-      await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await adminConnection.OpenAsync();
-      await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+      // Create a database of this test's own, through the factory that retries template contention.
+      var database = await PerTestDatabaseFactory.CreateAsync(DATABASE_PREFIX);
+      _testDatabaseName = database.Name;
 
       // Build connection string for the test database
-      var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-        Database = _testDatabaseName,
+      var builder = new NpgsqlConnectionStringBuilder(database.ConnectionString) {
         // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
         Timezone = "UTC",
         // Add Include Error Detail=true to see detailed error messages for debugging
@@ -122,45 +129,19 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
     // Drop the test-specific database to clean up
     if (_testDatabaseName != null) {
-      try {
-        // Close all connections to the test database first
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        // Return this database's pooled sessions before asking PostgreSQL to drop it. Npgsql
-        // pools per connection string, and a pooled session that reconnects in the gap between
-        // terminating backends and issuing the DROP is enough to make the DROP fail -- the two
-        // statements race each other. Clearing the pool removes the reconnect.
+      // Return this database's pooled sessions before asking PostgreSQL to drop it. Npgsql pools per connection
+      // string, and a pooled session that reconnects in the gap between terminating backends and issuing the DROP
+      // is enough to make the DROP fail. Clearing the pool removes the reconnect.
+      if (!string.IsNullOrEmpty(ConnectionString)) {
         NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
-
-        // WITH (FORCE) terminates remaining sessions and drops in one step instead of two racing
-        // ones. Without it these drops fail often enough to matter: a shared container was found
-        // holding 71 leaked test databases after two hours, and the cost is not just disk. The
-        // same suite slowed from 6m52s to 16m37s as they accumulated, and every extra database
-        // brings backends whose open transactions hold the cluster's cleanup horizon back --
-        // which is what makes VACUUM FULL reclaim nothing and produced the flake in issue #671.
-        //
-        // Retried because FORCE is not quite atomic against an arriving connection: a background
-        // worker the test started can reconnect between the terminate and the drop, and the drop
-        // then fails with the database still in use. One pass left 21 databases behind across a
-        // 2,675-test run; the ones that survive are droppable moments later, so what is needed is
-        // another attempt rather than a different statement.
-        var attempt = 1;
-        while (true) {
-          try {
-            await adminConnection.ExecuteAsync(
-              $"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-            break;
-          } catch when (attempt < 3) {
-            NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
-            await Task.Delay(TimeSpan.FromMilliseconds(150));
-            attempt++;
-          }
-        }
-      } catch {
-        // Still swallowed: a teardown failure must not mask the result of the test that just ran.
       }
 
+      // DropAsync uses WITH (FORCE), retries the contention a busy shared container produces, and abandons rather
+      // than throws, because a teardown failure must not mask the result of the test that just ran. Dropping
+      // matters beyond disk: a shared container once held 71 leaked test databases after two hours, the suite
+      // slowed from 6m52s to 16m37s as they accumulated, and their open transactions held the cluster's cleanup
+      // horizon back (#671).
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
   }

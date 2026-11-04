@@ -136,7 +136,6 @@ public class SchemaCommandBoundarySegmentTests {
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SchemaCommandBoundaryTests : IAsyncDisposable {
   private const string TABLE = "wh_per_boundary";

@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public sealed class SchemaStepRunnerTests : IAsyncDisposable {
   private const string SCHEMA = "public";

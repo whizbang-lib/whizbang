@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// the planner uses the index and that the rows match is <see cref="PhysicalJsonbContainmentIntegrationTests"/>.
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "Captured on purpose: a const local is inlined as a literal and the parameterized path would go untested.")]

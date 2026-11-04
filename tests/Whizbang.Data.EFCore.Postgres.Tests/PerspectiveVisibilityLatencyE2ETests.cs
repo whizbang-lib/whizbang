@@ -58,7 +58,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Asserts an unscaled wall-clock latency budget: runs alone so it measures the code, not its neighbors.
 [Category("Shard1")]
 public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
 

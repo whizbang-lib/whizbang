@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// persistence profile, so the atomic upsert, the change-tracker write and every read agree.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalJsonbColumnBindingTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=jsonbbind;Username=u;Password=p";

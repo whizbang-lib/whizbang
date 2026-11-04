@@ -31,7 +31,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/perspective-indexes</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/174_EnsureIndex.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class EnsureIndexFunctionTests {
   private const string TABLE = "wh_per_ensure_probe";

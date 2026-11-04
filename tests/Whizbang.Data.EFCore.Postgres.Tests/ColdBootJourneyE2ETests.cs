@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/ReadModelsReadyGate.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/StartupPipelineHosting.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class ColdBootJourneyE2ETests {
 
@@ -87,14 +86,7 @@ public class ColdBootJourneyE2ETests {
   [Before(Test)]
   public async Task SetupColdDatabaseAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"coldboot_{Guid.NewGuid():N}";
-
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = admin.CreateCommand();
-      create.CommandText = $"CREATE DATABASE {_databaseName}";
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("coldboot")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -123,20 +115,7 @@ public class ColdBootJourneyE2ETests {
       _dataSource = null;
     }
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var terminate = admin.CreateCommand();
-        terminate.CommandText = $@"
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_databaseName}' AND pid <> pg_backend_pid()";
-        await terminate.ExecuteNonQueryAsync();
-        await using var drop = admin.CreateCommand();
-        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)";
-        await drop.ExecuteNonQueryAsync();
-      } catch {
-        // container teardown reclaims stragglers
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
   }
