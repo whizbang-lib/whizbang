@@ -1973,7 +1973,6 @@ jobs:
           repositories: whizbang-lib.github.io
           permission-contents: write
           permission-pull-requests: write
-          permission-actions: write
 
       - name: Checkout docs repo
         if: steps.trx.outputs.have == 'true'
@@ -1997,8 +1996,11 @@ jobs:
 
       # Publishes to develop, never to main: main moving on its own is what let the
       # docs site's two branches drift apart. A release carries this forward to main.
-      # The docs develop ruleset requires PRs (0 approvals, no required checks), so
-      # publish = push branch + create PR + instant merge. Skips when the status is
+      # The docs develop ruleset requires PRs and the Build and Gate · Linked change checks, so
+      # publish = push branch + open a PR with auto-merge on (#2056). The PR merges as soon as the docs
+      # Build passes, and the docs repo starts its release when a test-status PR merges
+      # (release-on-test-status.yml there). An immediate merge through the bot's bypass was refused at
+      # times, and the five quick retries then left the PR open for good. Skips when the status is
       # byte-identical to what is already published.
       - name: Publish to docs develop
         id: publish
@@ -2007,47 +2009,59 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # `published` is only ever set on a successful merge; unset reads as falsy.
-          git config user.name "whizbang-ci"
-          git config user.email "ci@whizba.ng"
           git add src/assets/data/test-status
           if git diff --cached --quiet; then
             echo "Test status unchanged — nothing to publish"
             exit 0
           fi
           BRANCH="test-status/${{ github.run_id }}"
-          git checkout -b "$BRANCH"
-          # -s: the DCO sign-off check (Gate · DCO sign-off) requires it on every pull request commit,
-          # and this identity is not a GitHub bot account, so it is not exempt.
-          git commit -s -m "chore(test-status): whizbang run ${{ github.run_id }} (${GITHUB_SHA:0:8})"
-          # Force: a re-run shares the run_id, so a prior attempt that died between its
-          # branch push and PR merge leaves this branch behind — overwrite, don't collide.
-          git push --force origin "$BRANCH"
+          DOCS=whizbang-lib/whizbang-lib.github.io
+          # The commit is made through the API with the release app's token, not with git (#2061): GitHub
+          # signs it and attributes it to the app, and the docs develop ruleset requires signed commits, so
+          # an unsigned commit could only ever merge by bypassing it (and auto-merge never would).
+          BASE=$(git rev-parse HEAD)
+          ENTRIES=$(mktemp)
+          echo '[]' > "$ENTRIES"
+          while IFS=$'\t' read -r st file; do
+            if [ "$st" = D ]; then
+              jq --arg p "$file" '. + [{path: $p, mode: "100644", type: "blob", sha: null}]' "$ENTRIES" > "$ENTRIES.next"
+            else
+              BLOB=$(base64 -w0 "$file" | jq -Rs '{content: ., encoding: "base64"}' \
+                | gh api "repos/$DOCS/git/blobs" --input - --jq .sha)
+              jq --arg p "$file" --arg s "$BLOB" '. + [{path: $p, mode: "100644", type: "blob", sha: $s}]' "$ENTRIES" > "$ENTRIES.next"
+            fi
+            mv "$ENTRIES.next" "$ENTRIES"
+          done < <(git diff --cached --name-status --no-renames)
+          TREE=$(jq --arg b "$(git rev-parse HEAD^{tree})" '{base_tree: $b, tree: .}' "$ENTRIES" \
+            | gh api "repos/$DOCS/git/trees" --input - --jq .sha)
+          MESSAGE=$(printf 'chore(test-status): whizbang run %s (%s)\n\nSigned-off-by: whizbang-release-bot[bot] <340982866+whizbang-release-bot[bot]@users.noreply.github.com>' \
+            "${{ github.run_id }}" "${GITHUB_SHA:0:8}")
+          COMMIT=$(jq -n --arg m "$MESSAGE" --arg t "$TREE" --arg p "$BASE" '{message: $m, tree: $t, parents: [$p]}' \
+            | gh api "repos/$DOCS/git/commits" --input - --jq .sha)
+          # A re-run shares the run_id, so a prior attempt's branch is moved to this commit, not collided with.
+          gh api "repos/$DOCS/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$COMMIT" --silent \
+            || gh api -X PATCH "repos/$DOCS/git/refs/heads/$BRANCH" -f sha="$COMMIT" -F force=true --silent
           gh pr create --base develop --head "$BRANCH" \
             --title "chore(test-status): run ${{ github.run_id }}" \
             --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})." \
-            || echo "PR for $BRANCH already exists (prior attempt) — merging it with the force-pushed content"
-          for i in 1 2 3 4 5; do
-            if gh pr merge "$BRANCH" --squash --delete-branch; then
-              echo "published=true" >> "$GITHUB_OUTPUT"
-              exit 0
+            || echo "PR for $BRANCH already exists (prior attempt); it carries the force-pushed content"
+          # Only the newest snapshot may land: an older one whose checks finish later would overwrite
+          # newer data. Run ids grow, so an open test-status PR from an earlier run is closed, and if a
+          # later run's PR is already open this one is the stale one and closes itself instead.
+          RUN=${{ github.run_id }}
+          NEWER=0
+          while read -r number run; do
+            [ -n "$number" ] || continue
+            if [ "$run" -lt "$RUN" ]; then
+              gh pr close "$number" --delete-branch --comment "Superseded by the test-status data from run $RUN." \
+                || echo "::warning::could not close superseded test-status PR #$number"
+            elif [ "$run" -gt "$RUN" ]; then
+              NEWER=1
             fi
-            echo "merge attempt $i failed; retrying in 5s"
-            sleep 5
-          done
-          echo "Could not merge test-status PR — leaving it open for manual merge"
-
-      # Carries what was just published on to main. start-release cuts a release
-      # branch from docs develop, waits for its Build, then merges — which tags,
-      # releases and deploys the site. Skipped when nothing was published, so an
-      # unchanged run does not cut an empty release.
-      - name: Release docs to main
-        if: steps.publish.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh workflow run start-release.yml \
-            --repo whizbang-lib/whizbang-lib.github.io \
-            --ref develop \
-            -f release_type=patch \
-            -f auto_merge=true
+          done < <(gh pr list --base develop --state open --limit 100 --json number,headRefName \
+            --jq '.[] | select(.headRefName | test("^test-status/[0-9]+$")) | "\(.number) \(.headRefName | ltrimstr("test-status/"))"')
+          if [ "$NEWER" = 1 ]; then
+            gh pr close "$BRANCH" --delete-branch --comment "A later run's test-status data is already open; this older snapshot is not published."
+            exit 0
+          fi
+          gh pr merge "$BRANCH" --auto --squash --delete-branch

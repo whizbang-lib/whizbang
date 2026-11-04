@@ -81,6 +81,46 @@ public sealed partial class StartupMigrationStepsTests {
   }
 
   /// <summary>
+  /// A fresh database's pass runs every file for the first time, so it re-runs none: the stale-definition sweep finds
+  /// every framework function missing, and says nothing of a file the pass runs anyway. Before, it logged one
+  /// "re-running because ... (missing)" line per file on every fresh database, each naming a replay that never
+  /// happened.
+  /// </summary>
+  /// <docs>operations/infrastructure/migrations#stale-sweep-names-only-what-it-adds</docs>
+  [Test]
+  [Timeout(300000)]
+  public async Task AFreshDatabase_LogsNoReRunOfAFileThePassRunsAnywayAsync(CancellationToken cancellationToken) {
+    var log = new CapturedLog();
+
+    await _startAsync(log, cancellationToken: cancellationToken);
+
+    await Assert.That(log.All.Where(l => l.Contains("re-running because", StringComparison.Ordinal))).IsEmpty()
+      .Because("every file is new to a fresh database, so the sweep adds none of them to the run");
+  }
+
+  /// <summary>
+  /// The sweep still names what it puts back: a framework function missing from a current database is re-created by
+  /// re-running its last-word file, and that file, alone, is logged with the function marked missing.
+  /// </summary>
+  /// <docs>operations/infrastructure/migrations#stale-sweep-names-only-what-it-adds</docs>
+  [Test]
+  [Timeout(300000)]
+  public async Task AFunctionMissingFromACurrentDatabase_IsTheOneReRunLoggedAsync(CancellationToken cancellationToken) {
+    await _startAsync(new CapturedLog(), cancellationToken: cancellationToken);
+    await _executeAsync("DROP FUNCTION reconcile_message_type_registry(JSONB)");
+    var restart = new CapturedLog();
+
+    await _startAsync(restart, cancellationToken: cancellationToken);
+
+    var reRuns = restart.All.Where(l => l.Contains("re-running because", StringComparison.Ordinal)).ToList();
+    await Assert.That(reRuns).Count().IsEqualTo(1);
+    await Assert.That(reRuns[0]).Contains("reconcile_message_type_registry (missing)");
+    await Assert.That(await _scalarAsync<long>(
+        "SELECT count(*) FROM pg_proc WHERE proname = 'reconcile_message_type_registry'")).IsEqualTo(1L)
+      .Because("the last-word file re-ran and re-created it");
+  }
+
+  /// <summary>
   /// A step that fails keeps every step before it committed, records its own failure, and says where the pass
   /// stopped; the next attempt resumes at that step and runs nothing that is committed and unchanged.
   /// </summary>
@@ -140,6 +180,8 @@ public sealed partial class StartupMigrationStepsTests {
     await Assert.That(log.All).DoesNotContain(l => l.Contains("re-running because", StringComparison.Ordinal)
         && plan.Before.Any(b => l.Contains(b, StringComparison.Ordinal)))
       .Because("a committed file's functions are in place, so no sweep finds them missing");
+    await Assert.That(log.All).DoesNotContain(l => l.Contains("re-running because", StringComparison.Ordinal))
+      .Because("the failed step and every step after it run because they are not recorded, not because the sweep found them");
     await Assert.That(retried[^1]).StartsWith("Information Migration complete: ");
   }
 

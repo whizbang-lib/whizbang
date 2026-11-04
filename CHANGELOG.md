@@ -1377,6 +1377,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `whizbang.stream_integrity.redelivery_requests_ignored`, reason `own_request`). The subscription-growth backfill
   directs a request at each known domain owner on its request topic; only types with no usable owner fall back to the
   broadcast.
+- **The stale-definition line names only a file it re-runs (#1636).** The EF Core schema pass compares each framework
+  function in the database with its last-word migration and re-runs a file whose function is missing or older. It
+  logged `Migration <file>: re-running because the database's definition of <functions> (missing) does not match this
+  file` for every file whose functions did not exist yet, so a fresh database logged one such line for nearly every
+  migration, and a pass that failed and retried logged one for every file after the failure, each blaming a replay
+  that never happened. The line is now written only for a file the comparison adds to the run; a file already in it
+  (new, changed, or not yet reached) is not named. Which files run is unchanged.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The
