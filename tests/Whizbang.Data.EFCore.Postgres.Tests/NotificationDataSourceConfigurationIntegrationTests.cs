@@ -88,7 +88,8 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
     });
 
     services.AddSingleton<PgSharedNotifyConnection>();
-    services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    // #2046: the stamper hears its wakes on the signal bus; this test drives it by its poll.
+    services.AddSingleton<Whizbang.Core.Signals.ISignalBus>(Whizbang.Core.Signals.NullSignalBus.Instance);
     services.AddSingleton<PgCommitOrderStamperWorker>();
     // #2044: the stamper leads only through a duty elector. The role elector votes through the same notification
     // data source, so it authenticates the same way the stamper does.
