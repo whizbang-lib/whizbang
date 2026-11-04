@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// fast-path hash comparison, retry logic, and PgBouncer-compatible transaction-level locking.
 /// </summary>
 [Category("Integration")]
-[Category("Shard5")]
+[Category("Shard3")]
 public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   // ═══════════════════════════════════════════════════════════════════════════
