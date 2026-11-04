@@ -1440,6 +1440,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscription-expansion pass treats those newly stored types as expansions and backfills them under the existing caps,
   asking each type's known owner directly (#2032) and broadcasting only for a type with no known owner;
   `whizbang.stream_integrity.backfills_requested` counts them.
+- **Every consumed event's namespace is subscribed (#2065).** The event-namespace registry that decides the transport
+  subscriptions discovered perspectives and `IReceptor<TEvent>` only, so an event consumed by a synchronous receptor, a
+  notification tag or the collective sink had no subscription for its namespace and was never delivered. A service
+  consuming such an event may create one more subscription on its next start.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The
