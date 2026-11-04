@@ -127,6 +127,39 @@ public class MultiStreamCommandWorkerLoopTests {
   }
 
   [Test]
+  public async Task Loop_ANewRunSignalOnTheBus_WakesTheWorkerThroughItsSubscriberAsync() {
+    // #2046: the new-run notice arrives as MultiStreamWorkSignal on the signal bus; the host's subscriber turns it into
+    // an immediate pass. The poll is an hour, so the run below is worked only if the signal woke the loop.
+    var store = new LoopStore();
+    var worker = _worker(store);
+    var bus = new Whizbang.Core.Signals.SignalBus([new Whizbang.Core.Signals.InMemorySignalTransport()], []);
+    await bus.StartAsync();
+    var subscriber = new Whizbang.Data.Postgres.MultiStream.MultiStreamCommandSubscriber(bus, worker);
+    var (first, stopFirst) = _nextPass(worker);
+    var run = Guid.CreateVersion7();
+    var completed = new TaskCompletionSource<MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnRunCompleted += c => completed.TrySetResult(c);
+
+    await subscriber.StartAsync(CancellationToken.None);
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await Assert.That(await first.WaitAsync(_deadline)).IsEqualTo(0);
+      stopFirst();
+      store.Claims.Enqueue([_item(run, Guid.CreateVersion7())]);
+      store.Completions.Enqueue([new MultiStreamRunCompletion(run, _commandType, 1, 1, 0)]);
+
+      await bus.PublishAsync(new Whizbang.Core.Signals.MultiStreamWorkSignal());
+
+      var completion = await completed.Task.WaitAsync(_deadline);
+      await Assert.That(completion.RunId).IsEqualTo(run)
+        .Because("the signal on the bus, not the hour-long poll, started the pass that worked the new run");
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+      await subscriber.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
   public async Task Loop_AFullBatch_IsFollowedAtOnceByAnotherPassAsync() {
     var store = new LoopStore();
     var run = Guid.CreateVersion7();

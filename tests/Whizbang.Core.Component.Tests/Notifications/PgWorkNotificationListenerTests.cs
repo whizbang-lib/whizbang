@@ -74,6 +74,18 @@ public class PgWorkNotificationListenerTests {
   }
 
   [Test]
+  public async Task ASignal_WithNoOnSignalHandler_IsHarmless_AndStillStampsLastSignalAtAsync() {
+    // A host can start the listener before any worker attaches to OnSignal; a doorbell arriving then must not throw on
+    // the bus's dispatch path.
+    var (listener, bus, _, time) = _build();
+    await ((IHostedService)listener).StartAsync(CancellationToken.None);
+
+    await Assert.That(async () => await bus.PublishAsync(new DeadLetterReadySignal(), SignalTarget.Streams([Guid.CreateVersion7()])))
+      .ThrowsNothing();
+    await Assert.That(listener.LastSignalAt).IsEqualTo(time.GetUtcNow());
+  }
+
+  [Test]
   public async Task BeforeStart_AndAfterStop_NothingIsHeardAsync() {
     var (listener, bus, _, _) = _build();
     var received = new List<WorkSignalCategory>();
