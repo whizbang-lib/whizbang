@@ -47,6 +47,28 @@ public class WhizbangReceptorRegistryQueryConsumedMessagesTests {
   }
 
   [Test]
+  public async Task FindConsumedMessage_FindsByTypeAndAssembly_IgnoringVersionDetailsAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(_contribution(
+      new ConsumedMessageInfo("MyApp.Shipped, MyApp", IsEvent: true)));
+
+    await Assert.That(WhizbangReceptorRegistryQuery.FindConsumedMessage("MyApp.Shipped, MyApp, Version=2.0.0.0"))
+      .IsEqualTo(new ConsumedMessageInfo("MyApp.Shipped, MyApp", IsEvent: true));
+    await Assert.That(WhizbangReceptorRegistryQuery.FindConsumedMessage("MyApp.Other, MyApp")).IsNull();
+  }
+
+  [Test]
+  public async Task Adapter_FindConsumedMessage_ReadsTheGeneratedRegistryAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(_contribution(
+      new ConsumedMessageInfo("MyApp.Shipped, MyApp", IsEvent: true)));
+#pragma warning disable CA1859 // the lookup is asked through the registry interface, the way every reader asks it
+    IConsumerRegistry adapter = new WhizbangReceptorRegistryQueryAdapter(NullReceptorRegistry.Instance);
+#pragma warning restore CA1859
+
+    await Assert.That(adapter.FindConsumedMessage("MyApp.Shipped, MyApp"))
+      .IsEqualTo(new ConsumedMessageInfo("MyApp.Shipped, MyApp", IsEvent: true));
+  }
+
+  [Test]
   public async Task ThisAssemblysGeneratedRegistration_EnumeratesExactlyWhatHasAnyConsumerAcceptsAsync() {
     // This assembly's own generated registration (the module initializer already ran, and the tests in this group clear
     // the registry); Whizbang.Core exposes its own to this assembly too, so name the local one.

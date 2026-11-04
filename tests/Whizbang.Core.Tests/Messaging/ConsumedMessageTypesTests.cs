@@ -115,6 +115,15 @@ public class ConsumedMessageTypesTests {
       .Because("an absorbed namespace's events are stored though nothing consumes them");
   }
 
+  [Test]
+  public async Task FindConsumedMessage_ByDefault_MatchesTheNameWithoutVersionDetailsAsync() {
+    IConsumerRegistry registry = new FixedRegistry(new ConsumedMessageInfo(CONSUMED, IsEvent: true));
+
+    await Assert.That(registry.FindConsumedMessage(CONSUMED + ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"))
+      .IsEqualTo(new ConsumedMessageInfo(CONSUMED, IsEvent: true));
+    await Assert.That(registry.FindConsumedMessage(UNCONSUMED)).IsNull();
+  }
+
   private const string CONSUMED = "Contracts.OrderShipped, Contracts";
   private const string UNCONSUMED = "Contracts.KnownOnly, Contracts";
 

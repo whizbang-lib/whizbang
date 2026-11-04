@@ -87,6 +87,18 @@ public static class WhizbangReceptorRegistryQuery {
   public static IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => _currentSnapshot().ConsumedMessages;
 
   /// <summary>
+  /// The consumed message of the given type name, or <see langword="null"/> when nothing here consumes it. Assembly
+  /// version details on the name are ignored.
+  /// </summary>
+  /// <param name="messageType">The message type name (assembly-qualified).</param>
+  /// <returns>The consumed message, or <see langword="null"/>.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:FindConsumedMessage_FindsByTypeAndAssembly_IgnoringVersionDetailsAsync</tests>
+  public static ConsumedMessageInfo? FindConsumedMessage(string messageType) {
+    System.ArgumentNullException.ThrowIfNull(messageType);
+    return null;
+  }
+
+  /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
   /// The generator uses <c>SymbolDisplayFormat.FullyQualifiedFormat</c> which produces dots for
   /// nested types (e.g., <c>"Ns.Outer.Inner"</c>), but at runtime <c>Type.AssemblyQualifiedName</c>

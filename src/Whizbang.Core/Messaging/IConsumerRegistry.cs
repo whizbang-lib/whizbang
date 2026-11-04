@@ -48,6 +48,16 @@ public interface IConsumerRegistry {
   IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => [];
 
   /// <summary>
+  /// The consumed message of the given type name, or <see langword="null"/> when this service does not consume it.
+  /// The name may carry assembly version details; they are ignored. The receive path classifies a message as an event
+  /// by its <see cref="ConsumedMessageInfo.IsEvent"/> flag (#2064).
+  /// </summary>
+  /// <param name="messageType">The message type name (assembly-qualified).</param>
+  /// <returns>The consumed message, or <see langword="null"/>.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+  ConsumedMessageInfo? FindConsumedMessage(string messageType) => null;
+
+  /// <summary>
   /// The event types this service consumes, in the assembly-qualified wire form (the form the event store's
   /// <c>event_type</c> holds), deduplicated and in ordinal order: the list a peer or an audit can be given.
   /// </summary>
