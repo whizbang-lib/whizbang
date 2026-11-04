@@ -69,7 +69,7 @@ public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
       pod,
       NullLogger<WorkTableVacuumOnAcquisition>.Instance);
     var recorder = new Recorder();
-    pod.Build(ConnectionString, ConnectionString, version: null, bridge: false, pause: null, new FakeTimeProvider(), [],
+    pod.Build(ConnectionString, ConnectionString, version: null, pause: null, new FakeTimeProvider(), [],
       onAcquired: [vacuum, recorder]);
     return (pod, recorder);
   }

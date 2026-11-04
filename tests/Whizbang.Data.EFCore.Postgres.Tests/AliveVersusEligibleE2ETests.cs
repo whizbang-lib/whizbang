@@ -328,10 +328,9 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   private PartitionAssignerWorker _assignerFor(IServiceInstanceProvider instance) {
     var notification = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString, SignalingMode = WorkSignalingMode.ListenNotify };
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var roles = new RoleAssignmentOptions { HoldLegacySessionLock = false, RenewInterval = TimeSpan.FromMilliseconds(250) };
+    var roles = new RoleAssignmentOptions { RenewInterval = TimeSpan.FromMilliseconds(250) };
     roles.Roles.Add(PartitionAssignerOptions.ROLE);
     var elector = new PgRoleElector(Options.Create(notification), Options.Create(roles), config, instance,
-      new PgDutyElector(Options.Create(notification), config, instance, NullLogger<PgDutyElector>.Instance),
       NullLogger<PgRoleElector>.Instance, null);
     return new PartitionAssignerWorker(elector, new PgPartitionAssignmentStore(Options.Create(notification), config),
       NullInstanceConnectionModeSource.Instance, instance, Options.Create(new PartitionAssignerOptions()), Options.Create(roles),

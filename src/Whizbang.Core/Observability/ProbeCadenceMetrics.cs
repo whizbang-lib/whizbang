@@ -53,8 +53,6 @@ public sealed class ProbeCadenceMetrics {
 
     ProbeTicks = meter.CreatePassiveCounter<long>("whizbang.probes.ticks",
       description: "Periodic probe ticks by worker and outcome; the idle series are the service's idle footprint");
-    SuppressedDutyAttempts = meter.CreatePassiveCounter<long>("whizbang.probes.suppressed_duty_attempts",
-      description: "Duty attempts answered from memory while a contention window was open, so no lock round trip was made");
 
     foreach (var probe in _knownProbes) {
       ProbeTicks.Touch(new TagList { { PROBE_TAG, probe }, { OUTCOME_TAG, OUTCOME_WORK } });
@@ -64,9 +62,6 @@ public sealed class ProbeCadenceMetrics {
 
   /// <summary>Probe ticks by worker and outcome.</summary>
   public PassiveCounter<long> ProbeTicks { get; }
-
-  /// <summary>Duty attempts suppressed by a contention window.</summary>
-  public PassiveCounter<long> SuppressedDutyAttempts { get; }
 
   /// <summary>Records one probe tick.</summary>
   /// <param name="probe">The probing worker.</param>

@@ -16,7 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <summary>
 /// What a waiter watches while another instance migrates (#966 phase 4): the migrator's assignment
 /// row, held live while its lease runs or its marked backend works, and, for a migrator on an older
-/// release, the duty's session lock. Over a real, migrated database.
+/// release that holds the duty by its own session lock, the holding it records, judged by the one
+/// liveness rule (#2044). No lock is read. Over a real, migrated database.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigratorWatch.cs</code-under-test>
 [Category("Integration")]
@@ -56,14 +57,19 @@ public class MigratorWatchTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task AMigratorOnAnOlderRelease_HoldingTheDutysSessionLock_IsMigratingAsync(CancellationToken cancellationToken) {
+  public async Task AMigratorOnAnOlderRelease_IsSeenByItsRecordedHolding_WhileTheRuleCallsItLiveAsync(CancellationToken cancellationToken) {
+    var older = await _joinAsync(cancellationToken);
     await using var waiter = await _openAsync(cancellationToken);
-    await using var older = await _openAsync(cancellationToken);
-    _ = await _scalarAsync(older, "SELECT pg_advisory_lock(@k)", cancellationToken,
-      ("k", DutyLockKey.Compute("public", StartupDuties.MIGRATOR)));
+    _ = await _scalarAsync(waiter, "SELECT record_capability(@id, @role)", cancellationToken,
+      ("id", older), ("role", StartupDuties.MIGRATOR));
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "\"public\"", cancellationToken)).IsTrue()
-      .Because("either spelling of the schema names the same lock");
+      .Because("either spelling of the schema names the same holding");
+
+    _ = await _scalarAsync(waiter, "UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id",
+      cancellationToken, ("id", older));
+    await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "public", cancellationToken)).IsFalse()
+      .Because("the one liveness rule calls the older migrator dead, so its holding no longer keeps anyone waiting");
   }
 
   [Test]
@@ -93,15 +99,16 @@ public class MigratorWatchTests : EFCoreTestBase {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// The watch asks <c>to_regprocedure</c>, a name lookup answered from the session's catalog cache. Inside a
-  /// transaction that cache keeps a "no such function" cached before another session committed it, until a statement
-  /// opens a relation. The watch's first statement on every call is the session-lock probe, which reads
-  /// <c>pg_locks</c> and <c>pg_database</c>, so by the time it looks the function up the cache is current. Measured on
-  /// PostgreSQL 17: this test passes on the lookup as written, and fails if the lookup runs before the probe.
+  /// A <c>to_regprocedure</c> lookup is answered from the session's catalog cache, and inside a transaction that cache
+  /// keeps a "no such function" cached before another session committed it, until a statement opens a relation. The
+  /// watch once stayed current only because its first statement, a session-lock probe, read <c>pg_locks</c>; with no
+  /// lock read left (#2044) it asks <c>pg_proc</c> directly, which the statement's snapshot answers, and that read also
+  /// brings the cache current for the call that follows. Measured on PostgreSQL 17: this fails on a
+  /// <c>to_regprocedure</c> check.
   /// </para>
   /// <para>
-  /// It locks that ordering. The role table exists before the transaction on purpose: a lookup whose argument type does
-  /// not resolve refreshes the cache by itself, and would hide a regression. Documented at
+  /// The role table exists before the transaction on purpose: a lookup whose argument type does not resolve refreshes
+  /// the cache by itself, and would hide a regression. Documented at
   /// contributors/data-engines/writing-migrations#catalog-existence-checks.
   /// </para>
   /// </remarks>
@@ -119,26 +126,28 @@ public class MigratorWatchTests : EFCoreTestBase {
     await using var waiter = await _openAsync(cancellationToken);
     await using var transaction = await waiter.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken);
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, schema, cancellationToken)).IsFalse()
-      .Because("precondition: the role function does not exist yet, and the waiter's session has now looked for them");
+      .Because("precondition: the role functions do not exist yet, and the waiter's session has now looked for them");
 
     _ = await _scalarAsync(other, $"""
       CREATE FUNCTION {quoted}._role_lapse_reason(r {quoted}.wh_role_assignments) RETURNS text
         LANGUAGE sql AS 'SELECT NULL::text';
+      CREATE FUNCTION {quoted}._role_held_outside_assignment(p_role text, p_caller uuid) RETURNS boolean
+        LANGUAGE sql AS 'SELECT false';
       INSERT INTO {quoted}.wh_role_assignments (role, holder_instance_id) VALUES (@role, @holder);
       """, cancellationToken, ("role", StartupDuties.MIGRATOR), ("holder", (Guid)TrackedGuid.New()));
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, schema, cancellationToken)).IsTrue()
       .Because("the migrator's live assignment is committed, whatever the waiter's session cached before");
 
-    _ = await _scalarAsync(other, $"DROP FUNCTION {quoted}._role_lapse_reason({quoted}.wh_role_assignments)", cancellationToken);
+    _ = await _scalarAsync(other, $"DROP FUNCTION {quoted}._role_held_outside_assignment(text, uuid)", cancellationToken);
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, schema, cancellationToken)).IsFalse()
-      .Because("without the role function the watch answers from the session lock alone, and nothing holds it");
+      .Because("without the role functions there is no migrator to watch, whatever the waiter's session cached before");
   }
 
   [Test]
   [Timeout(60000)]
-  public async Task ASchemaWithoutTheRoleFunctions_AnswersFromTheSessionLockAloneAsync(CancellationToken cancellationToken) {
+  public async Task ASchemaWithoutTheRoleFunctions_IsNotMigratingAsync(CancellationToken cancellationToken) {
     await using var waiter = await _openAsync(cancellationToken);
 
     await Assert.That(await MigratorWatch.IsMigratingElsewhereAsync(waiter, "schema_never_bootstrapped", cancellationToken)).IsFalse();

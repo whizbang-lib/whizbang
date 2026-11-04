@@ -32,14 +32,6 @@ public class DutyHolderWorkerBranchCoverageTests {
     await Assert.That(worker.Holds(UNMANAGED_ROLE)).IsFalse();
   }
 
-  [Test]
-  public async Task Roles_RoleAssignmentDisabled_HoldsNothingAsync() {
-    var worker = _worker(new RoleAssignmentOptions { Enabled = false }, [new Handler(StartupDuties.MAINTAINER, "Rewrite")]);
-
-    await Assert.That(worker.Roles).IsEmpty()
-      .Because("with role assignment switched off no role is managed, so no handler is taken up");
-  }
-
   private static DutyHolderWorker _worker(RoleAssignmentOptions options, IEnumerable<IDutyWorkHandler> handlers) =>
     new(new UnusedElector(), new UnusedStore(), handlers, [], Options.Create(options), NullLogger<DutyHolderWorker>.Instance, notify: null);
 

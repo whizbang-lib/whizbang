@@ -22,16 +22,19 @@ namespace Whizbang.Core.Tests.Startup;
 /// </para>
 /// <para>
 /// The allowlists only shrink: an entry that no longer matches fails <c>EveryAllowlistEntry_StillMatchesAsync</c>.
-/// Entries marked <c>PENDING</c> are what slice 1 of #2022 has not folded in yet (the advisory-lock duties and the raw
-/// channels); each names the part of #2027 that removes it.
+/// Entries marked <c>PENDING</c> are what slice 1 of #2022 has not folded in yet (the raw channels); each names the part
+/// of #2027 that removes it. No duty is held by an advisory lock (#2044): what remains allowlisted is mutual exclusion
+/// around one statement or one DDL pass, never a duty.
 /// </para>
 /// </remarks>
 /// <docs>contributors/gravity</docs>
 [Category("Startup")]
 public partial class CoordinationSourceGuardTests {
-  private const string PENDING_DUTIES = "PENDING #2027 part 2: an advisory-lock duty, to be held as a role assignment with a lease and an epoch";
   private const string PENDING_CHANNELS = "PENDING #2027 part 4: a raw notification channel, to move onto the signal bus";
   private const string EXCLUSION = "a transaction-scoped advisory lock: mutual exclusion for one statement or DDL pass, released at commit; not a duty";
+  private const string CONCURRENT_DROP = "the schema lock held at session level for the three statements of one DROP INDEX CONCURRENTLY, which "
+    + "cannot run in a transaction, and only on a connection that reaches one backend: mutual exclusion with the schema "
+    + "pass around one statement, not a duty (#2044)";
 
   private static readonly string _repoRoot = _findRepoRoot();
 
@@ -44,11 +47,8 @@ public partial class CoordinationSourceGuardTests {
 
   /// <summary>C# files that may take or release an advisory lock.</summary>
   private static readonly Dictionary<string, string> _advisoryAllowlist = new(StringComparer.Ordinal) {
-    ["src/Whizbang.Data.Postgres/Notifications/PgDutyElector.cs"] = PENDING_DUTIES,
-    ["src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs"] = PENDING_DUTIES + " (the legacy-lock bridge)",
-    ["src/Whizbang.Data.Postgres/Notifications/PgCommitOrderStamperWorker.cs"] = PENDING_DUTIES + " (the stamper's own lock)",
-    ["src/Whizbang.Data.Postgres/AdvisoryLockRelease.cs"] = PENDING_DUTIES + " (the release of a session duty lock)",
-    ["src/Whizbang.Data.Postgres/Schema/ManagedSchemaReconciler.cs"] = PENDING_DUTIES + " (a session lock per drop) and " + EXCLUSION,
+    ["src/Whizbang.Data.Postgres/AdvisoryLockRelease.cs"] = "releases " + CONCURRENT_DROP + ", and logs a release a pooler sent elsewhere",
+    ["src/Whizbang.Data.Postgres/Schema/ManagedSchemaReconciler.cs"] = EXCLUSION + "; and " + CONCURRENT_DROP,
     ["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/CanonicalTemporalRewritePhase.cs"] = EXCLUSION,
@@ -65,7 +65,9 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] = "a write throttle on the beat itself; it judges no peer",
     ["src/Whizbang.Core/Workers/InboxHandlerWorker.cs"] = "a diagnostic message names the system view an operator should read; nothing is judged",
     ["src/Whizbang.Data.Postgres/SupersededRowVersionFence.cs"] = "a visibility fence over in-flight transaction ids; it judges no instance",
-    ["src/Whizbang.Data.Postgres/AdvisoryLockProbe.cs"] = PENDING_DUTIES + " (tells a live holder of a duty lock from a dead one)",
+    ["src/Whizbang.Data.Postgres/AdvisoryLockProbe.cs"] = "reads whether the transaction-scoped schema lock is held elsewhere, so a "
+      + "contender waits for the session doing schema work instead of queueing behind it: the state of an exclusion lock, which "
+      + "judges no instance and holds no duty (#2044)",
   };
 
   /// <summary>SQL functions (by their last definition) that may judge liveness or read session activity.</summary>
@@ -73,9 +75,6 @@ public partial class CoordinationSourceGuardTests {
     ["wh_instance_liveness"] = "THE liveness rule",
     ["wh_direct_alive_lock_holders"] = "the lock half of the rule",
     ["register_instance_heartbeat"] = "a write throttle on the beat itself; it judges no peer",
-    ["_advisory_lock_held_elsewhere"] = PENDING_DUTIES + " (sees a legacy duty lock)",
-    ["wh_end_lapsed_bridge"] = PENDING_DUTIES + " (ends a lapsed legacy-lock bridge)",
-    ["wh_vote_role"] = PENDING_DUTIES + " (the vote refuses while a legacy lock is held)",
     ["_role_backend_active"] = "whether a role holder's own long statement is still running: a lease extension, not a liveness verdict",
     ["wh_mark_role_duty_backend"] = "marks the backend running a role's statement: a lease extension, not a liveness verdict",
     ["stamp_pending_commit_sequences"] = "the visibility fence reads in-flight transaction ids; it judges no instance",
@@ -109,6 +108,9 @@ public partial class CoordinationSourceGuardTests {
 
   [GeneratedRegex(@"CREATE OR REPLACE FUNCTION\s+__SCHEMA__\.(\w+)\s*\(.*?\$\$(.*?)\$\$", RegexOptions.Singleline)]
   private static partial Regex _sqlFunction();
+
+  [GeneratedRegex(@"DROP FUNCTION IF EXISTS\s+__SCHEMA__\.(\w+)\s*\(|drop_all_overloads\('(\w+)'\)")]
+  private static partial Regex _sqlFunctionDrop();
 
   [GeneratedRegex(@"--[^\n]*")]
   private static partial Regex _sqlComment();
@@ -158,6 +160,28 @@ public partial class CoordinationSourceGuardTests {
   }
 
   [Test]
+  public async Task NoDuty_IsHeldByAnAdvisoryLockAnywhereAsync() {
+    // #2044: one way to hold a duty, the role table. The duty electors' files take no advisory lock, and no allowlist
+    // entry is left waiting for the advisory-lock duties to move.
+    var csharp = _csharpSources();
+    string[] dutyHolders = [
+      "src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs",
+      "src/Whizbang.Data.Postgres/Notifications/PgCommitOrderStamperWorker.cs",
+      "src/Whizbang.Data.Postgres/MigratorWatch.cs",
+    ];
+    foreach (var path in dutyHolders) {
+      await Assert.That(_advisory().IsMatch(csharp[path])).IsFalse().Because($"{path} holds a duty; a duty is a role assignment");
+    }
+    await Assert.That(csharp["src/Whizbang.Data.Postgres/MigratorWatch.cs"].Contains("AdvisoryLockProbe", StringComparison.Ordinal)).IsFalse()
+      .Because("a waiter watches the migrator's assignment and recorded holdings, never a duty lock");
+    await Assert.That(csharp.Keys.Any(p => p.EndsWith("/PgDutyElector.cs", StringComparison.Ordinal))).IsFalse()
+      .Because("the session-lock duty elector is gone; every duty is voted in the role table");
+    var reasons = _advisoryAllowlist.Values.Concat(_livenessAllowlist.Values).Concat(_sqlLivenessAllowlist.Values)
+      .Concat(_sqlSessionLockAllowlist.Values);
+    await Assert.That(reasons.Where(r => r.Contains("#2027 part 2", StringComparison.Ordinal))).IsEmpty();
+  }
+
+  [Test]
   public async Task TheScans_SeeTheMechanismsTheyGuardAsync() {
     // A guard that reads nothing passes everything: prove each scan finds what it exists to find.
     var csharp = _csharpSources();
@@ -167,6 +191,10 @@ public partial class CoordinationSourceGuardTests {
     await Assert.That(_advisory().IsMatch(csharp["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"])).IsTrue();
     await Assert.That(_liveness().IsMatch(sql["wh_instance_liveness"])).IsTrue();
     await Assert.That(_liveness().IsMatch("SELECT 1 FROM t WHERE last_heartbeat_at > now() - interval '1 minute'")).IsTrue();
+    await Assert.That(sql.ContainsKey("_advisory_lock_held_elsewhere")).IsFalse()
+      .Because("a function dropped after its last definition (#2044) is not run by any database, so it is not scanned");
+    await Assert.That(sql.ContainsKey("wh_role_assignment_status")).IsTrue()
+      .Because("a drop followed by a new definition (drop_all_overloads, then CREATE) leaves the new definition");
     await Assert.That(_liveness().IsMatch(sql["claim_work"])).IsFalse()
       .Because("claim_work ranks its peers through the rule (317); a comment that mentions pg_stat_activity is not code");
   }
@@ -199,13 +227,24 @@ public partial class CoordinationSourceGuardTests {
         f => _csComment().Replace(File.ReadAllText(f), string.Empty),
         StringComparer.Ordinal);
 
-  /// <summary>Each SQL function's last definition in the migration corpus, by name, with comments removed.</summary>
+  /// <summary>
+  /// Each SQL function's last definition in the migration corpus, by name, with comments removed. A function whose
+  /// last word is a drop is not in the result: a database does not run it.
+  /// </summary>
   private static Dictionary<string, string> _latestSqlFunctions() {
     var latest = new Dictionary<string, string>(StringComparer.Ordinal);
     var migrations = Path.Combine(_repoRoot, "src", "Whizbang.Data.Postgres", "Migrations");
     foreach (var file in Directory.EnumerateFiles(migrations, "*.sql").Order(StringComparer.Ordinal)) {
-      foreach (Match match in _sqlFunction().Matches(File.ReadAllText(file))) {
-        latest[match.Groups[1].Value] = _sqlComment().Replace(match.Groups[2].Value, string.Empty);
+      var sql = _sqlComment().Replace(File.ReadAllText(file), string.Empty);
+      var definitions = _sqlFunction().Matches(sql).Select(m => (m.Index, Name: m.Groups[1].Value, Body: (string?)m.Groups[2].Value));
+      var drops = _sqlFunctionDrop().Matches(sql)
+        .Select(m => (m.Index, Name: m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value, Body: (string?)null));
+      foreach (var (_, name, body) in definitions.Concat(drops).OrderBy(e => e.Index)) {
+        if (body is null) {
+          _ = latest.Remove(name);
+        } else {
+          latest[name] = body;
+        }
       }
     }
     return latest;

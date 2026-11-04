@@ -12,38 +12,25 @@ namespace Whizbang.Core.Tests.Startup;
 /// The tuning behind role assignment (#966): the lease is several renew intervals, so one slow
 /// renewal never costs the role; each duty may declare its own lease; the options refuse a
 /// configuration that would make every late beat a lapse. On by default, with the migrator held by
-/// assignment and the bridge on.
+/// assignment.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Startup/RoleAssignmentOptions.cs</code-under-test>
 [Category("Startup")]
 public class RoleAssignmentOptionsTests {
 
   [Test]
-  public async Task Defaults_ManageTheMaintainerAndTheMigrator_WithALeaseOfThreeRenewals_AndTheBridgeOnAsync() {
+  public async Task Defaults_HoldTheMaintainerAndTheMigrator_WithALeaseOfThreeRenewalsAsync() {
     var options = new RoleAssignmentOptions();
 
-    await Assert.That(options.Enabled).IsTrue();
     await Assert.That(options.RenewInterval).IsEqualTo(TimeSpan.FromSeconds(5));
     await Assert.That(options.MissedRenewalsBeforeLapse).IsEqualTo(3);
     await Assert.That(options.Lease).IsEqualTo(TimeSpan.FromSeconds(15));
     await Assert.That(options.CooldownAfterLapse).IsEqualTo(TimeSpan.FromSeconds(15));
-    await Assert.That(options.HoldLegacySessionLock).IsFalse()
-      .Because("the bridge costs a pinned connection per held role and is only needed while an instance "
-        + "older than role assignment is still running; a deploy rolling from such a release sets it true "
-        + "for that one deploy");
     await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsTrue();
     await Assert.That(options.Manages(StartupDuties.MIGRATOR)).IsTrue()
       .Because("the migrator's vote is part of the schema bootstrap, so it can be held by assignment");
-    await Assert.That(options.Manages("some-other-duty")).IsFalse();
-    await Assert.That(options.LegacyLockKeys).IsEmpty();
-  }
-
-  [Test]
-  public async Task Disabled_ManagesNothingAsync() {
-    var options = new RoleAssignmentOptions { Enabled = false };
-
-    await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsFalse();
-    await Assert.That(options.Manages(StartupDuties.MIGRATOR)).IsFalse();
+    await Assert.That(options.Manages("some-other-duty")).IsFalse()
+      .Because("Roles names the duties the holder loop holds; any other duty is still voted by assignment when asked for");
   }
 
   [Test]

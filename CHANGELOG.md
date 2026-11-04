@@ -830,6 +830,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Every duty is held in the role table; no duty is held by an advisory lock (#2044).** The session-lock duty
+  elector, the legacy-lock bridge in the role elector, the commit-order stamper's own lock and the migrator watch's
+  lock probe are gone: every duty, a host's own included, is a role assignment with a lease and epoch fencing, and a
+  holder that dies is replaced when its lease lapses or the one liveness rule (#2027) reaps it; a clean release still
+  hands it over at once. During a rolling deploy an older release that holds a duty by its own lock records the
+  holding, and the vote refuses (`legacy_holder`) while that instance is live. The stamper leads only through the
+  registered elector and no longer needs a direct connection. Migration 326. Removed: `PgDutyElector`, the keys
+  `Whizbang:Database:RoleAssignment:Enabled`, `Whizbang:Database:RoleAssignment:HoldLegacySessionLock` and
+  `Whizbang:Database:Stamper:AdvisoryLockKey`, and the metrics `whizbang.probes.suppressed_duty_attempts` and
+  `whizbang.roles.bridge_sessions_ended`. The only advisory locks left guard one DDL pass (the schema lock and the
+  concurrent index drop), each allowlisted with its reason.
 - **Instances share one durable record and one liveness rule (#2027).** Every reader that decides whether a peer is
   alive (work claiming and ranking, the partition assigner, orphan claims, the reap, the standby handshake, the fleet
   readers, the lifecycle monitor, the notification fan-out) now asks one SQL rule, `wh_instance_liveness`, instead of

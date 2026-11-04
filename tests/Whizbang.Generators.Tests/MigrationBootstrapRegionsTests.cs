@@ -48,6 +48,7 @@ public class MigrationBootstrapRegionsTests {
     "277_PreflightInstanceAndRoleColumns.sql", // the instance and role table columns and the stage recorder, so registration records its stage (#1636)
     "278_OneWriterOfTheInstancePhase.sql", // the one recorder of stage, phase and version, which registration writes through (#1636)
     "316_OneDurableInstanceRecord.sql", // the one liveness rule the migrator reads before the pass, and the record's columns (#2027)
+    "326_EveryDutyIsARoleAssignment.sql", // the vote, renewal and bridge expiry with no lock read: every duty is a role (#2044)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

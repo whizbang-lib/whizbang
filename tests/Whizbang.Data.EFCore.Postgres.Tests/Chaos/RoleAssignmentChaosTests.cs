@@ -22,8 +22,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Chaos;
 /// <summary>
 /// The chaos plan of #966 (phase 4), run against the real holder loop, elector, owed-work store and
 /// epoch fence: kill the holder, pause it mid-duty, partition it from the database, skew its clock,
-/// lose the database for longer than a lease, run a rolling deploy with old and new versions (bridged
-/// and not), and start ten instances at once. In every case at most one epoch writes, a new holder
+/// lose the database for longer than a lease, run a rolling deploy with old and new versions, and
+/// start ten instances at once. In every case at most one epoch writes, a new holder
 /// appears once the lease lapses in database time and not before, and the owed work completes exactly
 /// once.
 /// </summary>
@@ -53,10 +53,10 @@ public class RoleAssignmentChaosTests : EFCoreTestBase {
     await ChaosPod.ExecuteAsync(ConnectionString, ChaosPod.EFFECTS_DDL, CancellationToken.None);
 
   private async Task<ChaosPod> _podAsync(
-      CancellationToken ct, string? version = null, bool bridge = false, string? connectionString = null, Func<Task>? pause = null,
+      CancellationToken ct, string? version = null, string? connectionString = null, Func<Task>? pause = null,
       FakeTimeProvider? time = null, string[]? extraRoles = null) {
     var pod = await ChaosPod.JoinAsync(ConnectionString, CreateDbContext, ct);
-    pod.Build(connectionString ?? ConnectionString, ConnectionString, version, bridge, pause, time ?? new FakeTimeProvider(), extraRoles ?? []);
+    pod.Build(connectionString ?? ConnectionString, ConnectionString, version, pause, time ?? new FakeTimeProvider(), extraRoles ?? []);
     return pod;
   }
 
@@ -206,13 +206,13 @@ public class RoleAssignmentChaosTests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
-  [Arguments(true)]
-  [Arguments(false)]
-  public async Task RollingDeploy_FromTheSessionLockRelease_NeverHasBothActingAsync(bool bridge, CancellationToken cancellationToken) {
+  public async Task RollingDeploy_FromTheSessionLockRelease_NeverHasBothActingAsync(CancellationToken cancellationToken) {
+    // #2044: an instance on an older release holds the duty by its own session lock and records the holding. The new
+    // release reads the record, judged by the one liveness rule, and never a lock.
     var oldPod = await ChaosPod.JoinAsync(ConnectionString, CreateDbContext, cancellationToken);
     var lateOldPod = await ChaosPod.JoinAsync(ConnectionString, CreateDbContext, cancellationToken);
-    var oldHolder = (await oldPod.LegacyElector(ConnectionString).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-    var fresh = await _podAsync(cancellationToken, version: "0.2607.0", bridge: bridge);
+    var oldHolder = await oldPod.HoldOutsideTheTableAsync(ConnectionString, ROLE, cancellationToken);
+    var fresh = await _podAsync(cancellationToken, version: "0.2607.0");
     await _oweAsync(fresh, cancellationToken);
 
     await fresh.PassAsync(cancellationToken);
@@ -224,19 +224,12 @@ public class RoleAssignmentChaosTests : EFCoreTestBase {
     await Assert.That(fresh.Worker.Holds(ROLE)).IsTrue();
     await Assert.That((await _effectsAsync(cancellationToken)).Count).IsEqualTo(1);
 
-    // An old pod that starts late (its replacement is still rolling out).
-    var late = await lateOldPod.LegacyElector(ConnectionString).TryAcquireAsync(ROLE, cancellationToken);
-    if (bridge) {
-      await Assert.That(late.Grant).IsNull().Because("bridged, the new holder holds the old lock too, so the old pod defers");
-      return;
-    }
-    // Unbridged, the old pod can take the lock after the vote: the unsafe case the bridge exists for.
-    // The new holder sees it on its next renewal and steps aside, so the overlap is one renew interval.
-    await Assert.That(late.Grant).IsNotNull();
+    // An old pod that starts late (its replacement is still rolling out) takes its own lock after the vote. The new
+    // holder sees its record on its next renewal and steps aside, so the overlap is one renew interval.
+    await using var late = await lateOldPod.HoldOutsideTheTableAsync(ConnectionString, ROLE, cancellationToken);
     fresh.Time.Advance(_defaults.RenewInterval);
     await fresh.PassAsync(cancellationToken);
     await Assert.That(fresh.Worker.Holds(ROLE)).IsFalse();
-    await late.Grant!.DisposeAsync();
   }
 
   [Test]
@@ -311,20 +304,30 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
 
   private static IConfiguration _config() => new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
-  public PgDutyElector LegacyElector(string connectionString) =>
-    new(Options.Create(new WhizbangNotificationOptions { DirectConnectionString = connectionString }), _config(), this, NullLogger<PgDutyElector>.Instance);
+  /// <summary>
+  /// What an instance on an older release does when its own session-lock elector wins a duty: it records the holding
+  /// (record_capability), and releases the record when it lets go.
+  /// </summary>
+  public async Task<IAsyncDisposable> HoldOutsideTheTableAsync(string connectionString, string role, CancellationToken ct) {
+    await ExecuteAsync(connectionString, "SELECT record_capability(@id, @role)", ct, ("id", InstanceId), ("role", role));
+    return new Holding(connectionString, InstanceId, role);
+  }
+
+  private sealed class Holding(string connectionString, Guid instanceId, string role) : IAsyncDisposable {
+    public async ValueTask DisposeAsync() =>
+      await ExecuteAsync(connectionString, "SELECT release_capability(@id, @role)", CancellationToken.None, ("id", instanceId), ("role", role));
+  }
 
   public void Build(
-      string podConnection, string effectsConnection, string? version, bool bridge, Func<Task>? pause, FakeTimeProvider time,
+      string podConnection, string effectsConnection, string? version, Func<Task>? pause, FakeTimeProvider time,
       IEnumerable<string> extraRoles, RoleAssignmentOptions? tuned = null, IEnumerable<IDutyAcquisitionHandler>? onAcquired = null) {
     Time = time;
     var options = tuned ?? new RoleAssignmentOptions();
-    options.HoldLegacySessionLock = bridge;
     foreach (var role in extraRoles) {
       options.Roles.Add(role);
     }
     var notification = Options.Create(new WhizbangNotificationOptions { DirectConnectionString = podConnection });
-    var elector = new PgRoleElector(notification, Options.Create(options), _config(), this, LegacyElector(podConnection),
+    var elector = new PgRoleElector(notification, Options.Create(options), _config(), this,
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version), timeProvider: time);
     Store = new PgPendingDutyWorkStore(notification, Options.Create(options), _config(), this);
     IDutyWorkHandler[] handlers = [

@@ -1,9 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -25,9 +23,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// The #968 decisions through the real elector: each instance presents its library version, so a
 /// vacant role goes to the newest one and a live older holder is asked to drain; a holder marks the
-/// backend running its duty's statement; a bridged would-be winner ends a lapsed holder's lock
-/// session; several roles are voted for in one statement; and an unbridged holder steps aside for an
-/// old session-lock holder. Database time moves by shifting stored instants back, and the renew
+/// backend running its duty's statement; several roles are voted for in one statement; and a holder
+/// steps aside for an older release that recorded the duty outside the table (#2044). Database time
+/// moves by shifting stored instants back, and the renew
 /// throttle runs on a fake clock, so nothing sleeps.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
@@ -51,18 +49,16 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
   private static IConfiguration _config() => new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
-  private PgDutyElector _legacyFor(Pod pod) => new(Options.Create(_notification()), _config(), pod, NullLogger<PgDutyElector>.Instance);
-
   private PgRoleElector _electorFor(
-      Pod pod, string? version = null, bool bridge = false, TimeProvider? time = null, RoleAssignmentMetrics? metrics = null,
+      Pod pod, string? version = null, TimeProvider? time = null,
       Action<RoleAssignmentOptions>? configure = null, string? connectionString = null) {
-    var options = new RoleAssignmentOptions { HoldLegacySessionLock = bridge };
+    var options = new RoleAssignmentOptions();
     options.Roles.Add(OTHER);
     configure?.Invoke(options);
     return new PgRoleElector(
-      Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod, _legacyFor(pod),
+      Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod,
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version),
-      timeProvider: time, metrics: metrics);
+      timeProvider: time);
   }
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
@@ -102,26 +98,6 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
        WHERE role = @role RETURNING 1)
     UPDATE wh_role_candidates SET last_voted_at = last_voted_at - @by WHERE role = @role
     """, ct, ("by", by), ("role", role));
-
-  private sealed class MeterReader : IDisposable {
-    private readonly MeterListener _listener = new();
-    private readonly List<(string Name, long Value)> _seen = [];
-    public MeterReader(Meter meter) {
-      _listener.InstrumentPublished = (instrument, l) => {
-        if (instrument.Meter == meter) {
-          l.EnableMeasurementEvents(instrument);
-        }
-      };
-      _listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => _seen.Add((instrument.Name, value)));
-      _listener.Start();
-    }
-    public long Total(string name) {
-      _seen.Clear();
-      _listener.RecordObservableInstruments();
-      return _seen.Where(s => s.Name == name).Sum(s => s.Value);
-    }
-    public void Dispose() => _listener.Dispose();
-  }
 
   private sealed class OtherGrant : IDutyGrant {
     public string Duty => ROLE;
@@ -272,40 +248,15 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
-  public async Task ABridgedVoter_EndsALapsedBridgedHoldersLockSession_AndWinsAsync(CancellationToken cancellationToken) {
-    // Decision 4 of #968: logged and counted.
-    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
-    var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(provider.GetRequiredService<IMeterFactory>()));
-    using var reader = new MeterReader(metrics.Elections.Meter);
-    var a = await _joinAsync(cancellationToken);
-    var b = await _joinAsync(cancellationToken);
-    var stuck = (await _electorFor(a, bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-    var whileLive = await _electorFor(b, bridge: true, metrics: metrics).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(whileLive.Refusal).IsEqualTo(DutyRefusal.Contended).Because("a live bridged holder's session is never ended");
-
-    await _ageAsync(ROLE, _defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
-    var takeover = await _electorFor(b, bridge: true, metrics: metrics).TryAcquireAsync(ROLE, cancellationToken);
-
-    await Assert.That(takeover.Grant).IsNotNull()
-      .Because($"the stuck holder's session was ended, so the lock and the vote are free. Refusal: {takeover.Refusal} — {takeover.Detail}");
-    await Assert.That(takeover.Grant!.Epoch).IsEqualTo(stuck.Epoch + 1);
-    await Assert.That(reader.Total("whizbang.roles.bridge_sessions_ended")).IsEqualTo(1);
-    await Assert.That(await stuck.VerifyStillHeldAsync(cancellationToken)).IsFalse()
-      .Because("the stuck holder's bridge session is gone, so it knows it lost the role");
-    await takeover.Grant.DisposeAsync();
-    await stuck.DisposeAsync();
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task AnUnbridgedHolder_StepsAsideWithinOneRenewal_WhenASessionLockHolderTookTheDutyAsync(CancellationToken cancellationToken) {
+  public async Task AHolder_StepsAsideWithinOneRenewal_WhenAnOlderReleaseTookTheDutyOutsideTheTableAsync(CancellationToken cancellationToken) {
     var time = new FakeTimeProvider();
     var a = await _joinAsync(cancellationToken);
     var old = await _joinAsync(cancellationToken);
     var grant = (await _electorFor(a, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
 
-    // An instance on the session-lock elector starting after the vote: unsafe, and what the bridge prevents.
-    await using var legacy = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    // An instance on an older release takes the duty by its own session lock after the vote, and records the holding
+    // (#2044): the holder sees the record on its next renewal and steps aside.
+    _ = await _scalarAsync("SELECT record_capability(@id, @role)", cancellationToken, ("id", old.InstanceId), ("role", ROLE));
     time.Advance(_defaults.RenewInterval);
 
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse();
@@ -324,8 +275,9 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
     await Assert.That(first[0].Grant).IsNotNull();
     await Assert.That(first[1].Grant).IsNotNull();
-    await Assert.That(first[2].Grant).IsNotNull().Because("a duty this elector does not manage is delegated");
-    await Assert.That(first[2].Grant!.Epoch).IsNull();
+    await Assert.That(first[2].Grant).IsNotNull();
+    await Assert.That(first[2].Grant!.Epoch).IsEqualTo(1L)
+      .Because("#2044: a duty the holder loop does not hold is still voted in the role table, in the same statement");
     var lease = (TimeSpan)(await _scalarAsync("SELECT lease FROM wh_role_assignments WHERE role = @role", cancellationToken, ("role", OTHER)))!;
     await Assert.That(lease).IsEqualTo(TimeSpan.FromMinutes(1)).Because("each role is granted its own declared lease");
 
@@ -338,23 +290,14 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
-  public async Task TryAcquireMany_WhenBridged_OrWithoutAConnection_AsksOneByOneAsync(CancellationToken cancellationToken) {
+  public async Task TryAcquireMany_WithoutAConnection_IsUnavailableForEveryDutyAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
-    var bridged = await _electorFor(a, bridge: true).TryAcquireManyAsync([ROLE, OTHER], cancellationToken);
-    await Assert.That(bridged.All(x => x.Grant is not null)).IsTrue();
-    foreach (var attempt in bridged) {
-      await attempt.Grant!.DisposeAsync();
-    }
-
-    // Bridge off, so the multi-role vote runs and finds no connection; with the bridge on (the default) the
-    // roles are attempted one at a time, which reports the same.
     var noConnection = new PgRoleElector(
-      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions { HoldLegacySessionLock = false }), _config(), a,
-      NullDutyElector.Instance, NullLogger<PgRoleElector>.Instance, null);
+      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions()), _config(), a,
+      NullLogger<PgRoleElector>.Instance, null);
     var unavailable = await noConnection.TryAcquireManyAsync([ROLE, StartupDuties.MIGRATOR], cancellationToken);
     await Assert.That(unavailable.All(x => x.Refusal == DutyRefusal.Unavailable)).IsTrue();
     await Assert.That(async () => await noConnection.TryAcquireManyAsync(null!, cancellationToken)).Throws<ArgumentNullException>();
-    await Assert.That(noConnection.Manages(ROLE)).IsTrue();
     await Assert.That(noConnection.RenewInterval).IsEqualTo(_defaults.RenewInterval);
   }
 
@@ -371,6 +314,28 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
     await Assert.That(snapshot.DrainRequestedAt.HasValue).IsTrue();
     await Assert.That(snapshot.DutyBackendActive).IsFalse();
+    await grant.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ABridgedNewerInstance_StillAsksTheOlderHolderToDrainAsync(CancellationToken cancellationToken) {
+    // #2044: there is no bridge in this release, but an instance on an older release that ran one still calls
+    // wh_request_role_drain when it cannot take its legacy lock. The call keeps working: a newer caller still asks an
+    // older holder to drain, which the holder learns on its next renewal. (The name is kept because migration 184
+    // links to it.)
+    var time = new FakeTimeProvider();
+    var older = await _joinAsync(cancellationToken);
+    var newer = await _joinAsync(cancellationToken);
+    var grant = (await _electorFor(older, "0.2606.0", time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+
+    var asked = (string?)await _scalarAsync("SELECT wh_request_role_drain(@role, @id, @lease, @version)", cancellationToken,
+      ("role", ROLE), ("id", newer.InstanceId), ("lease", _defaults.Lease), ("version", LibraryVersionKey.From("0.2607.0")));
+    await Assert.That(asked).IsEqualTo("draining");
+
+    time.Advance(_defaults.RenewInterval);
+    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
+    await Assert.That(grant.DrainRequested).IsTrue();
     await grant.DisposeAsync();
   }
 
@@ -397,48 +362,5 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
       }
     }
     return left.Length.CompareTo(right.Length);
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task ABridgedNewerInstance_StillAsksTheOlderHolderToDrainAsync(CancellationToken cancellationToken) {
-    // The bridge is on by default; losing the legacy lock must not cost the drain or the candidacy.
-    var time = new FakeTimeProvider();
-    var older = await _joinAsync(cancellationToken);
-    var newer = await _joinAsync(cancellationToken);
-    var grant = (await _electorFor(older, "0.2606.0", bridge: true, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-
-    var asked = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(asked.Refusal).IsEqualTo(DutyRefusal.Contended);
-    await Assert.That(asked.Detail).Contains("asked to drain");
-    var again = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(again.Detail).Contains("asked to drain").Because("the drain stays pending");
-
-    time.Advance(_defaults.RenewInterval);
-    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
-    await Assert.That(grant.DrainRequested).IsTrue();
-    await grant.DisposeAsync();
-
-    var handedOver = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(handedOver.Grant).IsNotNull();
-    await handedOver.Grant!.DisposeAsync();
-  }
-
-  [Test]
-  [Timeout(120000)]
-  public async Task ABridgedLoser_ToASessionLockHolder_IsPlainlyContended_AndAnEqualVersionAsksNoDrainAsync(CancellationToken cancellationToken) {
-    var old = await _joinAsync(cancellationToken);
-    var a = await _joinAsync(cancellationToken);
-    var b = await _joinAsync(cancellationToken);
-    await using (var legacy = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!) {
-      var attempt = await _electorFor(a, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-      await Assert.That(attempt.Detail).Contains("session lock").Because("there is no assignment to drain");
-    }
-    var held = (await _electorFor(a, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
-    var equal = await _electorFor(b, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
-    await Assert.That(equal.Detail).Contains("session lock");
-    await Assert.That(await _scalarAsync("SELECT drain_requested_at FROM wh_role_assignments WHERE role = @role",
-      cancellationToken, ("role", ROLE))).IsNull();
-    await held.DisposeAsync();
   }
 }

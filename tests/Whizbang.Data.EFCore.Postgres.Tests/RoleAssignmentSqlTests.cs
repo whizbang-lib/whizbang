@@ -277,12 +277,15 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task Elect_WhileAnotherBackendHoldsTheLegacySessionLock_AnswersLegacyHolderAsync(CancellationToken cancellationToken) {
-    // Mixed-version fleets: an instance still on the session-lock elector holds the duty's lock.
+    // Mixed-version fleets (#2044): an instance on an older release holds the duty by its own session lock and records
+    // the holding. The vote sees the record, not the lock: the lock alone decides nothing. (The name is kept because
+    // migrations 173 and 184 link to it.)
     var a = await _joinAsync(cancellationToken);
+    var older = await _joinAsync(cancellationToken);
     const long legacyKey = 7_966_001L;
     await using var legacy = await _openAsync(cancellationToken);
     await using (var take = legacy.CreateCommand()) {
-      take.CommandText = $"SELECT pg_advisory_lock({legacyKey})";
+      take.CommandText = $"SELECT pg_advisory_lock({legacyKey}), record_capability('{older}'::uuid, '{ROLE}')";
       await take.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -290,6 +293,13 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
 
     await Assert.That(vote.Outcome).IsEqualTo("legacy_holder");
     await Assert.That(await _electionCountAsync(cancellationToken)).IsEqualTo(0L);
+
+    await using (var release = legacy.CreateCommand()) {
+      release.CommandText = $"SELECT release_capability('{older}'::uuid, '{ROLE}')";
+      await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await Assert.That((await _electAsync(a, cancellationToken, legacyKey)).Outcome).IsEqualTo("granted")
+      .Because("the session lock is still held, and it is not read");
   }
 
   [Test]

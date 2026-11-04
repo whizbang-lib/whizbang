@@ -53,9 +53,9 @@ public readonly record struct SchemaStaging(SchemaStage Stage, IDutyGrant? Grant
 /// than migrating without a duty, and it is a failure an operator has to clear by hand.
 /// </para>
 /// <para>
-/// The duty rides a session advisory lock on its own connection, so the holder's death releases it
-/// with no timeout to tune, and a waiter watching that lock sees the takeover become available the
-/// moment the holder stops existing.
+/// The duty is a role assignment (#2044): a holder that dies stops renewing, and its assignment is
+/// voided once the lease lapses or the one liveness rule has the instance reaped, so a waiter
+/// watching the assignment (<see cref="MigratorWatch"/>) sees the takeover become available.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>

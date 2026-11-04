@@ -29,7 +29,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.DataPostgres;
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgCommitOrderStamperWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDurableSignalRetentionWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDurableSignalTailWorker.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDutyElector.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgInstanceLifecycleMonitor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgScheduleClaimer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgScheduleManager.cs</code-under-test>
@@ -181,36 +180,6 @@ public class NotificationConstructorGuardTests {
   public async Task PgDurableSignalTailWorker_NullLogger_NamesLoggerAsync() {
     var ex = await Assert.That(() => new PgDurableSignalTailWorker(
         _options, _configuration, _instance, new NoopSink(), null!))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("logger");
-  }
-
-  // ---- PgDutyElector ----
-
-  [Test]
-  public async Task PgDutyElector_NullOptions_NamesOptionsAsync() {
-    var ex = await Assert.That(() => new PgDutyElector(null!, _configuration, _instance, NullLogger<PgDutyElector>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("options");
-  }
-
-  [Test]
-  public async Task PgDutyElector_NullConfiguration_NamesConfigurationAsync() {
-    var ex = await Assert.That(() => new PgDutyElector(_options, null!, _instance, NullLogger<PgDutyElector>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("configuration");
-  }
-
-  [Test]
-  public async Task PgDutyElector_NullInstanceProvider_NamesInstanceProviderAsync() {
-    var ex = await Assert.That(() => new PgDutyElector(_options, _configuration, null!, NullLogger<PgDutyElector>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("instanceProvider");
-  }
-
-  [Test]
-  public async Task PgDutyElector_NullLogger_NamesLoggerAsync() {
-    var ex = await Assert.That(() => new PgDutyElector(_options, _configuration, _instance, null!))
       .Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("logger");
   }

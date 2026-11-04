@@ -19,8 +19,9 @@ public static class StartupDuties {
 }
 
 /// <summary>
-/// A duty currently held. Dispose to release cleanly; death releases server-side without a call
-/// (the session ends, the primitive frees, the recorded holding is reaped with the instance row).
+/// A duty currently held. Dispose to release cleanly; a holder that dies without a call stops
+/// renewing, and the duty goes to the next vote once its lease lapses or the one liveness rule has
+/// the instance reaped (the recorded holding is reaped with the instance row).
 /// </summary>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 public interface IDutyGrant : IAsyncDisposable {
@@ -31,10 +32,9 @@ public interface IDutyGrant : IAsyncDisposable {
   DateTimeOffset AcquiredAt { get; }
 
   /// <summary>
-  /// Fencing: verifies the grant is still actually held by round-tripping the session that holds
-  /// the primitive. A long-tenure holder calls this before each unit of exclusive work — a grant
-  /// whose session died is a grant another instance may already hold. Returns false (and marks
-  /// the grant lost) instead of throwing.
+  /// Fencing: verifies the grant is still actually held, renewing its lease when due. A long-tenure
+  /// holder calls this before each unit of exclusive work: a grant that lapsed or was taken over is
+  /// a grant another instance may already hold. Returns false instead of throwing.
   /// </summary>
   Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken);
 
@@ -82,16 +82,15 @@ public interface IDutyGrant : IAsyncDisposable {
 
 /// <summary>
 /// Wins duties. An instance never looks up whether it has been <em>assigned</em> a capability —
-/// it attempts acquisition, and the primitive grants or refuses. <b>The lock decides, the row
-/// reports</b>: implementations record the holding after winning, and if the record and the lock
-/// ever disagree, the lock is right.
+/// it attempts acquisition, and the vote grants or refuses. <b>The vote decides, the row
+/// reports</b>: implementations record the holding after winning. In Postgres every duty is a role
+/// assignment with a lease and an epoch (#2044); no duty is held by an advisory lock.
 /// </summary>
 /// <remarks>
 /// Election is deliberately not membership: the primitive is linearizable against the database
 /// every instance already depends on, with no timeout to tune and no split-brain window. Liveness
 /// (heartbeats, <c>InstanceDiedSignal</c>) only prompts <em>re-attempts</em> — it never decides.
-/// The eviction fence reaches here too: an evicted instance is refused at acquisition even when
-/// it wins the primitive, and the implementation releases what it won.
+/// The eviction fence reaches here too: an evicted instance is refused at acquisition.
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>

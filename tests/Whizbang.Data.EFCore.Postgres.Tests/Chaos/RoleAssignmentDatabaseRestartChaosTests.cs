@@ -51,8 +51,8 @@ public class RoleAssignmentDatabaseRestartChaosTests {
     RoleAssignmentOptions tuned() => new() { RenewInterval = TimeSpan.FromSeconds(30) };
     var holder = await ChaosPod.JoinAsync(server.ConnectionString, () => new WorkCoordinationDbContext(options), cancellationToken);
     var other = await ChaosPod.JoinAsync(server.ConnectionString, () => new WorkCoordinationDbContext(options), cancellationToken);
-    holder.Build(server.ConnectionString, server.ConnectionString, null, false, null, new FakeTimeProvider(), [], tuned());
-    other.Build(server.ConnectionString, server.ConnectionString, null, false, null, new FakeTimeProvider(), [], tuned());
+    holder.Build(server.ConnectionString, server.ConnectionString, null, null, new FakeTimeProvider(), [], tuned());
+    other.Build(server.ConnectionString, server.ConnectionString, null, null, new FakeTimeProvider(), [], tuned());
     await holder.PassAsync(cancellationToken);
     var epoch = await ChaosPod.EpochAsync(server.ConnectionString, StartupDuties.MAINTAINER, cancellationToken);
     await other.Store.OweAsync(RoleAssignmentChaosTests.ROLE, RoleAssignmentChaosTests.WORK, cancellationToken);

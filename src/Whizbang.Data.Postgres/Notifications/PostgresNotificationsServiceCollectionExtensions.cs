@@ -121,8 +121,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingletonOverNullDefault<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
     services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
 
-    // Slice 26.12: register the commit-order stamper worker. Singleton per pod via
-    // pg_try_advisory_lock — every instance hosts it, only the lock-holder actively stamps.
+    // Slice 26.12: register the commit-order stamper worker. Every instance hosts it; only the
+    // holder of the stamper's role (a role assignment, #2044) actively stamps.
     // Bound to CommitOrderStamperOptions via the same Whizbang:Database section.
     services.AddOptions<CommitOrderStamperOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
@@ -230,9 +230,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Hosted to start at Accept commands (#1636).
     services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
-    // Duty election (#966 phase 3): duties are held by role assignment by default — a vote decides,
-    // the row is the role, with an epoch that fences exclusive work. The session-lock elector stays
-    // as the delegate for any duty not held by assignment, and a host's own elector is left alone.
+    // Duty election (#966 phase 3, #2044): every duty is held by role assignment; a vote decides,
+    // the row is the role, with an epoch that fences exclusive work. A host's own elector is left alone.
     // The commit-order stamper's leadership is one of the roles while the stamper is enabled.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
@@ -298,7 +297,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       _applySearchPath(builder, options, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
-      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - PgCommitOrderStamperWorker holds one long-lived stamping connection while it leads
       //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
       // 8 gives the long-held pair plus headroom for the burst connections under
       // contention. A smaller pool (we tried 4) starved test runs that drove
@@ -408,7 +407,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<INotificationDataSource>(sp => {
       // Independent data source — its pool is NOT shared with EF Core.
       // 4 connections is plenty: one for the LISTEN/NOTIFY shared connection,
-      // one for the commit-order stamper's advisory-lock holder, plus headroom
+      // one for the commit-order stamper's stamping connection, plus headroom
       // for the leader-election retry and probe paths.
       var builder = new NpgsqlDataSourceBuilder(connectionString);
       var explicitOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>()?.Value
@@ -416,7 +415,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       _applySearchPath(builder, explicitOptions, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
-      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - PgCommitOrderStamperWorker holds one long-lived stamping connection while it leads
       //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
       // 8 gives the long-held pair plus headroom for the burst connections under
       // contention. A smaller pool (we tried 4) starved test runs that drove
@@ -489,11 +488,6 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
 
     if (bool.TryParse(section["DisableStamper"], out var disable)) {
       options.DisableStamper = disable;
-    }
-
-    if (long.TryParse(section["AdvisoryLockKey"], System.Globalization.NumberStyles.Integer,
-        System.Globalization.CultureInfo.InvariantCulture, out var lockKey)) {
-      options.AdvisoryLockKey = lockKey;
     }
 
     if (TimeSpan.TryParse(section["FencedRetryInterval"], System.Globalization.CultureInfo.InvariantCulture, out var fencedRetry)) {
