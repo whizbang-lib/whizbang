@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
 [Category("Shard1")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class JsonbContainmentSwitchTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=gate;Username=u;Password=p";
 

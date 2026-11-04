@@ -88,14 +88,15 @@ public class JsonbContainmentAuthoringTests {
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
 
-  private static readonly AuthoringDbContext _db = new(_options);
+  // One context per test: a DbContext is not thread-safe, and the tests of this class run in parallel (#2069).
+  private readonly AuthoringDbContext _db = new(_options);
 
   /// <summary>
   /// Runs the rewriter over a real query carrying the predicate, and reports whether it produced a
   /// containment call. The predicate is wrapped in <c>Where</c> rather than visited bare, because a
   /// bare lambda is not what the interceptor ever sees and the rewrite is scoped to filter position.
   /// </summary>
-  private static bool _rewrites(Expression<Func<PerspectiveRow<OrderModel>, bool>> predicate) {
+  private bool _rewrites(Expression<Func<PerspectiveRow<OrderModel>, bool>> predicate) {
     var query = _db.Set<PerspectiveRow<OrderModel>>().Where(predicate).Expression;
     var rewritten = new JsonbContainmentRewriter(_db.Model).Visit(query);
     var finder = new MarkerFinder();

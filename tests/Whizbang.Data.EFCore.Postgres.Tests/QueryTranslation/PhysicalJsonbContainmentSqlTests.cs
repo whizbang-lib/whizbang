@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "Captured on purpose: a const local is inlined as a literal and the parameterized path would go untested.")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class PhysicalJsonbContainmentSqlTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=jsonbcols;Username=u;Password=p";
 

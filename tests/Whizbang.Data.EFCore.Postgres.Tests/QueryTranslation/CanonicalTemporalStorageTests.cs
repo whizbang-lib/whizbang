@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 [Category("Integration")]
 [Category("Shard1")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class CanonicalTemporalStorageTests : IAsyncDisposable {
   private const string TABLE = "wh_per_canonical_temporal";
 

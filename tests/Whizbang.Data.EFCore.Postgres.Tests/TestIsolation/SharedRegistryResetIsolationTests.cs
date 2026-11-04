@@ -11,8 +11,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.TestIsolation;
 /// <summary>
 /// A test that resets or clears one of the process-wide registries the database tests read (the model registrars,
 /// the physical field and hydrator registries, the DbContext registration and initialization registries, the data
-/// coalescers, the stream groups) runs alone, under a <c>[NotInParallel]</c> with no key, so the reset never overlaps
-/// a test that relies on what it removes (#1903, #2069).
+/// coalescers, the stream groups), or switches the containment mode every perspective query compiles under, runs
+/// alone, under a <c>[NotInParallel]</c> with no key, so the change never overlaps a test that relies on what it
+/// removes or switches (#1903, #2069).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -29,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.TestIsolation;
 /// </remarks>
 [Category("Shard1")]
 public partial class SharedRegistryResetIsolationTests {
-  [GeneratedRegex(@"\b\w+(Registry|Coalescer|Hydrator|TestSeam)\.(ResetForTesting|Clear)\(")]
+  [GeneratedRegex(@"\b\w+(Registry|Coalescer|Hydrator|TestSeam)\.(ResetForTesting|Clear)\(|\bJsonbContainmentSwitch\.(Set|SetMode|Reset|ApplyRuntimeConfiguration)\(")]
   private static partial Regex _resetsARegistry();
 
   /// <summary>The attribute with no key, which TUnit runs after everything else and one test at a time.</summary>

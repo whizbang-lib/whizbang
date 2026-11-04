@@ -79,10 +79,11 @@ public class JsonbContainmentJoinTests {
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
 
-  private static readonly JoinDbContext _db = new(_options);
+  // One context per test: a DbContext is not thread-safe, and the tests of this class run in parallel (#2069).
+  private readonly JoinDbContext _db = new(_options);
 
-  private static IQueryable<PerspectiveRow<OrderModel>> _orders => _db.Set<PerspectiveRow<OrderModel>>();
-  private static IQueryable<PerspectiveRow<CustomerModel>> _customers => _db.Set<PerspectiveRow<CustomerModel>>();
+  private IQueryable<PerspectiveRow<OrderModel>> _orders => _db.Set<PerspectiveRow<OrderModel>>();
+  private IQueryable<PerspectiveRow<CustomerModel>> _customers => _db.Set<PerspectiveRow<CustomerModel>>();
 
   private static int _containments(string sql) {
     var count = 0;

@@ -17,7 +17,7 @@ suite to finish in every CI run.
    ```csharp
    [NotInParallel("LocalEventStorageTests.LocalEventTracker")] // every test resets and reads the one process-wide event tracker
    ```
-4. **A test that resets a registry every database test reads runs alone**: `[NotInParallel]` with no key. A key only
+4. **A test that resets a registry or switch every database test reads runs alone**: `[NotInParallel]` with no key. A key only
    orders the tests that hold it, and every database test reads these registries, so no key is narrow enough.
 5. **A database is created and dropped through `PerTestDatabaseFactory`**, which retries the template contention
    (55006) that concurrent `CREATE DATABASE` produces. Never issue your own.
@@ -51,8 +51,9 @@ files, child processes and wall-clock assertions; every hit was read.
 
 | Outcome | Files | Why |
 |---|---|---|
-| Parallel, no key | 541 | own database, nothing process-wide that another test can disturb |
+| Parallel, no key | 531 | own database, nothing process-wide that another test can disturb |
 | Runs alone (registry reset) | 18 | resets the model registrars, the physical field, hydrator, DbContext registration or initialization registries, the data coalescers, the split-mode hydrators or the stream groups |
+| Runs alone (containment switch) | 10 | switches `JsonbContainmentSwitch`, the process-wide mode every perspective query compiles under (found by the first parallel run, not the scan: its setters are named `Set` and `SetMode`) |
 | Runs alone (measurement) | 23 | `Benchmark` classes (no shard, never in CI) and one test asserting an unscaled wall-clock latency budget |
 | Narrow key | 1 | `BaseUpsertStrategyCoverageIntegrationTests`: two tests register a TTL for the widget model that the others need absent |
 | Kept on the blanket key | 0 | |
@@ -64,6 +65,8 @@ Shared state that was isolated instead of serialized:
 - Three lock probes counted `pg_locks` or `pg_stat_activity` rows across every database on the server; they are
   scoped to their own.
 - 30 fixtures issued their own `CREATE DATABASE`; they use the factory.
+- Three query-translation classes shared one static `DbContext` across their tests, which a parallel run broke with
+  "An attempt was made to use the context instance while it is being configured"; each test has its own now.
 
 Not hazards, checked: `ScopeContextAccessor` and `ProcessingModeAccessor` are `AsyncLocal`; the registries tests add
 to (`PerspectivePhysicalFieldRegistry`, `SignalTypeRegistry`, `JsonIndexRegistry`, `PerspectiveTtlRegistry`) are

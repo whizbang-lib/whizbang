@@ -40,6 +40,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private const string TABLE = "wh_per_eligibility";
 
