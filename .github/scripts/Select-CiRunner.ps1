@@ -114,8 +114,10 @@ $script:BlacksmithVariables = @('CI_BLACKSMITH_RUNNER', 'CI_BLACKSMITH_RUNNER_AN
     any OS and architecture serves them. compile is Linux X64 because its determinism manifest is
     compared byte for byte with the GitHub-hosted x64 rebuild; linux and linux-docker are kept to X64, the
     architecture their bash steps and service images are verified on. Os and X64 are what a Blacksmith label must fit. HostedOn lists the events whose jobs of the class skip
-    tiers 1 and 2. Pool is false for a class whose job waits on other jobs of the run (the analysis waits
-    up to hours for the suites' coverage): on a pool machine it would hold the machine those jobs need.
+    tiers 1 and 2. Pool is false for analyze: its second half (Analyze · Quality) still waits up to hours
+    for another run's coverage on a release PR, which on a pool machine would hold a machine the suites
+    need, and both halves must check out at the same path (the scan's state names files absolutely),
+    which GitHub-hosted runners guarantee and pool machines do not.
 #>
 function Get-CiRunnerClass {
   $linux = @('self-hosted', 'whizbang', 'Linux', 'X64')

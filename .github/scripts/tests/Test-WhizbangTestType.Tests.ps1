@@ -97,6 +97,8 @@ jobs:
     needs: [build, $suites]
   publish-test-status:
     needs: [$suites]
+  quality:
+    needs: [build, $suites]
 "@
     return $repo
   }
@@ -249,6 +251,13 @@ Describe 'Get-CiSuiteListProblem' {
     $repo = New-FakeRepo
     Edit-RepoFile $repo '.github/workflows/ci.yml' "    if: >-`n      needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && " "    if: >-`n      needs.unit-tests.result == 'success' && "
     @(Get-CiSuiteListProblem -Root $repo) | Should -Be @("component-tests: ci.yml job release-publish does not require needs.component-tests.result == 'success'")
+  }
+
+  It 'reports a suite missing from the needs of Quality, which merges every suite''s coverage' {
+    # Quality starts once every suite has finished (#2068); one it does not need could still be running.
+    $repo = New-FakeRepo
+    Edit-RepoFile $repo '.github/workflows/ci.yml' "  quality:`n    needs: [build, unit-tests, component-tests, general-integration]" "  quality:`n    needs: [build, unit-tests, general-integration]"
+    @(Get-CiSuiteListProblem -Root $repo) | Should -Be @('component-tests: missing from the needs of ci.yml job quality')
   }
 
   It 'reads a single-job needs written without brackets' {

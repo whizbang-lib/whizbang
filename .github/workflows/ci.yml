@@ -707,8 +707,10 @@ jobs:
           if [ "$CONCL" != "success" ]; then
             emit false "PR run $PR_RUN for $PR_HEAD is '$CONCL', not success — full matrix"
           fi
+          # The job that ends the scan and enforces the coverage gate, by its exact name (the one
+          # require-pr-gate reads): Quality's first half alone succeeding proves nothing.
           QUALITY_OK=$(gh api "repos/$REPO/actions/runs/$PR_RUN/jobs?per_page=100" \
-            --jq '[.jobs[] | select(.name | test("Quality")) | select(.conclusion == "success")] | length' \
+            --jq '[.jobs[] | select(.name == "Analyze · Quality / Sonar and coverage") | select(.conclusion == "success")] | length' \
             2>/dev/null || echo 0)
           if [ "${QUALITY_OK:-0}" -lt 1 ]; then
             emit false "PR run $PR_RUN did not run Quality to green (dependabot? re-run?) — full matrix"
@@ -1022,39 +1024,65 @@ jobs:
       artifact-name: build-component-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
 
+  quality-build:
+    name: Analyze · Quality build
+    # The first half of Quality (#2068): SonarScanner begin and the Sonar-wrapped build, while the suites
+    # run. Only where the scanner runs, a pull request or main: on any other run the second half needs no
+    # build at all (the coverage merge reads reports and the checkout), and the analyzers are enforced by
+    # Build · Analyzers. Same conditions as the second half otherwise; see the notes there.
+    needs: [changes, queue-validated, ff-validated, release-pr, pick-runner]
+    if: >-
+      !failure() && !cancelled() &&
+      (github.event_name == 'pull_request' ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')) &&
+      (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
+      needs.queue-validated.outputs.validated != 'true' &&
+      needs.ff-validated.outputs.skip != 'true' &&
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-quality-build.yml
+    with:
+      runs-on: ${{ needs.pick-runner.outputs.analyze }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   quality:
     name: Analyze · Quality
-    # Deliberately does NOT need the test suites: it starts its Sonar-wrapped build
-    # while they run, then waits for their coverage artifacts internally (failing fast
-    # if any test job fails). actions:read is required for that polling.
+    # The second half of Quality: coverage merge, the coverage gates, SonarScanner end and the PR comment.
+    # It NEEDS every suite, so it starts once they have all finished instead of holding a runner while
+    # they run (#2068: 261 runner-hours of polling over two weeks). The Sonar-wrapped build, the slow part,
+    # still runs beside the suites, in quality-build, off their critical path. A suite that fails or is
+    # canceled skips this job, and Gate · CI result fails on that suite.
     #
     # Dependabot PR runs are excluded: workflows triggered by dependabot receive only
     # Dependabot-scope secrets (this repo defines only the lock-file app's, never
     # SONAR_TOKEN), so SONAR_TOKEN arrives empty
-    # and the scanner hard-fails on auth — and a re-run keeps the original actor's
+    # and the scanner hard-fails on auth, and a re-run keeps the original actor's
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop. The run for the regenerated lock files that
     # dependabot-lockfiles.yml pushes has the GitHub App as its actor, so it gets full
     # secrets and runs quality like any other pull request.
     # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
-    needs: [changes, queue-validated, ff-validated, release-pr, pick-runner]
+    needs: [changes, queue-validated, ff-validated, release-pr, pick-runner, quality-build, reupload-reports, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
     # queue-validated clause skips quality on a queue-validated develop push; the ff-validated
     # clause skips it on a fast-forward queue run (the PR run's Sonar already covered this exact
-    # tree). Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
+    # tree). Coverage still reaches Codecov: via reupload-reports on the push, or the PR run's
     # own upload on a fast-forward.
     #
     # NOT gated on the release-PR check, though format, build and the suites are. Those are
     # equivalent across the two runs covering a release cut: same commit, same bytes, same tests.
-    # This job is NOT, because it behaves differently per EVENT — SonarScanner Begin/End run only
+    # This job is NOT, because it behaves differently per EVENT: SonarScanner Begin/End run only
     # on a pull request or on main, so the push run for a release branch deliberately skips the
     # scanner. Yielding here removed the only context that ever analyzes a release PR, and the
     # release then merged to main carrying no analysis of its own.
     # With the suites yielded, this run has no coverage of its own: Quality waits for, and
-    # analyzes, the covering run's (coverage-run-id from release-pr).
+    # analyzes, the covering run's (coverage-run-id from release-pr). That is the one wait left,
+    # since a job dependency cannot name another run's jobs.
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
@@ -1067,6 +1095,7 @@ jobs:
       pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
     with:
+      # The same runner class as quality-build, so the scan ends at the checkout path it began at.
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
       # Set when the suites yielded to another run over the same tree (a release PR's push run, or
       # the release-branch run behind a main push): the coverage to analyze lives there.
@@ -1460,7 +1489,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
+    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
@@ -1862,7 +1891,7 @@ jobs:
 
   notify-cancelled:
     name: Notify · Canceled
-    needs: [build, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality]
+    needs: [build, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality]
     permissions:
       contents: read
     # merge_group is excluded for a different reason than success: the queue cancels its own runs

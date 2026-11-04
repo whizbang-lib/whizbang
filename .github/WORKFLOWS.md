@@ -34,7 +34,8 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 |---|---|---|
 | `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build, instrument the test-side copies for coverage while it uploads |
 | `reusable-test-*.yml` | CI | One suite each: unit, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob |
-| `reusable-quality.yml` | CI | Sonar analysis and the coverage gates, on this run's or a covering run's coverage |
+| `reusable-quality-build.yml` | CI | Quality's first half, where the scanner runs (a PR, or main): SonarScanner begin and the analysis build, beside the suites; hands its analysis state to the second half |
+| `reusable-quality.yml` | CI | Quality's second half, once every suite has finished: the coverage merge and gates, SonarScanner end and the PR comment, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
 | `reusable-version.yml` | CI | Resolve the version (release PR title, release branch name, or GitVersion) |
 | `reusable-mutation.yml` | Mutation Testing | One mutation run |
@@ -142,7 +143,7 @@ a table saying which tier each class got and why every higher tier was skipped.
 | `any-os` | `self-hosted`, `whizbang` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Any OS and architecture. The suites run the build with `dotnet test --test-modules` on the framework-dependent `.dll` (no RID, nothing native beyond what NuGet ships per RID), so the Linux build runs on Windows X64 and ARM64 and on macOS. Every step is pwsh or an action |
 | `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is what verify-rebuild compares with the tested run's (same SDK, same assembly set), and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
 | `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
-| `analyze` | none: never the pool | Analyze · Quality | Waits up to hours for the suites' coverage; on a pool machine it would hold the machine the suites need |
+| `analyze` | none: never the pool | Analyze · Quality build, Analyze · Quality | The two halves of Quality (#2068) must check out at the same path, since the scan's state names files absolutely, which GitHub-hosted runners guarantee; and on a release PR the second half still waits up to an hour for its release-branch run's coverage, holding whatever machine it is on |
 | `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |
 
 **Coverage from another checkout.** The build's coverage source-root mappings name the build machine's

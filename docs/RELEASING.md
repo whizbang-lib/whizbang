@@ -540,9 +540,11 @@ build and the six suites** (and so pack) to that run:
 
 **Quality never yields.** SonarScanner runs only on a pull request or on `main`, so the release PR's
 Quality and the main push's Quality are the only analyses those trees get (the release-branch push
-run's Quality builds and checks coverage but does not scan). Each one takes its **coverage from the
-run it yielded to** (`coverage-run-id`), waiting for that run's suites, because its own run
-produces none.
+run's Quality checks coverage but does not scan, and has no `Analyze · Quality build`). Each one takes
+its **coverage from the run it yielded to** (`coverage-run-id`), waiting for that run's suites,
+because its own run produces none. That is the only Quality that still waits: everywhere else
+`Analyze · Quality` needs every suite and starts once they have finished, while the Sonar-wrapped
+build runs beside them as `Analyze · Quality build` (#2068).
 
 Each release-PR yield posts one **sticky PR comment** naming the push run. If that run is later
 canceled or fails, the PR's gate fails and names it: **re-run the push run**
@@ -697,7 +699,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 |---|---|---|
 | Release PR's `Gate · CI result` failed: "the suites ran in run N, whose gate ended ..." | the release-branch push run it yielded to was canceled or failed | Re-run that run: `gh run rerun <id> --failed` (the sticky PR comment names it), then re-run the PR's failed jobs. Or set `RELEASE_PR_FULL_MATRIX=true` and re-run the PR's CI, then unset it |
 | `Gate · CI result` failed: "X is skipped, but nothing proves this tree was tested anywhere else" | a suite was skipped by a condition that is not one of the gate's proven paths | A workflow bug: find why the job's `if` skipped it. Never re-run to get past it |
-| `Analyze · Quality` canceled at its time limit | runners queued the suites for hours | Re-run the failed jobs; the suites' coverage is still there |
+| `Analyze · Quality` canceled at its time limit | on a release PR, the release-branch run it reads coverage from was queued for hours (any other run starts Quality only after its suites finish) | Re-run the failed jobs; the suites' coverage and the analysis state are still there |
+| `Analyze · Quality` failed at `Download the analysis state` or `Restore the analysis state` | `Analyze · Quality build` did not finish, or the two halves ran at different checkout paths (a runner-class change) | Re-run the failed jobs; for a path mismatch, keep both halves on the `analyze` class (`.github/WORKFLOWS.md`) |
 | `Plan · Locate the tested packages` failed: "No CI push run for ... was found" | the run search kept missing the run (#926), or no push run exists for that commit | `gh run list --workflow ci.yml --branch release/vX.Y.Z --event push`. A green run for the commit listed: the search missed it, so re-run this release's failed jobs (`gh run rerun <release run> --failed`); never re-run the release-branch CI for this. None listed: nothing tested those bytes, so do not publish; find out why the push run never ran |
 | `Plan · Locate the tested packages` failed: "ended '...', not success" or "still ..." | the release-branch run went red, was canceled, or had not finished | Fix or re-run it (`gh run rerun <id> --failed`), wait for green, then re-run this release's failed jobs (or `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false`) |
 | `Plan · Locate the tested packages` failed: "have expired" or "has no nuget-packages-... artifact" | the release PR sat open past 7 days, or the packages were never uploaded | Re-run **all** jobs of the release-branch run (`gh run rerun <id>`), which rebuilds and re-tests them under the same artifact name, wait for green, then re-run this release's failed jobs (or dispatch as above). This works after the release PR has merged too: `Plan · Route the hotfix by line` sees the branch is already in main and stands aside instead of trying to open a second release PR (#1209) |
@@ -823,10 +826,14 @@ success. CI always starts clean.
   through the same script, `.github/scripts/Test-InertDiff.ps1`. Add a path only if nothing reads it
   during build, test, analysis or versioning; `.editorconfig`, `BannedSymbols*.txt`, the signing key,
   the coverage and Sonar config and `GitVersion.yml` are code.
-- **Quality derives its coverage count.** It waits for one `coverage-*` artifact per suite leg,
+- **Quality derives its coverage count.** It expects one `coverage-*` artifact per suite leg,
   counting legs from the jobs list once Build succeeds. Suite legs must stay named
-  `<suite> / <...> Tests`; a finished-green set with a missing artifact fails loudly. Its job budget
-  (180 minutes) is sized for runner queueing, because it starts with the run and waits.
+  `Test · <suite> / Run suite`; a finished-green set with a missing artifact fails loudly. It is split
+  in two (#2068): `Analyze · Quality build` begins the scan and builds beside the suites (only where
+  the scanner runs: a PR or main), and `Analyze · Quality` needs every suite, so in its own run it
+  finds them finished and never waits. Its 180-minute budget is for a release PR, whose coverage comes
+  from the release-branch run and may still be on its way. A new suite job must be in Quality's
+  `needs` too (`Test-WhizbangTestType.ps1` checks it).
 - **A `pull_request` trigger filters on the BASE branch only.** There is no head-branch filter, so a
   release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
   prevented, which is why a release PR still shows a row per yielded job.

@@ -3,13 +3,16 @@
 
 name: Quality (Reusable)
 
-# Runs coverage merge + threshold + SonarCloud analysis. To keep the expensive
-# Sonar-wrapped build OFF the test-suite critical path, this job starts alongside the
-# suites: SonarScanner begins and the solution builds while tests run elsewhere, then a
-# wait step polls for the suites' coverage artifacts (failing fast if any test job
-# fails), and only the cheap merge/threshold/scanner-end steps happen after that.
-# The caller must grant `actions: read` (artifact/job polling) in addition to
-# `contents: read`.
+# The second half of the quality gate: coverage merge, the coverage gates, SonarScanner end and the PR
+# comment. The first half, reusable-quality-build.yml, begins the scan and runs the Sonar-wrapped build
+# while the suites run, off their critical path, and hands over its analysis state. ci.yml starts this
+# half only once every suite of the run has finished (a job dependency), so no runner sits waiting for
+# them: until #2068 one job did both halves and held its runner polling for the suites' coverage.
+#
+# Where the scanner does not run (develop and release-branch pushes, the merge queue), there is no first
+# half: the coverage merge reads the suites' reports and the checkout, never build output.
+#
+# The caller must grant `actions: read` (the artifact and job listing) in addition to `contents: read`.
 
 on:
   workflow_call:
@@ -25,6 +28,8 @@ on:
         description: >-
           Run whose suites produced the coverage to analyze, when this run's suites yielded to it
           (a release PR's push run, or the release-branch run behind a main push). Empty: this run.
+          That run may still be running (a release PR's push run starts alongside it), so this is the
+          one case that still waits for coverage: a job dependency cannot name another run's jobs.
         type: string
         required: false
         default: ''
@@ -49,9 +54,10 @@ jobs:
       contents: read
       actions: read
       pull-requests: write
-    # Sized for runner queueing, not work: this job starts with the run and waits for suites that
-    # may sit queued for most of an hour before they start (a 60-minute budget once canceled a
-    # required check while every suite was still green).
+    # Minutes of work once the suites are done. The budget stays wide for the one case that still waits:
+    # a release PR whose suites run in its release-branch push run (coverage-run-id), queued behind
+    # runners for most of an hour at worst (a 60-minute budget once canceled a required check while
+    # every suite was still green).
     timeout-minutes: 180
 
     steps:
@@ -72,120 +78,49 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
+      # The first half's analysis state: only where the scanner runs. Missing state on such a run fails here,
+      # so a scan can never end without the build it analyzes.
+      - name: Download the analysis state
+        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sonar-state-${{ github.run_id }}
+          path: ${{ runner.temp }}/sonar-state
+
+      # The state names this checkout's files by absolute path, some inside binary reports that cannot be
+      # rewritten, so the scan ends at the same path it began at. Both halves run on the same runner class
+      # (GitHub-hosted runners all check out at the same path); a different path is linked to this
+      # checkout, and the job fails, naming both paths, if even that is not possible.
+      - name: Restore the analysis state
+        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        env:
+          STATE: ${{ runner.temp }}/sonar-state
+        run: |
+          set -euo pipefail
+          tar -xzf "$STATE/sonarqube.tgz"
+          BEGAN=$(cat "$STATE/workspace.txt")
+          if [ "$BEGAN" != "$GITHUB_WORKSPACE" ]; then
+            if [ -e "$BEGAN" ]; then
+              echo "::error::The scan began in $BEGAN, which exists on this runner and is not this checkout ($GITHUB_WORKSPACE); the analysis state cannot be restored."
+              exit 1
+            fi
+            { mkdir -p "$(dirname "$BEGAN")" && ln -s "$GITHUB_WORKSPACE" "$BEGAN"; } 2>/dev/null \
+              || { sudo -n mkdir -p "$(dirname "$BEGAN")" && sudo -n ln -s "$GITHUB_WORKSPACE" "$BEGAN"; } \
+              || { echo "::error::The scan began in $BEGAN and this checkout is $GITHUB_WORKSPACE; could not link the two. Run both quality jobs on the same runner class."; exit 1; }
+            echo "Linked $BEGAN to this checkout."
+          fi
+          echo "SONARSCANNER_VERSION=$(cat "$STATE/sonarscanner-version.txt")" >> "$GITHUB_ENV"
+          echo "Restored the analysis state begun in $BEGAN with dotnet-sonarscanner $(cat "$STATE/sonarscanner-version.txt")."
+
       - name: Install tools
         run: |
-          dotnet tool install --global dotnet-sonarscanner
+          # The version the scan began with; none is pinned where the scanner does not run.
+          if [ -n "${SONARSCANNER_VERSION:-}" ]; then
+            dotnet tool install --global dotnet-sonarscanner --version "$SONARSCANNER_VERSION"
+          fi
           dotnet tool install --global dotnet-reportgenerator-globaltool
           # Reads the suites' binary coverage reports; the version is the one Find-UncoveredNewLines.ps1 names.
           dotnet tool install --global dotnet-coverage --version 18.12.0
-
-      # SonarCloud free plan only supports main branch + PR analysis, so the scanner is
-      # skipped for push events to non-main branches (e.g. develop).
-      #
-      # merge_group is skipped too, and NOT because it is cheap to drop: the queue ref is a
-      # throwaway (gh-readonly-queue/develop/pr-N-<sha>) and carries no pull_request context,
-      # so the scanner would submit a BRANCH analysis of a branch that ceases to exist minutes
-      # later — rejected outright on the main-plus-PRs free plan. The PR analysis already
-      # gated this exact change, and keeping the queue run lean is the point of the queue.
-      - name: SonarScanner Begin
-        # ONLY a pull request, or a run on main (a release landing, or a manual re-analysis).
-        # Every other context — develop pushes, the merge queue, a dispatch on any other branch —
-        # skips the scanner entirely. Analyzing anything else is actively harmful: see the branch
-        # note below.
-        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          # coverageReportPaths is a path only — the file is produced later, after the
-          # suites' coverage artifacts arrive; the scanner reads it at the End step.
-          SONAR_ARGS=(
-            /k:"whizbang-lib_whizbang" /o:"whizbang-lib"
-            /d:sonar.token="${SONAR_TOKEN}"
-            /d:sonar.host.url="https://sonarcloud.io"
-            /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml"
-          )
-
-          # A PR is a pull-request analysis against its base; a main push is the main-branch
-          # analysis (no sonar.branch.name — SonarCloud's default). There is deliberately no third
-          # shape. A manual run on main takes the same path, so the main line can be re-analyzed
-          # without waiting for the next release.
-          #
-          # This organization's SonarCloud plan does not serve non-main branch data: reads return
-          # "Organization is not allowed to access data from non main branches." Submitting a
-          # long-lived branch analysis still half-creates the branch — it appears in
-          # project_branches/list with no analysis date — and a PR's quality gate is resolved
-          # against its BASE branch, so once `develop` existed in that unreadable state every
-          # PR into develop failed post-processing with "Not authorized or project not found"
-          # AFTER uploading its report successfully. The analysis is fine; the gate lookup is what
-          # cannot resolve the base. Do not submit a branch analysis here until the plan supports
-          # it, and delete any branch that was created (Administration -> Branches & Pull Requests).
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            SONAR_ARGS+=(
-              /d:sonar.pullrequest.key="$PR_NUMBER"
-              /d:sonar.pullrequest.branch="$HEAD_REF"
-              /d:sonar.pullrequest.base="$BASE_REF"
-            )
-          fi
-          SONAR_ARGS+=(/d:sonar.qualitygate.wait=true)
-
-          # Load ALL sonar.* properties from shared config (single source of truth with local scripts)
-          while IFS='=' read -r key value; do
-            # Skip comments and empty lines
-            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-            key=$(echo "$key" | xargs)  # trim
-            value=$(echo "$value" | xargs)  # trim
-            SONAR_ARGS+=(/d:"$key=$value")
-          done < sonar.config
-
-          dotnet-sonarscanner begin "${SONAR_ARGS[@]}"
-
-      # Single build serves both the scanner (analysis hooks) and ReportGenerator
-      # (source-generated files must exist before the coverage merge). Runs while the
-      # test suites are still executing in their own jobs.
-      # Build ONLY what Sonar analyzes. sonar.config excludes samples, benchmarks, tools and
-      # scripts from analysis, yet the full-solution build compiled them anyway — 28 of the 93
-      # projects, built purely to be thrown away. Tests are NOT excluded (sonar.config carries
-      # per-rule ignores for **/tests/**, which only makes sense if they are analyzed).
-      #
-      # The exclusion list is READ FROM sonar.config rather than hardcoded here, so the build
-      # scope and the analysis scope cannot drift apart — one source of truth, and adding an
-      # exclusion there automatically stops building it.
-      #
-      # The solution is produced by FILTERING the real Whizbang.slnx, not by synthesising a bare
-      # one. A synthesised solution omits the <Configurations> block, and without it MSBuild can
-      # resolve a project under more than one platform concurrently — two writers on the same
-      # deps.json, which fails as "the process cannot access the file".
-      - name: Generate analysis solution
-        shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $cfg = Get-Content sonar.config -Raw
-          $m = [regex]::Match($cfg, '(?m)^sonar\.exclusions=(.+)$')
-          if (-not $m.Success) { throw 'sonar.exclusions not found in sonar.config' }
-          $pats = @($m.Groups[1].Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-          $dirs = @($pats | ForEach-Object { $mm = [regex]::Match($_, '^\*\*/([^/*]+)/\*\*'); if ($mm.Success) { $mm.Groups[1].Value } })
-          $kept = [System.Text.StringBuilder]::new(); $dropped = 0
-          # Split keeping line endings, so the kept file is byte-for-byte the solution minus dropped lines.
-          foreach ($line in [regex]::Split((Get-Content Whizbang.slnx -Raw), '(?<=\n)')) {
-            $pm = [regex]::Match($line, '<Project Path="([^"]+)"')
-            if ($pm.Success -and ($dirs | Where-Object { $pm.Groups[1].Value -match "(^|/)$([regex]::Escape($_))/" })) { $dropped++; continue }
-            [void]$kept.Append($line)
-          }
-          $out = $kept.ToString()
-          [System.IO.File]::WriteAllText((Join-Path -Path $PWD -ChildPath 'Whizbang.Analysis.slnx'), $out)
-          $analysed = ([regex]::Matches($out, '<Project Path=')).Count
-          Write-Output "excluded dirs from sonar.config: $($dirs -join ', ')"
-          Write-Output "dropped $dropped projects; analysing $analysed"
-          if (-not $out.Contains('<Configurations>')) { throw 'Configurations block must survive (see comment above)' }
-          if ($analysed -eq 0) { throw 'refusing to analyse an empty solution' }
-
-      - name: Build (analyzed)
-        run: dotnet build Whizbang.Analysis.slnx --configuration Release
 
       - name: Wait for test suites to publish coverage
         env:
