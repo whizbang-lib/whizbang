@@ -25,6 +25,12 @@ public class ReceivedInboxMessageBuilderClassificationTests {
   /// <summary>A command type.</summary>
   public sealed record ClassifiedCommand(Guid Id) : ICommand;
 
+  /// <summary>An event the application declares but this service does not consume (an absorbed namespace's event).</summary>
+  public sealed record CatalogedEvent([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>A command the application declares but this service does not consume.</summary>
+  public sealed record CatalogedCommand(Guid Id) : ICommand;
+
   private static readonly string _folded = TypeNameFormatter.Format(typeof(ClassifiedEvent));
   private const string RECEPTOR_ONLY = "Contracts.OrderShipped, Contracts";
   private const string CONSUMED_COMMAND = "Contracts.ShipOrder, Contracts";
@@ -80,6 +86,48 @@ public class ReceivedInboxMessageBuilderClassificationTests {
 
     await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, _folded, _json)).IsTrue()
       .Because("a host without the consumer registry keeps the perspective list as a positive signal");
+  }
+
+  // ── #2074: a declared type the consumer registry does not know is classified by the message type catalog ──
+
+  [Test]
+  public async Task AnUnconsumedTypeTheCatalogDeclaresAnEvent_IsAnEvent_EvenAsJsonAsync() {
+    await using var provider = _withCatalog(_entry(typeof(CatalogedEvent), "event"));
+
+    await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, TypeNameFormatter.Format(typeof(CatalogedEvent)), _json))
+      .IsTrue().Because("an absorbed event arrives as JSON and nothing here consumes it; the catalog still knows it is an event");
+  }
+
+  [Test]
+  public async Task AnUnconsumedTypeTheCatalogDeclaresACommand_IsNotAnEvent_WhateverItsPayloadAsync() {
+    await using var provider = _withCatalog(_entry(typeof(CatalogedCommand), "command"));
+
+    await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(
+      provider, TypeNameFormatter.Format(typeof(CatalogedCommand)), new ClassifiedEvent(Guid.Empty))).IsFalse()
+      .Because("the catalog is authoritative for a type it declares");
+  }
+
+  [Test]
+  public async Task ATypeKnownByAFormerName_IsClassifiedByItsCatalogEntryAsync() {
+    await using var provider = _withCatalog(_entry(typeof(CatalogedEvent), "event") with { FormerNames = ["Old.Contracts.Renamed"] });
+
+    await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, "Old.Contracts.Renamed, Old.Contracts", _json)).IsTrue()
+      .Because("an envelope written under a pre-rename name is still the same declared event");
+  }
+
+  private static MessageTypeCatalogEntry _entry(Type type, string kind) =>
+    new(type, TypeNameFormatter.FormatClrTypeName(type), kind, PinnedId: null);
+
+  private static ServiceProvider _withCatalog(params MessageTypeCatalogEntry[] entries) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConsumerRegistry>(new FixedRegistry([]));
+    services.AddSingleton<IMessageTypeCatalog>(new FixedCatalog(entries));
+    services.TryAddWhizbangDefaults();
+    return services.BuildServiceProvider();
+  }
+
+  private sealed class FixedCatalog(MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
   }
 
   private static ConsumedMessageInfo _event(string typeName) => new(typeName, IsEvent: true);
