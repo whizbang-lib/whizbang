@@ -2900,6 +2900,19 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
 
   /// <summary>
+  /// The distinct message types of the pending, unleased <c>wh_inbox</c> rows: the rows
+  /// <see cref="PurgeOrphanInboxAsync"/> may delete. The orphan-inbox janitor asks the receive boundary's keep decision
+  /// about each (#2066), so a type it keeps without a consumer (an absorbed namespace) is never purged. Default: none,
+  /// which leaves the janitor's purge list as it was.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The distinct message type names.</returns>
+  /// <docs>messaging/resilience/orphan-inbox</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync</tests>
+  Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
   /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of
   /// <paramref name="messageTypeNames"/>: the maintenance sweep's way to drop work this service has decided
   /// not to perform. The maintenance worker passes <see cref="RepairTraffic.InboxMessageTypeNames"/> while

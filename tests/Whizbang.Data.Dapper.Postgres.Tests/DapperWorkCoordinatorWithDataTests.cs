@@ -773,6 +773,28 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       .Because("Rows whose message_type IS locally handled must survive the purge.");
   }
 
+  // ----- GetPendingInboxMessageTypesAsync -----
+
+  [Test]
+  public async Task GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingRowsAsync() {
+    var c = _build();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
+    var third = (Guid)TrackedGuid.New();
+    await c.StoreInboxMessagesAsync([
+      _makeInbox((Guid)TrackedGuid.New(), first, _makeHops(first), messageType: "Test.Pending, Test"),
+      _makeInbox((Guid)TrackedGuid.New(), second, _makeHops(second), messageType: "Test.Pending, Test"),
+      _makeInbox((Guid)TrackedGuid.New(), third, _makeHops(third), messageType: "Test.Other, Test"),
+    ], partitionCount: 100);
+
+#pragma warning disable CA1859 // asked through the coordinator interface, the way the orphan-inbox janitor asks it
+    IWorkCoordinator coordinator = c;
+#pragma warning restore CA1859
+    var types = await coordinator.GetPendingInboxMessageTypesAsync();
+
+    await Assert.That(types).IsEquivalentTo(["Test.Other, Test", "Test.Pending, Test"]);
+  }
+
   // ----- NotifyScheduledRetryDueAsync -----
 
   [Test]

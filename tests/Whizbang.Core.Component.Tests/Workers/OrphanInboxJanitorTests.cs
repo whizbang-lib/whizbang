@@ -235,6 +235,37 @@ public class OrphanInboxJanitorTests {
   }
 
   /// <summary>
+  /// #2066: a pending type the receive boundary keeps without a consumer (an absorbed namespace: stored so a later
+  /// perspective can rebuild from it) is handed to the purge as handled, so its rows survive; a pending type nothing keeps
+  /// is still purged.
+  /// </summary>
+  [Test]
+  public async Task StartAsync_APendingTypeInAnAbsorbedNamespace_IsKeptAsync() {
+    var coordinator = new RecordingCoordinator {
+      PendingTypes = ["Contracts.Jobs.JobStarted, Contracts", "Other.Gone, Other"],
+    };
+    var consumers = new ConsumedRegistry(new ConsumedMessageInfo("Contracts.Folded, Contracts", IsEvent: true));
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(consumers);
+    services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
+      consumers, NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
+      new System.Diagnostics.Metrics.Meter("orphan-inbox-absorbed-test"),
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces("contracts.jobs")),
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+    await using var sp = services.BuildServiceProvider();
+    var janitor = new OrphanInboxJanitor(sp, new HandledReceptorTypeSnapshot([]), NullLogger<OrphanInboxJanitor>.Instance);
+
+    await _runToCompletionAsync(janitor);
+
+    await Assert.That(coordinator.LastHandledTypeNames).Contains("Contracts.Jobs.JobStarted, Contracts")
+      .Because("an absorbed namespace's events are kept on receive, so the janitor must not purge them as orphans");
+    await Assert.That(coordinator.LastHandledTypeNames).DoesNotContain("Other.Gone, Other")
+      .Because("a type nothing here keeps is still an orphan");
+  }
+
+  /// <summary>
+  /// The old shape ran the purge inline  /// <summary>
   /// The old shape ran the purge inline in <c>StartAsync</c>, so every later hosted service
   /// waited on it. StartAsync must now return without purging — the sweep is background work.
   /// </summary>
@@ -335,6 +366,10 @@ public class OrphanInboxJanitorTests {
     public IReadOnlyList<string>? LastHandledTypeNames { get; private set; }
     public IReadOnlyList<PurgedOrphanInboxRow> PurgeResult { get; set; } = [];
     public bool ThrowOnPurge { get; set; }
+    public IReadOnlyList<string> PendingTypes { get; init; } = [];
+
+    Task<IReadOnlyList<string>> IWorkCoordinator.GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken) =>
+      Task.FromResult(PendingTypes);
 
     // Explicit interface impl required to override the default interface
     // method on IWorkCoordinator — a `new` member wouldn't be dispatched
