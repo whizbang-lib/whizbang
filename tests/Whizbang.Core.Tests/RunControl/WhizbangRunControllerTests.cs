@@ -30,7 +30,9 @@ public class WhizbangRunControllerTests {
 
   private sealed class RecordingLifecycle(StepLog log, WhizbangRunPermit permit) : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; private set; } = LifecyclePhase.Running;
+    public List<CancellationToken> Tokens { get; } = [];
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
+      Tokens.Add(cancellationToken);
       log.Add($"phase:{phase}:{permit.State}");
       Phase = phase;
       return ValueTask.CompletedTask;
@@ -195,23 +197,41 @@ public class WhizbangRunControllerTests {
   }
 
   [Test]
-  public async Task Halt_Canceled_ThrowsAndReleasesTheSerializationAsync() {
+  public async Task Halt_CanceledWhileWaitingForHeldWork_IsLogged_AndTheHaltStillCompletesAsync() {
+    // #2045: the caller's token bounds every step (host shutdown passes its own), but a canceled step is a failed step:
+    // the path goes on, and the settled phase is still written, on a token of its own.
     var h = _build();
     using var hold = await h.Permit.EnterAsync(CancellationToken.None);
     using var cts = new CancellationTokenSource();
 
     var halting = h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token);
+    await Assert.That(halting.IsCompleted).IsFalse();
     await cts.CancelAsync();
-    await Assert.That(async () => await halting).Throws<OperationCanceledException>();
+    await halting;
 
+    await Assert.That(h.Log.Steps).IsEquivalentTo(["phase:Pausing:Paused", "phase:Paused:Paused"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(h.Lifecycle.Tokens[^1].CanBeCanceled).IsFalse()
+      .Because("the settled phase is written even after the caller's budget is spent");
     hold.Dispose();
-    await h.Controller.ResumeAsync(CancellationToken.None);
-    await Assert.That(h.Permit.State).IsEqualTo(RunState.Running);
   }
 
   [Test]
-  public async Task Halt_CanceledWhileAnObeyerActs_ThrowsAsync() {
-    // A cancellation is the caller's, not an obeyer's failure: it ends the path rather than being logged and passed.
+  public async Task Halt_WithTheCallersBudgetAlreadySpent_StillClosesThePermitAndWritesBothPhasesAsync() {
+    var log = new StepLog();
+    var h = _build([new RecordingWorkReleaser(log, "claims")], [new RecordingRoleReleaser(log, "elector")], log: log);
+    using var spent = new CancellationTokenSource();
+    await spent.CancelAsync();
+
+    await h.Controller.HaltAsync(RunHaltReason.Stop, spent.Token);
+
+    await Assert.That(h.Permit.State).IsEqualTo(RunState.Stopped);
+    await Assert.That(h.Log.Steps).Contains("phase:Stopping:Stopped");
+    await Assert.That(h.Log.Steps[^1]).IsEqualTo("phase:Stopped:Stopped");
+  }
+
+  [Test]
+  public async Task Halt_CanceledWhileAnObeyerActs_IsLogged_AndTheHaltStillCompletesAsync() {
     var h = _build();
     using var cts = new CancellationTokenSource();
     using var subscription = h.Permit.Obey(async (_, token) => {
@@ -219,8 +239,10 @@ public class WhizbangRunControllerTests {
       token.ThrowIfCancellationRequested();
     });
 
-    await Assert.That(async () => await h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token)).Throws<OperationCanceledException>();
-    await Assert.That(h.Log.Steps).IsEmpty();
+    await h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token);
+
+    await Assert.That(h.Log.Steps).IsEquivalentTo(["phase:Pausing:Paused", "phase:Paused:Paused"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
@@ -243,19 +265,30 @@ public class WhizbangRunControllerTests {
   }
 
   [Test]
-  public async Task Halt_CanceledWhileReleasing_ThrowsAsync() {
+  public async Task Halt_AReleaseThatBlocksUntilCanceled_IsCutShortByTheCallersToken_AndTheHaltCompletesAsync() {
+    // An unreachable database: the release blocks until the caller's token ends it. The path logs it, goes on to the
+    // roles, and confirms the halt, so a host stop never overruns its budget waiting on one step.
     var log = new StepLog();
+    var blocking = new BlockingWorkReleaser();
+    var h = _build([blocking], [new RecordingRoleReleaser(log, "elector")], log: log);
     using var cts = new CancellationTokenSource();
-    var h = _build([new CancelingWorkReleaser(cts)], log: log);
 
-    await Assert.That(async () => await h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token)).Throws<OperationCanceledException>();
-    await Assert.That(h.Log.Steps).DoesNotContain("phase:Paused:Paused");
+    var halting = h.Controller.HaltAsync(RunHaltReason.Stop, cts.Token);
+    await blocking.Entered;
+    await Assert.That(halting.IsCompleted).IsFalse();
+    await cts.CancelAsync();
+    await halting;
+
+    await Assert.That(h.Log.Steps).IsEquivalentTo(["phase:Stopping:Stopped", "roles:elector", "phase:Stopped:Stopped"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
-  private sealed class CancelingWorkReleaser(CancellationTokenSource cts) : IReleasesHeldWork {
+  private sealed class BlockingWorkReleaser : IReleasesHeldWork {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Entered => _entered.Task;
     public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
-      await cts.CancelAsync();
-      cancellationToken.ThrowIfCancellationRequested();
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
     }
   }
 
@@ -276,7 +309,7 @@ public class WhizbangRunControllerTests {
     await h.Controller.HaltAsync(reason, CancellationToken.None);
     h.Log.Steps.Clear();
 
-    await h.Controller.ResumeAsync(CancellationToken.None);
+    await h.Controller.ResumeAsync(reason, CancellationToken.None);
 
     await Assert.That(h.Log.Steps).IsEquivalentTo(["phase:Resuming:Paused", "phase:Running:Running"],
       TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -290,7 +323,8 @@ public class WhizbangRunControllerTests {
     var h = _build();
     await h.Controller.HaltAsync(RunHaltReason.Stop, CancellationToken.None);
 
-    await Assert.That(async () => await h.Controller.ResumeAsync(CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(async () => await h.Controller.ResumeAsync(RunHaltReason.Pause, CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(async () => await h.Controller.ResumeAsync(RunHaltReason.Stop, CancellationToken.None)).Throws<InvalidOperationException>();
     await Assert.That(h.Permit.State).IsEqualTo(RunState.Stopped);
   }
 
@@ -298,9 +332,75 @@ public class WhizbangRunControllerTests {
   public async Task Resume_WhenRunning_ChangesNothingAsync() {
     var h = _build();
 
-    await h.Controller.ResumeAsync(CancellationToken.None);
+    await h.Controller.ResumeAsync(RunHaltReason.Pause, CancellationToken.None);
 
     await Assert.That(h.Log.Steps).IsEmpty();
+  }
+
+  [Test]
+  public async Task APauseThenAStandDown_TheStandDownsRevival_LeavesTheInstancePausedAsync() {
+    // #2045: the permit is closed while ANY reason holds. A standby stand-down and its revival must not reopen an
+    // instance an operator paused.
+    var h = _build();
+    await h.Controller.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    await h.Controller.HaltAsync(RunHaltReason.StandDown, CancellationToken.None);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.StandingBy)
+      .Because("the phase reports the strongest reason that holds");
+
+    await h.Controller.ResumeAsync(RunHaltReason.StandDown, CancellationToken.None);
+
+    await Assert.That(h.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.Controller.HaltedFor).IsEqualTo(RunHaltReason.Pause);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.Paused);
+
+    await h.Controller.ResumeAsync(RunHaltReason.Pause, CancellationToken.None);
+    await Assert.That(h.Permit.IsRunning).IsTrue();
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.Running);
+  }
+
+  [Test]
+  public async Task AStandDownThenAPause_AnOperatorsResume_LeavesTheInstanceStandingByAsync() {
+    // The other order: a killswitch resume must not reopen a stand-down while the migrator may still be waiting on it.
+    var h = _build();
+    await h.Controller.HaltAsync(RunHaltReason.StandDown, CancellationToken.None);
+    await h.Controller.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.StandingBy);
+
+    await h.Controller.ResumeAsync(RunHaltReason.Pause, CancellationToken.None);
+
+    await Assert.That(h.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.Controller.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.StandingBy);
+    await Assert.That(h.Controller.HaltedReasons).IsEquivalentTo([RunHaltReason.StandDown]);
+
+    await h.Controller.ResumeAsync(RunHaltReason.StandDown, CancellationToken.None);
+    await Assert.That(h.Permit.IsRunning).IsTrue();
+    await Assert.That(h.Controller.HaltedReasons).IsEmpty();
+  }
+
+  [Test]
+  public async Task Resume_ForAReasonThatDoesNotHold_ChangesNothingAsync() {
+    var h = _build();
+    await h.Controller.HaltAsync(RunHaltReason.StandDown, CancellationToken.None);
+    h.Log.Steps.Clear();
+
+    await h.Controller.ResumeAsync(RunHaltReason.Pause, CancellationToken.None);
+
+    await Assert.That(h.Log.Steps).IsEmpty();
+    await Assert.That(h.Permit.State).IsEqualTo(RunState.Paused);
+  }
+
+  [Test]
+  public async Task AStopWithAPauseAndAStandDownHeld_IsFinal_AndReportsStoppedAsync() {
+    var h = _build();
+    await h.Controller.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    await h.Controller.HaltAsync(RunHaltReason.StandDown, CancellationToken.None);
+    await h.Controller.HaltAsync(RunHaltReason.Stop, CancellationToken.None);
+
+    await Assert.That(h.Controller.HaltedFor).IsEqualTo(RunHaltReason.Stop);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.Stopped);
+    await Assert.That(async () => await h.Controller.ResumeAsync(RunHaltReason.StandDown, CancellationToken.None))
+      .Throws<InvalidOperationException>();
   }
 
   [Test]

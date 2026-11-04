@@ -11,9 +11,9 @@ namespace Whizbang.Core.Tests.Startup;
 
 /// <summary>
 /// The host's own lifecycle marks Preflight before any hosted service starts (#1636), and takes the one run-control path
-/// before any stops (#2045): the permit closes, held work is finished or released, roles are released, and Draining then
-/// Stopped are written by that path. The stop does not take the host's stop token, whose budget may already be spent:
-/// the path bounds its own wait for held work.
+/// before any stops (#2045): the permit closes, held work is finished or released, roles are released, and the path
+/// writes the Stopping and Stopped phases (recorded as the Draining and Stopped stages). The host's stop token bounds
+/// every step of the path.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Startup/StartupStageHostLifecycle.cs</code-under-test>
 [Category("Startup")]
@@ -22,11 +22,12 @@ public class StartupStageHostLifecycleTests {
     public List<(RunHaltReason Reason, CancellationToken Token)> Halts { get; } = [];
     public WhizbangRunPermit Permit { get; } = new();
     public RunHaltReason? HaltedFor => Halts.Count == 0 ? null : Halts[^1].Reason;
+    public IReadOnlyCollection<RunHaltReason> HaltedReasons => [.. Halts.Select(h => h.Reason).Distinct()];
     public Task HaltAsync(RunHaltReason reason, CancellationToken cancellationToken) {
       Halts.Add((reason, cancellationToken));
       return Task.CompletedTask;
     }
-    public Task ResumeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task ResumeAsync(RunHaltReason reason, CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   [Test]
@@ -41,19 +42,19 @@ public class StartupStageHostLifecycleTests {
   }
 
   [Test]
-  public async Task Stopping_TakesTheRunControlPathToStop_EvenWhenTheStopBudgetIsSpentAsync() {
-    // #2045: host shutdown is the same path as a pause and a stand-down, with the reason Stop.
+  public async Task Stopping_TakesTheRunControlPathToStop_BoundedByTheHostsStopTokenAsync() {
+    // #2045: host shutdown is the same path as a pause and a stand-down, with the reason Stop. The host's stop token
+    // bounds every step of it, so releasing work and roles against an unreachable database cannot overrun the host's
+    // shutdown budget; the path itself still writes the final phase.
     var stages = new RecordingStageReporter();
     var runControl = new RecordingRunController();
-    using var spent = new CancellationTokenSource();
-    await spent.CancelAsync();
+    using var hostStop = new CancellationTokenSource();
 
-    await new StartupStageHostLifecycle(stages, runControl).StoppingAsync(spent.Token);
+    await new StartupStageHostLifecycle(stages, runControl).StoppingAsync(hostStop.Token);
 
     await Assert.That(runControl.Halts.Select(h => h.Reason)).IsEquivalentTo([RunHaltReason.Stop]);
-    await Assert.That(runControl.Halts[0].Token.CanBeCanceled).IsFalse()
-      .Because("the path bounds its own wait for held work, not a stop token that may already have expired");
-    await Assert.That(stages.Calls).IsEmpty().Because("the path writes Draining and Stopped; nothing else does");
+    await Assert.That(runControl.Halts[0].Token).IsEqualTo(hostStop.Token);
+    await Assert.That(stages.Calls).IsEmpty().Because("the path writes Stopping and Stopped; nothing else does");
   }
 
   [Test]

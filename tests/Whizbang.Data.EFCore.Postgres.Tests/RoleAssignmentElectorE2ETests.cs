@@ -411,7 +411,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     await Assert.That(one.Refusal).IsEqualTo(DutyRefusal.Halted);
     await Assert.That(many.Select(a => a.Refusal ?? DutyRefusal.Contended)).IsEquivalentTo([DutyRefusal.Halted, DutyRefusal.Halted]);
 
-    await path.ResumeAsync(cancellationToken);
+    await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, cancellationToken);
     await Assert.That((await elector.TryAcquireAsync(ROLE, cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Unavailable)
       .Because("a reopened permit votes again; with no connection configured that vote is unavailable");
   }

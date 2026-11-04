@@ -392,6 +392,22 @@ public class StandbyWatcherTests {
   }
 
   [Test]
+  public async Task ARevival_WhileAnOperatorsPauseHolds_LeavesTheInstancePausedAsync() {
+    // #2045: the stand-down and the pause are separate reasons; the revival lifts only its own.
+    var assessor = new StubAssessor(StartupVerdict.Serve, "ledger unchanged");
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.RunControl.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    h.Coordinator!.Request = null;
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.RunControl.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.Pause);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.Paused);
+  }
+
+  [Test]
   public async Task AfterRevival_AFreshRequestBindsUsAgainAsync() {
     // Revival has to actually clear the standby flag. Leaving it set would make the instance
     // ignore the next deploy's request and serve straight through the following migration.
