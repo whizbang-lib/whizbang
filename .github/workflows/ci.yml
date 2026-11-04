@@ -725,6 +725,42 @@ jobs:
           fi
           emit true "PR run $PR_RUN validated this exact tree ($MERGE_TREE) — skipping the redundant queue matrix"
 
+  # The merge queue tests a GROUP of pull requests in one run (#2070), and its ref names only the last
+  # (gh-readonly-queue/<base>/pr-<N>-<sha>). Every gate that checks a pull request in the queue, and the
+  # quality gate that reports to each one, reads the whole group from here: the queue's merge commits on
+  # top of the base, one per pull request (.github/scripts/Get-QueueGroupPullRequest.ps1, tested by
+  # script-tests). It falls back to the pull request the ref names, and fails the run if it can name none.
+  queue-prs:
+    name: Plan · Pull requests in this queue group
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # each pull request's head branch
+    outputs:
+      numbers: ${{ steps.group.outputs.numbers }}
+      matrix: ${{ steps.group.outputs.matrix }}
+      first: ${{ steps.group.outputs.first }}
+      first-head: ${{ steps.group.outputs.first-head }}
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: List the group's pull requests
+        id: group
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: >-
+          pwsh -NoProfile -File .github/scripts/Get-QueueGroupPullRequest.ps1 -Repository "$REPO"
+          -HeadRef "$QUEUE_REF" -HeadSha "$HEAD_SHA" -BaseSha "$BASE_SHA" -GitHubOutput
+
   # On pushes (and dispatch) the real version must be stamped into assemblies before
   # anything ships, so build waits for GitVersion. On PRs nothing ships — build starts
   # immediately with a placeholder while pr-version computes the real number in
@@ -1325,8 +1361,10 @@ jobs:
     # and the release pull request into main are exempt; the rules live in
     # .github/scripts/Test-LinkedIssue.ps1, tested by script-tests. The pull request is read from the API,
     # not the event, so adding the keyword and re-running this job is enough. It runs again in the merge
-    # queue, so the link cannot be removed after the pull request run passed. In ci-result's needs.
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # queue, for every pull request in the group (queue-prs), so the link cannot be removed after the pull
+    # request run passed. In ci-result's needs.
+    needs: [queue-prs]
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1342,9 +1380,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || 0 }}
+          # Every pull request in a queue group, not only the one its ref names (queue-prs, #2070).
+          PRS: ${{ needs.queue-prs.outputs.numbers || github.event.pull_request.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
-        run: pwsh -NoProfile -File .github/scripts/Test-LinkedIssue.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+        run: |
+          RC=0
+          for PR in $PRS; do
+            pwsh -NoProfile -File .github/scripts/Test-LinkedIssue.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF" || RC=1
+          done
+          exit $RC
 
   pipeline-owner:
     name: Gate · Pipeline owner
@@ -1354,8 +1398,10 @@ jobs:
     # code owner's review, which the rulesets do not require because an author can never approve their own
     # pull request. pr-intake.yml re-runs this job when a review is submitted or dismissed. Bots are exempt;
     # the rules live in .github/scripts/Test-PipelineOwner.ps1, tested by script-tests. It runs again in the
-    # merge queue, so an approval dismissed after the pull request run passed is caught. In ci-result's needs.
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # merge queue, for every pull request in the group (queue-prs), so an approval dismissed after the pull
+    # request run passed is caught. In ci-result's needs.
+    needs: [queue-prs]
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1381,9 +1427,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || 0 }}
+          # Every pull request in a queue group, not only the one its ref names (queue-prs, #2070).
+          PRS: ${{ needs.queue-prs.outputs.numbers || github.event.pull_request.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
-        run: pwsh -NoProfile -File .github/scripts/Test-PipelineOwner.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+        run: |
+          RC=0
+          for PR in $PRS; do
+            pwsh -NoProfile -File .github/scripts/Test-PipelineOwner.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF" || RC=1
+          done
+          exit $RC
 
   pr-type:
     name: Gate · Pull request type
@@ -1391,8 +1443,9 @@ jobs:
     # title) adds a CHANGELOG.md entry with an Upgrade note (CONTRIBUTING.md, "Commit Messages"). Bots and
     # the release pull request into main are exempt; the rules live in .github/scripts/Test-PullRequestType.ps1,
     # tested by script-tests. Read from the API, so retitling and re-running this job is enough; it runs
-    # again in the merge queue. In ci-result's needs.
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # again in the merge queue, for every pull request in the group (queue-prs). In ci-result's needs.
+    needs: [queue-prs]
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1407,9 +1460,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || 0 }}
+          # Every pull request in a queue group, not only the one its ref names (queue-prs, #2070).
+          PRS: ${{ needs.queue-prs.outputs.numbers || github.event.pull_request.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
-        run: pwsh -NoProfile -File .github/scripts/Test-PullRequestType.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+        run: |
+          RC=0
+          for PR in $PRS; do
+            pwsh -NoProfile -File .github/scripts/Test-PullRequestType.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF" || RC=1
+          done
+          exit $RC
 
   dependency-review:
     name: Gate · Dependency review
@@ -1534,7 +1593,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
+    needs: [changes, queue-prs, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
