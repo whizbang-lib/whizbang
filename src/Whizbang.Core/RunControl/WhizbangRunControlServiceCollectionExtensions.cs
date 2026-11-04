@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.RunControl;
 
@@ -34,7 +35,20 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
       sp.GetRequiredService<WhizbangLifecycleOptions>(),
       sp.GetService<TimeProvider>()));
+    // #2045: the instance's one run permit, and the one path that closes and reopens it. Every claiming worker, the
+    // transport consumer and the role elector take this permit; held work and roles are released through the
+    // registered IReleasesHeldWork and IReleasesHeldRoles, resolved when the path is first used.
+    services.TryAddSingleton<WhizbangRunPermit>();
+    services.TryAddSingleton<IWhizbangRunController>(static sp => new WhizbangRunController(
+      sp.GetRequiredService<WhizbangRunPermit>(),
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetServices<IReleasesHeldWork>(),
+      sp.GetServices<IReleasesHeldRoles>(),
+      sp.GetRequiredService<WhizbangLifecycleOptions>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetLoggerOrNullLogger<WhizbangRunController>()));
     services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
+      sp.GetRequiredService<IWhizbangRunController>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<WhizbangLifecycleCoordinator>()));
     return services;

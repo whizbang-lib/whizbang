@@ -117,14 +117,23 @@ public static class MigratorDutyStaging {
     }
 
     DutyAttempt attempt;
-    try {
-      attempt = await elector.TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken)
-        .ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // A database with no capability function yet answers this way, and so does one where the
-      // elector has no connection of its own. Either is a reason to stop electing, not to stop.
-      MigratorDutyStagingLog.ElectorFailed(log, ex, schema);
-      return new SchemaStaging(SchemaStage.Unstaged, null, "the elector could not be asked");
+    while (true) {
+      try {
+        attempt = await elector.TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // A database with no capability function yet answers this way, and so does one where the
+        // elector has no connection of its own. Either is a reason to stop electing, not to stop.
+        MigratorDutyStagingLog.ElectorFailed(log, ex, schema);
+        return new SchemaStaging(SchemaStage.Unstaged, null, "the elector could not be asked");
+      }
+      if (attempt.Refusal != DutyRefusal.Halted || elector is not Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {
+        break;
+      }
+      // #2045: this instance's run permit is closed. Not permanent: wait for it to reopen, on its own signal, and vote
+      // again. A stopped permit is final, and ends the election as canceled: the instance is stopping.
+      MigratorDutyStagingLog.Halted(log, schema, attempt.Detail!);
+      await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     if (attempt.Grant is { } grant) {
@@ -145,6 +154,12 @@ public static class MigratorDutyStaging {
       // that. NOT fatal: refusing to migrate leaves the schema behind for everyone, and the lock
       // still stops two instances doing it at once.
       MigratorDutyStagingLog.Refused(log, schema, detail);
+      return new SchemaStaging(SchemaStage.Unstaged, null, detail);
+    }
+
+    if (attempt.Refusal == DutyRefusal.Halted) {
+      // An elector with no run permit to wait on: said as halted, and the lock still guards, as for any other answer.
+      MigratorDutyStagingLog.Halted(log, schema, detail);
       return new SchemaStaging(SchemaStage.Unstaged, null, detail);
     }
 
@@ -229,4 +244,11 @@ internal static partial class MigratorDutyStagingLog {
       Message = "The duty elector for schema {Schema} could not be asked, so this instance is "
               + "migrating under the advisory lock alone")]
   public static partial void ElectorFailed(ILogger logger, Exception exception, string schema);
+
+  [LoggerMessage(
+      EventId = 8,
+      Level = LogLevel.Information,
+      Message = "The migrator duty for schema {Schema} was refused because this instance is halted (paused, standing down or "
+              + "stopping): {Detail}")]
+  public static partial void Halted(ILogger logger, string schema, string detail);
 }

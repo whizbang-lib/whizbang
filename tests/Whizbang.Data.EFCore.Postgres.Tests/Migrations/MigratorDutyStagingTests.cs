@@ -110,6 +110,81 @@ public class MigratorDutyStagingTests {
     await Assert.That(order).IsEquivalentTo(REGISTER_THEN_ELECT);
   }
 
+  /// <summary>Refuses as halted while the run permit is closed and grants once it reopens, as the role elector does.</summary>
+  private sealed class PermitElector(Whizbang.Core.RunControl.WhizbangRunPermit permit)
+      : IDutyElector, Whizbang.Core.RunControl.IObeysRunPermit {
+    private readonly TaskCompletionSource _firstAttempt = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit => permit;
+    public Task FirstAttempt => _firstAttempt.Task;
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      _firstAttempt.TrySetResult();
+      return Task.FromResult(permit.IsRunning
+        ? DutyAttempt.Granted(new FakeGrant())
+        : DutyAttempt.Lost(DutyRefusal.Halted, "the run permit is closed"));
+    }
+  }
+
+  private sealed class NoLifecycle : Whizbang.Core.RunControl.IWhizbangLifecycleState {
+    public Whizbang.Core.RunControl.LifecyclePhase Phase => Whizbang.Core.RunControl.LifecyclePhase.Running;
+    public ValueTask AdvanceToAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  }
+
+  private static Whizbang.Core.RunControl.WhizbangRunController _path() => new(
+    new Whizbang.Core.RunControl.WhizbangRunPermit(), new NoLifecycle(), [], [],
+    new Whizbang.Core.RunControl.WhizbangLifecycleOptions(), null,
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<Whizbang.Core.RunControl.WhizbangRunController>.Instance);
+
+  /// <summary>
+  /// A duty refused because the run permit is closed is not permanent (#2045): the election waits for the permit to
+  /// reopen, on its signal, says it is halted, and votes again.
+  /// </summary>
+  [Test]
+  public async Task AHaltedRefusal_WaitsForThePermitToReopen_ThenElectsAsync() {
+    var path = _path();
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var elector = new PermitElector(path.Permit);
+    var logger = new RecordingLogger();
+
+    var electing = MigratorDutyStaging.ElectAsync(elector, _registers(), SCHEMA, logger);
+    await elector.FirstAttempt;
+    await Assert.That(electing.IsCompleted).IsFalse();
+    await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var staging = await electing;
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Migrator);
+    await Assert.That(logger.Entries.Select(e => e.Message)).Contains(m => m.Contains("halted", StringComparison.Ordinal))
+      .Because("a halted refusal is logged as halted, not as an unavailable elector");
+  }
+
+  /// <summary>A stopped permit is final: the election ends as canceled, since the instance is stopping.</summary>
+  [Test]
+  public async Task AHaltedRefusal_WhenThePermitIsStopped_EndsTheElectionAsCanceledAsync() {
+    var path = _path();
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var elector = new PermitElector(path.Permit);
+
+    var electing = MigratorDutyStaging.ElectAsync(elector, _registers(), SCHEMA);
+    await elector.FirstAttempt;
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Stop, CancellationToken.None);
+
+    await Assert.That(async () => await electing).Throws<OperationCanceledException>();
+  }
+
+  /// <summary>An elector with no permit to wait on: the halted refusal is logged as halted, and the lock guards.</summary>
+  [Test]
+  public async Task AHaltedRefusal_FromAnElectorWithNoPermit_IsLoggedAsHalted_AndUnstagedAsync() {
+    var logger = new RecordingLogger();
+
+    var staging = await MigratorDutyStaging.ElectAsync(
+      new Elector(() => DutyAttempt.Lost(DutyRefusal.Halted, "the run permit is closed")), _registers(), SCHEMA, logger);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(logger.Entries.Select(e => e.Message)).Contains(m => m.Contains("halted", StringComparison.Ordinal));
+    await Assert.That(logger.Entries.Select(e => e.Message)).DoesNotContain(m => m.Contains("could not be decided", StringComparison.Ordinal))
+      .Because("the elector answered; the instance is halted, which is not a duty that could not be decided");
+  }
+
   /// <summary>A contended duty makes this instance a waiter.</summary>
   [Test]
   public async Task AContendedDutyMakesThisInstanceAWaiterAsync() {

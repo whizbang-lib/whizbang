@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 
 namespace Whizbang.Core.Tests.Startup;
@@ -48,5 +49,38 @@ public class MaintainerDutyTests {
   [Test]
   public async Task ANullProvider_IsRefusedAsync() {
     await Assert.That(() => MaintainerDuty.IsThisInstancesTurn(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  [Arguments(RunState.Paused, true)]
+  [Arguments(RunState.Stopped, true)]
+  [Arguments(RunState.Paused, false)]
+  public async Task WhileTheRunPermitIsClosed_NoInstanceHasATurnAsync(RunState closed, bool holds) {
+    // #2045: every fleet-wide maintenance worker and step asks this one question, so the run permit is obeyed here once
+    // for all of them. A paused, stood-down or stopping instance does no fleet-wide work, even while it still holds the
+    // maintainer duty in memory (the path releases the role, and the holder learns of it on its next pass).
+    var holder = await MaintainerDutyHolders.ElectedAsync(grants: holds);
+    var permit = new WhizbangRunPermit();
+    await permit.ChangeAsync(closed, CancellationToken.None);
+    await using var services = new ServiceCollection().AddSingleton(holder).AddSingleton(permit).BuildServiceProvider();
+
+    await Assert.That(MaintainerDuty.IsThisInstancesTurn(services)).IsFalse();
+  }
+
+  [Test]
+  public async Task WithoutRoleAssignment_AClosedPermit_StillHasNoTurnAsync() {
+    var permit = new WhizbangRunPermit();
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    await using var services = new ServiceCollection().AddSingleton(permit).BuildServiceProvider();
+
+    await Assert.That(MaintainerDuty.IsThisInstancesTurn(services)).IsFalse();
+  }
+
+  [Test]
+  public async Task AnOpenPermit_LeavesTheAnswerToTheDutyAsync() {
+    var holder = await MaintainerDutyHolders.ElectedAsync(grants: true);
+    await using var services = new ServiceCollection().AddSingleton(holder).AddSingleton(new WhizbangRunPermit()).BuildServiceProvider();
+
+    await Assert.That(MaintainerDuty.IsThisInstancesTurn(services)).IsTrue();
   }
 }

@@ -94,6 +94,109 @@ public partial class CoordinationSourceGuardTests {
     ["wh_release_role"] = PENDING_CHANNELS + " (a released role)",
   };
 
+  private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
+    + "closed run permit denies (#2045)";
+  private const string STORE = "the store that implements the claim; its callers obey the run permit";
+
+  /// <summary>
+  /// C# files that take work for this instance without a hold of their own, each with the reason (#2045). Everything
+  /// else that claims takes a hold (<c>RunPermit.EnterAsync</c>) or asks the maintainer turn.
+  /// </summary>
+  private static readonly Dictionary<string, string> _claimAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Messaging/IWorkCoordinator.cs"] = "declares the claims",
+    ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] = STORE,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.RowRetention.cs"] = STORE,
+    ["src/Whizbang.Data.Postgres/FleetClaim.cs"] = "the once-per-window claim helper the maintenance steps share",
+    ["src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs"] = "the physical-column fill's window claim, "
+      + "run by its maintenance step",
+    ["src/Whizbang.Core/Workers/QueueIndexReindexStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperManagedSchemaReconcileStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperPhysicalColumnFillMaintenanceStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Data.EFCore.Postgres/IndexStatisticsMaintenanceStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Data.EFCore.Postgres/ManagedSchemaReconcileStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Data.EFCore.Postgres/PhysicalColumnFillMaintenanceStep.cs"] = MAINTENANCE_STEP,
+    ["src/Whizbang.Core/Dispatcher.cs"] = "claims an emission key while handling a message it already holds: deduplication, not work taken",
+    ["src/Whizbang.Core/Fingerprint/TypeDefinitionReconciler.cs"] = "a startup reconcile, once per window, before the instance takes work",
+    ["src/Whizbang.Testing/Workers/WorkCoordinatorPumpAdapter.cs"] = "a test harness's manual pump, never hosted",
+  };
+
+  /// <summary>C# files that may write a halting phase (#2045): the path, and the stand-down's report in a host without it.</summary>
+  private static readonly Dictionary<string, string> _haltPhaseAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/RunControl/WhizbangRunController.cs"] = "THE run-control path",
+    ["src/Whizbang.Core/Startup/StartupStandDown.cs"] = "records StandingBy itself only in a host with no run-control path, "
+      + "where there is no permit, no held work and no role to release",
+  };
+
+  [GeneratedRegex(@"\.(?:Try)?(?:Claim|Lease)[A-Za-z]*Async\(|\.ClaimAsync\(|FetchPendingCoalesceAsync\(|IntegrityClaim[A-Za-z]*Async\(")]
+  private static partial Regex _workClaim();
+
+  [GeneratedRegex(@"RunPermit\.EnterAsync\(|MaintainerDuty\.IsThisInstancesTurn\(")]
+  private static partial Regex _obeysThePermit();
+
+  [GeneratedRegex(@"(?:AdvanceToAsync|EnterPhaseAsync)\([^;]*LifecyclePhase\.(?:Pausing|Paused|StandingBy|Stopping|Stopped|Resuming)\b")]
+  private static partial Regex _haltPhase();
+
+  [Test]
+  public async Task EveryClaim_ObeysTheRunPermitAsync() {
+    // #2045: a claim is taken inside a hold of the one run permit, or behind the maintainer turn that a closed permit
+    // denies. A new claim anywhere else fails here, so it cannot keep taking work through a stand-down, a pause or a stop.
+    var offenders = _csharpSources()
+      .Where(f => !_claimAllowlist.ContainsKey(f.Key) && _workClaim().IsMatch(f.Value) && !_obeysThePermit().IsMatch(f.Value))
+      .Select(f => f.Key)
+      .ToList();
+    await Assert.That(offenders).IsEmpty()
+      .Because("a claim that does not obey the run permit; take a hold (RunPermit.EnterAsync) or ask "
+        + "MaintainerDuty.IsThisInstancesTurn: " + string.Join(", ", offenders));
+  }
+
+  [GeneratedRegex(@":\s*BackgroundService\b")]
+  private static partial Regex _hostedWorker();
+
+  [GeneratedRegex(@"\.SubscribeBatchAsync\(|SubscribeWithRetryAsync\(")]
+  private static partial Regex _subscribes();
+
+  [Test]
+  public async Task EveryHostedConsumer_ObeysTheRunPermitAsync() {
+    // #2045: a hosted worker that subscribes to a transport is called back rather than looping, so it obeys the run
+    // permit by acting on each change (RunPermit.Obey). A consumer that subscribes without it keeps receiving through a
+    // stand-down, a pause and a stop, whoever registers it.
+    var offenders = _csharpSources()
+      .Where(f => _hostedWorker().IsMatch(f.Value) && _subscribes().IsMatch(f.Value) && !f.Value.Contains("RunPermit.Obey(", StringComparison.Ordinal))
+      .Select(f => f.Key)
+      .ToList();
+    await Assert.That(offenders).IsEmpty()
+      .Because("a hosted consumer that does not obey the run permit: " + string.Join(", ", offenders));
+    var consumers = _csharpSources().Where(f => _hostedWorker().IsMatch(f.Value) && _subscribes().IsMatch(f.Value))
+      .Select(f => f.Key).Order(StringComparer.Ordinal).ToList();
+    await Assert.That(consumers).IsEquivalentTo([
+      "src/Whizbang.Core/Workers/ServiceBusConsumerWorker.cs",
+      "src/Whizbang.Core/Workers/TransportConsumerWorker.cs",
+    ]).Because("the scan must see the consumers it vouches for, or it vouches for nothing");
+  }
+
+  [Test]
+  public async Task HaltingPhases_AreWrittenOnlyByTheRunControlPathAsync() {
+    // #2045: Pausing, Paused, StandingBy, Stopping, Stopped and Resuming are reported by the one path, after the permit
+    // has closed or reopened. A phase written anywhere else would say "paused" while the workers still claim.
+    await _assertOnlyAllowedAsync(_haltPhase(), _haltPhaseAllowlist,
+      "a halting phase written outside the run-control path; take IWhizbangRunController.HaltAsync or ResumeAsync instead");
+  }
+
+  [Test]
+  public async Task TheRunControlScans_SeeWhatTheyGuardAsync() {
+    var csharp = _csharpSources();
+
+    await Assert.That(_workClaim().IsMatch(csharp["src/Whizbang.Core/Workers/ClaimWorker.cs"])).IsTrue();
+    await Assert.That(_obeysThePermit().IsMatch(csharp["src/Whizbang.Core/Workers/ClaimWorker.cs"])).IsTrue();
+    await Assert.That(_obeysThePermit().IsMatch(csharp["src/Whizbang.Core/Workers/IntegrityAuditWorker.cs"])).IsTrue();
+    await Assert.That(_haltPhase().IsMatch(csharp["src/Whizbang.Core/RunControl/WhizbangRunController.cs"])).IsTrue();
+    await Assert.That(_haltPhase().IsMatch("await _lifecycle.AdvanceToAsync(LifecyclePhase.StandingBy, ct);")).IsTrue();
+    var stale = _claimAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_workClaim().IsMatch(code))
+      .Concat(_haltPhaseAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_haltPhase().IsMatch(code)))
+      .ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
   [GeneratedRegex(@"(?:^|[""\s;(])(?:UN)?LISTEN\s+[\\""{]|\bNOTIFY\s+[\\""{]|pg_notify\s*\(")]
   private static partial Regex _notify();
 

@@ -146,6 +146,12 @@ public enum DutyRefusal {
   /// restart, not a retry.
   /// </summary>
   Refused,
+
+  /// <summary>
+  /// This instance's run permit is closed (#2045): it is paused, standing down or stopping, so it holds no role. A
+  /// resume reopens the permit and the next vote is answered as usual; a stop is final.
+  /// </summary>
+  Halted,
 }
 
 /// <summary>

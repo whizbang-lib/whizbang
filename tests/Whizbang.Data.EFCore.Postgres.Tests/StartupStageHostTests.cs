@@ -186,8 +186,9 @@ public sealed partial class StartupStageHostTests {
   }
 
   /// <summary>
-  /// A graceful stop: Draining is recorded on the row before any worker stops, and the instance stops being eligible
-  /// for work at once; Stopped follows once every hosted service has stopped. Both are logged as shutdown stages.
+  /// A graceful stop takes the one run-control path (#2045): Draining is recorded on the row before any worker stops, and
+  /// the instance stops being eligible for work at once; Stopped confirms the stop once the work in hand is finished and
+  /// held work and roles are released. Both are written by the path and logged as shutdown stages.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -202,11 +203,11 @@ public sealed partial class StartupStageHostTests {
     await watch.Reached(StartupStage.Stopped).WaitAsync(_deadline, cancellationToken);
 
     await Assert.That(log.Lines.TakeLast(2)).IsEquivalentTo([
-      "Information Shutdown stage: Draining - host stopping, finishing in-flight work",
-      "Information Shutdown stage: Stopped - host stopped",
+      "Information Shutdown stage: Draining - stopping, finishing in-flight work",
+      "Information Shutdown stage: Stopped - stopped",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     var draining = watch.Recorded.Single(r => r.Stage == 80);
-    await Assert.That(draining.Message).IsEqualTo("host stopping, finishing in-flight work");
+    await Assert.That(draining.Message).IsEqualTo("stopping, finishing in-flight work");
     await Assert.That(draining.Eligible).IsFalse()
       .Because("a draining instance's share goes to its peers the moment Draining is recorded, not when its heartbeat lapses");
     await Assert.That(watch.Seen.Select(s => s.Stage)).Contains(StartupStage.Stopped);

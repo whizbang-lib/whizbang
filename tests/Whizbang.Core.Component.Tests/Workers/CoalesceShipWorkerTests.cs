@@ -40,6 +40,33 @@ public class CoalesceShipWorkerTests {
   #region Slide / max-delay firing decisions
 
   [Test]
+  public async Task RunOnce_WhileTheRunPermitIsClosed_FoldsNothingUntilItReopensAsync() {
+    // #2045: folding takes the pending singles for this instance, so the shipper obeys the run permit: a tick waits at
+    // the permit before reading anything, and the tick is a hold the run-control path waits for.
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FakeCoalesceCoordinator();
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce("record-digest", c => c.SlideSeconds = 15);
+    var resolver = new CoalesceGroupResolver(tagOptions, time,
+      () => [CoalesceTestTags.TagRegistration(typeof(TestFoldedEvent), "record-digest")]);
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    var worker = _buildWorker(coordinator, resolver, time, permit);
+    coordinator.Stats = [_stats("record-digest", count: 3, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = _singles(3);
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Paused, CancellationToken.None);
+
+    var tick = worker.RunOnceAsync(CancellationToken.None);
+    await Assert.That(tick.IsCompleted).IsFalse();
+    await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
+
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Running, CancellationToken.None);
+    await tick;
+    await Assert.That(coordinator.FetchedGroups).Contains("record-digest");
+    await Assert.That(permit.Held).IsEqualTo(0);
+    await Assert.That(((Whizbang.Core.RunControl.IObeysRunPermit)worker).RunPermit).IsSameReferenceAs(permit);
+  }
+
+  [Test]
   public async Task RunOnce_GroupStillArriving_DoesNotFoldAsync() {
     // Newest single is 5s old with a 15s slide — the window is still open; a fold now would
     // split a burst instead of shipping its entire tail at burst-end.
@@ -467,7 +494,8 @@ public class CoalesceShipWorkerTests {
   private static CoalesceShipWorker _buildWorker(
       IWorkCoordinator coordinator,
       CoalesceGroupResolver? resolver,
-      FakeTimeProvider time) {
+      FakeTimeProvider time,
+      Whizbang.Core.RunControl.WhizbangRunPermit? permit = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(
@@ -481,7 +509,8 @@ public class CoalesceShipWorkerTests {
       logger: NullLogger<CoalesceShipWorker>.Instance,
       compositeFactory: new CompositeFactory(),
       coalesceResolver: resolver,
-      timeProvider: time);
+      timeProvider: time,
+      runPermit: permit);
   }
 
   private static CoalesceGroupStats _stats(string group, long count, int oldestAge, int newestAge) => new() {

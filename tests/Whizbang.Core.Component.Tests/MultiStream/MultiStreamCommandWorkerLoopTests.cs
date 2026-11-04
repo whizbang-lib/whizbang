@@ -32,7 +32,7 @@ public class MultiStreamCommandWorkerLoopTests {
 
   private static MultiStreamCommandWorker _worker(
       LoopStore store, MultiStreamCommandOptions? options = null, LoopHandler? handler = null,
-      bool withHandler = true) {
+      bool withHandler = true, Whizbang.Core.RunControl.WhizbangRunPermit? permit = null) {
     var services = new ServiceCollection();
     if (withHandler) {
       services.AddMultiStreamCommandHandler<LoopProbeCommand, LoopHandler>();
@@ -48,7 +48,8 @@ public class MultiStreamCommandWorkerLoopTests {
       new LoopInstance(),
       Options.Create(options),
       NullLogger<MultiStreamCommandWorker>.Instance,
-      new NoAssignment());
+      new NoAssignment(),
+      runPermit: permit);
   }
 
   private static (Task<int> Pass, Action Unsubscribe) _nextPass(MultiStreamCommandWorker worker, Func<int, bool>? when = null) {
@@ -60,6 +61,43 @@ public class MultiStreamCommandWorkerLoopTests {
     }
     worker.OnPassCompleted += Handler;
     return (pass.Task, () => worker.OnPassCompleted -= Handler);
+  }
+
+  [Test]
+  public async Task Loop_AStoppedRunPermit_EndsTheLoopWithoutAClaimAsync() {
+    // #2045: a stop is final. The loop ends on the stopped permit rather than retrying a pass that can never claim, and
+    // it ends with the host's stopping token still uncanceled: only the permit ended it.
+    var store = new LoopStore();
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Stopped, CancellationToken.None);
+    var worker = _worker(store, permit: permit);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await worker.ExecuteTask!.WaitAsync(_deadline);
+      await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+      await Assert.That(store.ClaimCount).IsEqualTo(0);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task Loop_ACanceledClaimThatIsNotAStop_IsAFailedPass_AndTheLoopGoesOnAsync() {
+    // #2045: only the host stopping or a stopped run permit ends the loop. A claim canceled for its own reasons is a
+    // failed pass like any other, and the next pass claims again.
+    var store = new LoopStore { ClaimFailure = new OperationCanceledException("the statement was canceled") };
+    var worker = _worker(store);
+    var (second, _) = _nextPass(worker, _ => store.ClaimCount >= 2);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      worker.RequestImmediateRun();
+      await second.WaitAsync(_deadline);
+      await Assert.That(store.ClaimCount).IsGreaterThanOrEqualTo(2);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
   }
 
   [Test]

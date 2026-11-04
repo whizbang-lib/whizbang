@@ -54,7 +54,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
-public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutdown, IRoleAssignmentReader {
+public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunControl.IReleasesHeldRoles, IRoleAssignmentReader,
+  Whizbang.Core.RunControl.IObeysRunPermit {
   /// <summary>The vote outcome that hands this instance a role it did not hold.</summary>
   private const string OUTCOME_GRANTED = "granted";
 
@@ -97,7 +98,8 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       INotificationConnectionStringFallback? connectionStringFallback = null,
       INotificationDataSource? notificationDataSource = null,
       TimeProvider? timeProvider = null,
-      RoleAssignmentMetrics? metrics = null) {
+      RoleAssignmentMetrics? metrics = null,
+      Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(roleOptions);
@@ -115,7 +117,19 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     _time = timeProvider ?? TimeProvider.System;
     _metrics = metrics;
     _versionKey = LibraryVersionKey.From(libraryVersion?.LibraryVersion);
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
   }
+
+  /// <summary>
+  /// The instance's run permit (#2045). While it is closed every vote is refused as <see cref="DutyRefusal.Halted"/>: a
+  /// paused, stood-down or stopping instance holds no role, and the run-control path has released the ones it held.
+  /// </summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
+
+  private DutyAttempt? _haltedRefusal(string duty) => RunPermit.IsRunning
+    ? null
+    : DutyAttempt.Lost(DutyRefusal.Halted,
+      $"duty '{duty}' is not voted for: this instance's run permit is closed (paused, standing down or stopping)");
 
   /// <summary>How often a holder renews; a holder's work loop wakes at least this often.</summary>
   public TimeSpan RenewInterval => _roleOptions.RenewInterval;
@@ -123,7 +137,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// <inheritdoc />
   public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
-    return _voteAsync(duty, cancellationToken);
+    return _haltedRefusal(duty) is { } refused ? Task.FromResult(refused) : _voteAsync(duty, cancellationToken);
   }
 
   /// <summary>
@@ -135,6 +149,9 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// <returns>One attempt per duty, in order.</returns>
   public async Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(duties);
+    if (!RunPermit.IsRunning) {
+      return [.. duties.Select(duty => _haltedRefusal(duty)!)];
+    }
     var voted = await _voteManyAsync([.. duties.Distinct(StringComparer.Ordinal)], cancellationToken).ConfigureAwait(false);
     var attempts = new List<DutyAttempt>(duties.Count);
     foreach (var duty in duties) {
@@ -234,10 +251,11 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   }
 
   /// <summary>
-  /// Releases every role this elector still holds, so a graceful stop hands each one off at once.
-  /// Idempotent; a release that cannot reach the database leaves the lease to lapse.
+  /// Releases every role this elector still holds, so a stand-down, a pause or a stop hands each one off at once: the
+  /// role step of the run-control path (#2045). Idempotent; a release that cannot reach the database leaves the lease to
+  /// lapse.
   /// </summary>
-  /// <param name="cancellationToken">The host's stop token.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
   public async Task ReleaseAllAsync(CancellationToken cancellationToken) {
     foreach (var tenure in _tenures.Values) {
       cancellationToken.ThrowIfCancellationRequested();

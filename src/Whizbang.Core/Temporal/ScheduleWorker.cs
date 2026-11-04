@@ -15,10 +15,11 @@ namespace Whizbang.Core.Temporal;
 /// poll-source fast path) and reconciles on a backstop interval, then drains due schedules through
 /// <see cref="IScheduleClaimer"/> — which atomically spawns each occurrence, advances <c>next_fire_at</c>,
 /// and logs the run. Provider-agnostic: it depends only on the Core claimer seam and the signal bus, so
-/// any data provider that registers an <see cref="IScheduleClaimer"/> gets firing for free.
+/// any data provider that registers an <see cref="IScheduleClaimer"/> gets firing for free. Firing claims a due schedule
+/// for this instance, so each tick is a hold of the instance's run permit (#2045): nothing fires while it is closed.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
-public sealed partial class ScheduleWorker : BackgroundService {
+public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TemporalOptions _options;
   private readonly ILogger<ScheduleWorker> _logger;
@@ -27,15 +28,23 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly SemaphoreSlim _wake = new(0, 1);
   private readonly ScheduleTimer _timer;
 
-  /// <summary>Constructor. The signal bus and time provider are optional (defaults suffice).</summary>
+  /// <summary>The run permit each tick takes a hold of (#2045).</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
+
+  /// <summary>
+  /// Constructor. The time provider is optional, and so is the run permit: a worker built without one is under no run
+  /// control.
+  /// </summary>
   public ScheduleWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<TemporalOptions> options,
     ILogger<ScheduleWorker> logger,
     ILoggerFactory loggerFactory,
     ISignalBus signalBus,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null,
+    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
     _scopeFactory = scopeFactory;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     ArgumentNullException.ThrowIfNull(logger);
@@ -111,6 +120,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
   /// A no-op returning 0 when no claimer is registered (non-temporal host). Public test seam.
   /// </summary>
   public async Task<int> TickOnceAsync(CancellationToken cancellationToken = default) {
+    using var hold = await RunPermit.EnterAsync(cancellationToken).ConfigureAwait(false);
     using var scope = _scopeFactory.CreateScope();
     var claimer = scope.ServiceProvider.GetService<IScheduleClaimer>();
     if (claimer is null) {

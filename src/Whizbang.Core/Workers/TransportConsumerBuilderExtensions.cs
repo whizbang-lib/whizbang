@@ -378,7 +378,9 @@ public static class TransportConsumerBuilderExtensions {
           sp.GetService<TransportBatchOptions>(),
           sp.GetService<Tags.ControlClassResolver>(),
           sp.GetService<TimeProvider>(),
-          sp.GetRequiredService<DeadLetterLoggingOptions>())));
+          sp.GetRequiredService<DeadLetterLoggingOptions>(),
+          // #2045: the instance's one run permit, when the host runs the worker pipeline (which registers it).
+          sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>())));
     // The consumer dead-letters what it cannot store, so the level option binds here too: a host can register the
     // consumer without the worker pipeline (#1901).
     Whizbang.Core.Configuration.ProcessWideOptionsBinding.AddDeadLetterLogging(services);
