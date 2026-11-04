@@ -61,21 +61,3 @@ public static class AppSignalTopicValidator {
   /// <summary>Builds the postgres channel name from a topic ('wh_app_' prefix).</summary>
   public static string ToChannelName(string topic) => "wh_app_" + Validate(topic);
 }
-
-/// <summary>No-op app signal channel used when notifications are disabled.</summary>
-public sealed class NoOpAppSignalChannel : IAppSignalChannel {
-  /// <inheritdoc />
-  public Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default) {
-    _ = AppSignalTopicValidator.Validate(topic);  // still validate for caller correctness
-    return Task.CompletedTask;
-  }
-  /// <inheritdoc />
-  public IDisposable Subscribe(string topic, Func<string, CancellationToken, Task> handler) {
-    _ = AppSignalTopicValidator.Validate(topic);
-    return new NoOpDisposable();
-  }
-
-  private sealed class NoOpDisposable : IDisposable {
-    public void Dispose() { }
-  }
-}

@@ -891,7 +891,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replayed by each instance's tail to a subscriber that missed the notification; `RowsCommittedSignal`,
   `MultiStreamWorkSignal`, `WorkOrphanedSignal` and `DeadLetterReadySignal` are best-effort doorbells, each with a poll
   behind it. Signals that carry a payload implement `IPayloadSignal<TSelf>`. Application topics ride the bus too:
-  `IAppSignalChannel` is the bus, and its Postgres transport carries each topic (`PgAppSignalChannel` is removed; a
+  `IAppSignalChannel` is the bus, and its Postgres transport carries each topic (`PgAppSignalChannel` is removed, and so
+  is `NoOpAppSignalChannel`, which nothing registered; a
   transport that carries topics implements `ISignalTopicTransport`). One SQL function publishes, `wh_publish_signal`;
   the role release, the partition-assignment publish, the multi-stream run and the reap's orphan wake call it. The
   holder loop, the commit-order stamper, the partition cache, the multi-stream worker and the work listener subscribe

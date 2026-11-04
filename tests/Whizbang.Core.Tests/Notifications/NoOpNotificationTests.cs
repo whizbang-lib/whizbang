@@ -16,8 +16,7 @@ namespace Whizbang.Core.Tests.Notifications;
 
 /// <summary>
 /// Covers the no-op fallback implementations used when no direct postgres
-/// connection is configured (<see cref="NoOpAppSignalChannel"/>,
-/// <see cref="NoOpWorkNotificationListener"/>) plus the topic validation
+/// connection is configured (<see cref="NoOpWorkNotificationListener"/>) plus the topic validation
 /// rules in <see cref="AppSignalTopicValidator"/>. These types are small
 /// but were untested — the system silently falls back to them when
 /// notifications can't be wired, and operators have observed that
@@ -75,51 +74,6 @@ public class NoOpNotificationTests {
   [Test]
   public async Task ToChannelName_PropagatesValidationErrorAsync() {
     await Assert.That(() => AppSignalTopicValidator.ToChannelName("wh_internal")).Throws<ArgumentException>();
-  }
-
-  // ===================== NoOpAppSignalChannel =====================
-
-  [Test]
-  public async Task NoOpAppSignalChannel_PublishValidTopic_CompletesSilentlyAsync() {
-    var channel = new NoOpAppSignalChannel();
-    var delivered = 0;
-    using var subscription = channel.Subscribe("ok_topic", (_, _) => {
-      Interlocked.Increment(ref delivered);
-      return Task.CompletedTask;
-    });
-
-    await channel.PublishAsync("ok_topic", "payload");
-
-    // "Silently" is the load-bearing word: the fallback validates and drops. It is not a local
-    // in-memory bus, so a subscriber on the very same topic hears nothing — code that works only
-    // because the no-op looped a signal back would break the moment Postgres was configured.
-    await Assert.That(delivered).IsEqualTo(0)
-      .Because("the no-op fallback delivers nothing to anyone, including subscribers in this process");
-  }
-
-  [Test]
-  public async Task NoOpAppSignalChannel_PublishInvalidTopic_ThrowsAsync() {
-    var channel = new NoOpAppSignalChannel();
-    await Assert.That(async () => await channel.PublishAsync("wh_reserved", "payload"))
-      .Throws<ArgumentException>();
-  }
-
-  [Test]
-  public async Task NoOpAppSignalChannel_SubscribeValidTopic_ReturnsDisposableAsync() {
-    var channel = new NoOpAppSignalChannel();
-    using var sub = channel.Subscribe("topic", static (_, _) => Task.CompletedTask);
-    await Assert.That(sub).IsNotNull();
-    // Idempotent disposal:
-    sub.Dispose();
-    sub.Dispose();
-  }
-
-  [Test]
-  public async Task NoOpAppSignalChannel_SubscribeInvalidTopic_ThrowsAsync() {
-    var channel = new NoOpAppSignalChannel();
-    await Assert.That(() =>
-        channel.Subscribe("WH_BadCase", static (_, _) => Task.CompletedTask))
-      .Throws<ArgumentException>();
   }
 
   // ===================== NoOpWorkNotificationListener =====================
