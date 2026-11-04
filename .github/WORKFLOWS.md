@@ -139,7 +139,7 @@ a table saying which tier each class got and why every higher tier was skipped.
 | Class | Pool labels | Jobs | Notes |
 |---|---|---|---|
 | `any-os` | `self-hosted`, `whizbang` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Any OS and architecture. The suites run the build with `dotnet test --test-modules` on the framework-dependent `.dll` (no RID, nothing native beyond what NuGet ships per RID), so the Linux build runs on Windows X64 and ARM64 and on macOS. Every step is pwsh or an action |
-| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is compared byte for byte with the GitHub-hosted verify-rebuild, and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
+| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is what verify-rebuild compares with the tested run's (same SDK, same assembly set), and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
 | `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
 | `analyze` | none: never the pool | Analyze · Quality | Waits up to hours for the suites' coverage; on a pool machine it would hold the machine the suites need |
 | `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |

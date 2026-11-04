@@ -489,16 +489,20 @@ Two pushes carry a tree another run already tested:
   determinism manifest (the queue run, or on a fast-forward the PR run, after proving the trees are
   identical). `validated` is true only if **both** are still live; otherwise the full matrix runs.
   Found ⇒ the six suites and quality skip in the push run.
-- **verify-rebuild** replaces them on the publish path. It reads the determinism manifest of the run
-  that built this tree (the queue run, or on a fast-forward the PR run), requires that run's exact SDK
-  and rebuilds at the queue's placeholder version, then confirms the built **assembly set**
-  matches the queue run's determinism manifest (`reusable-build.yml` uploads one on every run).
-  Same commit SHA + same SDK + same assembly set is the safety argument — identical source on an
-  identical toolchain behaves like what the suites tested. Byte-for-byte hash identity is
-  reported for monitoring but is **not** a gate: source generators emit nondeterministically for
-  an unpredictable subset of assemblies (`[LoggerMessage]` partial-class ordering, ILRepack
-  MVIDs), so a hash comparison flakes and a name allowlist can never be complete. Tamper-evidence
-  for the published bits is the SLSA provenance attestation, not this rebuild.
+- **verify-rebuild** replaces them on the publish path. It compares two determinism manifests
+  (`reusable-build.yml` uploads one on every run): the one of the run that built this tree (the
+  queue run, or on a fast-forward the PR run) and the one this run's own `Build · Compile` wrote,
+  which describes the very bits pack ships. It requires the **same SDK** and the **same assembly
+  set**. Same commit SHA + same SDK + same assembly set is the safety argument: identical source on
+  an identical toolchain behaves like what the suites tested. It builds nothing: until #2068 it
+  rebuilt the whole solution at the queue's placeholder version (15 to 26 minutes per develop push)
+  to enforce exactly these two facts. Byte-for-byte hash identity is **not** a gate and is no
+  longer reported: the two builds stamp different versions into every assembly, and source
+  generators emit nondeterministically for an unpredictable subset of assemblies
+  (`[LoggerMessage]` partial-class ordering, ILRepack MVIDs), so a hash comparison flakes and a name
+  allowlist can never be complete. Tamper-evidence for the published bits is the SLSA provenance
+  attestation. A docs-only merge builds nothing, so there is nothing to compare and the job passes.
+- **Compile uploads no per-suite build slices** on this path: no suite runs, so nothing would read them.
 - **reupload-reports** republishes the tested run's coverage and TRX into the push run, both to
   Codecov and as its own `coverage-republished` artifact, so the Codecov baseline, Test Analytics,
   the docs test status and, on a release cut, the release PR's and the main push's Quality (which
@@ -700,8 +704,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Release Prerelease refused: "gate did not pass" / "PR's head is not this commit" | the release PR's Quality or SonarCloud check failed, or is still running, on the branch head | Fix it in the release branch through a PR until the release PR is green on its head, then retry |
 | Older-line hotfix refused: "pushed directly" | the fix was pushed to the hotfix branch instead of merged through a PR | Put the fix on `fix/<name>`, PR it into the hotfix branch, merge when green |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
-| Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
-| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
+| Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run's Compile, a different assembly set, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
+| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, a different assembly set, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
 | `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the job cannot read the `release-app` environment's secrets. Until #1796 the merge-back ran inside a reusable workflow whose callers passed no secrets, and GitHub delivers an environment secret to a reusable workflow's job only when the caller passes it, so it read an empty string on every stable release from 2026-10-19 (the `workflow_call.secrets` declaration of #1477 did not change that). Since #1796 the job mints the token itself, so this now means the environment secrets are missing or the job lost its `environment: release-app` | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'` (for an older-line hotfix, `origin/develop...<the hotfix commit>`). Empty means nothing was lost. Otherwise fix the cause by PR. Re-running the failed job re-runs the workflow file of the original commit, so a run from before the fix fails again, as does an older-line hotfix branch cut before it (it runs its own copy of `ci.yml`): open the sync PR by hand instead, from a branch of the source with develop's `Directory.Build.props` restored, published through `Publish-SignedCommit.ps1` (see [Sync Main → Develop](#sync-main--develop)) |
 | `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z`. That tag is not signed by the workflow, so it fails SECURITY.md's verification: say so in the release notes |

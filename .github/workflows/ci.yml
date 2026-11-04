@@ -227,10 +227,10 @@ jobs:
   # matrix on, so the post-merge push run re-testing that SHA is pure redundancy
   # (~35-40 min per merge). When a successful merge_group CI run exists for this
   # SHA, the suites and quality skip; the publish gate then requires
-  # verify-rebuild instead — a same-SDK rebuild at the queue's version whose
-  # assembly hashes must match the queue's manifest, byte-for-byte outside a small
-  # documented allowlist of upstream nondeterminism (see the job), proving "same
+  # verify-rebuild instead: this run's Compile manifest must name the same SDK and the
+  # same assembly set as the tested run's manifest (see the job), proving "same
   # source, same toolchain; only the stamped version differs" for the packed bits.
+  # Compile skips its per-suite slice uploads on that path, since no suite runs.
   # reupload-reports republishes the queue run's coverage + TRX into this run so
   # the Codecov develop baseline and the docs test-status keep flowing unchanged.
   #
@@ -440,30 +440,28 @@ jobs:
 
   verify-rebuild:
     name: Build · Verify rebuild matches the tested build
-    # The hardened half of the skip: rebuild on the QUEUE's exact SDK at the QUEUE's
-    # version and confirm the SAME assembly SET. That plus the shared commit SHA is the
-    # safety argument for publishing queue-validated bits unre-tested: identical source +
-    # identical toolchain ⇒ identical behavior to what the suites tested. SDK drift or a
-    # changed assembly set keep the publish gate closed. Byte-identity is NOT gated —
-    # source generators emit nondeterministically for an unpredictable subset of
-    # assemblies (see the compare step); tamper-evidence is the SLSA provenance
-    # attestation on the published bits, not this rebuild.
-    needs: [queue-validated]
+    # The hardened half of the skip: this run's own Compile (the bits pack ships) must have been
+    # built on the TESTED run's exact SDK and produced the SAME assembly SET. That plus the shared
+    # commit SHA is the safety argument for publishing queue-validated bits unre-tested: identical
+    # source + identical toolchain ⇒ identical behavior to what the suites tested. SDK drift or a
+    # changed assembly set keep the publish gate closed. Byte-identity is NOT gated: source
+    # generators emit nondeterministically for an unpredictable subset of assemblies, and the two
+    # builds stamp different versions; tamper-evidence is the SLSA provenance attestation on the
+    # published bits, not this check.
+    #
+    # It compares the two runs' determinism manifests instead of building the solution a third time
+    # (#2068). Compile already hashes every packable output with the SDK that built it, which is
+    # everything the old rebuild produced that this job ever enforced, and it is the build that is
+    # actually packed, so the check now covers the published bits rather than a copy of them. The
+    # rebuild took 15 to 26 minutes of a runner per develop push.
+    needs: [queue-validated, build]
     if: ${{ !failure() && !cancelled() && needs.queue-validated.outputs.validated == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup .NET
-        uses: ./.github/actions/setup-dotnet-retry
-        with:
-          dotnet-version: '10.0.x'
-
       - name: Download the determinism manifest of the run that built this tree
         env:
           GH_TOKEN: ${{ github.token }}
@@ -484,56 +482,53 @@ jobs:
           echo "Verifying against the manifest from run $MANIFEST_RUN_ID."
           echo "manifest: built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
 
-      # The toolchain must be EXACTLY the queue's: with a different SDK even benign
-      # hash differences lose their explanation, so drift fails closed before building.
-      - name: Require the queue's exact SDK
+      # This run's Compile wrote the manifest of the bits pack ships. A docs-only merge builds nothing
+      # (the change detector found no code), so there is nothing to publish and nothing to compare.
+      - name: Download this run's determinism manifest
+        if: needs.build.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: determinism-manifest-${{ github.run_id }}
+          path: this-manifest
+
+      # The toolchain must be EXACTLY the tested run's: with a different SDK even benign hash
+      # differences lose their explanation, so drift fails closed.
+      - name: Require the tested run's exact SDK and assembly set
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
         run: |
           set -euo pipefail
+          if [ "$BUILD_RESULT" != success ]; then
+            echo "Compile did not run in this run ($BUILD_RESULT): the change built nothing, so nothing is packed or published and there is no build to compare."
+            exit 0
+          fi
           QUEUE_SDK=$(cat queue-manifest/sdk.txt)
-          LOCAL_SDK=$(dotnet --version)
+          LOCAL_SDK=$(cat this-manifest/sdk.txt)
           if [ "$QUEUE_SDK" != "$LOCAL_SDK" ]; then
-            echo "::error::SDK drift between the queue run ($QUEUE_SDK) and this push run ($LOCAL_SDK) — the rebuild cannot be verified. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
+            echo "::error::SDK drift between the tested run ($QUEUE_SDK) and this run's Compile ($LOCAL_SDK): the build cannot be verified. Set repo variable PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true on a release branch) and re-run all jobs to run the full matrix instead."
             exit 1
           fi
-          echo "SDK matches the queue run: $LOCAL_SDK"
+          echo "SDK matches the tested run: $LOCAL_SDK"
 
-      - name: Rebuild at the queue's version and verify the assembly set
-        run: |
-          set -euo pipefail
-          QUEUE_VERSION=$(cat queue-manifest/version.txt)
-          dotnet restore --locked-mode
-          BUILD_ARGS=(--no-restore --configuration Release)
-          if [ -n "$QUEUE_VERSION" ]; then BUILD_ARGS+=("-p:Version=$QUEUE_VERSION"); fi
-          dotnet build "${BUILD_ARGS[@]}"
-          find src tools -path "*/bin/Release/*" \( -name "*.dll" -o -name "*.exe" \) -type f \
-            ! -path "*/ref/*" | sort | xargs sha256sum > rebuilt.sha256
-
-          # HARD GATE: the queue built the SAME assemblies we did, on the SAME SDK (checked
-          # above), from the SAME commit (the push and queue are the same SHA). That triad
-          # is the safety argument for publishing queue-validated bits without re-running the
-          # suites: identical source + identical toolchain ⇒ identical BEHAVIOR to what the
-          # suites tested. An added/removed assembly means the structure diverged — refuse.
+          # HARD GATE: the tested run built the SAME assemblies this run's Compile did, on the SAME
+          # SDK (checked above), from the SAME tree (queue-validated proved it). That triad is the
+          # safety argument for publishing queue-validated bits without re-running the suites:
+          # identical source + identical toolchain ⇒ identical BEHAVIOR to what the suites tested.
+          # An added or removed assembly means the structure diverged: refuse.
           awk '{print $2 " " $1}' queue-manifest/assemblies.sha256 | sort > queue.kv
-          awk '{print $2 " " $1}' rebuilt.sha256 | sort > local.kv
+          awk '{print $2 " " $1}' this-manifest/assemblies.sha256 | sort > local.kv
           if ! diff -u <(cut -d' ' -f1 queue.kv) <(cut -d' ' -f1 local.kv); then
-            echo "::error::The SET of built assemblies differs from the queue run — refusing to publish."
+            echo "::error::The SET of built assemblies differs from the tested run: refusing to publish."
             exit 1
           fi
 
-          # INFORMATIONAL: byte-identity is NOT a gate. Source generators emit
-          # nondeterministically — [LoggerMessage] partial-class ordering and ILRepack MVIDs
-          # shift hashes for an UNPREDICTABLE subset of assemblies each build, so a byte
-          # comparison flakes and a name allowlist can never be complete (that fragility
-          # blocked a publish; see #691). Tamper-evidence for the actually-published bits is
-          # the SLSA provenance attestation (nuget-push.yml), not this rebuild. Report the
-          # match rate for monitoring; do not fail on it.
-          DIFFERING=$(join queue.kv local.kv | awk '$2 != $3' | wc -l)
-          TOTAL=$(wc -l < local.kv)
-          echo "Assembly set matches the queue run ($TOTAL assemblies). Byte-identical: $((TOTAL - DIFFERING)); differing (generator nondeterminism, informational): $DIFFERING."
-          if [ "$DIFFERING" -gt 0 ]; then
-            echo "Differing assemblies (expected — LoggerMessage/ILRepack ordering):"
-            join queue.kv local.kv | awk '$2 != $3 {print "  " $1}'
-          fi
+          # INFORMATIONAL ONLY, and no longer a byte comparison. The old rebuild stamped the tested
+          # run's placeholder version so its hashes could be compared; this run's Compile stamps the
+          # version being published, which is embedded in every assembly, so every hash differs by
+          # construction and a match rate would carry no information. Byte identity was never a gate
+          # (generator nondeterminism flaked it, #691); the SLSA provenance attestation
+          # (nuget-push.yml) is the tamper-evidence for the published bits.
+          echo "Assembly set matches the tested run ($(wc -l < local.kv) assemblies) on SDK $LOCAL_SDK. Built version '$(cat this-manifest/version.txt)'; tested version '$(cat queue-manifest/version.txt)'."
 
   reupload-reports:
     name: Report · Republish the tested run's coverage
@@ -885,7 +880,9 @@ jobs:
 
   build:
     name: Build · Compile
-    needs: [version, changes, release-pr, ff-validated, pick-runner]
+    # queue-validated is needed only to know whether any suite will run: a reused push uploads no
+    # per-suite slices, because nothing downloads them (#2068).
+    needs: [version, changes, release-pr, ff-validated, queue-validated, pick-runner]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
@@ -907,6 +904,8 @@ jobs:
     with:
       runs-on: ${{ needs.pick-runner.outputs.compile }}
       version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
+      # The suites skip when this push reuses an already-tested run, so their slices would be read by nothing.
+      upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
