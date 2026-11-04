@@ -339,7 +339,7 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
       .Because("another live instance holds the duty outside the table; the assignment steps aside within one renewal");
     await Assert.That((string)(await _scalarAsync("SELECT last_vacated_reason FROM wh_role_assignments WHERE role = @role",
       cancellationToken, ("role", ROLE)))!).IsEqualTo("legacy_holder");
-    await Assert.That(await _capabilityHoldersAsync(ROLE, cancellationToken)).IsEquivalentTo(new[] { older })
+    await Assert.That(await _capabilityHoldersAsync(ROLE, cancellationToken)).IsEquivalentTo([older])
       .Because("stepping aside releases the holder's own record");
     await using var check = await _openAsync(cancellationToken);
     await Assert.That(await _fencedOnAsync(check, a, grant.Epoch, cancellationToken)).IsFalse();
