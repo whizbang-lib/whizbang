@@ -534,7 +534,9 @@ build and the six suites** (and so pack) to that run:
 - **The main push.** Merging the release PR pushes `main`, whose tree is byte-identical to the
   release-branch tree that just went green (`start-release` merges main in first). The push to main
   yields to that release-branch run: about 46 minutes per release. It fails safe: a non-merge push,
-  a merge that changed the tree, or no green release-branch run keeps the full matrix.
+  a merge that changed the tree, or no green release-branch run keeps the full matrix. The check reads
+  the merge's second parent and both trees from the commits API: until #2068 it ran `git fetch` in a
+  job with no checkout, which always failed, so every main push silently ran the full matrix.
 
 **Quality never yields.** SonarScanner runs only on a pull request or on `main`, so the release PR's
 Quality and the main push's Quality are the only analyses those trees get (the release-branch push

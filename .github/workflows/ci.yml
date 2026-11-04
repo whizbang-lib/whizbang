@@ -424,11 +424,15 @@ jobs:
           keep() { echo "Keeping the full matrix on main: $1"; echo "Main push duplicate: **false** -- $1" >> "$GITHUB_STEP_SUMMARY"; echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
           # Every fallible command falls back to keep(): a FAILED guard would make !failure() false
           # for every job downstream of it and skip the whole matrix, the opposite of failing safe.
-          git fetch --quiet --depth=2 origin "$GITHUB_SHA" || keep "could not fetch $GITHUB_SHA"
-          SRC=$(git rev-parse --verify --quiet "$GITHUB_SHA^2" || true)
+          # The commits API, not git: this job has no checkout, so the git fetch it used to run here
+          # always failed ("could not fetch", run 41247029910) and every main push ran the full matrix
+          # (#2068). The API gives the same two facts: the merge's second parent and both trees.
+          COMMIT=$(gh api "repos/$REPO/commits/$GITHUB_SHA" 2>/dev/null) || keep "could not read commit $GITHUB_SHA"
+          SRC=$(jq -r '.parents[1].sha // ""' <<< "$COMMIT" 2>/dev/null || true)
           [ -n "$SRC" ] || keep "HEAD is not a merge"
-          git fetch --quiet --depth=1 origin "$SRC" || keep "could not fetch $SRC"
-          [ "$(git rev-parse "$GITHUB_SHA^{tree}" 2>/dev/null)" = "$(git rev-parse "$SRC^{tree}" 2>/dev/null)" ] \
+          TREE=$(jq -r '.commit.tree.sha // ""' <<< "$COMMIT" 2>/dev/null || true)
+          SRC_TREE=$(gh api "repos/$REPO/commits/$SRC" --jq '.commit.tree.sha // ""' 2>/dev/null) || keep "could not read commit $SRC"
+          [ -n "$TREE" ] && [ "$TREE" = "$SRC_TREE" ] \
             || keep "the merge changed the tree relative to its release-branch parent $SRC"
           # Addressed by workflow PATH, not by name (this workflow sets a run-name).
           RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&status=success&per_page=10" \
