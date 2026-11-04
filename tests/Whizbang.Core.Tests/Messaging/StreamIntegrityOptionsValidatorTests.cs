@@ -93,4 +93,31 @@ public class StreamIntegrityOptionsValidatorTests {
       .Throws<OptionsValidationException>()
       .Because("the validator is registered by the pipeline, so a bad bound fails where it is read");
   }
+
+  [Test]
+  [Arguments("ReattributionIntervalSeconds")]
+  [Arguments("ReattributionBatchSize")]
+  [Arguments("MaxReattributionBatchesPerPass")]
+  public async Task Validate_AReattributionBoundBelowOne_FailsNamingTheKeyAsync(string key) {
+    var options = key switch {
+      "ReattributionIntervalSeconds" => new StreamIntegrityOptions { ReattributionIntervalSeconds = 0 },
+      "ReattributionBatchSize" => new StreamIntegrityOptions { ReattributionBatchSize = 0 },
+      _ => new StreamIntegrityOptions { MaxReattributionBatchesPerPass = 0 },
+    };
+
+    var result = new StreamIntegrityOptionsValidator().Validate(null, options);
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("a bound below one would spin the re-attribution loop or walk nothing, a broken setting that reads as a quiet store");
+    await Assert.That(result.FailureMessage).Contains($"Whizbang:StreamIntegrity:{key}");
+  }
+
+  [Test]
+  public async Task Validate_ReattributionBoundsOfOne_SucceedAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions {
+      ReattributionIntervalSeconds = 1, ReattributionBatchSize = 1, MaxReattributionBatchesPerPass = 1,
+    });
+
+    await Assert.That(result.Succeeded).IsTrue();
+  }
 }
