@@ -48,6 +48,16 @@ Describe 'Get-ClassCost' {
     $cost['C'] | Should -Be 1
   }
 
+  It 'leaves out a result the runner never timed, as it reports a test that timed out' {
+    # TUnit writes 0001-01-01 for both times of a test that hit its timeout; taken at face value it opens the
+    # shard's window two thousand years early.
+    $untimed = [pscustomobject]@{ Class = 'Hung'; Start = [datetime]::MinValue; End = [datetime]::MinValue }
+    $cost = Get-ClassCost (@(ConvertTo-Result -Entries @(@('A', 0, 2), @('B', 2, 3))) + $untimed)
+    $cost['A'] | Should -Be 2
+    $cost['B'] | Should -Be 1
+    $cost.ContainsKey('Hung') | Should -BeFalse
+  }
+
   It 'never charges a negative gap for overlapping tests' {
     $cost = Get-ClassCost @(ConvertTo-Result -Entries @(@('A', 0, 5), @('B', 0, 5)))
     $cost['A'] | Should -BeGreaterOrEqual 0

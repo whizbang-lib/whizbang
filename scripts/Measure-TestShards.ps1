@@ -93,11 +93,13 @@ function Get-Quantile([double[]]$Values, [double]$P) {
     boundaries is shared equally among the tests running then, so a serial shard charges each test its whole
     duration and a parallel one (#2069) charges a test its share of the time it ran beside others. A moment when no
     test runs (the next test's database being provisioned) goes to the test that started last before it, as the gap
-    to the next start did when shards ran one test at a time. The costs sum to the shard's test window.
+    to the next start did when shards ran one test at a time. The costs sum to the shard's test window. A test the
+    runner never timed (a timeout reports 0001-01-01) is left out.
     $Results: objects with Class, Start ([datetime]) and End ([datetime]).
 #>
 function Get-ClassCost([object[]]$Results) {
-  $tests = @($Results | Sort-Object Start)
+  # A test that hit its timeout is reported with both times at 0001-01-01; it has no place on the timeline.
+  $tests = @($Results | Where-Object { $_.Start.Year -gt 1 } | Sort-Object Start)
   $cost = @{}
   foreach ($t in $tests) { $cost[$t.Class] = 0.0 }
   # One sweep over the boundaries: ends sort before starts at the same instant, so a test that ends as the next
