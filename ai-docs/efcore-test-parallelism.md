@@ -74,7 +74,23 @@ concurrent collections keyed by test-local types; every meter and activity liste
 meter or database; created roles carry a random suffix; `NpgsqlConnection.ClearAllPools` only closes idle pooled
 connections.
 
-## Connection math
+## Capacity: connections, and the disk
 
-See `EFCorePostgresParallelism` and `ParallelismPolicyGuardTests.TheContainer_HasTheConnectionsTheLimitNeedsAsync`
-for the numbers the build checks.
+**Connections.** `pg_stat_activity` was sampled once a second through full runs of every shard on the build servers.
+Most test databases hold 2 to 6 connections; a few tests that start a host with every worker reach 60; two shards
+sharing one container never held more than 88 between them. The budget is 20 per running test, two processes per
+container and 100 spare: 8 x 20 x 2 + 100 = 420 of the container's 500. `EFCorePostgresParallelism` explains the
+limit, and `ParallelismPolicyGuardTests.TheContainer_HasTheConnectionsTheLimitNeedsAsync` checks the sum against the
+live container, so a container made by hand or before the rule fails loudly instead of throttling the run.
+
+**The disk was the real shared resource.** Every test drops its database, and since PostgreSQL 15 a `DROP DATABASE`
+forces an immediate checkpoint and waits for it, so a parallel shard asks for one every second or so. With durability
+on, each one flushes and syncs everything every other test wrote. On one build server, whose disk is a shared volume,
+those checkpoints took a median 0.8 s and up to 36 s, and three tests that bound a host's startup at 60 s failed there
+while the same shards passed on a server whose checkpoints took milliseconds. The container now runs without `fsync`,
+synchronous commit or full-page writes (`SharedPostgresContainer`, applied on every initialization so a container kept
+between runs gets them too; `TestIsolation/SharedContainerDurabilityTests` holds it). A test database is thrown away
+with its container, so durability bought nothing.
+
+**TUnit's `[Timeout]` covers the test's hooks too.** A test's timeout includes `[Before(Test)]`, which creates and
+migrates its database, so setup that slows under load eats into the test's own budget.
