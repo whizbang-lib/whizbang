@@ -77,8 +77,8 @@ connections.
 ## Capacity: connections, and the disk
 
 **Connections.** `pg_stat_activity` was sampled once a second through full runs of every shard on the build servers.
-Most test databases hold 2 to 6 connections; a few tests that start a host with every worker reach 60; two shards
-sharing one container never held more than 88 between them. The budget is 20 per running test, two processes per
+Most test databases hold 2 to 6 connections; a few tests that start a host with every worker reach 65; two shards
+sharing one container never held more than 98 between them. The budget is 20 per running test, two processes per
 container and 100 spare: 8 x 20 x 2 + 100 = 420 of the container's 500. `EFCorePostgresParallelism` explains the
 limit, and `ParallelismPolicyGuardTests.TheContainer_HasTheConnectionsTheLimitNeedsAsync` checks the sum against the
 live container, so a container made by hand or before the rule fails loudly instead of throttling the run.
@@ -94,3 +94,20 @@ with its container, so durability bought nothing.
 
 **TUnit's `[Timeout]` covers the test's hooks too.** A test's timeout includes `[Before(Test)]`, which creates and
 migrates its database, so setup that slows under load eats into the test's own budget.
+
+## Measured (build servers, November 2026)
+
+Each shard run end to end (container ready to last result) on the build servers, two shards sharing a server's
+container at a time. Before: develop, one class at a time. Parallel, durable: the limit of 8 with the container still
+syncing to disk. After: parallel, durability off, two runs each.
+
+| Shard | Before | Parallel, durable | After |
+|---|---|---|---|
+| 1 | 53.1 min | 21.0 min | 11.1, 12.2 min |
+| 2 | 58.4 min | 24.5 min | 13.7, 11.5 min |
+| 3 | 59.0 min | 22.3 min | 13.4, 11.6 min |
+| 4 | 61.4 min | 34.2 min (one test out of time) | 16.4, 14.9 min |
+| 5 | 51.6 min | 30.5 min (two tests out of time) | 15.2, 13.9 min |
+
+The shards were then rebalanced on the after runs (`scripts/Measure-TestShards.ps1`'s cost model, which since
+#2069 shares each moment among the tests running then).

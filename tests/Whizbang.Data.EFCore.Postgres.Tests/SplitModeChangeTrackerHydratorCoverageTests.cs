@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>_hydrators</c> is process-global and NOT scoped by any per-class constraint key of its own
 /// — the same hazard already recorded for <c>IntegrityManifestReceptors._pagesFollowed</c> in
 /// <c>scratchpad/residue.md</c>. The class runs alone (<see cref="NotInParallelAttribute"/> with no key)
-/// so <c>Clear()</c> can never run concurrently with another test's own <c>Register</c> call — without it,
+/// so <c>Clear()</c> can never run concurrently with another test's own <c>Register</c> call. Without it,
 /// wiping the registry mid-run would corrupt whichever other Split-mode test happened to be mid-hydration
 /// at that moment.
 /// </para>

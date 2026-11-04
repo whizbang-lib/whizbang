@@ -16,10 +16,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// and every test process on a machine shares it: two build-server slots, or a CI shard plus nothing else.
 /// </para>
 /// <para>
-/// The budget: 20 connections per running test (most hold 2 to 6; a few hosts with every worker running reach 60), two
+/// The budget: 20 connections per running test (most hold 2 to 6; a few hosts with every worker running reach 65), two
 /// processes sharing a container at most, and 100 left for the server and other projects' setup, so
 /// 8 x 20 x 2 + 100 = 420 of 500. <c>ParallelismPolicyGuardTests</c> checks that sum against the live container. The
-/// measured peak across a whole build server, two shards at once, was 88.
+/// measured peak across a whole build server, two shards at once, was 98.
 /// </para>
 /// <para>
 /// Eight rather than more because the tests wait on PostgreSQL, which runs on the same machine: a CI runner has four
