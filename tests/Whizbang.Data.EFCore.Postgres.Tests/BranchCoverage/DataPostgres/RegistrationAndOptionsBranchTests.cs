@@ -1,15 +1,11 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Notifications;
-using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
@@ -20,12 +16,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.DataPostgres;
 /// <summary>
 /// Registration and option-derived decisions that need no database: the pinned pool resolving a
 /// named connection string in a container with no configuration, the role elector's "is a real
-/// elector already registered" check against a null default registered as an instance, and the
-/// duty elector's contention ceiling under a polling interval shorter than its floor.
+/// elector already registered" check against a null default registered as an instance.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresPinnedPoolServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/RoleAssignmentServiceCollectionExtensions.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDutyElector.cs</code-under-test>
 [Category("Shard5")]
 public class RegistrationAndOptionsBranchTests {
   private const string INLINE_CONNECTION_STRING = "Host=localhost;Username=pinned-user;Database=pinned";
@@ -69,19 +63,19 @@ public class RegistrationAndOptionsBranchTests {
   [Test]
   public async Task RoleAssignmentByDefault_WithTheHostsElectorRegisteredByType_LeavesItInPlaceAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton<IDutyElector, PgDutyElector>();
+    services.AddSingleton<IDutyElector, HostElector>();
 
     services.AddWhizbangRoleAssignmentByDefault();
 
     await Assert.That(services.Any(d => d.ServiceType == typeof(PgRoleElector))).IsFalse();
     await Assert.That(services.Single(d => d.ServiceType == typeof(IDutyElector)).ImplementationType)
-      .IsEqualTo(typeof(PgDutyElector));
+      .IsEqualTo(typeof(HostElector));
   }
 
   [Test]
   public async Task RoleAssignmentByDefault_WithTheHostsElectorRegisteredByFactory_LeavesItInPlaceAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton<IDutyElector>(sp => sp.GetRequiredService<PgDutyElector>());
+    services.AddSingleton<IDutyElector>(_ => new HostElector());
 
     services.AddWhizbangRoleAssignmentByDefault();
 
@@ -89,24 +83,9 @@ public class RegistrationAndOptionsBranchTests {
     await Assert.That(services.Single(d => d.ServiceType == typeof(IDutyElector)).ImplementationFactory).IsNotNull();
   }
 
-  [Test]
-  public async Task DutyElector_PollingIntervalBelowTheFloor_UsesTheFloorAsTheCeilingAsync() {
-    var elector = _elector(TimeSpan.FromMilliseconds(500));
-
-    await Assert.That(elector.ContentionBackoffCeiling).IsEqualTo(PgDutyElector.ContentionBackoffFloor)
-      .Because("the suppression window may never shrink below its own floor");
+  /// <summary>A host's own elector: never asked for anything here.</summary>
+  private sealed class HostElector : IDutyElector {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+      throw new NotSupportedException("registration only");
   }
-
-  [Test]
-  public async Task DutyElector_PollingIntervalAboveTheFloor_IsTheCeilingAsync() {
-    var elector = _elector(TimeSpan.FromSeconds(45));
-
-    await Assert.That(elector.ContentionBackoffCeiling).IsEqualTo(TimeSpan.FromSeconds(45));
-  }
-
-  private static PgDutyElector _elector(TimeSpan pollingFallbackInterval) => new(
-    Options.Create(new WhizbangNotificationOptions { PollingFallbackInterval = pollingFallbackInterval }),
-    new ConfigurationBuilder().Build(),
-    new ServiceInstanceProvider(Guid.NewGuid(), "duty-svc", "duty-host", processId: 1),
-    NullLogger<PgDutyElector>.Instance);
 }

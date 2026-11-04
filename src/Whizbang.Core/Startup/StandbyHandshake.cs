@@ -66,7 +66,7 @@ public sealed partial class StandbyHandshake {
   /// <c>StandingBy</c>. Peers whose heartbeat lapses stop counting — the wait is bounded by
   /// lease expiry. Returns the ids of the peers that acknowledged.
   /// </summary>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Each poll filters the fleet down to the peers that still block the handshake: not me, not evicted, heartbeat still inside the liveness window, an older version, and not yet standing by. Each filter is one line, and each has its own reason for not counting.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Each poll filters the fleet down to the peers that still block the handshake: not me, not evicted, live by the one liveness rule, an older version, and not yet standing by. Each filter is one line, and each has its own reason for not counting.")]
   public async Task<IReadOnlyList<Guid>> AwaitPeersStandingByAsync(string version, CancellationToken cancellationToken) {
     if (!SemanticVersion.TryParse(version, out var mine)) {
       throw new ArgumentException($"'{version}' is not a readable version — refusing to run a handshake on a guess.", nameof(version));
@@ -77,7 +77,6 @@ public sealed partial class StandbyHandshake {
       var fleet = await _fleetSource.GetFleetAsync(cancellationToken).ConfigureAwait(false);
       var blocking = new List<Guid>();
       var acknowledged = new List<Guid>();
-      var now = DateTimeOffset.UtcNow;
       foreach (var peer in fleet) {
         if (peer.InstanceId == _instanceProvider.InstanceId) {
           continue;   // our own row does not acknowledge to itself
@@ -86,8 +85,8 @@ public sealed partial class StandbyHandshake {
           continue;   // the deliberate fence: an evicted peer no longer counts, and the
                       // handshake completes without it
         }
-        if (!peer.AliveLockHeld && now - peer.LastHeartbeatAt > _options.RequesterLivenessWindow) {
-          continue;   // a peer that stopped heartbeating stops counting; one holding its alive-lock is live (#1286)
+        if (!peer.IsLive) {
+          continue;   // a peer the one liveness rule calls dead stops counting (#2027); one holding its alive-lock is live
         }
         if (!SemanticVersion.TryParse(peer.LibraryVersion, out var theirs) || theirs.CompareTo(mine) >= 0) {
           continue;   // same-or-newer peers (and unranked ones) are not asked to stand by

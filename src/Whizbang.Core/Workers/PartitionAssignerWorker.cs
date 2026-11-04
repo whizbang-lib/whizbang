@@ -17,8 +17,8 @@ namespace Whizbang.Core.Workers;
 /// <remarks>
 /// <para>
 /// Every instance runs this worker and votes for <see cref="PartitionAssignerOptions.ROLE"/>; the holder leads. Each
-/// tick of its tenure, one per role renewal interval, it reads the registered instances and judges each by the strategy
-/// for its connection mode (<see cref="PartitionAssigner.IsLive"/>). It publishes when that changes the membership (an
+/// tick of its tenure, one per role renewal interval, it reads the registered instances with the database's one liveness
+/// rule's answer for each (<see cref="PartitionAssigner.IsLive"/>, #2027). It publishes when that changes the membership (an
 /// alive-lock gained or lost, a heartbeat gone stale or fresh), when its tenure has not published yet, and on the slow
 /// backstop cadence; otherwise it renews the published assignment's lease while it holds its alive-lock. Its heartbeat
 /// renews the lease as well, so the lease runs out exactly when the assigner stops being seen.
@@ -173,7 +173,7 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
     }
     var self = _instance.InstanceId;
     var candidates = await _store.ReadCandidatesAsync(cancellationToken).ConfigureAwait(false);
-    var members = PartitionAssigner.LiveMembers(candidates, self, _options);
+    var members = PartitionAssigner.LiveMembers(candidates, self);
     var published = LastPublished;
     var sincePublished = published is null ? TimeSpan.MaxValue : _time.GetElapsedTime(Volatile.Read(ref _publishedAtTimestamp));
     var evaluation = PartitionAssigner.Evaluate(members, published, epoch, sincePublished, _options);

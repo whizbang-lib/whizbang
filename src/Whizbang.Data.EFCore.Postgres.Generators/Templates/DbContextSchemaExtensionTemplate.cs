@@ -96,6 +96,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var schemaIsCurrent = Whizbang.Data.Postgres.StartupVerdictBinding.IsCurrent(
       await Whizbang.Data.Postgres.StartupVerdictBinding.ReadAsync(serviceProvider, cancellationToken));
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
+    _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
@@ -255,8 +256,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           await using var fleetConnection = rewriteConnectionFactory();
           await fleetConnection.OpenAsync(cancellationToken);
           var otherReleases = await Whizbang.Data.Postgres.FleetVersions.OtherLiveVersionsAsync(
-            fleetConnection, "__SCHEMA__", thisInstance.InstanceId, libraryVersion.LibraryVersion,
-            TimeSpan.FromMinutes(2), cancellationToken);
+            fleetConnection, "__SCHEMA__", thisInstance.InstanceId, libraryVersion.LibraryVersion, cancellationToken);
           if (otherReleases.Count > 0) {
             logger?.LogWarning(
               "Other releases are alive in the fleet for schema {Schema} while the stored-form rewrite "
@@ -315,9 +315,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
     // Phase 2: whoever does the schema work rewrites first; whoever does not, waits.
     //
-    // A waiter lost the election, so it watches the DUTY lock: the migrator holds the duty until it
-    // returns, so a holder that dies releases it and the wait ends in a takeover with no deadline
-    // to tune. How the wait ended decides one thing. Either the holder finished, and the fast path
+    // A waiter lost the election, so it watches the migrator's DUTY: the migrator holds the role until
+    // it returns, and a holder that dies loses it (its lease lapses, or the one liveness rule has it
+    // reaped), so the wait ends in a takeover. How the wait ended decides one thing. Either the holder finished, and the fast path
     // below reads clean hashes and exits in one query; or the holder is gone, or could not be
     // watched, and this instance is about to do the schema work itself: then it rewrites first,
     // because a migrator killed mid-rewrite leaves the remaining tables in the old form and every
@@ -338,9 +338,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       try {
         await using var waitConnection = segmentConnectionFactory();
         await waitConnection.OpenAsync(cancellationToken);
-        // A waiter watches the migrator: its assignment row (the duty is held by assignment) or,
-        // while an older release may be the migrator, the duty's session lock (DutyLockKey for
-        // StartupDuties.MIGRATOR). Anyone else watches the schema lock.
+        // A waiter watches the migrator: its assignment row, or, while an older release may be the
+        // migrator, the holding that release records (judged by the one liveness rule, #2044).
+        // Anyone else watches the schema lock.
         System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
           ? ct => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", ct)
           : ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct);
@@ -881,6 +881,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// it awaits and reverts when it returns, so concurrent initializations keep their own.
   /// </summary>
   private static readonly System.Threading.AsyncLocal<int?> _schemaCommandTimeout = new();
+
+  // #2027: the application version this pass records in the migration ledger beside the library version, resolved from
+  // the host's services for the pass that is running (the same ambient shape as the command timeout above).
+  private static readonly System.Threading.AsyncLocal<string?> _ledgerApplicationVersion = new();
 
   /// <summary>
   /// How long any one schema statement may take: the initialization connection string's
@@ -2124,8 +2128,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       ON CONFLICT (library_version, application_version) DO UPDATE SET notes = EXCLUDED.notes
       RETURNING id";
     cmd.Parameters.AddWithValue("version", "__LIBRARY_VERSION__");
-    cmd.Parameters.AddWithValue("appVersion", "__APPLICATION_VERSION__");
-    cmd.Parameters.AddWithValue("notes", DBNull.Value);
+    // #2027: the application version as recorded on the instance rows ("unknown" when unknown), so the ledger can be
+    // compared with them; the assembly that applied the pass is kept as the note.
+    cmd.Parameters.AddWithValue("appVersion", _ledgerApplicationVersion.Value ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN);
+    cmd.Parameters.AddWithValue("notes", "__APPLICATION_VERSION__");
     cmd.CommandTimeout = 30;
     var result = await cmd.ExecuteScalarAsync(ct);
     return (int)result!;

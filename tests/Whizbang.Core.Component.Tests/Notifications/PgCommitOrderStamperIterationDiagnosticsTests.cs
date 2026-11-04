@@ -59,7 +59,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
-      dutyElector: null,
+      dutyElector: new GrantingElector(),
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -104,7 +104,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
-      dutyElector: null,
+      dutyElector: new GrantingElector(),
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -118,7 +118,9 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
   }
 
   [Test]
-  public async Task Startup_PooledFallback_LogsLoudPooledWarningAsync() {
+  public async Task Startup_PooledFallback_NeedsNoDirectConnection_SoNoPooledWarningAsync() {
+    // #2044: the stamper holds no session lock; it leads on a role assignment, and each stamp is one transaction, which a
+    // transaction-pooling pooler serves correctly. So a pooled connection earns no warning from the stamper.
     var badPooled = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
     var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:test-db"] = badPooled,
@@ -145,18 +147,24 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
-      dutyElector: null,
+      dutyElector: new GrantingElector(),
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
-    await logger.PooledFallbackWarningTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // The first iteration runs after the start-up diagnostics, where the warning was written, so its failure is the
+    // signal that the warning would have been logged by now.
+    await logger.IterationFailedTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
-    await Assert.That(logger.LastPooledFallbackMessage).IsNotNull();
-    await Assert.That(logger.LastPooledFallbackMessage).Contains("pgbouncer");
-    await Assert.That(logger.LastPooledFallbackMessage).Contains("test-db-direct");
-    await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
+    await Assert.That(logger.PooledFallbackWarningTcs.Task.IsCompleted).IsFalse();
+    await Assert.That(logger.LastPooledFallbackMessage).IsNull();
+    // Nor does the iteration failure send the operator to a direct connection the stamper does not need.
+    var failure = logger.LastIterationFailedMessage;
+    await Assert.That(failure).IsNotNull();
+    await Assert.That(failure).Contains("PooledKeyFallback").Because("the failure still names where the connection came from");
+    await Assert.That(failure).DoesNotContain("-direct");
+    await Assert.That(failure).DoesNotContain("pgbouncer");
   }
 
   private sealed class StamperCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
@@ -194,6 +202,19 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
           _ = PooledFallbackWarningTcs.TrySetResult();
           break;
       }
+    }
+  }
+
+  /// <summary>Grants the stamper role at once (#2044: the stamper leads only through an elector).</summary>
+  private sealed class GrantingElector : Whizbang.Core.Startup.IDutyElector {
+    public Task<Whizbang.Core.Startup.DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+      Task.FromResult(Whizbang.Core.Startup.DutyAttempt.Granted(new Grant(duty)));
+
+    private sealed class Grant(string duty) : Whizbang.Core.Startup.IDutyGrant {
+      public string Duty => duty;
+      public DateTimeOffset AcquiredAt => DateTimeOffset.UnixEpoch;
+      public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+      public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
   }
 }

@@ -17,6 +17,7 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>Cadences and bounds for the standby watcher.</summary>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:StandbyWatcher:RequesterLivenessWindow", "Whizbang:Workers:Heartbeat:IntervalSeconds")]
 public sealed class StandbyWatcherOptions {
   /// <summary>How often the watcher checks for an active standby request. The poll is the floor
   /// beneath any faster signal; the handshake's latency budget is bounded by it.</summary>
@@ -26,10 +27,6 @@ public sealed class StandbyWatcherOptions {
   /// verdict is not a startup-only fact; an instance becomes obsolete the moment a newer peer
   /// migrates underneath it.</summary>
   public TimeSpan ObsolescenceInterval { get; set; } = TimeSpan.FromSeconds(60);
-
-  /// <summary>How stale the requester's heartbeat may be before its request is void. Matches the
-  /// fleet's ordinary staleness threshold: a dead migrator must not strand its peers in standby.</summary>
-  public TimeSpan RequesterLivenessWindow { get; set; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>
@@ -198,12 +195,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
     return requested.CompareTo(mine) > 0;
   }
 
-  // #1286: a requester holding its alive-lock is alive whatever its heartbeat's age (it beats on the slow cadence);
-  // otherwise its heartbeat decides.
-  private bool _requesterIsAlive(StandbyRequest request) =>
-    request.RequesterAliveLockHeld
-      || (request.RequesterLastHeartbeatAt is { } heardAt
-          && _time.GetUtcNow() - heardAt <= _options.RequesterLivenessWindow);
+  // #2027: the database's one liveness rule decides (it counts a requester holding its alive-lock between slow beats);
+  // the watcher keeps no window of its own.
+  private static bool _requesterIsAlive(StandbyRequest request) => request.RequesterIsLive;
 
   private async Task _watchOutcomeAsync(StandbyRequest? request, CancellationToken cancellationToken) {
     if (request is not null && _requesterIsAlive(request)) {

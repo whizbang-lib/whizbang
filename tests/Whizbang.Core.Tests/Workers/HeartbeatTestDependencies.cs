@@ -17,6 +17,10 @@ internal static class HeartbeatTestDependencies {
   /// <summary>A fixed library version.</summary>
   public static ILibraryVersionProvider Version { get; } = new LibraryVersionProvider("0.0.0-test");
 
+  /// <summary>A fixed application version.</summary>
+  public static Whizbang.Core.Versioning.IApplicationVersionProvider ApplicationVersion { get; } =
+    new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown);
+
   private sealed class RunningLifecycleState : IWhizbangLifecycleState {
     public LifecyclePhase Phase => LifecyclePhase.Running;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;

@@ -22,8 +22,8 @@ namespace Whizbang.Data.Postgres;
 /// the query behind that warning.
 /// </para>
 /// <para>
-/// A live instance is one that has heartbeated within the window, and its release is what its
-/// heartbeat's metadata says. This instance's own row is ignored, and so is any instance on the
+/// A live instance is one the database's one liveness rule (#2027, <c>wh_live_instance_ids</c>) calls live, and its
+/// release is what its heartbeat's metadata says. The rule is Preflight's, so it is there before this runs. This instance's own row is ignored, and so is any instance on the
 /// same release. A registry that does not exist yet answers nothing rather than failing the
 /// migrator over a warning.
 /// </para>
@@ -41,7 +41,6 @@ public static class FleetVersions {
   /// <param name="schema">The schema the registry lives in.</param>
   /// <param name="self">This instance, which is not "other".</param>
   /// <param name="ownVersion">This instance's release, which is not "other" either.</param>
-  /// <param name="liveWindow">How recent a heartbeat has to be for the instance to count as alive.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The distinct other releases, empty when the fleet is uniform or the registry is absent.</returns>
   public static async Task<IReadOnlyList<string>> OtherLiveVersionsAsync(
@@ -49,7 +48,6 @@ public static class FleetVersions {
       string schema,
       Guid self,
       string ownVersion,
-      TimeSpan liveWindow,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(ownVersion);
@@ -65,12 +63,11 @@ public static class FleetVersions {
     }
 
     await using var command = new NpgsqlCommand(
-      "SELECT DISTINCT coalesce(metadata ->> 'Version', $3) AS release "
+      "SELECT DISTINCT coalesce(metadata ->> 'Version', $2) AS release "
       + $"FROM {quoted}.wh_service_instances "
-      + "WHERE instance_id <> $1 AND last_heartbeat_at > now() - $2 "
+      + $"WHERE instance_id <> $1 AND instance_id IN (SELECT l.instance_id FROM {quoted}.wh_live_instance_ids() l) "
       + "ORDER BY release", connection);
     command.Parameters.AddWithValue(self);
-    command.Parameters.AddWithValue(liveWindow);
     command.Parameters.AddWithValue(UNKNOWN);
 
     var others = new List<string>();

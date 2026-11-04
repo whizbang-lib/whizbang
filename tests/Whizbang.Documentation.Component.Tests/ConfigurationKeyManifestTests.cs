@@ -180,6 +180,10 @@ public class ConfigurationKeyManifestTests {
     // configuration with none records only the section.
     "Whizbang:Schema:Reconcile:Drop:*",
     "Whizbang:Schema:Reconcile:Pins:*",
+    // The application version's host overrides, read when the version is first resolved (the heartbeat, the
+    // stand-down beat and the migration ledger), which the harness never reaches; ApplicationVersionTests reads both.
+    "Whizbang:Application:DeployNumber",
+    "Whizbang:Application:Version",
   ];
 
   private const string MANIFEST_HEADER =

@@ -9,16 +9,23 @@ using Npgsql;
 namespace Whizbang.Data.Postgres;
 
 /// <summary>
-/// Asks whether some other session currently holds a given advisory lock.
+/// Asks whether some other session currently holds a given advisory lock: the transaction-scoped
+/// schema initialization lock, the one advisory lock schema work still takes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A failed <c>pg_try_advisory_lock</c> says only "not yours". It does not say whether the holder is
-/// still alive, and those two situations call for opposite behavior: an instance that lost the
-/// schema lock to a working migrator should wait for the result, while one that lost it to a pod
-/// that has since died must take over or the schema never advances. The lock's own presence in
-/// <c>pg_locks</c> distinguishes them, and it does so without a timeout to tune, because a lock
-/// disappears when its session ends whether that ending was clean or not.
+/// It is not a duty probe (#2044): no duty is held by an advisory lock, and the migrator duty is
+/// watched through its role assignment (<see cref="MigratorWatch"/>). The schema lock is mutual
+/// exclusion around one DDL pass, released at commit; this asks only whether a pass is in flight
+/// elsewhere, so a contender can wait for its result instead of queueing behind it.
+/// </para>
+/// <para>
+/// A failed <c>pg_try_advisory_xact_lock</c> says only "not yours". It does not say whether the pass
+/// that holds it is still running, and those two situations call for opposite behavior: an instance
+/// that lost the schema lock to a working pass should wait for the result, while one whose rival's
+/// session has since ended must contend again or the schema never advances. The lock's own presence
+/// in <c>pg_locks</c> distinguishes them, and it does so without a timeout to tune, because a lock
+/// disappears when its transaction ends, whether that ending was clean or not.
 /// </para>
 /// <para>
 /// The key has to be reassembled rather than compared directly. PostgreSQL stores a single-bigint

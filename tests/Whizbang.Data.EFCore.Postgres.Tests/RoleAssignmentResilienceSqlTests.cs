@@ -15,12 +15,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Migration 184: the role-assignment decisions of #968 in SQL. Per-duty leases, the duty-backend
 /// backstop for one long statement, the cooperative drain, the newest-version preference for a
-/// vacant role, ending a lapsed bridged holder's lock session, the fleet-wide lapse that skips the
+/// vacant role, a holder outside the table seen through its recorded holding (#2044), the fleet-wide lapse that skips the
 /// cool-down, and the multi-role vote. Database time is advanced by shifting stored instants back;
 /// a backend counts as running a statement when the check itself runs on it, so nothing here
 /// sleeps, polls or races.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/184_RoleAssignmentResilience.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/326_EveryDutyIsARoleAssignment.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
@@ -318,52 +319,151 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task RenewLease_StepsAside_WhenALegacyHolderTookTheLockAfterTheVoteAsync(CancellationToken cancellationToken) {
+    // #2044: an instance on an older release that holds the duty by its own session lock records the holding
+    // (record_capability). The holder sees that record, judged live by the one liveness rule, within one renewal; the
+    // lock itself is not read. (The name is kept because migration 184 links to it.)
     const long legacyKey = 0x5EED_0184_0001;
     var a = await _joinAsync(cancellationToken);
-    var grant = await _voteAsync(a, cancellationToken, legacyKey: legacyKey);
-    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken, legacyKey)).IsEqualTo("renewed");
+    var older = await _joinAsync(cancellationToken);
+    var grant = await _voteAsync(a, cancellationToken);
+    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken)).IsEqualTo("renewed")
+      .Because("the holder's own record of the duty is the assignment's, not a holding outside the table");
 
     await using var legacy = await _openAsync(cancellationToken);
     _ = await _scalarOnAsync(legacy, "SELECT pg_advisory_lock(@k)", cancellationToken, ("k", legacyKey));
+    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken, legacyKey)).IsEqualTo("renewed")
+      .Because("the older release's lock alone decides nothing");
+    await _recordCapabilityAsync(older, ROLE, cancellationToken);
 
-    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken, legacyKey)).IsEqualTo("lost")
-      .Because("an instance on the session-lock elector took the duty; the assignment steps aside within one renewal");
+    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken)).IsEqualTo("lost")
+      .Because("another live instance holds the duty outside the table; the assignment steps aside within one renewal");
     await Assert.That((string)(await _scalarAsync("SELECT last_vacated_reason FROM wh_role_assignments WHERE role = @role",
       cancellationToken, ("role", ROLE)))!).IsEqualTo("legacy_holder");
+    await Assert.That(await _capabilityHoldersAsync(ROLE, cancellationToken)).IsEquivalentTo([older])
+      .Because("stepping aside releases the holder's own record");
     await using var check = await _openAsync(cancellationToken);
     await Assert.That(await _fencedOnAsync(check, a, grant.Epoch, cancellationToken)).IsFalse();
-    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken, legacyKey)).IsEqualTo("lost")
+    await Assert.That(await _renewLeaseAsync(a, grant.Epoch, cancellationToken)).IsEqualTo("lost")
       .Because("stepping aside again changes nothing");
   }
 
   [Test]
   [Timeout(60000)]
-  public async Task EndLapsedBridge_EndsOnlyTheLapsedHoldersLockSession_AndOnlyOnceAsync(CancellationToken cancellationToken) {
-    // Decision 4: once the row says the bridged holder lapsed, a would-be winner may end that holder's
-    // legacy-lock session, and only that session.
-    const long legacyKey = 0x5EED_0184_0002;
+  public async Task Vote_IgnoresAnAdvisoryLockOnTheLegacyKey_AndRecordsNoBridgeSessionAsync(CancellationToken cancellationToken) {
+    const long legacyKey = 0x5EED_2044_0002;
     var a = await _joinAsync(cancellationToken);
-    var bridge = await _openAsync(cancellationToken);
-    await using var bystander = await _openAsync(cancellationToken);
+    await using var legacy = await _openAsync(cancellationToken);
+    _ = await _scalarOnAsync(legacy, "SELECT pg_advisory_lock(@k)", cancellationToken, ("k", legacyKey));
+
+    var vote = await _voteAsync(a, cancellationToken, legacyKey: legacyKey, bridgePid: legacy.ProcessID);
+
+    await Assert.That(vote.Outcome).IsEqualTo("granted")
+      .Because("no lock is read: the vote decides from the role table and the recorded holdings");
+    await Assert.That(await _scalarAsync("SELECT bridge_backend_pid FROM wh_role_assignments WHERE role = @role",
+      cancellationToken, ("role", ROLE))).IsNull()
+      .Because("there is no bridge session to end later, so none is recorded");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Vote_WhileALiveInstanceHoldsTheDutyOutsideTheTable_AnswersLegacyHolderAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    var older = await _joinAsync(cancellationToken);
+    await _recordCapabilityAsync(older, ROLE, cancellationToken);
+
+    var vote = await _voteAsync(a, cancellationToken);
+
+    await Assert.That(vote.Outcome).IsEqualTo("legacy_holder");
+    await Assert.That(await _scalarAsync("SELECT holder_instance_id FROM wh_role_assignments WHERE role = @role",
+      cancellationToken, ("role", ROLE))).IsNull();
+
+    _ = await _scalarAsync("SELECT release_capability(@id, @role)", cancellationToken, ("id", older), ("role", ROLE));
+    await Assert.That((await _voteAsync(a, cancellationToken)).Outcome).IsEqualTo("granted")
+      .Because("once the older holder releases the duty, the vote grants it");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Vote_DoesNotCountAHolderOutsideTheTable_ThatTheLivenessRuleCallsDeadAsync(CancellationToken cancellationToken) {
+    // A recorded holding whose instance stopped beating is reaped with the row; until then the one liveness rule
+    // decides, not the record's presence.
+    var a = await _joinAsync(cancellationToken);
+    var older = await _joinAsync(cancellationToken);
+    await _recordCapabilityAsync(older, ROLE, cancellationToken);
+    _ = await _scalarAsync("UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id",
+      cancellationToken, ("id", older));
+    await Assert.That((bool)(await _scalarAsync("SELECT wh_instance_is_live(@id)", cancellationToken, ("id", older)))!).IsFalse();
+
+    await Assert.That((await _voteAsync(a, cancellationToken)).Outcome).IsEqualTo("granted");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task EndLapsedBridge_EndsOnlyTheLapsedHoldersLockSession_AndOnlyOnceAsync(CancellationToken cancellationToken) {
+    // #2044: there is no bridge. An older bridged instance may still call the expiry; it answers that nothing was
+    // ended, and the session that holds the old lock is left alone: since 326 the expiry ends no session at all. (The
+    // name is kept because migration 184 links to it.)
+    const long legacyKey = 0x5EED_2044_0003;
+    var a = await _joinAsync(cancellationToken);
+    await using var bridge = await _openAsync(cancellationToken);
     _ = await _scalarOnAsync(bridge, "SELECT pg_advisory_lock(@k)", cancellationToken, ("k", legacyKey));
-    _ = await _scalarOnAsync(bystander, "SELECT pg_advisory_lock(@k)", cancellationToken, ("k", legacyKey + 1));
     _ = await _voteAsync(a, cancellationToken, bridgePid: bridge.ProcessID);
-
-    var whileLive = await _scalarAsync("SELECT wh_end_lapsed_bridge(@role, @k)", cancellationToken, ("role", ROLE), ("k", legacyKey));
-    await Assert.That(whileLive).IsNull().Because("a live holder's session is never ended");
-
+    _ = await _scalarAsync("UPDATE wh_role_assignments SET bridge_backend_pid = @pid, "
+      + "bridge_backend_started_at = (SELECT backend_start FROM pg_stat_activity WHERE pid = @pid) WHERE role = @role",
+      cancellationToken, ("pid", bridge.ProcessID), ("role", ROLE));
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
-    var unrelatedKey = await _scalarAsync("SELECT wh_end_lapsed_bridge(@role, @k)", cancellationToken, ("role", ROLE), ("k", legacyKey + 1));
-    await Assert.That(unrelatedKey).IsNull().Because("only the session holding THIS role's legacy lock may be ended");
 
     var ended = await _scalarAsync("SELECT wh_end_lapsed_bridge(@role, @k)", cancellationToken, ("role", ROLE), ("k", legacyKey));
-    await Assert.That(ended).IsEqualTo(bridge.ProcessID);
-    await Assert.That(await _scalarAsync("SELECT wh_end_lapsed_bridge(@role, @k)", cancellationToken, ("role", ROLE), ("k", legacyKey))).IsNull()
-      .Because("ended once; a fleet asking together ends it once");
-    await Assert.That((bool)(await _scalarOnAsync(bystander, "SELECT pg_try_advisory_lock(@k)", cancellationToken, ("k", legacyKey)))!).IsTrue()
-      .Because("the lapsed holder's lock went with its session, and the bystander's session is untouched");
-    await Assert.That(async () => await _scalarOnAsync(bridge, "SELECT 1", cancellationToken)).Throws<Exception>();
-    await bridge.DisposeAsync();
+
+    await Assert.That(ended).IsNull();
+    await Assert.That(await _scalarOnAsync(bridge, "SELECT 1", cancellationToken)).IsEqualTo(1)
+      .Because("no session is terminated to free a duty: a duty is never held by a session");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task TheAdvisoryLockReader_IsGoneAsync(CancellationToken cancellationToken) {
+    await Assert.That((bool)(await _scalarAsync("SELECT to_regprocedure('_advisory_lock_held_elsewhere(bigint)') IS NULL", cancellationToken))!).IsTrue()
+      .Because("no role function reads advisory locks any more (#2044)");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task VoteRoles_TakesNoLegacyKeysAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    await using var conn = await _openAsync(cancellationToken);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT role, outcome FROM wh_vote_roles(@roles, @leases, @id, @cooldown, NULL, @version)";
+    cmd.Parameters.AddWithValue("roles", new[] { OTHER_ROLE, ROLE });
+    cmd.Parameters.AddWithValue("leases", new[] { _lease, _lease });
+    cmd.Parameters.AddWithValue("id", a);
+    cmd.Parameters.AddWithValue("cooldown", _cooldown);
+    cmd.Parameters.Add(new NpgsqlParameter("version", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = _new });
+    var outcomes = new List<string>();
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
+      while (await reader.ReadAsync(cancellationToken)) {
+        outcomes.Add(reader.GetString(1));
+      }
+    }
+
+    await Assert.That(outcomes.Count).IsEqualTo(2);
+    await Assert.That(outcomes.All(o => o == "granted")).IsTrue();
+  }
+
+  private async Task _recordCapabilityAsync(Guid instanceId, string role, CancellationToken ct) =>
+    await Assert.That((bool)(await _scalarAsync("SELECT record_capability(@id, @role)", ct, ("id", instanceId), ("role", role)))!).IsTrue();
+
+  private async Task<List<Guid>> _capabilityHoldersAsync(string role, CancellationToken ct) {
+    await using var conn = await _openAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT instance_id FROM wh_instance_capabilities WHERE capability = @role";
+    cmd.Parameters.AddWithValue(nameof(role), role);
+    var holders = new List<Guid>();
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      holders.Add(reader.GetGuid(0));
+    }
+    return holders;
   }
 
   [Test]

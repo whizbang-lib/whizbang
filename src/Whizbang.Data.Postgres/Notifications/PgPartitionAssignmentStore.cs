@@ -71,14 +71,15 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT instance_id, connection_mode, alive_lock_held, heartbeat_age FROM wh_partition_assignment_candidates()";
+      cmd.CommandText = "SELECT instance_id, connection_mode, alive_lock_held, heartbeat_age, is_live FROM wh_partition_assignment_candidates()";
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         candidates.Add(new PartitionAssignmentCandidate(
           InstanceId: reader.GetGuid(0),
           Mode: InstanceConnectionModes.Parse(reader.GetString(1)),
           AliveLockHeld: reader.GetBoolean(2),
-          HeartbeatAge: reader.GetTimeSpan(3)));
+          HeartbeatAge: reader.GetTimeSpan(3),
+          IsLive: reader.GetBoolean(4)));
       }
     }
     return candidates;

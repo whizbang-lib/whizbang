@@ -231,6 +231,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
       _heartbeat = new HeartbeatWorker(
         scopeFactory, Instance, Options.Create(new HeartbeatWorkerOptions()),
         NullLogger<HeartbeatWorker>.Instance, Lifecycle, new LibraryVersionProvider("999.9.9"),
+        new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown),
         NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance);
       _heartbeat.OnHeartbeatRecorded += () => _firstBeat.TrySetResult();
     }
@@ -327,10 +328,9 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   private PartitionAssignerWorker _assignerFor(IServiceInstanceProvider instance) {
     var notification = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString, SignalingMode = WorkSignalingMode.ListenNotify };
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var roles = new RoleAssignmentOptions { HoldLegacySessionLock = false, RenewInterval = TimeSpan.FromMilliseconds(250) };
+    var roles = new RoleAssignmentOptions { RenewInterval = TimeSpan.FromMilliseconds(250) };
     roles.Roles.Add(PartitionAssignerOptions.ROLE);
     var elector = new PgRoleElector(Options.Create(notification), Options.Create(roles), config, instance,
-      new PgDutyElector(Options.Create(notification), config, instance, NullLogger<PgDutyElector>.Instance),
       NullLogger<PgRoleElector>.Instance, null);
     return new PartitionAssignerWorker(elector, new PgPartitionAssignmentStore(Options.Create(notification), config),
       NullInstanceConnectionModeSource.Instance, instance, Options.Create(new PartitionAssignerOptions()), Options.Create(roles),

@@ -830,6 +830,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Every duty is held in the role table; no duty is held by an advisory lock (#2044).** The session-lock duty
+  elector, the legacy-lock bridge in the role elector, the commit-order stamper's own lock and the migrator watch's
+  lock probe are gone: every duty, a host's own included, is a role assignment with a lease and epoch fencing, and a
+  holder that dies is replaced when its lease lapses or the one liveness rule (#2027) reaps it; a clean release still
+  hands it over at once. During a rolling deploy an older release that holds a duty by its own lock records the
+  holding, and the vote refuses (`legacy_holder`) while that instance is live. The stamper leads only through the
+  registered elector and no longer needs a direct connection. Migration 326. Removed: `PgDutyElector`, the keys
+  `Whizbang:Database:RoleAssignment:Enabled`, `Whizbang:Database:RoleAssignment:HoldLegacySessionLock` and
+  `Whizbang:Database:Stamper:AdvisoryLockKey`, and the metrics `whizbang.probes.suppressed_duty_attempts` and
+  `whizbang.roles.bridge_sessions_ended`. The only advisory locks left guard one DDL pass (the schema lock and the
+  concurrent index drop), each allowlisted with its reason.
+- **Instances share one durable record and one liveness rule (#2027).** Every reader that decides whether a peer is
+  alive (work claiming and ranking, the partition assigner, orphan claims, the reap, the standby handshake, the fleet
+  readers, the lifecycle monitor, the notification fan-out) now asks one SQL rule, `wh_instance_liveness`, instead of
+  its own window; the C# copies are removed. A direct instance holding its alive-lock is live; a direct instance whose
+  lock is gone is taken over one beat (30 seconds) after its last heartbeat; an instance behind a transaction pooler,
+  which cannot hold the lock, is judged by the window it declares from its own heartbeat cadence (90 seconds in
+  table-only mode), so one late beat no longer reads it as dead. Migrations 316 and 317. The standby watcher's own
+  liveness window key, `Whizbang:StandbyWatcher:RequesterLivenessWindow`, is removed.
+- **Every instance and the migration ledger record the application version (#2027).** Beside the platform version,
+  each instance row records the version of the application it runs: `Whizbang:Application:Version` (SemVer) or
+  `Whizbang:Application:DeployNumber` when the host sets one, otherwise the entry assembly's informational version
+  when it is SemVer, otherwise unknown. An unknown version never orders against another. Setting both keys fails
+  startup.
+- **A source guard keeps instance coordination on the allowlisted mechanisms (#2027).** A test fails when
+  notify/listen, an advisory lock or a liveness check appears in C# or SQL outside an allowlist whose every entry
+  states its reason, and the allowlist can only shrink.
 
 - **The process-wide saga per-item stream namespace is first-registration-wins (#2021).** The first `AddWhizbangSagas`
   call in a process sets `SagaItemStreams.AppDefaultNamespace`, which `SagaItemStreams.Of` without a namespace reads. A
@@ -1350,6 +1377,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `whizbang.stream_integrity.redelivery_requests_ignored`, reason `own_request`). The subscription-growth backfill
   directs a request at each known domain owner on its request topic; only types with no usable owner fall back to the
   broadcast.
+- **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
+  with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
+  answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The
+  scheduled prefix truncate was not registered on Dapper at all. `DapperWorkCoordinator` now implements the truncate,
+  its targets, the archive read, the consuming perspective names, the event version and the apply-path fold through
+  `StreamPrefixTruncateSql`, which EF Core calls too, and both drivers register the scheduled prefix truncate through
+  `AddScheduledPrefixTruncate()`. **Upgrade note:** `ScheduledPrefixTruncateReceptor` moved from the
+  `Whizbang.Data.EFCore.Postgres` namespace to `Whizbang.Data.Postgres`.
 - **The live audit path resolves event types through the same catalog as the audit ledger rebuild (#2040).** The
   outbox audit builder resolved an event's type with `Type.GetType` (under an IL2057 suppression) while the rebuild
   resolved through the message-type catalog, so a loaded type outside the catalog was audited by its attribute live and
@@ -1386,6 +1421,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The initialization-registry test for a second concurrent call is deterministic (#2019).** It asserted the first
   call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
   explicit signal, and a new test reproduces the window on purpose.
+
+- **A redelivery bundle no longer creates and drops a temporary table (#2047).** The bundle answer recorded at commit
+  (migration 320) and the redelivery reconcile (301) each built their working table with `ON COMMIT DROP`, so every
+  bundle wrote and deleted a set of system catalog rows, invalidated every other connection's caches, and planned each
+  of its statements afresh. A consumer receiving hundreds of one-event bundles a minute spent most of each call on that
+  churn. Migration 321 keeps each working table for the connection (`ON COMMIT DELETE ROWS`) and empties it per call.
 
 - **Integrity repair waits for the answer to its request (#2029).** The paced repair drain re-asked for a bucket while
   the answer to its previous request was still on the way, and a received answer stopped nothing until the next audit.

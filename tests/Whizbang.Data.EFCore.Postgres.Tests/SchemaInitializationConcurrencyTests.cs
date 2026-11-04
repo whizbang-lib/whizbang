@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -641,34 +642,47 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     };
   }
 
+  /// <summary>The role elector, as the driver registers it: the migrator is a role assignment (#2044).</summary>
+  private PgRoleElector _electorFor(Pod pod, TimeSpan? migratorLease = null, TimeProvider? time = null) {
+    var roles = new RoleAssignmentOptions();
+    if (migratorLease is { } lease) {
+      roles.RoleLeases[StartupDuties.MIGRATOR] = lease;
+    }
+    return new PgRoleElector(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+      Options.Create(roles),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      pod,
+      NullLogger<PgRoleElector>.Instance,
+      libraryVersion: null,
+      timeProvider: time);
+  }
+
   /// <summary>A scope carrying what staged startup resolves: an identity and an elector.</summary>
   private IServiceProvider _stagedScope(Pod pod) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(pod);
-    services.AddSingleton<IDutyElector>(new PgDutyElector(
-      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
-      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
-      pod,
-      NullLogger<PgDutyElector>.Instance));
+    services.AddSingleton<IDutyElector>(_electorFor(pod));
     return services.BuildServiceProvider();
   }
 
-  private static long _migratorDutyKey() => DutyLockKey.Compute("public", StartupDuties.MIGRATOR);
-
-  /// <summary>A session holding the migrator duty, standing in for the instance that won it.</summary>
-  private async Task<(NpgsqlConnection Connection, int Pid)> _holdMigratorDutyAsync(CancellationToken ct) {
-    var holder = new NpgsqlConnection(ConnectionString);
-    await holder.OpenAsync(ct);
-    int pid;
-    await using (var pidCmd = holder.CreateCommand()) {
-      pidCmd.CommandText = "SELECT pg_backend_pid()";
-      pid = Convert.ToInt32(await pidCmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+  /// <summary>
+  /// Another registered instance holding the migrator role, standing in for the instance that won it. Its lease is
+  /// long, so only what a test does to it (a release, or its death judged by the liveness rule) ends it.
+  /// </summary>
+  private async Task<(IDutyGrant Grant, Pod Holder, FakeTimeProvider Time)> _holdMigratorDutyAsync(CancellationToken ct) {
+    var holder = new Pod();
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync(ct);
+      await using var register = conn.CreateCommand();
+      register.CommandText = "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at) "
+        + "VALUES (@id, 'migrator-holder', 'holder-host', 1, now(), now())";
+      register.Parameters.AddWithValue("id", holder.InstanceId);
+      await register.ExecuteNonQueryAsync(ct);
     }
-    await using (var take = holder.CreateCommand()) {
-      take.CommandText = $"SELECT pg_advisory_lock({_migratorDutyKey()})";
-      await take.ExecuteNonQueryAsync(ct);
-    }
-    return (holder, pid);
+    var time = new FakeTimeProvider();
+    var attempt = await _electorFor(holder, TimeSpan.FromHours(1), time).TryAcquireAsync(StartupDuties.MIGRATOR, ct);
+    return (attempt.Grant ?? throw new InvalidOperationException($"the holder did not win the migrator: {attempt.Detail}"), holder, time);
   }
 
   private async Task<long> _capabilityRowsAsync(Guid instanceId, CancellationToken ct) {
@@ -736,8 +750,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Staged_ANonHolderWaitsForTheDutyHolderAsync(CancellationToken cancellationToken) {
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
-    var (holder, _) = await _holdMigratorDutyAsync(cancellationToken);
-    await using var holding = holder;
+    var (holding, _, _) = await _holdMigratorDutyAsync(cancellationToken);
 
     await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
@@ -750,10 +763,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     // The holder finishes: the schema is current again and the duty is released.
     await _setLedgerRowAsync(rowFile, rowHash, UNTOUCHED, cancellationToken);
-    await using (var release = holding.CreateCommand()) {
-      release.CommandText = $"SELECT pg_advisory_unlock({_migratorDutyKey()})";
-      await release.ExecuteNonQueryAsync(cancellationToken);
-    }
+    await holding.DisposeAsync();
 
     await init;
 
@@ -768,16 +778,16 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   /// A duty holder that is killed mid-migration is taken over.
   /// </summary>
   /// <remarks>
-  /// The crash an orchestrator actually produces. The duty rides a session advisory lock, so the
-  /// backend dying releases it with nothing to time out, and the survivor has to notice and finish
-  /// the work rather than wait on a pod that no longer exists.
+  /// The crash an orchestrator actually produces. The holder stops beating, the one liveness rule
+  /// calls it dead and the reap removes it, which voids its assignment however long its lease
+  /// (#2044); the survivor has to notice and finish the work rather than wait on a pod that no
+  /// longer exists.
   /// </remarks>
   [Test]
   [Timeout(120000)]
   public async Task Staged_AKilledDutyHolderIsTakenOverAsync(CancellationToken cancellationToken) {
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
-    var (holder, pid) = await _holdMigratorDutyAsync(cancellationToken);
-    await using var holding = holder;
+    var (holding, holder, holderTime) = await _holdMigratorDutyAsync(cancellationToken);
 
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
@@ -791,8 +801,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await using (var killer = new NpgsqlConnection(ConnectionString)) {
       await killer.OpenAsync(cancellationToken);
       await using var kill = killer.CreateCommand();
-      kill.CommandText = "SELECT pg_terminate_backend(@pid)";
-      kill.Parameters.AddWithValue("pid", pid);
+      kill.CommandText = """
+        UPDATE wh_service_instances SET last_heartbeat_at = now() - INTERVAL '1 hour' WHERE instance_id = @id;
+        SELECT count(*) FROM cleanup_stale_instances(now());
+        """;
+      kill.Parameters.AddWithValue("id", holder.InstanceId);
       await kill.ExecuteScalarAsync(cancellationToken);
     }
 
@@ -803,6 +816,10 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .Because("the survivor took over the work the dead holder left outstanding");
     await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED);
 
+    holderTime.Advance(new RoleAssignmentOptions().RenewInterval);
+    await Assert.That(await holding.VerifyStillHeldAsync(cancellationToken)).IsFalse()
+      .Because("the dead holder's assignment was voided; its grant cannot fence a write any more");
+    await holding.DisposeAsync();
     await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
@@ -876,16 +893,13 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
+  /// <summary>How many instances hold the migrator role: none, once every migration has handed it back.</summary>
   private async Task<long> _dutyLockHoldersAsync(CancellationToken ct) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(ct);
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText =
-      "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
-      + "AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = @key "
-      // pg_locks is cluster-wide; a sibling fixture's database on the shared container takes the same key.
-      + "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
-    cmd.Parameters.AddWithValue("key", _migratorDutyKey());
+    cmd.CommandText = "SELECT count(*) FROM wh_role_assignments WHERE role = @role AND holder_instance_id IS NOT NULL";
+    cmd.Parameters.AddWithValue("role", StartupDuties.MIGRATOR);
     return (long)(await cmd.ExecuteScalarAsync(ct))!;
   }
 

@@ -85,6 +85,22 @@ public sealed partial class StartupStandDown {
   public event Action<bool>? BeatRecorded;
 
   /// <summary>
+  /// The application version each beat records beside the library version (#2027), as recorded
+  /// (<see cref="Whizbang.Core.Versioning.ApplicationVersion.Recorded"/>); null when it is unknown.
+  /// </summary>
+  public string? ApplicationVersion { get; init; }
+
+  /// <summary>
+  /// The liveness window each beat declares (#2027): the one liveness rule judges a stood-down instance by it, so it is
+  /// derived from this beat's own cadence the way the heartbeat worker derives its own (three beats; no slow cadence).
+  /// </summary>
+  public int LivenessWindowSeconds => Whizbang.Core.Workers.HeartbeatLivenessThreshold.StaleThresholdSeconds(
+    new Whizbang.Core.Workers.HeartbeatWorkerOptions {
+      IntervalSeconds = (int)Math.Ceiling(_beatInterval.TotalSeconds),
+      LivenessSourceMode = Whizbang.Core.Workers.HeartbeatLivenessSourceMode.HeartbeatTableOnly,
+    });
+
+  /// <summary>
   /// Builds the stand-down from a host's services: the instance identity (none means nothing to register as, and
   /// <see langword="null"/> is returned), the stage recorder, the library version, the heartbeat interval and the clock.
   /// </summary>
@@ -104,7 +120,9 @@ public sealed partial class StartupStandDown {
       services.GetService<ILibraryVersionProvider>()?.LibraryVersion,
       TimeSpan.FromSeconds(interval),
       services.GetService<TimeProvider>() ?? TimeProvider.System,
-      services.GetService<ILogger<StartupStandDown>>()!);
+      services.GetService<ILogger<StartupStandDown>>()!) {
+      ApplicationVersion = services.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
+    };
   }
 
   /// <summary>
@@ -151,7 +169,8 @@ public sealed partial class StartupStandDown {
       }
       accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
         _instance.InstanceId, _instance.ServiceName, _instance.HostName, _instance.ProcessId,
-        LibraryVersion: _libraryVersion), stop).ConfigureAwait(false);
+        LibraryVersion: _libraryVersion, StaleThresholdSeconds: LivenessWindowSeconds,
+        ApplicationVersion: ApplicationVersion), stop).ConfigureAwait(false);
     }
 #pragma warning disable CA1031 // logged with what it costs, and retried on the next beat
     catch (Exception ex) when (!stop.IsCancellationRequested) {

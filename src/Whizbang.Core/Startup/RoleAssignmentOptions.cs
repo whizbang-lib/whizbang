@@ -7,8 +7,8 @@ using System.Collections.Generic;
 namespace Whizbang.Core.Startup;
 
 /// <summary>
-/// Tuning for role assignment: duties held as a liveness-tied assignment row with an epoch,
-/// rather than as a session advisory lock held for the whole tenure.
+/// Tuning for role assignment: every duty is held as a liveness-tied assignment row with a lease
+/// and an epoch (#2044). There is no other way to hold a duty, and no session advisory lock.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,10 +20,10 @@ namespace Whizbang.Core.Startup;
 /// release carries no cool-down.
 /// </para>
 /// <para>
-/// Role assignment is on by default. The migrator is held by assignment too: its vote is part of the
-/// schema bootstrap, so it exists before the first migration, and migrator waiters watch the
-/// assignment row as well as the duty's session lock. Turn the whole mechanism off with
-/// <see cref="Enabled"/>, and every duty goes back to the session-lock elector.
+/// The migrator is held by assignment too: its vote is part of the schema bootstrap, so it exists
+/// before the first migration, and migrator waiters watch the assignment row. An instance on an older
+/// release that still holds a duty by its own session lock is seen through the holding it records,
+/// judged by the one liveness rule, never through the lock.
 /// </para>
 /// <para>
 /// Each duty may declare its own lease in <see cref="RoleLeases"/>. Whatever the lease, a holder that
@@ -33,16 +33,11 @@ namespace Whizbang.Core.Startup;
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:Enabled")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:HoldLegacySessionLock")]
 public sealed class RoleAssignmentOptions {
   /// <summary>The migrator's default lease: a migration can spend longer between statements than a maintenance pass.</summary>
   public static readonly TimeSpan DefaultMigratorLease = TimeSpan.FromSeconds(30);
-
-  /// <summary>
-  /// Whether duties are held by assignment at all. Default true. When false, the role elector
-  /// delegates every duty to the session-lock elector, the holder loop holds nothing, and the
-  /// <c>roles</c> health component has nothing to report.
-  /// </summary>
-  public bool Enabled { get; set; } = true;
 
   /// <summary>How often a holder renews its lease. Default 5 seconds.</summary>
   public TimeSpan RenewInterval { get; set; } = TimeSpan.FromSeconds(5);
@@ -57,35 +52,16 @@ public sealed class RoleAssignmentOptions {
   public TimeSpan CooldownAfterLapse { get; set; } = TimeSpan.FromSeconds(15);
 
   /// <summary>
-  /// While true, a holder also holds the duty's legacy session advisory lock, so an instance still
-  /// running the session-lock elector sees the duty as held, and a new instance defers to an old holder:
-  /// old and new never both act during a rolling deploy. It costs one pinned connection per held role.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// <b>Defaults to false.</b> The bridge is only needed while an instance older than role assignment is
-  /// still running, and it costs a pinned connection per held role for as long as it is on.
-  /// </para>
-  /// <para>
-  /// <b>Set it to true for one deploy</b>
-  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=true</c>) when rolling from a release
-  /// that held duties by session lock, that is, from before role assignment. Turn it back off afterwards.
-  /// With it off, the vote still refuses while an old holder is visible, and a holder steps aside within
-  /// one renewal once it sees one, but for that renewal interval both may act.
-  /// </para>
-  /// </remarks>
-  public bool HoldLegacySessionLock { get; set; }
-
-  /// <summary>
   /// How long owed duty work backs off after a failed attempt, doubled per further failure and
   /// capped at one hour. Default 30 seconds.
   /// </summary>
   public TimeSpan OwedWorkRetryBase { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
-  /// The duties held by assignment. Default: <see cref="StartupDuties.MAINTAINER"/> and
-  /// <see cref="StartupDuties.MIGRATOR"/>; the Postgres driver adds the commit-order stamper's role
-  /// while the stamper is enabled.
+  /// The duties the holder loop holds and the <c>roles</c> health component reports. Default:
+  /// <see cref="StartupDuties.MAINTAINER"/> and <see cref="StartupDuties.MIGRATOR"/>; the Postgres
+  /// driver adds the commit-order stamper's role while the stamper is enabled. A duty not listed is
+  /// still held by assignment whenever it is asked for: every duty is a role (#2044).
   /// </summary>
   public ISet<string> Roles { get; } = new HashSet<string>(StringComparer.Ordinal) {
     StartupDuties.MAINTAINER, StartupDuties.MIGRATOR,
@@ -97,13 +73,6 @@ public sealed class RoleAssignmentOptions {
   /// <see cref="DefaultMigratorLease"/> or <see cref="Lease"/>, whichever is longer.
   /// </summary>
   public IDictionary<string, TimeSpan> RoleLeases { get; } = new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
-
-  /// <summary>
-  /// How an instance on the session-lock elector locks a role, by schema, for a role whose legacy
-  /// lock is not the duty lock (the commit-order stamper's leader lock, for one). A role not listed
-  /// uses the duty lock. Read only while bridged, or to see an old holder.
-  /// </summary>
-  public IDictionary<string, Func<string?, long>> LegacyLockKeys { get; } = new Dictionary<string, Func<string?, long>>(StringComparer.Ordinal);
 
   /// <summary>The default lease a holder is granted: <see cref="RenewInterval"/> × <see cref="MissedRenewalsBeforeLapse"/>.</summary>
   public TimeSpan Lease => RenewInterval * MissedRenewalsBeforeLapse;
@@ -121,10 +90,10 @@ public sealed class RoleAssignmentOptions {
     return IsEpisodic(role) && DefaultMigratorLease > Lease ? DefaultMigratorLease : Lease;
   }
 
-  /// <summary>Whether <paramref name="duty"/> is held by assignment rather than delegated.</summary>
+  /// <summary>Whether the holder loop holds <paramref name="duty"/> and the health component reports it.</summary>
   /// <param name="duty">The duty name.</param>
-  /// <returns>True when role assignment is <see cref="Enabled"/> and the duty is in <see cref="Roles"/>.</returns>
-  public bool Manages(string duty) => Enabled && Roles.Contains(duty);
+  /// <returns>True when the duty is in <see cref="Roles"/>.</returns>
+  public bool Manages(string duty) => Roles.Contains(duty);
 
   /// <summary>
   /// Whether <paramref name="role"/> is held only while a task runs rather than continuously: the

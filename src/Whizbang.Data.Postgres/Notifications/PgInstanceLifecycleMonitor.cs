@@ -22,13 +22,10 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Liveness is the two-signal predicate the SQL reap already uses (<c>is_instance_alive</c>,
-/// migration 055): an instance is alive while its session alive-lock is held OR its heartbeat row
-/// is within the stale threshold. The threshold is not a constant; it derives from the heartbeat
-/// writer's own cadence through <see cref="HeartbeatLivenessThreshold"/>, so a writer on its slow
-/// cadence (lock held) or a beat delayed by a stalled database can never read as a death. The
-/// earlier form of this monitor compared the bare timestamp against 30 s, the same as the fast
-/// cadence, and announced a live, heartbeating instance dead under load.
+/// Liveness is the database's one liveness rule (#2027, <c>wh_instance_is_live</c>), the same rule the claim, the reap
+/// and every other reader ask: an instance is alive while its heartbeat is newer than the window it declares from its
+/// own cadence (<see cref="HeartbeatLivenessThreshold"/>), or while it is a direct instance holding its alive-lock. This
+/// detector and the reap therefore can never disagree about who is dead. The threshold here only paces the scan.
 /// </para>
 /// <para>
 /// The monitor tracks the deaths it has already announced in-process so it does not republish the
@@ -149,7 +146,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
       return ComputeTickInterval(null, threshold);
     }
 
-    var (dead, alive, oldestAge) = await _readLivenessAsync(plan, threshold, ct);
+    var (dead, alive, oldestAge) = await _readLivenessAsync(plan, ct);
     await _announceDeathsAsync(dead, threshold, ct);
     await _retractRevivalsAsync(alive, ct);
 
@@ -159,20 +156,18 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <summary>One registry scan: the instances found dead, the ones found alive, and the oldest heartbeat age seen.</summary>
   private static async Task<(List<Guid> Dead, List<Guid> Alive, TimeSpan? OldestAge)> _readLivenessAsync(
-      NotificationConnectionPlan plan, TimeSpan threshold, CancellationToken ct) {
+      NotificationConnectionPlan plan, CancellationToken ct) {
     var dead = new List<Guid>();
     var alive = new List<Guid>();
     TimeSpan? oldestAge = null;
     await using var conn = await plan.OpenAsync(ct);
-    // Two-signal liveness (migration 055): the alive-lock in pg_locks OR a heartbeat row within
-    // the derived threshold. The bare timestamp comparison this replaced could not see the lock
-    // and used a threshold equal to the fast cadence.
+    // #2027: the one liveness rule decides who is dead (the window each instance declares, or a direct instance's held
+    // alive-lock); this detector keeps no threshold of its own. The threshold only paces the next scan.
     await using var cmd = new NpgsqlCommand(@"
       SELECT instance_id,
              EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::double precision AS age_seconds,
-             is_instance_alive(instance_id, @threshold_seconds) AS alive
+             wh_instance_is_live(instance_id) AS alive
       FROM wh_service_instances", conn);
-    cmd.Parameters.AddWithValue("threshold_seconds", (int)Math.Ceiling(threshold.TotalSeconds));
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
       var id = reader.GetGuid(0);

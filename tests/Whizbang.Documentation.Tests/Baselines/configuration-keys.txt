@@ -7,6 +7,8 @@ ConnectionPool:MinPoolSize
 ConnectionPool:Timeout
 ConnectionStrings:*
 ServiceName
+Whizbang:Application:DeployNumber
+Whizbang:Application:Version
 Whizbang:Archive:AzureBlob:AccessTier
 Whizbang:Archive:AzureBlob:CompressionLevel
 Whizbang:Archive:AzureBlob:ConnectionString
@@ -72,15 +74,12 @@ Whizbang:Database:ListenReconnectInitialDelay
 Whizbang:Database:ListenReconnectMaxDelay
 Whizbang:Database:PollingFallbackInterval
 Whizbang:Database:RoleAssignment:CooldownAfterLapse
-Whizbang:Database:RoleAssignment:Enabled
-Whizbang:Database:RoleAssignment:HoldLegacySessionLock
 Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
 Whizbang:Database:RoleAssignment:RenewInterval
 Whizbang:Database:SignalRetention
 Whizbang:Database:SignalingMode
 Whizbang:Database:Stamper
-Whizbang:Database:Stamper:AdvisoryLockKey
 Whizbang:Database:Stamper:BatchSize
 Whizbang:Database:Stamper:DisableStamper
 Whizbang:Database:Stamper:DrainBatchSize
@@ -274,7 +273,6 @@ Whizbang:SignalBus:ProbeTimeoutMilliseconds
 Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
-Whizbang:StandbyWatcher:RequesterLivenessWindow
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes

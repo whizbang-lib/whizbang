@@ -52,7 +52,7 @@ public class PartitionAssignerWorkerTests {
   }
 
   private static PartitionAssignmentCandidate _pooled(Guid id, int heartbeatAgeSeconds) =>
-    new(id, InstanceConnectionMode.Pooled, false, TimeSpan.FromSeconds(heartbeatAgeSeconds));
+    new(id, InstanceConnectionMode.Pooled, false, TimeSpan.FromSeconds(heartbeatAgeSeconds), IsLive: heartbeatAgeSeconds < 60);
 
   [Test]
   public async Task Tick_TheFirstOfATenure_PublishesTheLiveMembersAsync() {

@@ -90,6 +90,16 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
     services.AddSingleton<PgSharedNotifyConnection>();
     services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddSingleton<PgCommitOrderStamperWorker>();
+    // #2044: the stamper leads only through a duty elector. The role elector votes through the same notification
+    // data source, so it authenticates the same way the stamper does.
+    services.AddSingleton<Whizbang.Core.Startup.IDutyElector>(sp => new PgRoleElector(
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>(),
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Startup.RoleAssignmentOptions()),
+      sp.GetRequiredService<IConfiguration>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgRoleElector>.Instance,
+      libraryVersion: null,
+      notificationDataSource: sp.GetService<INotificationDataSource>()));
 
     await using var sp = services.BuildServiceProvider();
 
@@ -100,6 +110,13 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
       var ctx = probeScope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
       await ctx.Database.OpenConnectionAsync();
       _ = await new NpgsqlCommand("SELECT 1", (NpgsqlConnection)ctx.Database.GetDbConnection()).ExecuteScalarAsync();
+      // A vote is open only to a registered instance.
+      await using var register = new NpgsqlCommand(
+        "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at) "
+          + "VALUES (@id, 'datasource-svc', 'datasource-host', 1, now(), now())",
+        (NpgsqlConnection)ctx.Database.GetDbConnection());
+      register.Parameters.AddWithValue("id", sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId);
+      _ = await register.ExecuteNonQueryAsync();
     }
 
     // Sanity check: the EF Core data source's ConnectionString IS stripped.
@@ -126,7 +143,7 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
       // because every OpenAsync throws "No password has been provided".
       await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
       await Assert.That(stamper.IsLeader).IsTrue()
-        .Because("worker must authenticate via INotificationDataSource and acquire the advisory lock");
+        .Because("worker must authenticate via INotificationDataSource and be voted the stamper's role");
     } finally {
       await stamper.StopAsync(CancellationToken.None);
       await shared.StopAsync(CancellationToken.None);
@@ -173,17 +190,19 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
       o.LeaderElectionRetry = TimeSpan.FromMilliseconds(100);
     });
 
-    // This test is about connection discovery, not roles: hold the stamper's leadership on its own
-    // lock, so the role vote's cadence does not stand between discovery and leadership.
-    services.AddOptions<Whizbang.Core.Startup.RoleAssignmentOptions>().Configure(o => o.Enabled = false);
-
     await using var sp = services.BuildServiceProvider();
 
-    // Same pre-condition: open DbContext, strip credentials.
+    // Same pre-condition: open DbContext, strip credentials. The stamper leads on the role it is voted (#2044), and a
+    // vote is open only to a registered instance, so this one joins the registry first.
     await using (var probeScope = sp.CreateAsyncScope()) {
       var ctx = probeScope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
       await ctx.Database.OpenConnectionAsync();
-      _ = await new NpgsqlCommand("SELECT 1", (NpgsqlConnection)ctx.Database.GetDbConnection()).ExecuteScalarAsync();
+      await using var register = new NpgsqlCommand(
+        "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at) "
+          + "VALUES (@id, 'discovery-svc', 'discovery-host', 1, now(), now())",
+        (NpgsqlConnection)ctx.Database.GetDbConnection());
+      register.Parameters.AddWithValue("id", sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId);
+      _ = await register.ExecuteNonQueryAsync();
     }
 
     // Auto-discovered INotificationDataSource should be available.

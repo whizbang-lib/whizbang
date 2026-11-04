@@ -93,7 +93,7 @@ public static class ManagedSchemaReconciler {
       var effective = await _withEquivalentsAsync(connection, schema, declared, live, token);
       var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, target.LedgerTable, token);
       var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
-        connection, schema, instanceId, effective, ManagedSchemaFleet.LiveWindow, token);
+        connection, schema, instanceId, effective, token);
       var planned = ManagedSchemaPlanner.Plan(effective, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
       await ManagedSchemaCatalog.WriteLedgerAsync(connection, target.LedgerTable, planned.Records, token);
       return planned;

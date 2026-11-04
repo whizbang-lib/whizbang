@@ -30,6 +30,10 @@ namespace Whizbang.Core.Messaging;
 /// How the instance reaches the database, recorded at registration so the partition assigner judges its liveness by
 /// the right signal (#1254); null leaves the recorded mode alone.
 /// </param>
+/// <param name="ApplicationVersion">
+/// The application version the instance runs, as recorded (<see cref="Whizbang.Core.Versioning.ApplicationVersion.Recorded"/>),
+/// or null when it is unknown or to leave the registry's value alone (#2027).
+/// </param>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed record HeartbeatRequest(
   Guid InstanceId,
@@ -40,4 +44,5 @@ public sealed record HeartbeatRequest(
   string? LifecyclePhase = null,
   string? LibraryVersion = null,
   int? StaleThresholdSeconds = null,
-  Whizbang.Core.Workers.InstanceConnectionMode? ConnectionMode = null);
+  Whizbang.Core.Workers.InstanceConnectionMode? ConnectionMode = null,
+  string? ApplicationVersion = null);

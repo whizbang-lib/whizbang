@@ -169,11 +169,19 @@ public sealed class UnknownConfigurationKeyCheckTests {
       ("Whizbang:PostgresExtensions:ProbeOnStartup", ["Whizbang:Capabilities:ProbeOnStartup"]),
       .. _inboxBatch("AzureServiceBus"),
       .. _inboxBatch("RabbitMQ"),
+      // #2027: the standby watcher's own liveness window; the one liveness rule judges the requester by the window
+      // each instance declares from its heartbeat cadence.
+      ("Whizbang:StandbyWatcher:RequesterLivenessWindow", ["Whizbang:Workers:Heartbeat:IntervalSeconds"]),
+      // #2044: every duty is a role assignment, so nothing hands duties back to a session lock, bridges to one, or keys
+      // the commit-order stamper's own.
+      ("Whizbang:Database:RoleAssignment:Enabled", []),
+      ("Whizbang:Database:RoleAssignment:HoldLegacySessionLock", []),
+      ("Whizbang:Database:Stamper:AdvisoryLockKey", []),
     ];
 
     var declared = _coreRemovedKeys();
 
-    await Assert.That(declared.Count).IsEqualTo(8).Because("the table held eight entries");
+    await Assert.That(declared.Count).IsEqualTo(12).Because("the table held eight entries, #2027 removed one more and #2044 three");
     foreach (var (key, replacedBy) in expected) {
       var entry = declared.SingleOrDefault(d => d.Key == key);
       await Assert.That(entry).IsNotNull().Because($"{key} was in the table");

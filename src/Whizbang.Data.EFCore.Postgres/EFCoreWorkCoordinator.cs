@@ -406,7 +406,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
-    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode)";
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode, @applicationVersion)";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
     cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
@@ -423,6 +423,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("connectionMode", NpgsqlTypes.NpgsqlDbType.Text) {
       Value = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : DBNull.Value
     });
+    // 316 (#2027): the application version, recorded at registration like the library version.
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("applicationVersion", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.ApplicationVersion ?? DBNull.Value });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IsTrue(result);
@@ -2182,19 +2184,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
-    var instances = BuildSchemaQualifiedName(schema, "wh_service_instances");
-    var aliveFn = BuildSchemaQualifiedName(schema, "is_instance_alive");
+    var liveFn = BuildSchemaQualifiedName(schema, "wh_instance_is_live");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified names built from validated schema constant
     cmd.CommandText = $@"
-      SELECT r.requested_by, r.requested_version, r.requested_at, i.last_heartbeat_at,
-             -- #1286: the requester's alive-lock alone (055, zero heartbeat threshold); read before migrations run.
-             {aliveFn}(r.requested_by, 0) AS alive_lock_held
-      FROM {requests} r
-      LEFT JOIN {instances} i ON i.instance_id = r.requested_by";
+      SELECT r.requested_by, r.requested_version, r.requested_at,
+             -- #2027: the one liveness rule (Preflight's, so present before migrations run); no row is not live.
+             {liveFn}(r.requested_by) AS is_live
+      FROM {requests} r";
 #pragma warning restore S2077
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -2204,10 +2204,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       reader.GetGuid(0),
       reader.GetString(1),
       await reader.GetFieldValueAsync<DateTime>(2, cancellationToken) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
-      await reader.IsDBNullAsync(3, cancellationToken)
-        ? null
-        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3, cancellationToken), DateTimeKind.Utc)),
-      reader.GetBoolean(4));
+      reader.GetBoolean(3));
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
@@ -2558,147 +2555,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<StreamTruncateResult> TruncateStreamPrefixAsync(
-    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_truncate_stream_prefix");
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT truncate_status, events_truncated FROM {fn}(@sid, @through, @archive)";
-#pragma warning restore S2077
-    var pStream = cmd.CreateParameter();
-    pStream.ParameterName = "sid";
-    pStream.Value = streamId;
-    cmd.Parameters.Add(pStream);
-    var pThrough = cmd.CreateParameter();
-    pThrough.ParameterName = "through";
-    pThrough.Value = throughVersion;
-    cmd.Parameters.Add(pThrough);
-    var pArchive = cmd.CreateParameter();
-    pArchive.ParameterName = "archive";
-    pArchive.Value = archive;
-    cmd.Parameters.Add(pArchive);
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new StreamTruncateResult(reader.GetString(0), reader.GetInt64(1));
-  }
+  public Task<StreamTruncateResult> TruncateStreamPrefixAsync(
+    Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
+    _withPrefixTruncateCommandAsync((cmd, prefix) =>
+      StreamPrefixTruncateSql.TruncateAsync(cmd, prefix, streamId, throughVersion, archive, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
-    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // wh_truncate_stream_prefix's own range (084, 240): this stream, at or below the truncate point
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    cmd.CommandText =
-      $"SELECT event_id, stream_id, event_type FROM {store} WHERE stream_id = @sid AND version <= @through ORDER BY version";
-#pragma warning restore S2077
-    var pStream = cmd.CreateParameter();
-    pStream.ParameterName = "sid";
-    pStream.Value = streamId;
-    cmd.Parameters.Add(pStream);
-    var pThrough = cmd.CreateParameter();
-    pThrough.ParameterName = "through";
-    pThrough.Value = throughVersion;
-    cmd.Parameters.Add(pThrough);
-    var list = new List<EphemeralDestructionTarget>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new EphemeralDestructionTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
-    }
-    return list;
-  }
+  public Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    _withPrefixTruncateCommandAsync((cmd, prefix) =>
+      StreamPrefixTruncateSql.TargetsAsync(cmd, prefix, streamId, throughVersion, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
-    Guid streamId, CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var archive = BuildSchemaQualifiedName(schema, "wh_event_archive");
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    cmd.CommandText =
-      "SELECT event_id, stream_id, version, event_type, event_data::text, metadata::text " +
-      $"FROM {archive} WHERE stream_id = @sid ORDER BY version";
-#pragma warning restore S2077
-    var pStream = cmd.CreateParameter();
-    pStream.ParameterName = "sid";
-    pStream.Value = streamId;
-    cmd.Parameters.Add(pStream);
-    var list = new List<ArchivedEvent>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new ArchivedEvent(
-        reader.GetGuid(0), reader.GetGuid(1), reader.GetInt32(2), reader.GetString(3),
-        await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
-        await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5)));
-    }
-    return list;
-  }
+  public Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
+    Guid streamId, CancellationToken cancellationToken = default) =>
+    _withPrefixTruncateCommandAsync((cmd, prefix) =>
+      StreamPrefixTruncateSql.ArchivedEventsAsync(cmd, prefix, streamId, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
-    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table names built from validated schema constant
-    cmd.CommandText =
-      $"SELECT DISTINCT ma.target_name FROM {store} es " +
-      $"JOIN {assoc} ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
-      "WHERE es.stream_id = @sid AND es.version <= @through";
-#pragma warning restore S2077
-    var pStream = cmd.CreateParameter();
-    pStream.ParameterName = "sid";
-    pStream.Value = streamId;
-    cmd.Parameters.Add(pStream);
-    var pThrough = cmd.CreateParameter();
-    pThrough.ParameterName = "through";
-    pThrough.Value = throughVersion;
-    cmd.Parameters.Add(pThrough);
-    var list = new List<string>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(reader.GetString(0));
-    }
-    return list;
-  }
+  public Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    _withPrefixTruncateCommandAsync((cmd, prefix) =>
+      StreamPrefixTruncateSql.ConsumingPerspectiveNamesAsync(cmd, prefix, streamId, throughVersion, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
-  public async Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+  public Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+    _withPrefixTruncateCommandAsync((cmd, prefix) =>
+      StreamPrefixTruncateSql.EventVersionAsync(cmd, prefix, eventId, cancellationToken), cancellationToken);
+
+  /// <summary>
+  /// One prefix-truncate statement from <see cref="StreamPrefixTruncateSql"/>, the copy the Dapper coordinator runs too
+  /// (#2043): the gate, this context's connection, the schema prefix and a command with the coordinator timeout. The
+  /// slot is taken under the public member's name (<paramref name="caller"/>), so the gate's holder diagnostics name
+  /// the operation, not this helper.
+  /// </summary>
+  private async Task<T> _withPrefixTruncateCommandAsync<T>(
+      Func<System.Data.Common.DbCommand, string, Task<T>> operation, CancellationToken cancellationToken,
+      [System.Runtime.CompilerServices.CallerMemberName] string caller = "<unknown>") {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken, caller).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    cmd.CommandText = $"SELECT version FROM {store} WHERE event_id = @id";
-#pragma warning restore S2077
-    var pId = cmd.CreateParameter();
-    pId.ParameterName = "id";
-    pId.Value = eventId;
-    cmd.Parameters.Add(pId);
-    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is null || result is DBNull ? null : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await operation(cmd, PgIdentifier.QualifyPrefix(schema)).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -3730,16 +3629,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (streamIds.Count == 0) {
       return Task.FromResult(0);
     }
-    return _withCoordinatorCommandAsync(async (cmd, schema) => {
-      var fn = BuildSchemaQualifiedName(schema, "fold_stream_apply_paths");
-#pragma warning disable S2077
-      cmd.CommandText = $"SELECT {fn}(@ids)";
-#pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
-        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamIds.ToArray() });
-      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return ScalarResult.IntOrZero(result);
-    }, cancellationToken);
+    return _withCoordinatorCommandAsync((cmd, schema) =>
+      StreamPrefixTruncateSql.FoldStreamApplyPathsAsync(cmd, PgIdentifier.QualifyPrefix(schema), streamIds, cancellationToken), cancellationToken);
   }
 
   /// <inheritdoc />

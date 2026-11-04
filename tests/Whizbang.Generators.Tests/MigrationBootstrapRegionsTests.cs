@@ -47,6 +47,8 @@ public class MigrationBootstrapRegionsTests {
     "198_LapsedBridgeLooksBeforeItLocks.sql", // redefines 184's wh_end_lapsed_bridge, so a re-applied bootstrap keeps it (#1217)
     "277_PreflightInstanceAndRoleColumns.sql", // the instance and role table columns and the stage recorder, so registration records its stage (#1636)
     "278_OneWriterOfTheInstancePhase.sql", // the one recorder of stage, phase and version, which registration writes through (#1636)
+    "316_OneDurableInstanceRecord.sql", // the one liveness rule the migrator reads before the pass, and the record's columns (#2027)
+    "326_EveryDutyIsARoleAssignment.sql", // the vote, renewal and bridge expiry with no lock read: every duty is a role (#2044)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

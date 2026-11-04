@@ -23,17 +23,17 @@ public static class RoleAssignmentServiceCollectionExtensions {
   public const string CONFIGURATION_SECTION = PostgresNotificationsServiceCollectionExtensions.CONFIGURATION_SECTION + ":RoleAssignment";
 
   /// <summary>
-  /// Holds the duties in <see cref="RoleAssignmentOptions.Roles"/> (default: the maintainer, the
-  /// migrator, and the commit-order stamper's role) as liveness-tied assignments with an epoch,
-  /// instead of session advisory locks, and releases held roles when the host stops. The Postgres
-  /// driver registers this by default, so call it only to tune the options in code, or to replace an
-  /// elector the host registered. Safe before or after the driver's registration, and more than once.
+  /// Holds every duty as a liveness-tied assignment with a lease and an epoch (#2044), holds the
+  /// duties in <see cref="RoleAssignmentOptions.Roles"/> (default: the maintainer, the migrator, and
+  /// the commit-order stamper's role) from the holder loop, and releases held roles when the host
+  /// stops. The Postgres driver registers this by default, so call it only to tune the options in
+  /// code, or to replace an elector the host registered. Safe before or after the driver's
+  /// registration, and more than once.
   /// </summary>
   /// <remarks>
-  /// The options also bind from <c>Whizbang:Database:RoleAssignment</c>. The legacy-lock bridge
-  /// (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) is off by default. Set it to true for
-  /// one deploy when rolling from a release that held duties by session lock, so that deploy never has
-  /// both an old and a new holder acting.
+  /// The options also bind from <c>Whizbang:Database:RoleAssignment</c>. During a rolling deploy from a
+  /// release that held some duties by session lock, the vote sees such a holder through the holding it
+  /// records, and a holder steps aside within one renewal when one appears, so no bridge is needed.
   /// </remarks>
   /// <param name="services">The service collection.</param>
   /// <param name="configure">Optional tuning.</param>
@@ -52,8 +52,8 @@ public static class RoleAssignmentServiceCollectionExtensions {
     }
     _addCore(services);
 
-    // Replaces whatever elector is registered, the null default or the session-lock elector. A
-    // later AddWhizbangPostgresNotifications only displaces null defaults, so it leaves this in place.
+    // Replaces whatever elector is registered, the null default or a host's own. A later
+    // AddWhizbangPostgresNotifications only displaces null defaults, so it leaves this in place.
     services.RemoveAll<IDutyElector>();
     services.AddSingleton<IDutyElector>(sp => sp.GetRequiredService<PgRoleElector>());
     return services;
@@ -86,14 +86,11 @@ public static class RoleAssignmentServiceCollectionExtensions {
     services.TryAddSingleton<WhizbangMetrics>();
     services.TryAddSingleton<RoleAssignmentMetrics>();
 
-    // The session-lock elector, as a concrete service: the role elector's delegate.
-    services.TryAddSingleton<PgDutyElector>();
     services.AddSingleton(sp => new PgRoleElector(
       sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
       sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
       sp.GetRequiredService<IConfiguration>(),
       sp.GetRequiredService<IServiceInstanceProvider>(),
-      sp.GetRequiredService<PgDutyElector>(),
       sp.GetRequiredService<ILogger<PgRoleElector>>(),
       sp.GetService<ILibraryVersionProvider>(),
       sp.GetService<INotificationConnectionStringFallback>(),
@@ -141,9 +138,8 @@ public static class RoleAssignmentServiceCollectionExtensions {
 
 /// <summary>
 /// AOT-safe binding of <see cref="RoleAssignmentOptions"/> from <c>Whizbang:Database:RoleAssignment</c>:
-/// <c>Enabled</c>, <c>HoldLegacySessionLock</c>, <c>RenewInterval</c>, <c>MissedRenewalsBeforeLapse</c>,
-/// <c>CooldownAfterLapse</c> and <c>OwedWorkRetryBase</c>, so an operator can turn the bridge on for one
-/// rolling deploy, or role assignment off, without a code change.
+/// <c>RenewInterval</c>, <c>MissedRenewalsBeforeLapse</c>, <c>CooldownAfterLapse</c> and
+/// <c>OwedWorkRetryBase</c>, so an operator can tune the lease without a code change.
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentRegistrationTests.cs</tests>
@@ -151,12 +147,6 @@ internal sealed class ConfigureRoleAssignmentOptionsFromConfiguration(IConfigura
   : IConfigureOptions<RoleAssignmentOptions> {
   public void Configure(RoleAssignmentOptions options) {
     var section = configuration.GetSection(RoleAssignmentServiceCollectionExtensions.CONFIGURATION_SECTION);
-    if (bool.TryParse(section["Enabled"], out var enabled)) {
-      options.Enabled = enabled;
-    }
-    if (bool.TryParse(section["HoldLegacySessionLock"], out var bridge)) {
-      options.HoldLegacySessionLock = bridge;
-    }
     if (TimeSpan.TryParse(section["RenewInterval"], CultureInfo.InvariantCulture, out var renew)) {
       options.RenewInterval = renew;
     }
@@ -173,22 +163,18 @@ internal sealed class ConfigureRoleAssignmentOptionsFromConfiguration(IConfigura
 }
 
 /// <summary>
-/// Holds the commit-order stamper's leadership by assignment (#966 phase 3): adds its role, one per
-/// schema since the assignment table is per schema, and names its legacy leader lock so a bridged
-/// holder, or a vote seeing an old stamper, uses the lock an old stamper takes.
+/// Holds the commit-order stamper's leadership from the holder loop's roles (#966 phase 3): adds its
+/// role, one per schema since the assignment table is per schema.
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CommitOrderStamperRoleTests.cs</tests>
 internal sealed class CommitOrderStamperRoleOptions(IOptions<CommitOrderStamperOptions> stamperOptions)
   : IPostConfigureOptions<RoleAssignmentOptions> {
   public void PostConfigure(string? name, RoleAssignmentOptions options) {
-    var stamper = stamperOptions.Value;
-    if (stamper.DisableStamper) {
+    if (stamperOptions.Value.DisableStamper) {
       return;
     }
     _ = options.Roles.Add(CommitOrderStamperOptions.ROLE);
-    var baseKey = stamper.AdvisoryLockKey;
-    options.LegacyLockKeys[CommitOrderStamperOptions.ROLE] = schema => CommitOrderStamperLockKey.Compute(schema, baseKey);
   }
 }
 

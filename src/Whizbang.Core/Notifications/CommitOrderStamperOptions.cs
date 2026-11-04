@@ -5,11 +5,13 @@ namespace Whizbang.Core.Notifications;
 
 /// <summary>
 /// Options for the slice 26 commit-order stamper. The stamper is a singleton per service
-/// schema (enforced via <c>pg_try_advisory_lock</c> on a schema-scoped key); every service
-/// instance runs the worker but only the lock-holder actively stamps. Services that share a
-/// database in separate schemas each elect their own stamper.
+/// schema: every service instance runs the worker, but only the holder of the stamper's role
+/// (<see cref="ROLE"/>, a role assignment with a lease and an epoch, #2044) stamps. The role
+/// table is per schema, so services that share a database in separate schemas each elect their
+/// own stamper.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:Stamper:AdvisoryLockKey")]
 public sealed class CommitOrderStamperOptions {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>
@@ -51,8 +53,9 @@ public sealed class CommitOrderStamperOptions {
   public TimeSpan? NotifyHealthyPollingInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
-  /// How long a non-holder waits before retrying the advisory-lock acquisition. Default 1.5s.
-  /// On the holder's clean shutdown the lock auto-releases; the next contender's retry picks it up.
+  /// How long a non-holder waits before voting for the stamper's role again. Default 1.5s.
+  /// A holder's clean shutdown releases the role and announces it, which wakes a waiting
+  /// contender before its retry interval is up.
   /// </summary>
   public TimeSpan LeaderElectionRetry { get; set; } = TimeSpan.FromMilliseconds(1500);
 
@@ -100,17 +103,8 @@ public sealed class CommitOrderStamperOptions {
   public int DrainBatchSize { get; set; } = 25_000;
 
   /// <summary>
-  /// Killswitch. When true, the worker exits early and never acquires the lock.
+  /// Killswitch. When true, the worker exits early and never asks for the stamper's role.
   /// Polling backstop is unaffected (it lives in the worker; without the worker, there's no stamping).
   /// </summary>
   public bool DisableStamper { get; set; }
-
-  /// <summary>
-  /// Base of the advisory lock key. The stamper does not lock on this value directly: it
-  /// derives its key from this value and the service's schema, so every instance of one service
-  /// contends for the same lock while services in other schemas of the same database elect their
-  /// own stampers. Must be the same across all instances of the same service. Default is a stable
-  /// constant; change it only to move the derived key away from a colliding application lock.
-  /// </summary>
-  public long AdvisoryLockKey { get; set; } = 0x57480001_5557_5048L;
 }

@@ -211,6 +211,7 @@ public class HeartbeatWorkerTickPlanTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
+      applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: lockSource,
       signalBus: NullSignalBus.Instance);

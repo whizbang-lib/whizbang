@@ -80,7 +80,7 @@ Verdicts: **Switched** (now a catalog read, locked by a test) or **Kept**, with 
 
 | Site | Verdict | Reason |
 |---|---|---|
-| `MigratorWatch.IsMigratingElsewhereAsync` (`to_regprocedure`) | Kept, locked by a test | R7: its session-lock probe reads `pg_locks` before every lookup, which refreshes the cache. The lock test passes on this code, and would fail if the lookup ran first: `MigratorWatchTests.InsideATransactionThatBeganBeforeTheRoleObjectsWereCommitted_SeesTheMigratorAsync` |
+| `MigratorWatch.IsMigratingElsewhereAsync` | **Switched** to a `pg_proc` read (#2054) | Kept as a name lookup in #2038 because its session-lock probe read `pg_locks` first; #2044 removed that probe (no duty is a lock), which left the lookup stale inside a caller's transaction. It now reads `pg_proc` for both role functions, and opening `pg_proc` also refreshes the cache for the call that follows. Test: `MigratorWatchTests.InsideATransactionThatBeganBeforeTheRoleObjectsWereCommitted_SeesTheMigratorAsync` (fails on a `to_regprocedure` check) |
 | `ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync` (ledger) | **Switched** to `CatalogPresence` | Public, caller's connection, gates the schema pass fast path. Test: `ManagedSchemaReconcilerTests.InsideATransactionThatBeganBeforeTheLedgerWasCommitted_NamesTheTableForRebuildingAsync` |
 | `SchemaBootstrapPhase._recordedClosureAsync`, `CanElectAsync` | Switched in #2009 | Now through `CatalogPresence` / `pg_proc` |
 | `ManagedSchemaReconciler` plan transaction (ledger) | Kept | R1: first lookup after a non-blocking try-lock in a fresh transaction |

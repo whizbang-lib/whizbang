@@ -1481,6 +1481,8 @@ public interface IWorkCoordinator {
   /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:FoldStreamApplyPaths_FoldsAStreamOnce_AndAnEmptySetIsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<int> FoldStreamApplyPathsAsync(
     IReadOnlyCollection<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
@@ -2375,6 +2377,9 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_ConsumptionGate_BlocksThenTruncatesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:Truncate_ConsumptionGate_BlocksThenTruncatesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:Truncator_AHookToldProceed_SeesTheDetailActuallyTruncated_AndIsAnnouncedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<StreamTruncateResult> TruncateStreamPrefixAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamTruncateResult("unsupported", 0));
@@ -2392,6 +2397,8 @@ public interface IWorkCoordinator {
   /// <returns>The (event, stream, type) of each event at or below the truncate point.</returns>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetStreamTruncateTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:GetStreamTruncateTargets_ListsTheStreamsEventsThroughTheTruncatePointAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
     Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
@@ -2406,6 +2413,9 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The archived events for the stream, ordered by version.</returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_Archive_MovesDetailToColdStorage_RetrievableAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:Truncate_Archive_WritesTheDetailToColdStorage_AndReadsItBackInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
     Guid streamId, CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<ArchivedEvent>>([]);
@@ -2421,6 +2431,9 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The distinct consuming perspective names.</returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetConsumingPerspectiveNames_ReturnsDistinctAssociatedPerspectivesInRangeAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:GetConsumingPerspectiveNames_ReturnsTheDistinctPerspectivesInTheRangeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
     Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<string>>([]);
@@ -2434,6 +2447,9 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The event's per-stream version, or <c>null</c>.</returns>
   /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetEventVersion_ReturnsPerStreamVersion_NullForUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:GetEventVersion_ReturnsThePerStreamVersion_NullForAnUnknownEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) =>
     Task.FromResult<long?>(null);
 

@@ -70,9 +70,9 @@ public class StandbyHandshakeCoverageTests {
     var stalePeer = Guid.NewGuid();
     var newerPeer = Guid.NewGuid();
     var fleet = new List<FleetInstanceStatus> {
-      new(self, "svc", "host", DateTimeOffset.UtcNow, [], LibraryVersion: "0.5.0"),
-      new(stalePeer, "svc", "host", DateTimeOffset.UtcNow.AddMinutes(-10), [], LifecyclePhase: "Running", LibraryVersion: "0.5.0"),
-      new(newerPeer, "svc", "host", DateTimeOffset.UtcNow, [], LifecyclePhase: "Running", LibraryVersion: "99.0.0"),
+      new(self, "svc", "host", DateTimeOffset.UnixEpoch, [], LibraryVersion: "0.5.0", IsLive: true),
+      new(stalePeer, "svc", "host", DateTimeOffset.UnixEpoch, [], LifecyclePhase: "Running", LibraryVersion: "0.5.0", IsLive: false),
+      new(newerPeer, "svc", "host", DateTimeOffset.UnixEpoch, [], LifecyclePhase: "Running", LibraryVersion: "99.0.0", IsLive: true),
     };
     var handshake = new StandbyHandshake(
       scopeFactory: _emptyScopeFactory(),
@@ -95,8 +95,10 @@ public class StandbyHandshakeCoverageTests {
     var self = Guid.NewGuid();
     var olderPeer = Guid.NewGuid();
     var fleet = new List<FleetInstanceStatus> {
-      new(olderPeer, "svc", "host", DateTimeOffset.UtcNow.AddSeconds(-45), [],
-        LifecyclePhase: "StandingBy", LibraryVersion: "0.5.0", AliveLockHeld: true),
+      // #2027: the handshake keeps no window of its own (it once compared heartbeats with the host's clock); the fleet
+      // source carries the one liveness rule's answer, which counts an older peer holding its alive-lock.
+      new(olderPeer, "svc", "host", DateTimeOffset.UnixEpoch, [],
+        LifecyclePhase: "StandingBy", LibraryVersion: "0.5.0", IsLive: true),
     };
     var handshake = new StandbyHandshake(
       scopeFactory: _emptyScopeFactory(),
