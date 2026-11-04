@@ -93,10 +93,10 @@ public static class WhizbangReceptorRegistryQuery {
   /// <param name="messageType">The message type name (assembly-qualified).</param>
   /// <returns>The consumed message, or <see langword="null"/>.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:FindConsumedMessage_FindsByTypeAndAssembly_IgnoringVersionDetailsAsync</tests>
-  public static ConsumedMessageInfo? FindConsumedMessage(string messageType) {
-    System.ArgumentNullException.ThrowIfNull(messageType);
-    return null;
-  }
+  public static ConsumedMessageInfo? FindConsumedMessage(string messageType) =>
+    _currentSnapshot().ConsumedByName.TryGetValue(EventTypeMatchingHelper.NormalizeTypeName(messageType), out var consumed)
+      ? consumed
+      : null;
 
   /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
@@ -168,7 +168,7 @@ public static class WhizbangReceptorRegistryQuery {
     handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
     var consumedList = new List<ConsumedMessageInfo>(consumedByName.Values);
     consumedList.Sort(static (a, b) => string.CompareOrdinal(a.TypeName, b.TypeName));
-    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList);
+    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName);
   }
 
   /// <summary>
@@ -212,12 +212,14 @@ public static class WhizbangReceptorRegistryQuery {
       HashSet<string> inboxHandler,
       Dictionary<LifecycleStage, HashSet<string>> stageTypes,
       IReadOnlyList<HandledMessageInfo> handledMessages,
-      IReadOnlyList<ConsumedMessageInfo> consumedMessages) {
+      IReadOnlyList<ConsumedMessageInfo> consumedMessages,
+      Dictionary<string, ConsumedMessageInfo> consumedByName) {
     public int ContributionCount { get; } = contributionCount;
     public HashSet<string> AnyConsumer { get; } = anyConsumer;
     public HashSet<string> InboxHandler { get; } = inboxHandler;
     public Dictionary<LifecycleStage, HashSet<string>> StageTypes { get; } = stageTypes;
     public IReadOnlyList<HandledMessageInfo> HandledMessages { get; } = handledMessages;
     public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; } = consumedMessages;
+    public Dictionary<string, ConsumedMessageInfo> ConsumedByName { get; } = consumedByName;
   }
 }

@@ -721,7 +721,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       }
     }
 
-    _filterInboxMessagesByKnownEventTypes(inboxMessages);
+    _filterInboxMessagesByKnownEventTypes(inboxMessages, discardPolicy);
     if (inboxMessages.Count > 0) {
       await _storeInboxBatchAsync(inboxMessages, pendingCleanupClaims, scope.ServiceProvider, workCoordinator, cancellationToken);
     }
@@ -1193,14 +1193,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <see cref="InboxReceiveDiscard.UNKNOWN_EVENT_TYPE"/> rather than processed (#1720: it used to be removed before the
   /// store, leaving no row). Commands are always processed because they're routed to a specific service on purpose.
   /// </summary>
-  private void _filterInboxMessagesByKnownEventTypes(List<InboxMessage> inboxMessages) {
+  private void _filterInboxMessagesByKnownEventTypes(List<InboxMessage> inboxMessages, IMessageDiscardPolicy? discardPolicy) {
     if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
       return;
     }
     for (var i = 0; i < inboxMessages.Count; i++) {
       var msg = inboxMessages[i];
       if (msg.IsEvent && msg.DiscardedOnReceive is null
-          && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType))) {
+          && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType))
+          // An event the discard policy keeps with no consumer (an absorbed namespace) is stored on purpose (#1776).
+          && discardPolicy?.EvaluateReceive(msg.MessageType, string.Empty, string.Empty).ShouldDiscard != false) {
         LogStoredSettledOnReceive(_logger, msg.MessageId, msg.MessageType, InboxReceiveDiscard.UNKNOWN_EVENT_TYPE);
         _countDiscard(InboxReceiveDiscard.UNKNOWN_EVENT_TYPE, TypeNameFormatter.GetSimpleName(msg.MessageType));
         inboxMessages[i] = msg with { DiscardedOnReceive = InboxReceiveDiscard.UNKNOWN_EVENT_TYPE };
@@ -1566,16 +1568,17 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_knownEventTypeNames is not null) {
       return;
     }
+    // #2064: the events this service consumes (the consumer registry) are known as well as the ones its perspectives
+    // fold. Receive now classifies a receptor-only event as an event, so a perspective-only set would settle every
+    // such event as unknown. Empty = no filtering (allow all through).
+    var known = new HashSet<string>(
+      _receptorRegistry.GetConsumedEventTypes().Select(EventTypeMatchingHelper.NormalizeTypeName), StringComparer.Ordinal);
     var eventTypeProvider = serviceProvider.GetRequiredService<IEventTypeProvider>();
     if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      _knownEventTypeNames = new HashSet<string>(
-        eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
-          TypeNameFormatter.Format(t))),
-        StringComparer.Ordinal);
-    } else {
-      _knownEventTypeNames = [];  // Empty = no filtering (allow all through)
+      known.UnionWith(eventTypeProvider.GetEventTypes().Select(t => EventTypeMatchingHelper.NormalizeTypeName(
+        TypeNameFormatter.Format(t))));
     }
+    _knownEventTypeNames = known;
   }
 
   /// <summary>

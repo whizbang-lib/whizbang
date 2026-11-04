@@ -1430,6 +1430,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscription-expansion backfill and the orphan-inbox janitor read the same registry: a service with no perspectives
   now baselines and backfills the events its receptors consume, and the janitor no longer counts on the perspective
   list for what is handled.
+- **A consumed event reaches the event store whether or not a perspective folds it (#2064).** The receive path
+  classified an event by the perspective event list, so a receptor-only event in a service with perspectives, and every
+  event in a service with none (a transport payload arrives as JSON, so its own marker cannot say), was stored as a
+  non-event and never copied into the event store. The consumer registry's event flag now decides for a type the
+  service consumes (`IConsumerRegistry.FindConsumedMessage`); the perspective list and the payload's marker decide only
+  for a type it does not. The transport consumer's known-event filter counts the consumed events too, and keeps an
+  event the discard policy keeps with no consumer (an absorbed namespace). On the first start after upgrading, the
+  subscription-expansion pass treats those newly stored types as expansions and backfills them under the existing caps,
+  asking each type's known owner directly (#2032) and broadcasting only for a type with no known owner;
+  `whizbang.stream_integrity.backfills_requested` counts them.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

@@ -28,7 +28,9 @@ namespace Whizbang.Core.Messaging;
 /// The default implementation is the source-generated registry (<see cref="WhizbangReceptorRegistryQueryAdapter"/>,
 /// also the <see cref="IReceptorRegistryQuery"/>), so the receive boundary's gate and every list reader see the same
 /// registry. Runtime-registered receptors (control-plane receptors, test waits) are answered by the predicate but not
-/// enumerated: they register after startup and carry no compile-time metadata.
+/// enumerated: they register after startup and carry no compile-time metadata, so a list reader (the integrity audit, the
+/// janitor) does not see them. A composite is listed as consumed but not as an event: the composite itself is never
+/// stored, only the children it fans out into, so stream integrity never audits it.
 /// </para>
 /// </remarks>
 /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
@@ -55,7 +57,10 @@ public interface IConsumerRegistry {
   /// <param name="messageType">The message type name (assembly-qualified).</param>
   /// <returns>The consumed message, or <see langword="null"/>.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
-  ConsumedMessageInfo? FindConsumedMessage(string messageType) => null;
+  ConsumedMessageInfo? FindConsumedMessage(string messageType) {
+    var name = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+    return GetConsumedMessages().FirstOrDefault(c => string.Equals(c.TypeName, name, System.StringComparison.Ordinal));
+  }
 
   /// <summary>
   /// The event types this service consumes, in the assembly-qualified wire form (the form the event store's

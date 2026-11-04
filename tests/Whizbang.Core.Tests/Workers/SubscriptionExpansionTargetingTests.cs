@@ -128,6 +128,29 @@ public class SubscriptionExpansionTargetingTests {
       .Because("one owner's types share one request");
   }
 
+  /// <summary>
+  /// The first pass after the upgrade to the consumer registry (#2064): the perspective's event was baselined before,
+  /// and the event only a receptor consumes is new to the registry, so it is an expansion. Its history was never stored
+  /// here, and its owner is known, so it is asked of that owner alone: a directed request, never a broadcast.
+  /// </summary>
+  [Test]
+  public async Task Backfill_FirstPassAfterUpgrade_AsksTheReceptorOnlyEventOfItsOwner_NeverBroadcastsAsync() {
+    var coordinator = new ExpandingCoordinator {
+      Claims = [_claim("whizbang.core.tests.workers.backfillprobes.billing", _billingOwner, "billing-svc", "billing.requests")],
+    };
+    coordinator.Registry[TypeNameFormatter.FormatClrTypeName(typeof(PlacedEvent))] = ConsumedTypeBackfillStatus.Baseline;
+    var transport = new CaptureTransport();
+
+    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+
+    var (envelope, destination, _) = transport.Published.Single();
+    await Assert.That(envelope.Target).IsEqualTo("billing-svc")
+      .Because("the owner is known, so the post-upgrade backfill is directed at it, not broadcast to every holder");
+    await Assert.That(destination.Address).IsEqualTo("billing.requests");
+    await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_billedWire])
+      .Because("only the newly consumed type is an expansion; the baselined perspective type is not asked again");
+  }
+
   private static IntegrityDomainClaim _claim(string domain, Guid owner, string name, string? requestTopic) =>
     new() { Domain = domain, OwnerServiceId = owner, OwnerServiceName = name, RequestTopic = requestTopic };
 
@@ -139,7 +162,7 @@ public class SubscriptionExpansionTargetingTests {
   private static SubscriptionExpansionWorker _buildWorker(ExpandingCoordinator coordinator, CaptureTransport transport) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new ConsumesBoth());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanding-svc"));
@@ -153,8 +176,11 @@ public class SubscriptionExpansionTargetingTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(PlacedEvent), typeof(BilledEvent)];
+  /// <summary>The consumer registry (#2058): this service consumes both probe events.</summary>
+  private sealed class ConsumesBoth : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => messageType == _placedWire || messageType == _billedWire;
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [new ConsumedMessageInfo(_placedWire, IsEvent: true), new ConsumedMessageInfo(_billedWire, IsEvent: true)];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
