@@ -830,6 +830,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Instances share one durable record and one liveness rule (#2027).** Every reader that decides whether a peer is
+  alive (work claiming and ranking, the partition assigner, orphan claims, the reap, the standby handshake, the fleet
+  readers, the lifecycle monitor, the notification fan-out) now asks one SQL rule, `wh_instance_liveness`, instead of
+  its own window; the C# copies are removed. A direct instance holding its alive-lock is live; a direct instance whose
+  lock is gone is taken over one beat (30 seconds) after its last heartbeat; an instance behind a transaction pooler,
+  which cannot hold the lock, is judged by the window it declares from its own heartbeat cadence (90 seconds in
+  table-only mode), so one late beat no longer reads it as dead. Migrations 316 and 317. The standby watcher's own
+  liveness window key, `Whizbang:StandbyWatcher:RequesterLivenessWindow`, is removed.
+- **Every instance and the migration ledger record the application version (#2027).** Beside the platform version,
+  each instance row records the version of the application it runs: `Whizbang:Application:Version` (SemVer) or
+  `Whizbang:Application:DeployNumber` when the host sets one, otherwise the entry assembly's informational version
+  when it is SemVer, otherwise unknown. An unknown version never orders against another. Setting both keys fails
+  startup.
+- **A source guard keeps instance coordination on the allowlisted mechanisms (#2027).** A test fails when
+  notify/listen, an advisory lock or a liveness check appears in C# or SQL outside an allowlist whose every entry
+  states its reason, and the allowlist can only shrink.
 
 - **The process-wide saga per-item stream namespace is first-registration-wins (#2021).** The first `AddWhizbangSagas`
   call in a process sets `SagaItemStreams.AppDefaultNamespace`, which `SagaItemStreams.Of` without a namespace reads. A
