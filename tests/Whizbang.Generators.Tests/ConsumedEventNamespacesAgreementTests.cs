@@ -14,8 +14,9 @@ namespace Whizbang.Generators.Tests;
 /// The event namespaces a service subscribes to cover every event it consumes (#2058). The event-namespace registry
 /// decides the transport subscriptions; the consumer registry decides what the receive boundary keeps. Subscriptions
 /// are namespace-granular and may cover more than is consumed, but never less: an event consumed in a namespace with
-/// no subscription is never delivered. One direction only, by design. The fixture covers the consumers the
-/// event-namespace generator discovers: inbox receptors, lifecycle receptors and perspectives.
+/// no subscription is never delivered. One direction only, by design. The fixture has one consumer of every kind:
+/// an inbox receptor, a lifecycle receptor, a perspective, both synchronous receptor shapes, both notification tags and
+/// a collective event (#2065).
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/EventNamespaceRegistryGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Generators/ReceptorRegistryQueryGenerator.cs</code-under-test>
@@ -41,8 +42,44 @@ namespace Contracts.Staged {
   public record ItemStaged : IEvent { public string Id { get; init; } = string.Empty; }
 }
 
+namespace Contracts.Synced {
+  public record ItemSynced : IEvent { public string Id { get; init; } = string.Empty; }
+  public record ItemSyncedWithReply : IEvent { public string Id { get; init; } = string.Empty; }
+}
+
+namespace Contracts.Tagged {
+  [Whizbang.Core.NotificationTagAttribute("items")]
+  public record ItemTagged : IEvent { public string Id { get; init; } = string.Empty; }
+}
+
+namespace Contracts.IdTagged {
+  [Whizbang.Core.NotificationIdTagAttribute("items")]
+  public record ItemIdTagged : IEvent { public string Id { get; init; } = string.Empty; }
+}
+
+namespace Contracts.Swept {
+  public sealed record ItemsSwept(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+}
+
+namespace Whizbang.Core {
+  public sealed class NotificationTagAttribute : System.Attribute {
+    public NotificationTagAttribute(string tag) { }
+  }
+  public sealed class NotificationIdTagAttribute : System.Attribute {
+    public NotificationIdTagAttribute(string tag) { }
+  }
+}
+
 namespace MyApp {
   public record ItemModel { public string Id { get; set; } = string.Empty; }
+
+  public class SyncedReceptor : ISyncReceptor<Contracts.Synced.ItemSynced> {
+    public void Handle(Contracts.Synced.ItemSynced message) { }
+  }
+
+  public class SyncedWithReplyReceptor : ISyncReceptor<Contracts.Synced.ItemSyncedWithReply, string> {
+    public string Handle(Contracts.Synced.ItemSyncedWithReply message) => message.Id;
+  }
 
   public class ReceivedReceptor : IReceptor<Contracts.Received.ItemReceived> {
     public ValueTask HandleAsync(Contracts.Received.ItemReceived message, CancellationToken ct = default) => ValueTask.CompletedTask;
@@ -66,7 +103,9 @@ namespace MyApp {
     var consumedNamespaces = _consumedEventNamespaces();
     var subscribed = _subscribedNamespaces();
 
-    await Assert.That(consumedNamespaces).IsEquivalentTo(["contracts.received", "contracts.folded", "contracts.staged"],
+    await Assert.That(consumedNamespaces).IsEquivalentTo([
+        "contracts.received", "contracts.folded", "contracts.staged", "contracts.synced", "contracts.tagged",
+        "contracts.idtagged", "contracts.swept"],
       TUnit.Assertions.Enums.CollectionOrdering.Any)
       .Because("the fixture consumes one event in each namespace; if this changes, the check below proves less");
     foreach (var ns in consumedNamespaces) {
