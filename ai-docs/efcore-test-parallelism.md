@@ -54,7 +54,7 @@ files, child processes and wall-clock assertions; every hit was read.
 | Parallel, no key | 531 | own database, nothing process-wide that another test can disturb |
 | Runs alone (registry reset) | 18 | resets the model registrars, the physical field, hydrator, DbContext registration or initialization registries, the data coalescers, the split-mode hydrators or the stream groups |
 | Runs alone (containment switch) | 10 | switches `JsonbContainmentSwitch`, the process-wide mode every perspective query compiles under (found by the first parallel run, not the scan: its setters are named `Set` and `SetMode`) |
-| Runs alone (measurement) | 23 | `Benchmark` classes (no shard, never in CI) and one test asserting an unscaled wall-clock latency budget |
+| Runs alone (measurement) | 24 | 23 `Benchmark` classes (no shard, never in CI) and one test asserting an unscaled wall-clock latency budget |
 | Narrow key | 1 | `BaseUpsertStrategyCoverageIntegrationTests`: two tests register a TTL for the widget model that the others need absent |
 | Kept on the blanket key | 0 | |
 
@@ -67,6 +67,10 @@ Shared state that was isolated instead of serialized:
 - 30 fixtures issued their own `CREATE DATABASE`; they use the factory.
 - Three query-translation classes shared one static `DbContext` across their tests, which a parallel run broke with
   "An attempt was made to use the context instance while it is being configured"; each test has its own now.
+- Three connection tests pointed at a loopback port they had probed and released, which anything could bind before
+  the attempt (the develop baseline timed out on it); the port is now a socket bound and not listening, held for the
+  test.
+- The one deliberate raw `CREATE DATABASE` left (a database that comes up late) runs under the factory's retry.
 
 Not hazards, checked: `ScopeContextAccessor` and `ProcessingModeAccessor` are `AsyncLocal`; the registries tests add
 to (`PerspectivePhysicalFieldRegistry`, `SignalTypeRegistry`, `JsonIndexRegistry`, `PerspectiveTtlRegistry`) are
