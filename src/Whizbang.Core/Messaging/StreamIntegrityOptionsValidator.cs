@@ -7,8 +7,8 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Rejects a <see cref="StreamIntegrityOptions.MaxRepairDrainBacklog"/> below one, and a
-/// <see cref="StreamIntegrityOptions.RepairAnswerTimeoutMinutes"/> below one, where the options are read, naming the
-/// configuration key.
+/// <see cref="StreamIntegrityOptions.RepairAnswerTimeoutMinutes"/> below one, and a re-attribution interval, batch size
+/// or batches-per-pass bound below one (#2008), where the options are read, naming the configuration key.
 /// </summary>
 /// <remarks>
 /// A bound of zero or less admits no deficit to the paced repair drain, so with auto-repair on nothing
@@ -33,6 +33,18 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
         $"Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes must be at least 1 (was {options.RepairAnswerTimeoutMinutes}); " +
         "a requested bucket waits that long for its answer, and a timeout below one minute asks again at once.");
     }
+    _atLeastOne(failures, "ReattributionIntervalSeconds", options.ReattributionIntervalSeconds,
+      "it is the wait between re-attribution passes, and a wait below one second spins the loop");
+    _atLeastOne(failures, "ReattributionBatchSize", options.ReattributionBatchSize,
+      "it is the rows one re-attribution batch scans, and a batch below one walks nothing");
+    _atLeastOne(failures, "MaxReattributionBatchesPerPass", options.MaxReattributionBatchesPerPass,
+      "it bounds one re-attribution pass, and a bound below one runs no batch");
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
+  }
+
+  private static void _atLeastOne(List<string> failures, string key, int value, string reason) {
+    if (value < 1) {
+      failures.Add($"Whizbang:StreamIntegrity:{key} must be at least 1 (was {value}); {reason}.");
+    }
   }
 }

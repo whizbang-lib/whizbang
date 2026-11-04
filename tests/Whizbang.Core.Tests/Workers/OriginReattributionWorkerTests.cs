@@ -252,7 +252,7 @@ public class OriginReattributionWorkerTests {
 
   [Test]
   public async Task Pass_CountsReattributedUnattributedAndDisagreeingRowsAsync() {
-    using var meterFactory = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var meterFactory = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: meterFactory.GetRequiredService<IMeterFactory>()));
     var readings = new Dictionary<string, long>();
     using var listener = new MeterListener();

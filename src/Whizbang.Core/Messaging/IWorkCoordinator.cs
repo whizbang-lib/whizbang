@@ -2072,6 +2072,37 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<IntegrityDomainClaim>>([]);
 
   /// <summary>
+  /// The next batch of the re-attribution walk (#2008): the rows after the walk's durable cursor by commit sequence, at
+  /// most <paramref name="maxEvents"/> of them, and the distinct types among them that carry no origin. A fingerprint
+  /// other than the one the walk last ran under restarts the walk from the beginning.
+  /// </summary>
+  /// <param name="ownershipFingerprint">The fingerprint of the ownership map and this service's owned domains
+  /// (<see cref="IntegrityDomainOwnership.Fingerprint"/>).</param>
+  /// <param name="maxEvents">The most rows the batch scans.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The batch (empty, at the cursor, once the walk has caught up); null when the store cannot re-attribute.</returns>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginReattributionSqlTests.cs:Window_IsTheNextBatchByCommitSequence_WithTheTypesThatHaveNoOriginAsync</tests>
+  Task<OriginReattributionWindow?> GetOriginReattributionWindowAsync(
+    string ownershipFingerprint, int maxEvents, CancellationToken cancellationToken = default) =>
+    Task.FromResult<OriginReattributionWindow?>(null);
+
+  /// <summary>
+  /// Applies one re-attribution batch (#2008): rows without an origin whose type has a known owner take it as origin
+  /// (unless their stored first hop names a third service), move to the owner's digest lane, refold sealed local
+  /// epochs and re-arm the owner's ledger buckets they land in; rows of a type with no known owner are counted. The
+  /// cursor moves to the batch's ceiling only if it still reads the batch's floor.
+  /// </summary>
+  /// <param name="batch">The window and its non-owned types with their owners.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>What the batch did; null when the store cannot re-attribute.</returns>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginReattributionSqlTests.cs:Reattribute_ARowAnotherServiceOwns_TakesTheOwnerAsOrigin_AndItsDigestMovesLanesAsync</tests>
+  Task<OriginReattributionResult?> ReattributeOriginsAsync(
+    OriginReattributionBatch batch, CancellationToken cancellationToken = default) =>
+    Task.FromResult<OriginReattributionResult?>(null);
+
+  /// <summary>
   /// Records a stream-integrity delivery for the maintainer's drain (#2001). Recorded once: a delivery whose
   /// <paramref name="deliveryId"/> is already recorded is left as it is.
   /// </summary>

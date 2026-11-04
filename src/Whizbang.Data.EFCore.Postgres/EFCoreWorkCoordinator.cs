@@ -1262,6 +1262,64 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return await _readDomainClaimsAsync(cmd, cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  public async Task<OriginReattributionWindow?> GetOriginReattributionWindowAsync(
+      string ownershipFingerprint, int maxEvents, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ownershipFingerprint);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_reattribution_window");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT after_commit_sequence, through_commit_sequence, event_types FROM {fn}(@p_fingerprint, @p_max_events)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_fingerprint", ownershipFingerprint);
+    cmd.Parameters.AddWithValue("p_max_events", maxEvents);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    // The function always returns exactly one row (RETURN QUERY of three locals).
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new OriginReattributionWindow {
+      AfterCommitSequence = reader.GetInt64(0),
+      ThroughCommitSequence = reader.GetInt64(1),
+      EventTypes = reader.GetFieldValue<string[]>(2),
+    };
+  }
+
+  /// <inheritdoc />
+  public async Task<OriginReattributionResult?> ReattributeOriginsAsync(
+      OriginReattributionBatch batch, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(batch);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_reattribute_origins");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT reattributed_count, hop_disagreement_count, unattributed_count, advanced FROM {fn}(@p_after, @p_through, @p_event_types, @p_owner_ids, @p_owner_names)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_after", batch.AfterCommitSequence);
+    cmd.Parameters.AddWithValue("p_through", batch.ThroughCommitSequence);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = batch.Targets.Select(t => t.EventType).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_owner_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = batch.Targets.Select(t => t.OwnerServiceId).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_owner_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = batch.Targets.Select(t => t.OwnerServiceName).ToArray()
+    });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    // The function always returns exactly one row.
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new OriginReattributionResult {
+      Reattributed = reader.GetInt32(0),
+      HopDisagreements = reader.GetInt32(1),
+      Unattributed = reader.GetInt32(2),
+      Advanced = reader.GetBoolean(3),
+    };
+  }
+
   private static async Task<IReadOnlyList<IntegrityDomainClaim>> _readDomainClaimsAsync(
       System.Data.Common.DbCommand cmd, CancellationToken cancellationToken) {
     var claims = new List<IntegrityDomainClaim>();

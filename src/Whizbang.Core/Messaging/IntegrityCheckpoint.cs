@@ -653,4 +653,25 @@ public sealed class StreamIntegrityOptions {
   /// </remarks>
   public bool PublishReportEvents { get; set; }
 
+  /// <summary>
+  /// Re-attribute this store's pre-origin history to the services that wrote it (default true; #2008). Runs on the
+  /// maintainer under the housekeeping idle gate, and only when owned domains are registered: events of a type another
+  /// service owns take that owner as origin and leave the local lane.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public bool ReattributionEnabled { get; set; } = true;
+
+  /// <summary>Seconds between re-attribution passes (default 60). At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int ReattributionIntervalSeconds { get; set; } = 60;
+
+  /// <summary>Rows one re-attribution batch scans, by commit sequence (default 5000). At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int ReattributionBatchSize { get; set; } = 5000;
+
+  /// <summary>The most re-attribution batches one pass runs (default 20), so a pass admitted by the idle gate, or forced
+  /// through, is bounded. At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int MaxReattributionBatchesPerPass { get; set; } = 20;
+
 }

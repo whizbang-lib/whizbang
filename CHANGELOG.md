@@ -1322,6 +1322,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registered keeps the earlier behavior exactly. The namespace rule is `OwnedNamespaceMatcher` (new `IsLocalEventType`
   and `NormalizeDomain`), which the dispatcher, the receptor invoker and the transport consumer now share instead of
   each keeping a copy.
+- **Pre-origin history is re-attributed to the service that wrote it (#2008).** A new maintainer worker
+  (`OriginReattributionWorker`) walks the store in commit-sequence batches under the housekeeping idle gate (forced
+  through after `Whizbang:Housekeeping:MaxDeferral`), only when owned domains are registered. An event with no origin
+  whose type another service owns takes that owner as origin, its digest moves from the local lane to the owner's,
+  sealed local epochs are refolded (advancing the origin generation) and the owner's repair-ledger buckets it lands in
+  have their unhealable and exhausted marks cleared and their attempts and pending answer reset. Ownership is primary:
+  an event whose first hop names a third service is logged and left. A non-owned type with no known owner is counted as
+  unattributed and left (out of the local lane logically). The walk's cursor is durable and restarts when the ownership
+  map changes (migration 325: `wh_integrity_reattribution`, `wh_integrity_reattribution_window`,
+  `wh_integrity_reattribute_origins`). New keys `Whizbang:StreamIntegrity:ReattributionEnabled` (default true),
+  `ReattributionIntervalSeconds` (60), `ReattributionBatchSize` (5000) and `MaxReattributionBatchesPerPass` (20); new
+  counters `origins_reattributed`, `origins_unattributed` and `reattribution_hop_disagreements`.
 - **Owners are exchanged on the integrity checkpoint (#2008).** `IntegrityCheckpoint` gains an additive `OwnedDomains`
   list (an older origin reads as announcing none). Consumers persist each origin's claims (`wh_integrity_domain_claims`,
   migration 325): an announcement replaces the origin's claim set and keeps its known request address. A domain two

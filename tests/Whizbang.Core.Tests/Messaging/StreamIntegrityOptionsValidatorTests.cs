@@ -115,7 +115,9 @@ public class StreamIntegrityOptionsValidatorTests {
   [Test]
   public async Task Validate_ReattributionBoundsOfOne_SucceedAsync() {
     var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions {
-      ReattributionIntervalSeconds = 1, ReattributionBatchSize = 1, MaxReattributionBatchesPerPass = 1,
+      ReattributionIntervalSeconds = 1,
+      ReattributionBatchSize = 1,
+      MaxReattributionBatchesPerPass = 1,
     });
 
     await Assert.That(result.Succeeded).IsTrue();
