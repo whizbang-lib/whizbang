@@ -24,6 +24,7 @@ public class OriginReattributionWorkerLoopTests {
   private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _reads;
     public bool ThrowOnFirstRead { get; init; }
+    public bool CancelOnFirstRead { get; init; }
     public TaskCompletionSource SecondRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int Reads => Volatile.Read(ref _reads);
 
@@ -33,11 +34,16 @@ public class OriginReattributionWorkerLoopTests {
       if (n >= 2) {
         SecondRead.TrySetResult();
       }
+      if (n == 1 && CancelOnFirstRead) {
+        throw new OperationCanceledException("the host is stopping");
+      }
       if (n == 1 && ThrowOnFirstRead) {
         throw new InvalidOperationException("transient store failure");
       }
       return Task.FromResult<OriginReattributionWindow?>(new OriginReattributionWindow {
-        AfterCommitSequence = 0, ThroughCommitSequence = 0, EventTypes = [],
+        AfterCommitSequence = 0,
+        ThroughCommitSequence = 0,
+        EventTypes = [],
       });
     }
   }
@@ -96,5 +102,20 @@ public class OriginReattributionWorkerLoopTests {
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
     await Assert.That(coordinator.Reads).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WhenAPassIsCanceled_EndsTheLoopWithoutFaultingAsync(CancellationToken testToken) {
+    var coordinator = new CountingCoordinator { CancelOnFirstRead = true };
+    var worker = _worker(coordinator, new StreamIntegrityOptions { ReattributionIntervalSeconds = 1 });
+
+    await worker.StartAsync(testToken);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("cancellation inside a pass is the way out of the loop, not a failure to log and retry");
+    await Assert.That(coordinator.Reads).IsEqualTo(1);
+    await worker.StopAsync(CancellationToken.None);
   }
 }

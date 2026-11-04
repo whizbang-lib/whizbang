@@ -126,4 +126,28 @@ public class IntegrityDomainOwnershipTests {
     await Assert.That(conflicts.FirstSighting("app.contracts.orders", _orders, _archive)).IsTrue();
     await Assert.That(conflicts.FirstSighting("app.contracts.billing", _orders, _billing)).IsTrue();
   }
+
+  [Test]
+  public async Task Constructor_AnEmptyDomain_AndAThirdClaimantOfAContestedDomain_AreIgnoredAsync() {
+    var ownership = new IntegrityDomainOwnership([
+      _claim(" . ", _orders, "orders-svc"),
+      _claim("app.contested", _orders, "orders-svc"),
+      _claim("app.contested", _billing, "billing-svc"),
+      _claim("app.contested", _archive, "archive-svc"),
+    ]);
+
+    await Assert.That(ownership.Owners).IsEmpty()
+      .Because("a blank declaration claims nothing, and a contested domain stays contested whoever else claims it");
+    await Assert.That(ownership.ConflictedDomains).IsEquivalentTo(["app.contested"]);
+  }
+
+  [Test]
+  public async Task FindOwner_TheMostSpecificWins_WhateverOrderTheClaimsArriveInAsync() {
+    var ownership = new IntegrityDomainOwnership([
+      _claim("app.contracts.archive", _archive, "archive-svc"),
+      _claim("app.contracts", _orders, "orders-svc"),
+    ]);
+
+    await Assert.That(ownership.FindOwner("App.Contracts.Archive.Archived, App.Contracts")!.OwnerServiceId).IsEqualTo(_archive);
+  }
 }

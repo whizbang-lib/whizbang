@@ -2830,7 +2830,9 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_DigestsOfATypeAnotherServiceOwns_AreNotComparedAsync() {
     var coordinator = new AuditCoordinator { ReceivedTypeDigests = [] };
     coordinator.Claims = [new IntegrityDomainClaim {
-      Domain = "app.contracts.billing", OwnerServiceId = TrackedGuid.New().Value, OwnerServiceName = "billing-svc",
+      Domain = "app.contracts.billing",
+      OwnerServiceId = TrackedGuid.New().Value,
+      OwnerServiceName = "billing-svc",
     }];
     var transport = new CaptureTransport();
     var dispatcher = new CaptureDispatcher();
@@ -2851,5 +2853,25 @@ public class IntegrityManifestReceptorTests {
       [_typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6)], ManifestLevel.Types));
     await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsGreaterThan(0)
       .Because("the control: with no known owner the same digest is compared as before");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_MixedDigests_ComparesOnlyThoseNoOtherServiceOwnsAsync() {
+    var coordinator = new AuditCoordinator { ReceivedTypeDigests = [] };
+    coordinator.Claims = [new IntegrityDomainClaim {
+      Domain = "app.contracts.billing",
+      OwnerServiceId = TrackedGuid.New().Value,
+      OwnerServiceName = "billing-svc",
+    }];
+    var sp = _provider(coordinator, new CaptureTransport());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6),
+      _typeDigest("App.Contracts.Orders.Placed, App.Contracts", 7, 8, 9),
+    ], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsGreaterThan(0)
+      .Because("the digest no other service owns is still compared");
   }
 }

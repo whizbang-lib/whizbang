@@ -112,6 +112,22 @@ public class SubscriptionExpansionTargetingTests {
     await Assert.That(_command(transport.Published.Single().Envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire]);
   }
 
+  [Test]
+  public async Task Backfill_TypesOfOneOwner_GoOutAsOneRequestAsync() {
+    var coordinator = new ExpandingCoordinator {
+      Claims = [_claim("whizbang.core.tests.workers.backfillprobes", _ordersOwner, "probes-svc", "probes.requests")],
+    };
+    var transport = new CaptureTransport();
+
+    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+
+    var (envelope, destination, _) = transport.Published.Single();
+    await Assert.That(envelope.Target).IsEqualTo("probes-svc");
+    await Assert.That(destination.Address).IsEqualTo("probes.requests");
+    await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire])
+      .Because("one owner's types share one request");
+  }
+
   private static IntegrityDomainClaim _claim(string domain, Guid owner, string name, string? requestTopic) =>
     new() { Domain = domain, OwnerServiceId = owner, OwnerServiceName = name, RequestTopic = requestTopic };
 

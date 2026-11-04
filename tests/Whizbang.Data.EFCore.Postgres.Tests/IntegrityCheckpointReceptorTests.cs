@@ -849,7 +849,9 @@ public class IntegrityCheckpointReceptorTests {
     var fx = _fixture(metrics: metrics, logger: logger);
     var rival = Guid.Parse("0f000000-0000-0000-0000-00000000000f");
     fx.Coordinator.Conflicts = [new IntegrityDomainClaim {
-      Domain = "app.contracts.orders", OwnerServiceId = rival, OwnerServiceName = "rival-svc",
+      Domain = "app.contracts.orders",
+      OwnerServiceId = rival,
+      OwnerServiceName = "rival-svc",
     }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true) with { OwnedDomains = ["app.contracts.orders"] });
@@ -870,7 +872,9 @@ public class IntegrityCheckpointReceptorTests {
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
     fx.Coordinator.Counts = _ => [];
     fx.Coordinator.Claims = [new IntegrityDomainClaim {
-      Domain = VERIFIED_DOMAIN, OwnerServiceId = Guid.Parse("0f000000-0000-0000-0000-00000000000f"), OwnerServiceName = "owner-svc",
+      Domain = VERIFIED_DOMAIN,
+      OwnerServiceId = Guid.Parse("0f000000-0000-0000-0000-00000000000f"),
+      OwnerServiceName = "owner-svc",
     }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
@@ -887,12 +891,32 @@ public class IntegrityCheckpointReceptorTests {
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
     fx.Coordinator.Counts = _ => [];
     fx.Coordinator.Claims = [new IntegrityDomainClaim {
-      Domain = VERIFIED_DOMAIN, OwnerServiceId = fx.OriginId, OwnerServiceName = "origin-svc",
+      Domain = VERIFIED_DOMAIN,
+      OwnerServiceId = fx.OriginId,
+      OwnerServiceName = "origin-svc",
     }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
 
     await Assert.That(fx.Dispatcher.Published.OfType<IntegrityGapDetected>().Count()).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Checkpoint_APendingGapOfATypeLearnedLaterToBeAnothersOwn_IsDroppedAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
+    fx.Coordinator.Claims = [new IntegrityDomainClaim {
+      Domain = VERIFIED_DOMAIN,
+      OwnerServiceId = Guid.Parse("0f000000-0000-0000-0000-00000000000f"),
+      OwnerServiceName = "owner-svc",
+    }];
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty()
+      .Because("the deficit was recorded before the owner was known; once it is, the pending gap is not confirmed against this origin");
+    await Assert.That(fx.Transport.Published).IsEmpty();
   }
 }

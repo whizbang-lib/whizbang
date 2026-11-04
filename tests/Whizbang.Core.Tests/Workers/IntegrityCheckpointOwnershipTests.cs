@@ -142,6 +142,25 @@ public class IntegrityCheckpointOwnershipTests {
       .Because("the liveness beat is never dropped: with no owned topic to ride it goes through the dispatcher");
   }
 
+  [Test]
+  public async Task RunCheckpointOnce_NoOwnedDomains_AHistoricalTypeOutsideTheCatalog_RidesNoTopicAsync() {
+    var coordinator = new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 1, ToCommitSequence = 2 },
+      OwnAuditedEventTypes = ["Retired.Contracts.Gone, Retired"],
+    };
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, dispatcher, s => {
+      _addTransportInfrastructure(s, transport, new Catalog(_ordersType));
+      s.AddSingleton<IOutboxRoutingStrategy>(new DomainTopicOutboxStrategy());
+    });
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsEmpty().Because("a stored type no catalog entry resolves has no topic to ride");
+    await Assert.That(dispatcher.Published).Count().IsEqualTo(1);
+  }
+
   private static IntegrityCheckpointWorker _buildWorker(
       CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, Action<IServiceCollection> configure) {
     var services = new ServiceCollection();
