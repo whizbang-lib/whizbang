@@ -2477,11 +2477,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// One prefix-truncate statement from <see cref="StreamPrefixTruncateSql"/>, the copy the Dapper coordinator runs too
-  /// (#2043): the gate, this context's connection, the schema prefix and a command with the coordinator timeout.
+  /// (#2043): the gate, this context's connection, the schema prefix and a command with the coordinator timeout. The
+  /// slot is taken under the public member's name (<paramref name="caller"/>), so the gate's holder diagnostics name
+  /// the operation, not this helper.
   /// </summary>
   private async Task<T> _withPrefixTruncateCommandAsync<T>(
-      Func<System.Data.Common.DbCommand, string, Task<T>> operation, CancellationToken cancellationToken) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      Func<System.Data.Common.DbCommand, string, Task<T>> operation, CancellationToken cancellationToken,
+      [System.Runtime.CompilerServices.CallerMemberName] string caller = "<unknown>") {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken, caller).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
