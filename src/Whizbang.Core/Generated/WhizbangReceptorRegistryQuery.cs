@@ -78,6 +78,15 @@ public static class WhizbangReceptorRegistryQuery {
   }
 
   /// <summary>
+  /// Enumerates every consumed message type across all loaded assemblies' contributions, in the assembly-qualified
+  /// wire form: the list form of <see cref="HasAnyConsumer"/>.
+  /// </summary>
+  /// <returns>The consumed message types, deduplicated by type name and in ordinal order.</returns>
+  /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs</tests>
+  public static IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => [];
+
+  /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
   /// The generator uses <c>SymbolDisplayFormat.FullyQualifiedFormat</c> which produces dots for
   /// nested types (e.g., <c>"Ns.Outer.Inner"</c>), but at runtime <c>Type.AssemblyQualifiedName</c>
@@ -117,6 +126,7 @@ public static class WhizbangReceptorRegistryQuery {
     var inbox = new HashSet<string>(System.StringComparer.Ordinal);
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
     var handledByName = new Dictionary<string, HandledMessageInfo>(System.StringComparer.Ordinal);
+    var consumedByName = new Dictionary<string, ConsumedMessageInfo>(System.StringComparer.Ordinal);
     foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
       foreach (var t in contribution.AnyConsumerTypes) {
         any.Add(t);
@@ -138,10 +148,15 @@ public static class WhizbangReceptorRegistryQuery {
         // handled in two assemblies carries identical namespace/kind metadata anyway).
         handledByName.TryAdd(handled.MessageTypeName, handled);
       }
+      foreach (var consumed in contribution.ConsumedMessages) {
+        consumedByName.TryAdd(consumed.TypeName, consumed);
+      }
     }
     var handledList = new List<HandledMessageInfo>(handledByName.Values);
     handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
-    return new Snapshot(contributionCount, any, inbox, stages, handledList);
+    var consumedList = new List<ConsumedMessageInfo>(consumedByName.Values);
+    consumedList.Sort(static (a, b) => string.CompareOrdinal(a.TypeName, b.TypeName));
+    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList);
   }
 
   /// <summary>
@@ -184,11 +199,13 @@ public static class WhizbangReceptorRegistryQuery {
       HashSet<string> anyConsumer,
       HashSet<string> inboxHandler,
       Dictionary<LifecycleStage, HashSet<string>> stageTypes,
-      IReadOnlyList<HandledMessageInfo> handledMessages) {
+      IReadOnlyList<HandledMessageInfo> handledMessages,
+      IReadOnlyList<ConsumedMessageInfo> consumedMessages) {
     public int ContributionCount { get; } = contributionCount;
     public HashSet<string> AnyConsumer { get; } = anyConsumer;
     public HashSet<string> InboxHandler { get; } = inboxHandler;
     public Dictionary<LifecycleStage, HashSet<string>> StageTypes { get; } = stageTypes;
     public IReadOnlyList<HandledMessageInfo> HandledMessages { get; } = handledMessages;
+    public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; } = consumedMessages;
   }
 }

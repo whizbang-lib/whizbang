@@ -46,4 +46,9 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
   /// gates.</remarks>
   public IReadOnlyList<HandledMessageInfo> GetHandledMessages()
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetConsumedMessages_DelegatesToGeneratedStaticAsync</tests>
+  public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages()
+    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
 }

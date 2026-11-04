@@ -40,4 +40,12 @@ public sealed class ReceptorRegistryContribution {
   /// tests keep compiling and simply contribute no handled-message metadata.
   /// </summary>
   public IReadOnlyList<HandledMessageInfo> HandledMessages { get; init; } = [];
+
+  /// <summary>
+  /// Every message type this assembly consumes (the <see cref="AnyConsumerTypes"/> set), in the assembly-qualified
+  /// wire form with whether each is an event. NOT <c>required</c>: contributions built by older generator output or
+  /// hand-built in tests keep compiling and enumerate nothing.
+  /// </summary>
+  /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+  public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; init; } = [];
 }
