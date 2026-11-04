@@ -406,6 +406,23 @@ public class PostgresSignalTransportUnitTests {
   }
 
   [Test]
+  public async Task ACoordinationChannel_WhoseDispatchThrowsSynchronously_IsLoggedAndTheLoopContinuesAsync() {
+    // The notification arrives on the shared connection's receive loop: a throw there would end the loop for every
+    // channel, so it is logged and the next notification is still delivered.
+    var logger = new CapturingSignalLogger();
+    var (transport, shared, _) = _createTransport(logger: logger);
+    var sink = new CountingSink { ThrowOnReceive = true };
+    await transport.StartAsync(sink);
+    var committed = shared.All.Single(s => s.ChannelName == "wh_committed");
+
+    committed.OnNotification("");
+    committed.OnNotification("");
+
+    await Assert.That(sink.Received).IsEqualTo(2);
+    await Assert.That(logger.Messages.Count(m => m.Contains("committed", StringComparison.Ordinal))).IsEqualTo(2);
+  }
+
+  [Test]
   public async Task TheWorkChannel_DeliversOrphanedWorkAndDeadLetters_AsSignalsAsync() {
     // The reap's orphan wake and the dead-letter trigger send these payloads on the instance channel.
     var (transport, shared, instanceId) = _createTransport();

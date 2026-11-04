@@ -127,7 +127,7 @@ public static class RoleAssignmentServiceCollectionExtensions {
       [.. sp.GetServices<IDutyAcquisitionHandler>()],
       sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
       sp.GetRequiredService<ILogger<DutyHolderWorker>>(),
-      sp.GetService<ISharedNotifyConnection>(),
+      sp.GetService<Whizbang.Core.Signals.ISignalBus>(),
       sp.GetRequiredService<RoleAssignmentMetrics>()));
     // #1636: the holder loop votes, renews and runs owed work from Coordinate on. Before then its maintainer vote, and
     // the vacuum on winning, ran against tables the migration was altering and, on a fresh database, before they

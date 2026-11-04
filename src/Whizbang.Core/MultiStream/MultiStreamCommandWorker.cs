@@ -7,7 +7,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
-using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Workers;
@@ -25,10 +24,7 @@ namespace Whizbang.Core.MultiStream;
 /// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_AHandlerThatThrows_RecordsTheFailureAndWorksTheRestAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CanceledMidBatch_RecordsTheStreamsAlreadyDoneAndStopsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandWorkerLoopTests.cs:Loop_ANewRunNotice_WakesTheWorkerAsync</tests>
-public sealed partial class MultiStreamCommandWorker : BackgroundService, INotifySubscription, Whizbang.Core.RunControl.IObeysRunPermit {
-  /// <summary>The channel a newly recorded run is announced on.</summary>
-  public const string CHANNEL = "wh_multi_stream_work";
-
+public sealed partial class MultiStreamCommandWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit {
   private readonly IMultiStreamCommandStore _store;
   private readonly Dictionary<string, IMultiStreamCommandBinding> _bindings;
   private readonly IServiceScopeFactory _scopeFactory;
@@ -90,13 +86,10 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <summary>Raised after each pass of the loop with the number of streams it claimed; a pass that failed reports zero.</summary>
   public event Action<int>? OnPassCompleted;
 
-  /// <inheritdoc/>
-  public string ChannelName => CHANNEL;
-
-  /// <inheritdoc/>
-  public void OnNotification(string payload) => RequestImmediateRun();
-
-  /// <summary>Wakes the loop for a pass now instead of at the next poll.</summary>
+  /// <summary>
+  /// Wakes the loop for a pass now instead of at the next poll: called when a new run is announced on the signal bus
+  /// (<see cref="Whizbang.Core.Signals.MultiStreamWorkSignal"/>, #2046).
+  /// </summary>
   public void RequestImmediateRun() {
     try {
       _wake.Release();

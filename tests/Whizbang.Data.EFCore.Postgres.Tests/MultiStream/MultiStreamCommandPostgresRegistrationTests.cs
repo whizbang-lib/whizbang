@@ -88,7 +88,8 @@ public class MultiStreamCommandPostgresRegistrationTests {
     var subscriber = sp.GetServices<IHostedService>().OfType<MultiStreamCommandSubscriber>().Single();
 
     await subscriber.StartAsync(CancellationToken.None);
-    var subscribed = bus.Subscriptions.Single();
+    // Other services built by the container subscribe to the bus too; this one subscribes to new-run signals.
+    var subscribed = bus.Subscriptions.Single(s => s.SignalType == typeof(MultiStreamWorkSignal));
     await subscriber.StopAsync(CancellationToken.None);
     await subscriber.StopAsync(CancellationToken.None);
 

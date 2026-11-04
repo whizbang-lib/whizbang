@@ -17,7 +17,7 @@ internal static class DutyHolders {
 
   private static DutyHolderWorker _holder(bool grants, string role) =>
     new(new Elector(grants), new NoOwedWork(), [new Handler(role)], [], Options.Create(new RoleAssignmentOptions()),
-      NullLogger<DutyHolderWorker>.Instance, notify: null);
+      NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private sealed class Handler(string role) : IDutyWorkHandler {
     public string Role => role;

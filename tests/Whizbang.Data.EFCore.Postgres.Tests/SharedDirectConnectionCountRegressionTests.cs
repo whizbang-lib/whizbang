@@ -58,60 +58,52 @@ public class SharedDirectConnectionCountRegressionTests : EFCoreTestBase {
     Whizbang.Core.Notifications.AppSignals.IAppSignalChannel appChannel = bus;
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var available = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    shared.OnAvailabilityChanged += isAvailable => {
+      if (isAvailable) {
+        available.TrySetResult();
+      }
+    };
 
     await ((IHostedService)shared).StartAsync(cts.Token);
     await bus.StartAsync(cts.Token);
     await ((IHostedService)workListener).StartAsync(cts.Token);
     using var appSub = appChannel.Subscribe("test_topic", (_, _) => Task.CompletedTask);
 
-    // The signal: the shared connection has issued each LISTEN.
-    var workChannel = $"wh_work_i_{instanceProvider.InstanceId:D}";
-    await shared.WaitForChannelListenedAsync(workChannel, cts.Token);
-    await shared.WaitForChannelListenedAsync(PgSignalWire.COMMITTED_CHANNEL, cts.Token);
-    await shared.WaitForChannelListenedAsync("wh_app_test_topic", cts.Token);
+    // The signals: the functionality probe has finished (its ephemeral connection is closed), and the shared
+    // connection has issued every LISTEN: the instance channel, the broadcast channel, each coordination channel and
+    // the application topic.
+    if (!shared.IsAvailable) {
+      await available.Task.WaitAsync(cts.Token);
+    }
+    string[] channels = [
+      $"wh_work_i_{instanceProvider.InstanceId:D}", "wh_signal_broadcast", "wh_app_test_topic",
+      .. PgSignalWire.Bindings.Select(b => b.Channel),
+    ];
+    foreach (var channel in channels) {
+      await shared.WaitForChannelListenedAsync(channel, cts.Token);
+    }
 
-    // Count distinct sessions on this database that are LISTENing on our 3 channels
-    // (work, committed, app) by name match.
-    var listeningPids = await _countListeningSessionsAsync(workChannel, PgSignalWire.COMMITTED_CHANNEL, "wh_app_test_topic");
-
-    // EXPECTED: exactly 1 session (the shared conn) holds LISTEN on all three channels.
-    await Assert.That(listeningPids).IsEqualTo(1)
+    // EXPECTED: exactly 1 session of this instance (the shared conn, named for the instance) holds every LISTEN.
+    await Assert.That(await _countInstanceSessionsAsync(instanceProvider.InstanceId)).IsEqualTo(1)
       .Because("every LISTEN is the bus's, on a single per-pod direct conn; baseline was 3 (one per listener)");
 
     await ((IHostedService)workListener).StopAsync(CancellationToken.None);
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
-  /// <summary>
-  /// Counts distinct backend PIDs that are LISTENing on ANY of the given channels in
-  /// the current database. Uses <c>pg_listening_channels()</c> evaluated per session via
-  /// <c>pg_stat_activity</c> backend-PID join.
-  /// </summary>
-  private async Task<int> _countListeningSessionsAsync(params string[] channels) {
-    await using var dbContext = CreateDbContext();
-    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync();
-    }
-
-    // pg_listening_channels() is per-backend (evaluates against current session), so we
-    // can't directly query "all sessions' listened channels" from one session. Instead
-    // we use the inet_server_addr / pg_stat_activity backed view alternative: query
-    // pg_stat_activity for sessions with `wait_event = 'ClientRead'` AND `query` matching
-    // the LISTEN commands. Simpler and works: count distinct PIDs whose recent `query`
-    // text is LISTEN on our channels.
-    var channelList = string.Join(" OR ", channels.Select(c => $"query LIKE '%LISTEN%\"{c}\"%'"));
-    var sql = $@"
+  /// <summary>Counts the sessions open under the instance's application name.</summary>
+  private async Task<int> _countInstanceSessionsAsync(Guid instanceId) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
       SELECT count(DISTINCT pid)::int
       FROM pg_stat_activity
       WHERE datname = current_database()
-        AND state IS NOT NULL
-        AND pid != pg_backend_pid()
-        AND ({channelList})";
-
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = sql;
-    var result = await cmd.ExecuteScalarAsync();
-    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+        AND application_name = @app
+        AND pid != pg_backend_pid()";
+    cmd.Parameters.AddWithValue("app", $"whizbang-{instanceId:D}");
+    return (int)(await cmd.ExecuteScalarAsync())!;
   }
 }

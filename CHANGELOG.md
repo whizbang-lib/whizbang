@@ -885,6 +885,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AuditLedgerRebuild` constructor overload takes an `ILogger<AuditLedgerRebuild>`, which the built-in rebuild receptor
   resolves from the container. `OptOut` is unchanged: the type is audited.
 
+- **Coordination channels move onto the signal bus (#2046).** Every raw notification channel is now a typed signal on
+  `ISignalBus`, and the bus alone issues NOTIFY and LISTEN: `RoleReleasedSignal` and `PartitionAssignmentPublishedSignal`
+  are decisions, recorded in the durable signal log with their payload (new `wh_signals.payload`, migration 330) and
+  replayed by each instance's tail to a subscriber that missed the notification; `RowsCommittedSignal`,
+  `MultiStreamWorkSignal`, `WorkOrphanedSignal` and `DeadLetterReadySignal` are best-effort doorbells, each with a poll
+  behind it. Signals that carry a payload implement `IPayloadSignal<TSelf>`. Application topics ride the bus too:
+  `IAppSignalChannel` is the bus, and its Postgres transport carries each topic (`PgAppSignalChannel` is removed; a
+  transport that carries topics implements `ISignalTopicTransport`). One SQL function publishes, `wh_publish_signal`;
+  the role release, the partition-assignment publish, the multi-stream run and the reap's orphan wake call it. The
+  holder loop, the commit-order stamper, the partition cache, the multi-stream worker and the work listener subscribe
+  on the bus: `DutyHolderWorker` and `PgCommitOrderStamperWorker` take an `ISignalBus` where they took the shared notify
+  connection, `PgWorkNotificationListener` takes the bus, `PartitionAssignmentCache.OnPublished` replaces its
+  notification handler, and the channel constants (`DutyHolderWorker.RELEASE_CHANNEL`, `PartitionAssignmentCache.CHANNEL`,
+  `MultiStreamCommandWorker.CHANNEL`, `PgMultiStreamCommandStore.CHANNEL`) are gone. Every channel name and payload on
+  the wire is unchanged, so a mixed fleet keeps hearing each other during a rolling deploy in both directions; an older
+  instance's tail skips the new durable wire names. The coordination source guard allows a subscription to the shared
+  connection only in the bus's files and names a coordination channel only in the bus's wire, and no allowlist entry is
+  left pending.
 - **Stream-integrity work runs on the maintainer, idle-gated (#2001).** Received checkpoints, manifest requests,
   manifest chunks, redelivery requests and bundle reconciles are recorded in `wh_integrity_deliveries` (migration 302)
   and drained one at a time by `IntegrityDeliveryWorker` on the maintainer duty's holder, with retry backoff and an

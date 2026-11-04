@@ -134,8 +134,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Hosted to start at Accept commands (#1636): it stamps the message tables the data plane fills.
     services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
 
-    // App-signal channel (publishes pg_notify on wh_app_<topic>).
-    services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
+    // App signals ride the signal bus (#2046): the channel is the bus, whose Postgres transport carries each topic on
+    // wh_app_<topic>.
+    services.TryAddSingleton<IAppSignalChannel>(static sp => sp.GetRequiredService<Whizbang.Core.Signals.SignalBus>());
 
     // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
     // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink —

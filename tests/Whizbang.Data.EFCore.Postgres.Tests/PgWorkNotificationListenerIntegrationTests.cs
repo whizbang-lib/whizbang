@@ -329,8 +329,8 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       if (!healthy) { healthDropped.TrySetResult(); } else if (healthDropped.Task.IsCompleted) { healthRecovered.TrySetResult(); }
     };
 
-    // Terminate the listener's backend session. Match by query text — the LISTEN session
-    // sits idle with `query` retaining 'LISTEN wh_work' in pg_stat_activity.
+    // Terminate the listener's backend session: the instance's one LISTEN connection, found by the application name it
+    // carries (the bus listens on several channels, so the session's last statement is any one of its LISTENs).
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -341,8 +341,10 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
         WHERE datname = current_database()
-          AND query LIKE '%LISTEN%wh_work_i_%'
+          AND application_name = @app
+          AND query LIKE '%LISTEN%'
           AND pid != pg_backend_pid()";
+      kill.Parameters.AddWithValue("app", $"whizbang-{instanceId:D}");
       _ = await kill.ExecuteScalarAsync();
     }
 

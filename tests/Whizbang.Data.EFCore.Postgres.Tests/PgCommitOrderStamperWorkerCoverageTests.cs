@@ -145,7 +145,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     await bus.StartAsync();
     var worker = _newWorker(bus: bus);
     var listening = worker.ListenForWakes();
-    await Assert.That(worker.PendingWakes.Wait(0)).IsTrue().Because("the loop starts with one wake pending");
+    await Assert.That(await worker.PendingWakes.WaitAsync(0)).IsTrue().Because("the loop starts with one wake pending");
 
     await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
     await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(1).Because("a commit wakes the stamping loop");
@@ -160,7 +160,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(1).Because("a release heard twice is one vacancy");
 
     listening.Dispose();
-    await Assert.That(worker.PendingWakes.Wait(0)).IsTrue();
+    await Assert.That(await worker.PendingWakes.WaitAsync(0)).IsTrue();
     await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
     await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(0).Because("a stopped listener wakes nothing");
   }

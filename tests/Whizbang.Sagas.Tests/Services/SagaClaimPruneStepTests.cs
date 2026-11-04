@@ -211,7 +211,7 @@ public class SagaClaimPruneStepTests {
   private static DutyHolderWorker _holder(bool grants, string role = StartupDuties.MAINTAINER) =>
     new(new Elector(grants), new NoOwedWork(), [new Handler(role)], [],
       Options.Create(new RoleAssignmentOptions { Roles = { StartupDuties.MIGRATOR } }),
-      NullLogger<DutyHolderWorker>.Instance, notify: null);
+      NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private sealed record PruneCall(string Prefix, DateTimeOffset Before);
 

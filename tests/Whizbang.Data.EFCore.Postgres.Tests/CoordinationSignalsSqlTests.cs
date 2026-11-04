@@ -45,7 +45,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync(ct);
     await using var cmd = new NpgsqlCommand(
       "SELECT wire_name, payload, target_instance_id FROM wh_signals WHERE id > @id ORDER BY id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     var rows = new List<SignalRow>();
     while (await reader.ReadAsync(ct)) {
@@ -79,7 +79,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   public async Task PublishSignal_ADecision_IsRecordedWithItsPayload_AndNotifiedAtCommitAsync(CancellationToken cancellationToken) {
     var before = await _maxSignalIdAsync(cancellationToken);
     var (listener, payloads) = await _listenAsync(PgSignalWire.ROLE_RELEASED_CHANNEL, cancellationToken);
-    await using var _ = listener;
+    await using var listening = listener;
 
     await using (var conn = await _openAsync(cancellationToken))
     await using (var cmd = new NpgsqlCommand("SELECT wh_publish_signal(@channel, @payload, @wire)", conn)) {
@@ -99,7 +99,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   public async Task PublishSignal_ADoorbell_IsNotifiedButNeverRecordedAsync(CancellationToken cancellationToken) {
     var before = await _maxSignalIdAsync(cancellationToken);
     var (listener, payloads) = await _listenAsync(PgSignalWire.COMMITTED_CHANNEL, cancellationToken);
-    await using var _ = listener;
+    await using var listening = listener;
 
     await using (var conn = await _openAsync(cancellationToken))
     await using (var cmd = new NpgsqlCommand("SELECT wh_publish_signal(@channel, @payload)", conn)) {
@@ -135,7 +135,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   public async Task RecordingAMultiStreamRun_RingsTheOlderChannelWithTheRunId_AndRecordsNothingAsync(CancellationToken cancellationToken) {
     var before = await _maxSignalIdAsync(cancellationToken);
     var (listener, payloads) = await _listenAsync(PgSignalWire.MULTI_STREAM_WORK_CHANNEL, cancellationToken);
-    await using var _ = listener;
+    await using var listening = listener;
     var run = Guid.CreateVersion7();
 
     await using (var conn = await _openAsync(cancellationToken))
@@ -195,7 +195,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   public async Task PublishingADecisionOnTheBus_RecordsIt_AndRingsTheOlderChannelAsync(CancellationToken cancellationToken) {
     var before = await _maxSignalIdAsync(cancellationToken);
     var (listener, payloads) = await _listenAsync(PgSignalWire.ROLE_RELEASED_CHANNEL, cancellationToken);
-    await using var _ = listener;
+    await using var listening = listener;
     await using var stack = PgSignalBusStack.Create(ConnectionString);
     await stack.Transport.StartAsync(new RecordingSink(), cancellationToken);
 
@@ -212,7 +212,7 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   public async Task PublishingADoorbellOnTheBus_RingsTheOlderChannel_AndRecordsNothingAsync(CancellationToken cancellationToken) {
     var before = await _maxSignalIdAsync(cancellationToken);
     var (listener, payloads) = await _listenAsync(PgSignalWire.MULTI_STREAM_WORK_CHANNEL, cancellationToken);
-    await using var _ = listener;
+    await using var listening = listener;
     await using var stack = PgSignalBusStack.Create(ConnectionString);
     await stack.Transport.StartAsync(new RecordingSink(), cancellationToken);
 

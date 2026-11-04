@@ -59,7 +59,8 @@ public class SignalBusAppTopicTests {
     var first = new TopicTransport();
     var second = new TopicTransport();
     IAppSignalChannel channel = new SignalBus([first, second], []);
-    Func<string, CancellationToken, Task> handler = (_, _) => Task.CompletedTask;
+    static Task handlerAsync(string payload, CancellationToken cancellationToken) => Task.CompletedTask;
+    Func<string, CancellationToken, Task> handler = handlerAsync;
 
     var subscription = channel.Subscribe("orders", handler);
 
