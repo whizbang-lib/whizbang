@@ -14,7 +14,7 @@ BeforeAll {
       $needs[$job] = @{ result = 'success'; outputs = @{} }
     }
     $needs['changes'].outputs = @{ code = 'true' }
-    foreach ($job in @('release-pr', 'ff-validated', 'queue-validated', 'verify-rebuild', 'reupload-reports')) {
+    foreach ($job in @('release-pr', 'ff-validated', 'queue-validated', 'verify-rebuild', 'reupload-reports', 'queue-quality')) {
       $needs[$job] = @{ result = 'skipped'; outputs = @{} }
     }
     return $needs
@@ -97,6 +97,29 @@ Describe 'tested here' {
     $v = Get-CiVerdict -NeedsTable $n -EventName workflow_dispatch
     $v.Path | Should -Be 'tested here'
     $v.Pass | Should -BeFalse
+  }
+}
+
+Describe 'tested here, in the merge queue (#2070)' {
+  # The queue reports the quality gate to each pull request in its group from queue-quality; quality itself
+  # does not run there.
+  It 'passes when queue-quality is green and quality skipped' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality'); $n['queue-quality'].result = 'success'
+    $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
+    $v.Path | Should -Be 'tested here'
+    $v.Pass | Should -BeTrue
+  }
+
+  It 'fails when queue-quality did not run' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality')
+    $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain 'queue-quality is skipped, but nothing proves this tree was tested anywhere else'
+  }
+
+  It 'fails when one pull request''s leg failed' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality'); $n['queue-quality'].result = 'failure'
+    (Get-CiVerdict -NeedsTable $n -EventName merge_group).Problems | Should -Contain 'queue-quality failure'
   }
 }
 

@@ -27,6 +27,8 @@
       tested here   anything else: build, the analyzers, every suite and Quality must be green. A skip
                     fails. Compile builds with the analyzers off (#2068), so Build - Analyzers is the
                     only job that enforces them; every other path proves a run where it went green.
+                    In the merge queue the quality gate is queue-quality, one leg per pull request in
+                    the group (#2070), in place of quality.
 
     On every path, any failed or canceled job fails the gate. A push to a release branch must also have
     built and packed, whatever path it took (#1208): that run is the one the stable publish promotes
@@ -158,7 +160,10 @@ function Get-CiVerdict {
       & $require 'build' $why
       & $require 'analyzers' $why
       foreach ($suite in $script:Suites) { & $require $suite $why }
-      if (-not ($EventName -eq 'pull_request' -and $Actor -eq 'dependabot[bot]')) {
+      if ($EventName -eq 'merge_group') {
+        # The queue reports the quality gate to each pull request in its group (#2070).
+        & $require 'queue-quality' $why
+      } elseif (-not ($EventName -eq 'pull_request' -and $Actor -eq 'dependabot[bot]')) {
         & $require 'quality' $why
       }
     }

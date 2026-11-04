@@ -927,6 +927,7 @@ Describe 'Which class each ci.yml job takes' {
       'script-tests'           = 'any-os'
       'quality-build'          = 'analyze'
       'quality'                = 'analyze'
+      'queue-quality'          = 'analyze'
       'postgres-integration'   = 'linux-docker'
       'inmemory-integration'   = 'linux-docker'
       'rabbitmq-integration'   = 'linux-docker'
@@ -946,6 +947,7 @@ Describe 'Which class each ci.yml job takes' {
     @{ Job = 'script-tests'; Class = 'any-os' }
     @{ Job = 'quality-build'; Class = 'analyze' }
     @{ Job = 'quality'; Class = 'analyze' }
+    @{ Job = 'queue-quality'; Class = 'analyze' }
     @{ Job = 'postgres-integration'; Class = 'linux-docker' }
     @{ Job = 'inmemory-integration'; Class = 'linux-docker' }
     @{ Job = 'rabbitmq-integration'; Class = 'linux-docker' }

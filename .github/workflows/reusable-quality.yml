@@ -33,6 +33,56 @@ on:
         type: string
         required: false
         default: ''
+      sonar:
+        description: >-
+          True where Analyze · Quality build began a scan to end here: a pull-request analysis (a PR run, or a
+          merge-queue leg) or main. False elsewhere (develop and release-branch pushes).
+        type: boolean
+        required: false
+        default: false
+      pull-request:
+        description: >-
+          The pull request this gate reports to (comment, findings, failure). Empty: no pull request (a push).
+        type: string
+        required: false
+        default: ''
+      pull-request-head:
+        description: The pull request's head branch (a merge-queue leg re-points the scan at it).
+        type: string
+        required: false
+        default: ''
+      checked-sha:
+        description: The commit the comment says was checked (the PR head, or the queue group's commit).
+        type: string
+        required: false
+        default: ''
+      pull-request-sha:
+        description: >-
+          The pull request's head commit, which the comment's findings block names so
+          scripts/Invoke-PrReviewDraft.ps1 drafts it on the head (a block naming another commit reads as stale).
+        type: string
+        required: false
+        default: ''
+      diff-base:
+        description: >-
+          What new code is measured against: a branch name (a PR run: its base branch, fetched here) or a
+          commit (a merge-queue leg: the queue base, already in the full-history checkout).
+        type: string
+        required: false
+        default: ''
+      queue-group:
+        description: >-
+          True on a merge-queue leg (#2070): the coverage and Sonar findings are the whole group's, so only
+          those in files this pull request changed are reported to it and fail it, and the scan is re-pointed
+          at this pull request before it ends. The library-wide gap is reported to every pull request.
+        type: boolean
+        required: false
+        default: false
+      upload-coverage:
+        description: Upload the merged coverage to Codecov (one leg of a merge-queue group does, not each).
+        type: boolean
+        required: false
+        default: true
     secrets:
       SONAR_TOKEN:
         description: "SonarCloud token"
@@ -81,7 +131,7 @@ jobs:
       # The first half's analysis state: only where the scanner runs. Missing state on such a run fails here,
       # so a scan can never end without the build it analyzes.
       - name: Download the analysis state
-        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        if: inputs.sonar
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sonar-state-${{ github.run_id }}
@@ -92,7 +142,7 @@ jobs:
       # (GitHub-hosted runners all check out at the same path); a different path is linked to this
       # checkout, and the job fails, naming both paths, if even that is not possible.
       - name: Restore the analysis state
-        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        if: inputs.sonar
         env:
           STATE: ${{ runner.temp }}/sonar-state
         run: |
@@ -111,6 +161,15 @@ jobs:
           fi
           echo "SONARSCANNER_VERSION=$(cat "$STATE/sonarscanner-version.txt")" >> "$GITHUB_ENV"
           echo "Restored the analysis state begun in $BEGAN with dotnet-sonarscanner $(cat "$STATE/sonarscanner-version.txt")."
+
+      # One build of a merge-queue group serves every pull request in it: the scan began as the group's
+      # first pull request's analysis, and this leg reports it as its own (Set-SonarPullRequest.ps1).
+      - name: Point the analysis at this pull request
+        if: inputs.sonar && inputs.queue-group
+        env:
+          PR: ${{ inputs.pull-request }}
+          HEAD_REF: ${{ inputs.pull-request-head }}
+        run: pwsh -NoProfile -File .github/scripts/Set-SonarPullRequest.ps1 -ConfigPath .sonarqube/conf/SonarQubeAnalysisConfig.xml -Key "$PR" -Branch "$HEAD_REF"
 
       - name: Install tools
         run: |
@@ -228,6 +287,7 @@ jobs:
           ls -laR coverage/ || echo "Coverage directory empty or missing"
 
       - name: Upload Merged Coverage to Codecov
+        if: inputs.upload-coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -276,21 +336,38 @@ jobs:
         id: uncovered
         shell: pwsh
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
+          PR: ${{ inputs.pull-request }}
+          DIFF_BASE: ${{ inputs.diff-base }}
+          QUEUE_GROUP: ${{ inputs.queue-group }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           $gate = @()
-          if ($env:EVENT_NAME -eq 'pull_request') {
-            git fetch --no-tags origin "$env:BASE_REF"
-            $gate = @('-BaseRef', "origin/$env:BASE_REF", '-OutFile', 'coverage/uncovered-new-lines.txt', '-BranchOutFile', 'coverage/uncovered-new-branches.txt')
+          if ($env:PR) {
+            # A PR run measures against its base branch; a merge-queue leg against the queue base, a commit
+            # the full-history checkout already holds.
+            $base = $env:DIFF_BASE
+            if ($base -notmatch '^[0-9a-f]{40}$') {
+              git fetch --no-tags origin "$base"
+              $base = "origin/$base"
+            }
+            $gate = @('-BaseRef', $base, '-OutFile', 'coverage/uncovered-new-lines.txt', '-BranchOutFile', 'coverage/uncovered-new-branches.txt')
           }
           & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -MergedOutFile coverage-merged/merged.cobertura.xml -SummaryOutFile coverage-merged/whole-library.json -LibraryGapOutFile coverage-merged/library-gap.txt @gate | Write-Host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:QUEUE_GROUP -eq 'true') {
+            # The group's new code is every pull request's; this one is reported only the findings in the
+            # files it changed (a file two of them changed reports to both).
+            gh api --paginate "repos/$env:REPO/pulls/$env:PR/files" --jq '.[].filename' > coverage/pr-files.txt
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::Could not list the files pull request #$env:PR changed."; exit 1 }
+            & pwsh .github/scripts/Select-PullRequestFinding.ps1 -FileList coverage/pr-files.txt -Path coverage/uncovered-new-lines.txt, coverage/uncovered-new-branches.txt | Write-Host
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           $whole = Get-Content coverage-merged/whole-library.json -Raw | ConvertFrom-Json
           "whole=$($whole.Text)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "wholeUntested=$($whole.Untested)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "wholeUncoveredLines=$($whole.UncoveredLines)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          if ($env:EVENT_NAME -eq 'pull_request') {
+          if ($env:PR) {
             $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
             $branches = @(Get-Content coverage/uncovered-new-branches.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
             "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -363,7 +440,7 @@ jobs:
         # Every other context — develop pushes, the merge queue, a dispatch on any other branch —
         # skips the scanner entirely. Analyzing anything else is actively harmful: see the branch
         # note below.
-        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        if: inputs.sonar
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -372,21 +449,28 @@ jobs:
       # ---- PR quality gate: 100% of new lines and hand-written branches covered, zero Sonar findings --
       # The uncovered new lines and branches were listed by "Merge Coverage Across Test Processes".
       - name: Sonar Findings on New Code
-        if: github.event_name == 'pull_request'
+        if: inputs.pull-request != ''
         id: sonar-findings
         shell: pwsh
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR: ${{ inputs.pull-request }}
+          QUEUE_GROUP: ${{ inputs.queue-group }}
         run: |
-          & pwsh scripts/Get-SonarPrFindings.ps1 -PullRequest ${{ github.event.pull_request.number }} -WaitForAnalysis .sonarqube/out/.sonar/report-task.txt -OutFile coverage/sonar-findings.txt | Write-Host
+          & pwsh scripts/Get-SonarPrFindings.ps1 -PullRequest $env:PR -WaitForAnalysis .sonarqube/out/.sonar/report-task.txt -OutFile coverage/sonar-findings.txt | Write-Host
+          if ($env:QUEUE_GROUP -eq 'true') {
+            & pwsh .github/scripts/Select-PullRequestFinding.ps1 -FileList coverage/pr-files.txt -Path coverage/sonar-findings.txt | Write-Host
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           $count = @(Get-Content coverage/sonar-findings.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload PR Gate Reports
-        if: github.event_name == 'pull_request' && always()
+        if: inputs.pull-request != '' && always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: pr-quality-gate
+          # One per pull request in a merge-queue group.
+          name: pr-quality-gate${{ inputs.queue-group && format('-{0}', inputs.pull-request) || '' }}
           path: |
             coverage/uncovered-new-lines.txt
             coverage/uncovered-new-branches.txt
@@ -396,7 +480,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Comment PR Gate Results
-        if: github.event_name == 'pull_request' && always() && steps.uncovered.outputs.count != ''
+        if: inputs.pull-request != '' && always() && steps.uncovered.outputs.count != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -406,7 +490,10 @@ jobs:
           WHOLE_LIBRARY: ${{ steps.uncovered.outputs.whole }}
           WHOLE_UNTESTED: ${{ steps.uncovered.outputs.wholeUntested }}
           WHOLE_UNCOVERED_LINES: ${{ steps.uncovered.outputs.wholeUncoveredLines }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ inputs.checked-sha }}
+          PR_HEAD_SHA: ${{ inputs.pull-request-sha || inputs.checked-sha }}
+          PR: ${{ inputs.pull-request }}
+          QUEUE_GROUP: ${{ inputs.queue-group }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           MARKER="<!-- pr-quality-gate -->"
@@ -414,7 +501,7 @@ jobs:
           BODY="${MARKER}
           ## PR quality gate
 
-          Checked commit \`${HEAD_SHA:0:9}\` at ${CHECKED_AT} ([run](${RUN_URL}))
+          Checked commit \`${HEAD_SHA:0:9}\` at ${CHECKED_AT} ([run](${RUN_URL}))$([ "$QUEUE_GROUP" = true ] && echo ", in the merge queue: the integration suites and this gate run there, once, for every pull request in the group, and each pull request is reported the findings in the files it changed")
 
           | Check | Result |
           |---|---|
@@ -454,22 +541,22 @@ jobs:
           "
           fi
           BODY="${BODY}
-          Reproduce locally: \`pwsh scripts/Invoke-PrHealth.ps1 -PullRequest ${{ github.event.pull_request.number }}\`
-          A maintainer can draft these as a review: \`pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest ${{ github.event.pull_request.number }}\`"
+          Reproduce locally: \`pwsh scripts/Invoke-PrHealth.ps1 -PullRequest ${PR}\`
+          A maintainer can draft these as a review: \`pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest ${PR}\`"
           # The same findings as a hidden block scripts/Invoke-PrReviewDraft.ps1 reads (scripts/lib/ReviewFindings.psm1).
-          BLOCK=$(pwsh -NoProfile -Command "Import-Module ./scripts/lib/ReviewFindings.psm1; ConvertTo-ReviewBlock -Source pr-quality-gate -Sha '${HEAD_SHA}' -Findings @(Get-GateFindings -UncoveredLinesFile coverage/uncovered-new-lines.txt -UncoveredBranchesFile coverage/uncovered-new-branches.txt -SonarFile coverage/sonar-findings.txt)") \
+          BLOCK=$(pwsh -NoProfile -Command "Import-Module ./scripts/lib/ReviewFindings.psm1; ConvertTo-ReviewBlock -Source pr-quality-gate -Sha '${PR_HEAD_SHA}' -Findings @(Get-GateFindings -UncoveredLinesFile coverage/uncovered-new-lines.txt -UncoveredBranchesFile coverage/uncovered-new-branches.txt -SonarFile coverage/sonar-findings.txt)") \
             || BLOCK="<!-- whizbang-review findings block could not be written -->"
           BODY="${BODY}
 
           ${BLOCK}"
           # Re-post rather than edit, so the latest result is always the newest comment in the thread (an
           # edited comment keeps its original position and creation time, which reads as stale).
-          gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
+          gh api --method POST "repos/${{ github.repository }}/issues/${PR}/comments" -f body="${BODY}" >/dev/null
           # Every run keeps its comment; earlier ones are minimized as outdated, never deleted.
-          pwsh -NoProfile -File .github/scripts/Hide-OutdatedComments.ps1 -Repository "${{ github.repository }}" -PullRequest "${{ github.event.pull_request.number }}" -Marker "$MARKER"
+          pwsh -NoProfile -File .github/scripts/Hide-OutdatedComments.ps1 -Repository "${{ github.repository }}" -PullRequest "${PR}" -Marker "$MARKER"
 
       - name: Fail on PR Gate Violations
-        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.uncovered.outputs.branches != '0' || steps.sonar-findings.outputs.count != '0' || steps.uncovered.outputs.wholeUntested != '0' || steps.uncovered.outputs.wholeUncoveredLines != '0')
+        if: inputs.pull-request != '' && (steps.uncovered.outputs.count != '0' || steps.uncovered.outputs.branches != '0' || steps.sonar-findings.outputs.count != '0' || steps.uncovered.outputs.wholeUntested != '0' || steps.uncovered.outputs.wholeUncoveredLines != '0')
         run: |
           echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.uncovered.outputs.branches }} uncovered new branch(es), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s), ${{ steps.uncovered.outputs.wholeUncoveredLines }} never-run line(s) and ${{ steps.uncovered.outputs.wholeUntested }} untested hand-written outcome(s) in the whole library. All must be zero (see the pr-quality-gate artifact, its library-gap.txt, and the PR comment)."
           exit 1

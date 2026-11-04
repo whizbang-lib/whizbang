@@ -21,7 +21,7 @@
     the queue's gates checked before groups were batched.
 
     With -GitHubOutput, writes the step outputs `numbers` (space-separated), `matrix` (a JSON array of
-    {"pr": N, "head": "<head branch>"} for a job matrix) and `first` / `first-head` (the first pull request
+    {"pr": N, "head": "<head branch>", "sha": "<head commit>"} for a job matrix) and `first` / `first-head` (the first pull request
     and its head branch). Exit 1 when no pull request can be named at all.
 
 .PARAMETER Repository
@@ -116,9 +116,10 @@ if ($numbers.Count -eq 0) {
 }
 
 $entries = foreach ($n in $numbers) {
-  $head = gh api "repos/$Repository/pulls/$n" --jq '.head.ref'
+  $head = gh api "repos/$Repository/pulls/$n" --jq '.head.ref + " " + .head.sha'
   if ($LASTEXITCODE -ne 0 -or -not $head) { Write-Output "::error::Could not read pull request #$n."; exit 1 }
-  [ordered]@{ pr = $n; head = [string]$head }
+  $ref, $sha = ([string]$head).Split(' ', 2)
+  [ordered]@{ pr = $n; head = $ref; sha = $sha }
 }
 $entries = @($entries)
 Write-Output "Pull requests in this queue group: $(($numbers | ForEach-Object { "#$_" }) -join ', ')"

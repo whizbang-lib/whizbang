@@ -1108,13 +1108,15 @@ jobs:
   quality-build:
     name: Analyze · Quality build
     # The first half of Quality (#2068): SonarScanner begin and the Sonar-wrapped build, while the suites
-    # run. Only where the scanner runs, a pull request or main: on any other run the second half needs no
-    # build at all (the coverage merge reads reports and the checkout), and the analyzers are enforced by
-    # Build · Analyzers. Same conditions as the second half otherwise; see the notes there.
-    needs: [changes, queue-validated, ff-validated, release-pr, pick-runner]
+    # run. Only where the scanner runs: a pull request, the merge queue (a pull-request analysis of the
+    # group's first pull request, re-pointed per pull request by queue-quality, #2070) or main. On any other
+    # run the second half needs no build at all (the coverage merge reads reports and the checkout), and the
+    # analyzers are enforced by Build · Analyzers. Same conditions as the second half otherwise; see the
+    # notes there.
+    needs: [changes, queue-validated, ff-validated, release-pr, queue-prs, pick-runner]
     if: >-
       !failure() && !cancelled() &&
-      (github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group' ||
        ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')) &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
@@ -1125,6 +1127,10 @@ jobs:
     uses: ./.github/workflows/reusable-quality-build.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      # Empty on main: the main-line analysis. The merge queue runs only for develop (its ruleset).
+      pull-request: ${{ github.event.pull_request.number || needs.queue-prs.outputs.first }}
+      pull-request-head: ${{ github.head_ref || needs.queue-prs.outputs.first-head }}
+      pull-request-base: ${{ github.base_ref || (github.event_name == 'merge_group' && 'develop' || '') }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -1164,12 +1170,13 @@ jobs:
     # With the suites yielded, this run has no coverage of its own: Quality waits for, and
     # analyzes, the covering run's (coverage-run-id from release-pr). That is the one wait left,
     # since a job dependency cannot name another run's jobs.
+    # The merge queue reports to each pull request in its group: queue-quality, below.
     if: >-
-      !failure() && !cancelled() &&
+      !failure() && !cancelled() && github.event_name != 'merge_group' &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
       needs.ff-validated.outputs.skip != 'true' &&
-      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
       actions: read
@@ -1181,6 +1188,50 @@ jobs:
       # Set when the suites yielded to another run over the same tree (a release PR's push run, or
       # the release-branch run behind a main push): the coverage to analyze lives there.
       coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
+      sonar: ${{ github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') }}
+      pull-request: ${{ github.event.pull_request.number || '' }}
+      checked-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      diff-base: ${{ github.base_ref }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # The merge queue's quality gate (#2070): one leg per pull request in the group (queue-prs), each the same
+  # gate a PR run applies, reported to that pull request. The group is built and scanned once
+  # (quality-build); each leg points the scan at its own pull request and ends it, so SonarCloud records an
+  # analysis under each pull request's key. The uncovered new lines and branches and the Sonar findings are
+  # the whole group's, so each pull request is reported, and failed by, only those in the files it changed;
+  # the library-wide gap is reported to all of them. Every leg comments on its pull request, as a PR run
+  # does, and a failing leg fails the run, so the queue removes the group and retries without the failing
+  # pull request. Named apart from quality so a PR run's "Analyze · Quality / Sonar and coverage", which
+  # require-pr-gate and ff-validated read, keeps its exact name.
+  queue-quality:
+    name: Analyze · Quality (queue)
+    needs: [changes, queue-validated, ff-validated, release-pr, queue-prs, pick-runner, quality-build, reupload-reports, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration]
+    if: >-
+      !failure() && !cancelled() && github.event_name == 'merge_group' &&
+      needs.ff-validated.outputs.skip != 'true' && needs.queue-prs.outputs.matrix != ''
+    strategy:
+      # Each pull request gets its own verdict and comment, whatever another one's leg found.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.queue-prs.outputs.matrix) }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write   # each leg comments the gate on its pull request
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      sonar: true
+      queue-group: true
+      pull-request: ${{ format('{0}', matrix.pr) }}
+      pull-request-head: ${{ matrix.head }}
+      pull-request-sha: ${{ matrix.sha }}
+      checked-sha: ${{ github.event.merge_group.head_sha }}
+      diff-base: ${{ github.event.merge_group.base_sha }}
+      # The coverage is the group's, the same for every leg: one upload is enough.
+      upload-coverage: ${{ format('{0}', matrix.pr) == needs.queue-prs.outputs.first }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -1593,7 +1644,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, queue-prs, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
+    needs: [changes, queue-prs, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, queue-quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
@@ -1996,7 +2047,7 @@ jobs:
 
   notify-cancelled:
     name: Notify · Canceled
-    needs: [build, analyzers, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality]
+    needs: [build, analyzers, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, queue-quality]
     permissions:
       contents: read
     # merge_group is excluded for a different reason than success: the queue cancels its own runs

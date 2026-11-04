@@ -32,8 +32,8 @@
 
     Get-CiSuiteListProblem checks the other half: every suite the gate counts is a ci.yml job, every
     job that runs a reusable-test-*.yml is counted, and every suite is in the needs of each job that
-    stands for all of them (the gate, test reporting, notifications, both publishes, and Quality, which
-    starts once every suite has finished and merges their coverage) and in the
+    stands for all of them (the gate, test reporting, notifications, both publishes, and Quality and its
+    merge-queue form, which start once every suite has finished and merge their coverage) and in the
     success condition of both publishes. A suite left out of a publish condition would let a package
     ship without it.
 
@@ -55,7 +55,7 @@ $ErrorActionPreference = 'Stop'
 
 # The ci.yml jobs that stand for every suite, and so must need each one. The two publishes must also
 # require each suite's success in their condition (see the DESCRIPTION).
-$script:SuiteConsumers = @('ci-result', 'test-results', 'publish-test-status', 'notify-cancelled', 'prerelease-publish', 'release-publish', 'quality')
+$script:SuiteConsumers = @('ci-result', 'test-results', 'publish-test-status', 'notify-cancelled', 'prerelease-publish', 'release-publish', 'quality', 'queue-quality')
 $script:SuiteGatedPublishes = @('prerelease-publish', 'release-publish')
 
 <#

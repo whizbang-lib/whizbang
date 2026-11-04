@@ -11,9 +11,12 @@ name: Quality Build (Reusable)
 # Until #2068 both halves were one job that, after building, held its runner for up to hours polling for the
 # suites' coverage (261 runner-hours of waiting over two weeks). Splitting it at the wait frees that runner.
 #
-# Called only where the scanner runs: a pull request, or a push or dispatch on main. Every other run needs
-# no build here: the coverage merge reads the suites' reports and the checkout, never build output, and the
-# analyzers are enforced by ci.yml's Build · Analyzers job.
+# Called only where the scanner runs: a pull request into main or a release branch, the merge queue, or a
+# push or dispatch on main. Every other run needs no build here: the coverage merge reads the suites'
+# reports and the checkout, never build output, and the analyzers are enforced by ci.yml's Build · Analyzers
+# job. In the merge queue the scan begins as a pull-request analysis of the group's first pull request, and
+# each of the second half's legs re-points it at its own pull request before ending it
+# (.github/scripts/Set-SonarPullRequest.ps1, #2070).
 
 on:
   workflow_call:
@@ -26,6 +29,23 @@ on:
         type: string
         required: false
         default: '"ubuntu-latest"'
+      pull-request:
+        description: >-
+          The pull request the analysis reports to: the pull request of a PR run, or the first of a merge-queue
+          group. Empty: a main-line analysis (a push or dispatch on main).
+        type: string
+        required: false
+        default: ''
+      pull-request-head:
+        description: The pull request's head branch.
+        type: string
+        required: false
+        default: ''
+      pull-request-base:
+        description: The branch the pull request merges into, which decides what is new code.
+        type: string
+        required: false
+        default: ''
     secrets:
       SONAR_TOKEN:
         description: "SonarCloud token"
@@ -70,26 +90,24 @@ jobs:
           echo "dotnet-sonarscanner $(cat "$RUNNER_TEMP/sonarscanner-version.txt")"
           [ -s "$RUNNER_TEMP/sonarscanner-version.txt" ]
 
-      # SonarCloud free plan only supports main branch + PR analysis, so the scanner runs only on a pull
-      # request or on main; ci.yml calls this workflow only there.
+      # SonarCloud free plan only supports main branch + PR analysis, so the scanner runs only as a
+      # pull-request analysis or on main; ci.yml calls this workflow only there.
       #
-      # merge_group is skipped too, and NOT because it is cheap to drop: the queue ref is a
-      # throwaway (gh-readonly-queue/develop/pr-N-<sha>) and carries no pull_request context,
-      # so the scanner would submit a BRANCH analysis of a branch that ceases to exist minutes
-      # later, rejected outright on the main-plus-PRs free plan. The PR analysis already
-      # gated this exact change, and keeping the queue run lean is the point of the queue.
+      # The merge queue is analyzed as PULL REQUESTS, never as its branch: the queue ref is a
+      # throwaway (gh-readonly-queue/develop/pr-N-<sha>), and a BRANCH analysis of a branch that
+      # ceases to exist minutes later is rejected outright on the main-plus-PRs free plan. Since
+      # #2070 the queue is where a pull request into develop is analyzed at all, so ci.yml passes
+      # the group's first pull request here and the second half reports to each of them.
       - name: SonarScanner Begin
-        # ONLY a pull request, or a run on main (a release landing, or a manual re-analysis).
-        # Every other context (develop pushes, the merge queue, a dispatch on any other branch)
-        # skips the scanner entirely. Analyzing anything else is actively harmful: see the branch
-        # note below.
-        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        # ONLY a pull-request analysis, or a run on main (a release landing, or a manual re-analysis).
+        # Every other context (develop and release-branch pushes, a dispatch on any other branch)
+        # skips the scanner entirely; ci.yml does not call this workflow there. Analyzing anything
+        # else is actively harmful: see the branch note below.
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ inputs.pull-request }}
+          HEAD_REF: ${{ inputs.pull-request-head }}
+          BASE_REF: ${{ inputs.pull-request-base }}
         run: |
           # coverageReportPaths is a path only: the file is produced later, by the second half, after
           # the suites' coverage artifacts arrive; the scanner reads it at the End step.
@@ -114,7 +132,7 @@ jobs:
           # AFTER uploading its report successfully. The analysis is fine; the gate lookup is what
           # cannot resolve the base. Do not submit a branch analysis here until the plan supports
           # it, and delete any branch that was created (Administration -> Branches & Pull Requests).
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ -n "$PR_NUMBER" ]; then
             SONAR_ARGS+=(
               /d:sonar.pullrequest.key="$PR_NUMBER"
               /d:sonar.pullrequest.branch="$HEAD_REF"

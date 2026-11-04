@@ -99,6 +99,8 @@ jobs:
     needs: [$suites]
   quality:
     needs: [build, $suites]
+  queue-quality:
+    needs: [build, $suites]
 "@
     return $repo
   }
