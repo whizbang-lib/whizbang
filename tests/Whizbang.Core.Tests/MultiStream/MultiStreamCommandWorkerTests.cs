@@ -43,6 +43,7 @@ public class MultiStreamCommandWorkerTests {
     public MultiStreamCommandOptions Options { get; } = new();
     public IPartitionAssignmentSource? Assignment { get; init; }
     public Action<IServiceCollection>? Configure { get; init; }
+    public Whizbang.Core.RunControl.WhizbangRunPermit Permit { get; } = new();
 
     public MultiStreamCommandWorker Build() {
       var services = new ServiceCollection();
@@ -59,7 +60,8 @@ public class MultiStreamCommandWorkerTests {
         Microsoft.Extensions.Options.Options.Create(Options),
         NullLogger<MultiStreamCommandWorker>.Instance,
         Assignment ?? new FixedAssignmentSource(null),
-        Time);
+        Time,
+        Permit);
     }
   }
 
@@ -68,6 +70,35 @@ public class MultiStreamCommandWorkerTests {
 
   private static MultiStreamWorkItem _item(Guid stream, string? scope = null, string? type = null) =>
     new(_run, stream, type ?? _probeType, _payload(), scope, 1);
+
+  [Test]
+  public async Task RunOnceAsync_WhileTheRunPermitIsClosed_ClaimsNothingUntilItReopensAsync() {
+    // #2045: the worker obeys the instance's one run permit. A pass waits at the permit, before the claim, and the pass
+    // is a hold: the run-control path waits for it before releasing what is left.
+    var h = new Harness();
+    h.Store.Claims.Enqueue([_item(_streamA)]);
+    var worker = h.Build();
+    await h.Permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Paused, CancellationToken.None);
+
+    var pass = worker.RunOnceAsync(CancellationToken.None);
+    await Assert.That(pass.IsCompleted).IsFalse();
+    await Assert.That(h.Store.ClaimRequests).IsEmpty().Because("nothing is claimed while the permit is closed");
+
+    await h.Permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Running, CancellationToken.None);
+    await Assert.That(await pass).IsEqualTo(1);
+    await Assert.That(h.Permit.Held).IsEqualTo(0).Because("the hold ends with the pass");
+    await Assert.That(((Whizbang.Core.RunControl.IObeysRunPermit)worker).RunPermit).IsSameReferenceAs(h.Permit);
+  }
+
+  [Test]
+  public async Task RunOnceAsync_WhenTheRunPermitIsStopped_EndsWithoutClaimingAsync() {
+    var h = new Harness();
+    var worker = h.Build();
+    await h.Permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Stopped, CancellationToken.None);
+
+    await Assert.That(async () => await worker.RunOnceAsync(CancellationToken.None)).Throws<OperationCanceledException>();
+    await Assert.That(h.Store.ClaimRequests).IsEmpty();
+  }
 
   [Test]
   public async Task RunOnceAsync_CallsTheHandlerOncePerClaimedStreamAndRecordsEachSuccessAsync() {

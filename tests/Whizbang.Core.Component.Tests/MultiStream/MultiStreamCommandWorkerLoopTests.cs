@@ -32,7 +32,7 @@ public class MultiStreamCommandWorkerLoopTests {
 
   private static MultiStreamCommandWorker _worker(
       LoopStore store, MultiStreamCommandOptions? options = null, LoopHandler? handler = null,
-      bool withHandler = true) {
+      bool withHandler = true, Whizbang.Core.RunControl.WhizbangRunPermit? permit = null) {
     var services = new ServiceCollection();
     if (withHandler) {
       services.AddMultiStreamCommandHandler<LoopProbeCommand, LoopHandler>();
@@ -48,7 +48,8 @@ public class MultiStreamCommandWorkerLoopTests {
       new LoopInstance(),
       Options.Create(options),
       NullLogger<MultiStreamCommandWorker>.Instance,
-      new NoAssignment());
+      new NoAssignment(),
+      runPermit: permit);
   }
 
   private static (Task<int> Pass, Action Unsubscribe) _nextPass(MultiStreamCommandWorker worker, Func<int, bool>? when = null) {
@@ -60,6 +61,25 @@ public class MultiStreamCommandWorkerLoopTests {
     }
     worker.OnPassCompleted += Handler;
     return (pass.Task, () => worker.OnPassCompleted -= Handler);
+  }
+
+  [Test]
+  public async Task Loop_AStoppedRunPermit_EndsTheLoopWithoutAClaimAsync() {
+    // #2045: a stop is final. The loop ends on the stopped permit rather than retrying a pass that can never claim, and
+    // it ends with the host's stopping token still uncanceled: only the permit ended it.
+    var store = new LoopStore();
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Stopped, CancellationToken.None);
+    var worker = _worker(store, permit: permit);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await worker.ExecuteTask!.WaitAsync(_deadline);
+      await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+      await Assert.That(store.ClaimCount).IsEqualTo(0);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
   }
 
   [Test]
