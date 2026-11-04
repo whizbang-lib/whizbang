@@ -409,7 +409,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var many = await elector.TryAcquireManyAsync([ROLE, "other"], cancellationToken);
 
     await Assert.That(one.Refusal).IsEqualTo(DutyRefusal.Halted);
-    await Assert.That(many.Select(a => a.Refusal)).IsEquivalentTo([DutyRefusal.Halted, DutyRefusal.Halted]);
+    await Assert.That(many.Select(a => a.Refusal ?? DutyRefusal.Contended)).IsEquivalentTo([DutyRefusal.Halted, DutyRefusal.Halted]);
 
     await path.ResumeAsync(cancellationToken);
     await Assert.That((await elector.TryAcquireAsync(ROLE, cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Unavailable)

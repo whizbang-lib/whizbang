@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Routing;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
@@ -105,8 +106,8 @@ public sealed class RunPermitAuditTests {
       .Because("every hosted service must say how a stand-down, a pause and a stop reach it: " + string.Join(", ", unplaced));
 
     var disobedient = hosted
-      .Where(s => _obeysThePermit.Contains(s.GetType().Name))
-      .Where(s => s is not IObeysRunPermit obeyer || !ReferenceEquals(obeyer.RunPermit, permit))
+      .Where(s => _obeysThePermit.Contains(s.GetType().Name)
+        && (s is not IObeysRunPermit obeyer || !ReferenceEquals(obeyer.RunPermit, permit)))
       .Select(s => s.GetType().Name)
       .ToList();
     await Assert.That(disobedient).IsEmpty()

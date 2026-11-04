@@ -95,7 +95,9 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetService<ILibraryVersionProvider>(),
       sp.GetService<INotificationConnectionStringFallback>(),
       sp.GetService<INotificationDataSource>(),
-      metrics: sp.GetRequiredService<RoleAssignmentMetrics>()));
+      metrics: sp.GetRequiredService<RoleAssignmentMetrics>(),
+      // #2045: the instance's one run permit, when the host runs the worker pipeline (which registers it).
+      runPermit: sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>()));
     services.AddSingleton<IRoleAssignmentReader>(sp => sp.GetRequiredService<PgRoleElector>());
     // The health source reads through a deferred reader: listing health sources must not build the
     // elector, whose construction resolves the notification data source (and through it, under

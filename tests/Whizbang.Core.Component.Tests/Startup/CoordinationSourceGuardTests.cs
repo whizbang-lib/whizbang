@@ -104,10 +104,8 @@ public partial class CoordinationSourceGuardTests {
   /// </summary>
   private static readonly Dictionary<string, string> _claimAllowlist = new(StringComparer.Ordinal) {
     ["src/Whizbang.Core/Messaging/IWorkCoordinator.cs"] = "declares the claims",
-    ["src/Whizbang.Core/Temporal/IScheduleClaimer.cs"] = "declares the schedule claim",
     ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] = STORE,
     ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.RowRetention.cs"] = STORE,
-    ["src/Whizbang.Data.Postgres/Notifications/PgScheduleClaimer.cs"] = STORE,
     ["src/Whizbang.Data.Postgres/FleetClaim.cs"] = "the once-per-window claim helper the maintenance steps share",
     ["src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs"] = "the physical-column fill's window claim, "
       + "run by its maintenance step",

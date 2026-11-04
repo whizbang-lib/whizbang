@@ -110,9 +110,12 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var assessor = new EFCorePostgresStartupAssessor(scopeFactory, typeof(WorkCoordinationDbContext), versionProvider);
     var reviveProbe = new CountingStep();
     var hostLifetime = new StubHostLifetime();
+    // #2045: the watcher stands down and revives through the one run-control path, which reports through this lifecycle.
+    var runControl = new WhizbangRunController(new WhizbangRunPermit(), lifecycle, [], [], lifecycleOptions, null,
+      NullLogger<WhizbangRunController>.Instance);
     var watcher = new StandbyWatcher(
       scopeFactory: scopeFactory,
-      lifecycle: lifecycle,
+      runControl: runControl,
       hostLifetime: hostLifetime,
       instanceProvider: pod,
       versionProvider: versionProvider,

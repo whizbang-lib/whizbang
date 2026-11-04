@@ -128,10 +128,15 @@ public class ClaimWorkerRunPermitTests {
   public async Task ReleaseHeldWork_ReleasesTheLastClaimsStreamsThatNoDrainHasStartedAsync() {
     var permit = new WhizbangRunPermit();
     var instance = new Instance();
-    Guid inboxIdle = Guid.CreateVersion7(), inboxDraining = Guid.CreateVersion7(), perspective = Guid.CreateVersion7();
+    var inboxIdle = Guid.CreateVersion7();
+    var inboxDraining = Guid.CreateVersion7();
+    var perspective = Guid.CreateVersion7();
     var batch = new WorkBatch {
-      OutboxWork = [], InboxWork = [], PerspectiveWork = [],
-      InboxStreamIds = [inboxIdle, inboxDraining], PerspectiveStreamIds = [perspective],
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      InboxStreamIds = [inboxIdle, inboxDraining],
+      PerspectiveStreamIds = [perspective],
     };
     var coordinator = new Coordinator(permit, batch);
     var inboxDrain = new InboxDrainChannel();

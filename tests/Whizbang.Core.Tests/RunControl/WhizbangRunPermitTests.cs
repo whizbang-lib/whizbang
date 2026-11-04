@@ -42,6 +42,7 @@ public class WhizbangRunPermitTests {
   [Test]
   public async Task Stopped_CancelsAwaitersAsync() {
     var permit = new WhizbangRunPermit();
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
     var waiting = permit.WaitAsync(CancellationToken.None);
     await permit.ChangeAsync(RunState.Stopped, CancellationToken.None);
 
