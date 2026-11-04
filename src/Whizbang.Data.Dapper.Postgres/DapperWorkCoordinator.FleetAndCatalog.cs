@@ -75,7 +75,7 @@ public partial class DapperWorkCoordinator {
     ArgumentNullException.ThrowIfNull(import);
     try {
       return await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ImportBrokerDeadLetterAsync(
-        cmd, prefix, import, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), Guid.NewGuid(),
+        cmd, prefix, import, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
         new DefaultGenerationProvider().GetGeneration(), cancellationToken), cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       throw CoordinatorFleetSql.ImportFailed(import, ex);
@@ -168,7 +168,7 @@ public partial class DapperWorkCoordinator {
   /// <inheritdoc />
   public Task RecordLifecycleCompletionAsync(Guid eventId, CancellationToken cancellationToken = default) =>
     _withGatedCommandAsync(async (cmd, prefix) => {
-      await OrphanedLifecycleEventsSql.RecordCompletionAsync(cmd, prefix, eventId, Guid.NewGuid(), cancellationToken).ConfigureAwait(false);
+      await OrphanedLifecycleEventsSql.RecordCompletionAsync(cmd, prefix, eventId, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), cancellationToken).ConfigureAwait(false);
       return true;
     }, cancellationToken);
 
