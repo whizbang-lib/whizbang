@@ -318,6 +318,28 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(120000)]
+  public async Task ABridgedNewerInstance_StillAsksTheOlderHolderToDrainAsync(CancellationToken cancellationToken) {
+    // #2044: there is no bridge in this release, but an instance on an older release that ran one still calls
+    // wh_request_role_drain when it cannot take its legacy lock. The call keeps working: a newer caller still asks an
+    // older holder to drain, which the holder learns on its next renewal. (The name is kept because migration 184
+    // links to it.)
+    var time = new FakeTimeProvider();
+    var older = await _joinAsync(cancellationToken);
+    var newer = await _joinAsync(cancellationToken);
+    var grant = (await _electorFor(older, "0.2606.0", time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+
+    var asked = (string?)await _scalarAsync("SELECT wh_request_role_drain(@role, @id, @lease, @version)", cancellationToken,
+      ("role", ROLE), ("id", newer.InstanceId), ("lease", _defaults.Lease), ("version", LibraryVersionKey.From("0.2607.0")));
+    await Assert.That(asked).IsEqualTo("draining");
+
+    time.Advance(_defaults.RenewInterval);
+    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
+    await Assert.That(grant.DrainRequested).IsTrue();
+    await grant.DisposeAsync();
+  }
+
+  [Test]
   public async Task LibraryVersionKey_OrdersVersionsAsSemVerDoesAsync() {
     string[] ordered = ["0.9.0", "0.2606.0-alpha", "0.2606.0-alpha.2", "0.2606.0-alpha.12", "0.2606.0-alpha.beta",
       "0.2606.0-beta", "0.2606.0-rc.1", "0.2606.0", "0.2606.1", "1.0"];
