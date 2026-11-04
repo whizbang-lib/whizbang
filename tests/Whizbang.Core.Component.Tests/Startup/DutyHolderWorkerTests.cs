@@ -9,8 +9,8 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Tests.Observability;
 
@@ -114,16 +114,11 @@ public class DutyHolderWorkerTests {
     }
   }
 
-  private sealed class Notify : ISharedNotifyConnection {
-    public INotifySubscription? Subscription { get; private set; }
-    public bool Unsubscribed { get; private set; }
-    public IDisposable Subscribe(INotifySubscription subscription) {
-      Subscription = subscription;
-      return new Handle(this);
-    }
-    private sealed class Handle(Notify owner) : IDisposable {
-      public void Dispose() => owner.Unsubscribed = true;
-    }
+  /// <summary>The signal bus over the in-memory transport: a publish reaches every subscriber before it returns.</summary>
+  private sealed class Notify {
+    public SignalBus Bus { get; } = new([new InMemorySignalTransport()], []);
+    public Notify() => Bus.StartAsync().GetAwaiter().GetResult();
+    public void Release(string role) => Bus.PublishAsync(new RoleReleasedSignal(role)).AsTask().GetAwaiter().GetResult();
   }
 
   private static PendingDutyWork _owed(string key, bool due = true) =>
@@ -132,10 +127,10 @@ public class DutyHolderWorkerTests {
   private static Handler _done(string key) => new(key, _ => ValueTask.FromResult(DutyWorkResult.Done()));
 
   private static DutyHolderWorker _worker(Elector elector, Store store, IEnumerable<IDutyWorkHandler> handlers,
-      ISharedNotifyConnection? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null,
+      Notify? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null,
       IEnumerable<IDutyAcquisitionHandler>? acquisitionHandlers = null, ILogger<DutyHolderWorker>? logger = null) =>
     new(elector, store, handlers, acquisitionHandlers ?? [], Options.Create(new RoleAssignmentOptions()),
-      logger ?? NullLogger<DutyHolderWorker>.Instance, notify, metrics, time);
+      logger ?? NullLogger<DutyHolderWorker>.Instance, notify?.Bus, metrics, time);
 
   private sealed class OnAcquired(Func<IDutyGrant, CancellationToken, ValueTask>? run = null, string role = ROLE) : IDutyAcquisitionHandler {
     public List<IDutyGrant> Acquisitions { get; } = [];
@@ -504,17 +499,16 @@ public class DutyHolderWorkerTests {
     elector.Attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     var wakes = 0;
     worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
-    notify.Subscription!.OnNotification("some-other-role");
+    notify.Release("some-other-role");
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(0)
       .Because("a release of a role this worker holds no work for must not wake a pass");
-    await Assert.That(notify.Subscription.ChannelName).IsEqualTo(DutyHolderWorker.RELEASE_CHANNEL);
     // The grant is held back between the attempt and its processing, which is the window #1707 raced:
     // "an attempt was made" is not "the role is held". Only the held-role signal proves the latter.
     var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var becameHolder = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnBecameHolder += role => becameHolder.TrySetResult(role);
     elector.Proceed = proceed.Task;
-    notify.Subscription.OnNotification(ROLE);
+    notify.Release(ROLE);
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1).Because("a release of our role wakes the next pass");
     await Assert.That(await elector.Attempted.Task).IsEqualTo(3);
     await Assert.That(becameHolder.Task.IsCompleted).IsFalse()
@@ -525,7 +519,9 @@ public class DutyHolderWorkerTests {
 
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(grant.Disposed).IsTrue().Because("a graceful stop releases the role, so the next holder takes it at once");
-    await Assert.That(notify.Unsubscribed).IsTrue();
+    notify.Release(ROLE);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
+      .Because("a stopped worker has left the bus: a later release wakes nothing");
     worker.Dispose();
   }
 
@@ -542,7 +538,7 @@ public class DutyHolderWorkerTests {
 
     await worker.StartAsync(CancellationToken.None);
     await elector.Attempted.Task;   // the loop subscribes before its first pass
-    notify.Subscription!.OnNotification(ROLE);
+    notify.Release(ROLE);
 
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
       .Because("the role is one this worker votes for, so its release wakes a pass at once");

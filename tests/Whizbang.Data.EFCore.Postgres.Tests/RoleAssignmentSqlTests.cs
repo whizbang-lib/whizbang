@@ -441,6 +441,33 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(payload).IsEqualTo(ROLE);
   }
 
+  [Test]
+  [Timeout(60000)]
+  public async Task Release_IsRecordedDurably_SoAnInstanceThatMissedTheNotificationIsStillToldAsync(CancellationToken cancellationToken) {
+    // #2046: a released role is a decision. The signal bus's tail replays it, payload and all, to a subscriber that was
+    // not listening when it committed.
+    var a = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await using var conn = await _openAsync(cancellationToken);
+    long before;
+    await using (var max = conn.CreateCommand()) {
+      max.CommandText = "SELECT COALESCE(MAX(id), 0) FROM wh_signals";
+      before = (long)(await max.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    await _releaseAsync(a, vote.Epoch, cancellationToken);
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT wire_name || '|' || payload || '|' || COALESCE(target_instance_id::text, 'all') FROM wh_signals WHERE id > @before";
+    read.Parameters.AddWithValue("before", before);
+    await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+    var rows = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      rows.Add(reader.GetString(0));
+    }
+    await Assert.That(rows).IsEquivalentTo([$"role-released|{ROLE}|all"]);
+  }
+
   private async Task _oweAsync(string key, CancellationToken ct) =>
     await _executeAsync("SELECT wh_owe_role_work(@role, @key)", ct, ("role", ROLE), ("key", key));
 

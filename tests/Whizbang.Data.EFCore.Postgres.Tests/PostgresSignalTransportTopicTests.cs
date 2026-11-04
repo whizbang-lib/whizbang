@@ -13,18 +13,14 @@ using Whizbang.Data.Postgres.Notifications;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Coverage-round tests for <see cref="PgAppSignalChannel"/> paths that
-/// <see cref="PgAppSignalChannelIntegrationTests"/> doesn't reach: a subscribed handler throwing
-/// during fan-out, and idempotent disposal of the handle <see cref="PgAppSignalChannel.Subscribe"/>
-/// returns. None of these need a real Postgres connection — dispatch runs entirely in memory once
-/// a subscription is registered, so a capturing fake <see cref="ISharedNotifyConnection"/> stands
-/// in for the shared connection the same way <c>PgAppSignalChannelIntegrationTests.NoOpSharedConnection</c>
-/// does, except this one keeps the registered <see cref="INotifySubscription"/> so the test can
-/// drive <c>OnNotification</c> directly.
+/// The signal bus's application topics on its Postgres transport (#2046): a subscribed handler throwing during fan-out,
+/// and idempotent disposal of the handle <see cref="PostgresSignalTransport.SubscribeTopic"/> returns. None of these
+/// need a real Postgres connection: dispatch runs in memory once a topic is listened, so a capturing fake shared
+/// connection keeps the registered subscription and the test drives it directly.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgAppSignalChannel.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs</code-under-test>
 [Category("Shard1")]
-public class PgAppSignalChannelCoverageTests {
+public class PostgresSignalTransportTopicTests {
 
   private sealed class CapturingSharedConnection : ISharedNotifyConnection {
     public INotifySubscription? Captured { get; private set; }
@@ -38,7 +34,7 @@ public class PgAppSignalChannelCoverageTests {
   }
 
   /// <summary>Captures every message logged, at any level.</summary>
-  private sealed class CapturingLogger : ILogger<PgAppSignalChannel> {
+  private sealed class CapturingLogger : ILogger<PostgresSignalTransport> {
     private readonly Lock _lock = new();
     private readonly List<string> _messages = [];
     public List<string> Messages { get { lock (_lock) { return [.. _messages]; } } }
@@ -50,25 +46,26 @@ public class PgAppSignalChannelCoverageTests {
     }
   }
 
-  private static PgAppSignalChannel _channel(ISharedNotifyConnection shared, ILogger<PgAppSignalChannel>? logger = null) =>
+  private static PostgresSignalTransport _channel(ISharedNotifyConnection shared, ILogger<PostgresSignalTransport>? logger = null) =>
     new(
       Options.Create(new WhizbangNotificationOptions()),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       shared,
+      new Whizbang.Core.Observability.ServiceInstanceProvider(Guid.NewGuid(), "topic-svc", "topic-host", processId: 1),
       logger ?? new CapturingLogger());
 
   // Fan-out to N handlers means one broken handler must not take down delivery to the rest, and
   // an operator needs the failure to be visible somewhere -- a silently swallowed throw here
   // would look exactly like an idle subscriber that simply never got called.
   [Test]
-  public async Task OnNotification_WhenAHandlerThrows_LogsItAndStillDeliversToTheOtherHandlersAsync() {
+  public async Task ATopicNotification_WhenAHandlerThrows_LogsItAndStillDeliversToTheOtherHandlersAsync() {
     var shared = new CapturingSharedConnection();
     var logger = new CapturingLogger();
     var channel = _channel(shared, logger);
     var secondHandlerRan = false;
 
-    using var broken = channel.Subscribe("topic_with_a_bad_handler", (_, _) => throw new InvalidOperationException("boom"));
-    using var healthy = channel.Subscribe("topic_with_a_bad_handler", (_, _) => {
+    using var broken = channel.SubscribeTopic("topic_with_a_bad_handler", (_, _) => throw new InvalidOperationException("boom"));
+    using var healthy = channel.SubscribeTopic("topic_with_a_bad_handler", (_, _) => {
       secondHandlerRan = true;
       return Task.CompletedTask;
     });
@@ -85,10 +82,10 @@ public class PgAppSignalChannelCoverageTests {
   // or a retry that re-runs teardown) must not attempt a second removal against a topic another
   // Subscribe may have already re-created under the same name.
   [Test]
-  public async Task Subscribe_DisposingTheReturnedHandleTwice_IsIdempotentAsync() {
+  public async Task SubscribeTopic_DisposingTheReturnedHandleTwice_IsIdempotentAsync() {
     var shared = new CapturingSharedConnection();
     var channel = _channel(shared);
-    var sub = channel.Subscribe("topic", (_, _) => Task.CompletedTask);
+    var sub = channel.SubscribeTopic("topic", (_, _) => Task.CompletedTask);
 
     sub.Dispose();
 
@@ -100,10 +97,10 @@ public class PgAppSignalChannelCoverageTests {
   /// Concurrent disposal of one subscription handle must stay a no-op rather than double-unregister.
   /// </summary>
   /// <remarks>
-  /// <see cref="PgAppSignalChannel"/>'s private <c>HandlerSubscription.Dispose()</c> guards
+  /// The transport's private topic handle's <c>Dispose()</c> guards
   /// against double-disposal with a plain <c>bool</c> field, unsynchronized. Two threads that
   /// both observe it as unset before either sets it can both proceed into the internal
-  /// <c>_removeHandler</c> call for the same topic; <c>_removeHandler</c>'s own "topic missing"
+  /// handler removal for the same topic; that removal's own "topic missing"
   /// guard is what makes the losing call a safe no-op rather than tearing down a fresh
   /// <see cref="Whizbang.Core.Notifications.INotifySubscription"/> registration a concurrent
   /// Subscribe already re-created under the same name. This test forces that race with a
@@ -112,10 +109,10 @@ public class PgAppSignalChannelCoverageTests {
   /// the test cannot flake, but it also cannot guarantee that exact line executes on every run.
   /// </remarks>
   [Test]
-  public async Task Subscribe_DisposedConcurrentlyFromManyThreads_NeverThrowsAndLeavesTheTopicReusableAsync() {
+  public async Task SubscribeTopic_DisposedConcurrentlyFromManyThreads_NeverThrowsAndLeavesTheTopicReusableAsync() {
     var shared = new CapturingSharedConnection();
     var channel = _channel(shared);
-    var sub = channel.Subscribe("race_topic", (_, _) => Task.CompletedTask);
+    var sub = channel.SubscribeTopic("race_topic", (_, _) => Task.CompletedTask);
 
     const int racers = 16;
     using var barrier = new Barrier(racers);
@@ -130,7 +127,7 @@ public class PgAppSignalChannelCoverageTests {
     // name afterward must register and deliver normally -- a corrupted intermediate state would
     // silently drop this handler instead.
     var resubscribedHandlerRan = false;
-    using var after = channel.Subscribe("race_topic", (_, _) => {
+    using var after = channel.SubscribeTopic("race_topic", (_, _) => {
       resubscribedHandlerRan = true;
       return Task.CompletedTask;
     });

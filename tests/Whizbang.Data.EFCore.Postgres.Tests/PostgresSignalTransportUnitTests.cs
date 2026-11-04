@@ -200,7 +200,7 @@ public class PostgresSignalTransportUnitTests {
 
     await transport.StartAsync(new CountingSink());
 
-    await Assert.That(shared.SubscribeCount).IsEqualTo(2);
+    await Assert.That(shared.SubscribeCount).IsEqualTo(2 + PgSignalWire.Bindings.Count);
     await Assert.That(shared.All.Any(s => s.ChannelName == "wh_signal_broadcast")).IsTrue();
     await Assert.That(shared.All.Any(s => s.ChannelName == $"wh_work_i_{instanceId:D}")).IsTrue();
   }
@@ -339,6 +339,99 @@ public class PostgresSignalTransportUnitTests {
 
   private sealed class FakeSource(IReadOnlyList<SignalTypeEntry> entries) : ISignalTypeSource {
     public IReadOnlyList<SignalTypeEntry> GetSignalTypes() => entries;
+  }
+
+  // ============================================================
+  // #2046: the coordination channels are the bus's wire
+  // ============================================================
+
+  /// <summary>Records each signal the transport delivers, typed.</summary>
+  private sealed class RecordingSink : ISignalSink {
+    public List<object> Received { get; } = [];
+    public bool Throw { get; set; }
+
+    public ValueTask ReceiveAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      Received.Add(signal!);
+      return Throw ? ValueTask.FromException(new InvalidOperationException("boom-bound")) : ValueTask.CompletedTask;
+    }
+  }
+
+  [Test]
+  public async Task StartAsync_ListensOnEachCoordinationChannel_ByTheNameAnOlderReleaseUsesAsync() {
+    // Rolling-deploy lock: an older instance LISTENs and its SQL NOTIFYs on these exact names. The bus owns them now,
+    // but renaming one would split a mixed fleet in two.
+    var (transport, shared, _) = _createTransport();
+
+    await transport.StartAsync(new CountingSink());
+
+    string[] legacy = ["wh_committed", "wh_role_released", "wh_partition_assignment", "wh_multi_stream_work"];
+    await Assert.That(PgSignalWire.Bindings.Select(b => b.Channel)).IsEquivalentTo(legacy);
+    foreach (var channel in legacy) {
+      await Assert.That(shared.All.Count(s => s.ChannelName == channel)).IsEqualTo(1).Because($"{channel} is listened once");
+    }
+  }
+
+  [Test]
+  public async Task ACoordinationChannel_DeliversItsTypedSignal_WithThePayloadAsync() {
+    var (transport, shared, _) = _createTransport();
+    var sink = new RecordingSink();
+    await transport.StartAsync(sink);
+
+    shared.All.Single(s => s.ChannelName == "wh_role_released").OnNotification("whizbang:maintainer");
+    shared.All.Single(s => s.ChannelName == "wh_partition_assignment").OnNotification("7:3");
+    shared.All.Single(s => s.ChannelName == "wh_committed").OnNotification("");
+    shared.All.Single(s => s.ChannelName == "wh_multi_stream_work").OnNotification(Guid.Empty.ToString());
+
+    await Assert.That(sink.Received).IsEquivalentTo(new object[] {
+      new RoleReleasedSignal("whizbang:maintainer"),
+      new PartitionAssignmentPublishedSignal("7:3"),
+      new RowsCommittedSignal(),
+      new MultiStreamWorkSignal(),
+    }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task ACoordinationChannel_WhoseSubscriberThrows_IsLoggedAndTheLoopContinuesAsync() {
+    var logger = new CapturingSignalLogger();
+    var (transport, shared, _) = _createTransport(logger: logger);
+    var sink = new RecordingSink { Throw = true };
+    await transport.StartAsync(sink);
+
+    shared.All.Single(s => s.ChannelName == "wh_role_released").OnNotification("whizbang:maintainer");
+
+    await Assert.That(sink.Received).Count().IsEqualTo(1);
+    await Assert.That(logger.Messages.Any(m => m.Contains("role-released", StringComparison.Ordinal))).IsTrue()
+      .Because("a failed dispatch names the signal that failed");
+  }
+
+  [Test]
+  public async Task TheWorkChannel_DeliversOrphanedWorkAndDeadLetters_AsSignalsAsync() {
+    // The reap's orphan wake and the dead-letter trigger send these payloads on the instance channel.
+    var (transport, shared, instanceId) = _createTransport();
+    var sink = new RecordingSink();
+    await transport.StartAsync(sink);
+    var instanceSub = shared.All.Single(s => s.ChannelName == $"wh_work_i_{instanceId:D}");
+
+    instanceSub.OnNotification("orphan");
+    instanceSub.OnNotification("deadletter");
+
+    await Assert.That(sink.Received).IsEquivalentTo(new object[] { new WorkOrphanedSignal(), new DeadLetterReadySignal() },
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task EveryPayloadSignal_HasAWireBindingAsync() {
+    // A payload signal published with no binding would lose its payload on the wire; the binding is the only path.
+    var payloadSignals = SignalTypeRegistry.GetAll()
+      .Where(e => typeof(IPayloadSignal).IsAssignableFrom(e.SignalType))
+      .Select(e => e.SignalType)
+      .ToList();
+
+    await Assert.That(payloadSignals).IsNotEmpty();
+    foreach (var type in payloadSignals) {
+      await Assert.That(PgSignalWire.ForType(type)).IsNotNull().Because($"{type.Name} carries a payload");
+    }
   }
 
   // ============================================================

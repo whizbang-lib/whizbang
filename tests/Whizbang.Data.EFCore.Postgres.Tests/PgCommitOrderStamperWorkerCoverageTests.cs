@@ -26,13 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PgCommitOrderStamperWorkerCoverageTests {
 
-  private sealed class NoOpSharedNotifyConnection : ISharedNotifyConnection {
-    public IDisposable Subscribe(INotifySubscription subscription) => new NoOpDisposable();
-    private sealed class NoOpDisposable : IDisposable {
-      public void Dispose() { }
-    }
-  }
-
   /// <summary>Records the event ids a worker logs.</summary>
   private sealed class EventIdRecordingLogger : ILogger<PgCommitOrderStamperWorker> {
     private readonly System.Collections.Concurrent.ConcurrentQueue<int> _ids = new();
@@ -141,11 +134,43 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     public Task WaitForTwoIterationErrorsAsync(TimeSpan timeout) => _sawTwo.Task.WaitAsync(timeout);
   }
 
+  /// <summary>
+  /// #2046: the stamper hears commits and its role's release on the signal bus, never on a channel of its own. A commit
+  /// wakes the stamping loop; a release of the stamper's role (and only that role) frees a waiting non-holder to vote,
+  /// and the same release delivered twice (the notification, then the durable log's replay) is harmless.
+  /// </summary>
+  [Test]
+  public async Task TheBus_WakesTheStamperOnACommit_AndAWaiterOnItsRolesReleaseAsync() {
+    var bus = new Whizbang.Core.Signals.SignalBus([new Whizbang.Core.Signals.InMemorySignalTransport()], []);
+    await bus.StartAsync();
+    var worker = _newWorker(bus: bus);
+    var listening = worker.ListenForWakes();
+    await Assert.That(worker.PendingWakes.Wait(0)).IsTrue().Because("the loop starts with one wake pending");
+
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(1).Because("a commit wakes the stamping loop");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(1).Because("wakes coalesce");
+
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal("whizbang:some-other-role"));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(0).Because("another role's release is not the stamper's");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal(CommitOrderStamperOptions.ROLE));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(1).Because("the stamper's release frees a waiter to vote");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal(CommitOrderStamperOptions.ROLE));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(1).Because("a release heard twice is one vacancy");
+
+    listening.Dispose();
+    await Assert.That(worker.PendingWakes.Wait(0)).IsTrue();
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(0).Because("a stopped listener wakes nothing");
+  }
+
   private static PgCommitOrderStamperWorker _newWorker(
       string? directConnectionString = null,
       ILogger<PgCommitOrderStamperWorker>? logger = null,
       bool withElector = true,
-      IDutyElector? elector = null) {
+      IDutyElector? elector = null,
+      Whizbang.Core.Signals.ISignalBus? bus = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = directConnectionString,
     };
@@ -158,7 +183,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       Options.Create(notificationOptions),
       Options.Create(stamperOptions),
       config,
-      new NoOpSharedNotifyConnection(),
+      bus ?? Whizbang.Core.Signals.NullSignalBus.Instance,
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
       dutyElector: withElector ? elector ?? new GrantingDutyElector() : null);
   }

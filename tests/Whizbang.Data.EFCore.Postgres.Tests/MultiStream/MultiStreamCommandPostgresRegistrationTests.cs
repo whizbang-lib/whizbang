@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Signals;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -80,18 +81,18 @@ public class MultiStreamCommandPostgresRegistrationTests {
   }
 
   [Test]
-  public async Task Subscriber_SubscribesTheWorkerToNewRunNoticesUntilStoppedAsync() {
-    var connection = new RecordingNotifyConnection();
-    await using var sp = _build(after: s => s.AddSingleton<ISharedNotifyConnection>(connection));
+  public async Task Subscriber_SubscribesTheWorkerToNewRunSignalsOnTheBusUntilStoppedAsync() {
+    // #2046: a new-run notice is a signal on the bus; the subscriber holds no raw channel of its own.
+    var bus = new RecordingSignalBus();
+    await using var sp = _build(after: s => s.AddSingleton<ISignalBus>(bus));
     var subscriber = sp.GetServices<IHostedService>().OfType<MultiStreamCommandSubscriber>().Single();
 
     await subscriber.StartAsync(CancellationToken.None);
-    var subscribed = connection.Subscriptions.Single();
+    var subscribed = bus.Subscriptions.Single();
     await subscriber.StopAsync(CancellationToken.None);
     await subscriber.StopAsync(CancellationToken.None);
 
-    await Assert.That(subscribed.Subscription).IsSameReferenceAs(sp.GetRequiredService<MultiStreamCommandWorker>());
-    await Assert.That(subscribed.Subscription.ChannelName).IsEqualTo(PgMultiStreamCommandStore.CHANNEL);
+    await Assert.That(subscribed.SignalType).IsEqualTo(typeof(MultiStreamWorkSignal));
     await Assert.That(subscribed.Disposed).IsTrue();
   }
 
@@ -163,18 +164,21 @@ public class MultiStreamCommandPostgresRegistrationTests {
       ValueTask.CompletedTask;
   }
 
-  private sealed class RecordingNotifyConnection : ISharedNotifyConnection {
+  private sealed class RecordingSignalBus : ISignalBus {
     public List<RecordedSubscription> Subscriptions { get; } = [];
 
-    public IDisposable Subscribe(INotifySubscription subscription) {
-      var recorded = new RecordedSubscription(subscription);
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => ValueTask.CompletedTask;
+
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal {
+      var recorded = new RecordedSubscription(typeof(TSignal));
       Subscriptions.Add(recorded);
       return recorded;
     }
   }
 
-  private sealed class RecordedSubscription(INotifySubscription subscription) : IDisposable {
-    public INotifySubscription Subscription { get; } = subscription;
+  private sealed class RecordedSubscription(Type signalType) : ISignalSubscription {
+    public Type SignalType { get; } = signalType;
 
     public bool Disposed { get; private set; }
 

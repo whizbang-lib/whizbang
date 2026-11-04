@@ -19,7 +19,7 @@ internal static class MaintainerDutyHolders {
   public static async Task<DutyHolderWorker> ElectedAsync(bool grants, string role = StartupDuties.MAINTAINER) {
     var holder = new DutyHolderWorker(new Elector(grants), new NoOwedWork(), [new Handler(role)], [],
       Options.Create(new RoleAssignmentOptions { Roles = { StartupDuties.MIGRATOR } }),
-      NullLogger<DutyHolderWorker>.Instance, notify: null);
+      NullLogger<DutyHolderWorker>.Instance, signalBus: null);
     await holder.RunOnceAsync(CancellationToken.None);
     return holder;
   }

@@ -11,6 +11,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -70,11 +71,8 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version), timeProvider: time);
   }
 
-  private PgSharedNotifyConnection _sharedFor(Pod pod) =>
-    new(Options.Create(_notification()), _config(), pod, NullLogger<PgSharedNotifyConnection>.Instance);
-
   private PgCommitOrderStamperWorker _workerFor(
-      Pod pod, IDutyElector elector, ISharedNotifyConnection? shared = null, ILogger<PgCommitOrderStamperWorker>? logger = null,
+      Pod pod, IDutyElector elector, ISignalBus? bus = null, ILogger<PgCommitOrderStamperWorker>? logger = null,
       TimeSpan? polling = null, TimeSpan? retry = null, INotificationDataSource? dataSource = null) => new(
     Options.Create(_notification()),
     Options.Create(new CommitOrderStamperOptions {
@@ -83,7 +81,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
       BatchSize = 100,
     }),
     _config(),
-    shared ?? _sharedFor(pod),
+    bus ?? NullSignalBus.Instance,
     logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
     elector,
     notificationDataSource: dataSource);
@@ -245,12 +243,14 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var led = _when(h => leader.OnBecameLeader += h);
     await leader.StartAsync(cancellationToken);
     await led.Task.WaitAsync(cancellationToken);
-    var shared = _sharedFor(b);
-    await shared.StartAsync(cancellationToken);
-    var waiter = _workerFor(b, _electorFor(b), shared, retry: TimeSpan.FromHours(1));
+    // #2046: the waiter hears the release on its signal bus.
+    await using var stack = PgSignalBusStack.Create(ConnectionString, b);
+    await stack.StartAsync(cancellationToken);
+    var waiter = _workerFor(b, _electorFor(b), stack.Bus, retry: TimeSpan.FromHours(1));
     var waiterLed = _when(h => waiter.OnBecameLeader += h);
     await waiter.StartAsync(cancellationToken);
-    await shared.WaitForChannelListenedAsync(DutyHolderWorker.RELEASE_CHANNEL, cancellationToken);
+    await stack.ListenedAsync(PgSignalWire.ROLE_RELEASED_CHANNEL, cancellationToken);
+    // A release of another role, as an older release's SQL announces it on the same channel, does not wake the waiter.
     _ = await _scalarAsync("SELECT pg_notify('wh_role_released', 'maintainer')", cancellationToken);
 
     await leader.StopAsync(CancellationToken.None);
@@ -259,7 +259,6 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     await Assert.That(await _holderAsync(cancellationToken)).IsEqualTo(b.InstanceId)
       .Because("the release was announced, so the waiter voted at once instead of after its hour-long retry");
     await waiter.StopAsync(CancellationToken.None);
-    await shared.StopAsync(CancellationToken.None);
   }
 
   [Test]

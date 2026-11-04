@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Slice 33.5 connection-count regression — the headline win of the slice 33 surgery.
 /// Pre-slice-33 each pod opened ONE direct connection per per-channel listener
-/// (PgWorkNotificationListener + PgCommitOrderStamperWorker + PgAppSignalChannel = 3
+/// (the work listener, the commit-order stamper and the app-signal channel = 3
 /// per pod). With horizontal scaling — N pods × M services × E environments — that's
 /// a real load on Postgres's max_connections budget. After slice 33.5 every per-pod
 /// LISTEN multiplexes through ONE shared connection, so the steady-state count is 1
@@ -45,53 +45,38 @@ public class SharedDirectConnectionCountRegressionTests : EFCoreTestBase {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
 
+    // #2046: every subscriber listens through the signal bus, whose transport is the one shared connection.
     using var shared = new PgSharedNotifyConnection(
       Options.Create(opts), cfg, instanceProvider,
       NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null,
       timeProvider: null);
-
-    var workListener = new PgWorkNotificationListener(
-      shared, shared, instanceProvider,
-      NullLogger<PgWorkNotificationListener>.Instance);
-
-    var appChannel = new PgAppSignalChannel(
-      Options.Create(opts), cfg, shared,
-      NullLogger<PgAppSignalChannel>.Instance);
+    using var transport = new PostgresSignalTransport(
+      Options.Create(opts), cfg, shared, instanceProvider, NullLogger<PostgresSignalTransport>.Instance);
+    var bus = new Whizbang.Core.Signals.SignalBus([transport], []);
+    var workListener = new PgWorkNotificationListener(bus, shared, NullLogger<PgWorkNotificationListener>.Instance);
+    Whizbang.Core.Notifications.AppSignals.IAppSignalChannel appChannel = bus;
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
-    // Start the shared conn (probe runs; once IsAvailable=true, the LISTEN dispatch loop
-    // is active).
     await ((IHostedService)shared).StartAsync(cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(50, cts.Token);
-    }
-    await Assert.That(shared.IsAvailable).IsTrue();
-
-    // Start the work listener — subscribes to wh_work_i_{instance} via shared.
+    await bus.StartAsync(cts.Token);
     await ((IHostedService)workListener).StartAsync(cts.Token);
-
-    // Subscribe to an app signal topic — registers wh_app_<topic> via shared.
     using var appSub = appChannel.Subscribe("test_topic", (_, _) => Task.CompletedTask);
 
-    // Settle: let the resync-signal triggered by the late subscriptions land the LISTENs
-    // on the shared conn before we count.
-    await Task.Delay(500, cts.Token);
+    // The signal: the shared connection has issued each LISTEN.
+    var workChannel = $"wh_work_i_{instanceProvider.InstanceId:D}";
+    await shared.WaitForChannelListenedAsync(workChannel, cts.Token);
+    await shared.WaitForChannelListenedAsync(PgSignalWire.COMMITTED_CHANNEL, cts.Token);
+    await shared.WaitForChannelListenedAsync("wh_app_test_topic", cts.Token);
 
     // Count distinct sessions on this database that are LISTENing on our 3 channels
-    // (work, committed, app) by name match. pg_listening_channels returns per-backend
-    // a row per channel; we count distinct PIDs across the channel names we care about.
-    var listeningPids = await _countListeningSessionsAsync(
-      $"wh_work_i_{instanceProvider.InstanceId:D}",
-      "wh_committed",
-      "wh_app_test_topic");
+    // (work, committed, app) by name match.
+    var listeningPids = await _countListeningSessionsAsync(workChannel, PgSignalWire.COMMITTED_CHANNEL, "wh_app_test_topic");
 
     // EXPECTED: exactly 1 session (the shared conn) holds LISTEN on all three channels.
-    // Pre-slice-33 design would have shown ≥3 here — one per listener.
     await Assert.That(listeningPids).IsEqualTo(1)
-      .Because("slice 33 multiplexes all per-channel LISTENs onto a single per-pod direct conn; baseline was 3 (one per listener)");
+      .Because("every LISTEN is the bus's, on a single per-pod direct conn; baseline was 3 (one per listener)");
 
     await ((IHostedService)workListener).StopAsync(CancellationToken.None);
     await ((IHostedService)shared).StopAsync(CancellationToken.None);

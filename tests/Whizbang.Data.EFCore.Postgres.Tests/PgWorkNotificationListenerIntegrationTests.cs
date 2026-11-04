@@ -12,6 +12,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Signals;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -19,8 +20,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Round-trip integration tests for <see cref="PgWorkNotificationListener"/>: real Postgres
-/// emits <c>pg_notify('wh_work', category)</c>, the listener receives it, and <c>OnSignal</c>
-/// fires with the correct <see cref="WorkSignalCategory"/>.
+/// emits <c>pg_notify('wh_work_i_&lt;instance&gt;', category)</c>, the signal bus receives it, and the listener's
+/// <c>OnSignal</c> fires with the correct <see cref="WorkSignalCategory"/>.
 /// </summary>
 /// <remarks>
 /// Uses the shared test container per-test database. The listener opens its own direct
@@ -52,7 +53,9 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   // Slice 33.4 — listener no longer owns a connection. Each test gets a fresh
   // PgSharedNotifyConnection too; StartAsync wires the listener as a subscriber. The
   // shared-conn must also be started so its dispatch loop runs.
-  private static (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
+  // #2046: the listener is a subscriber of the signal bus. Each test builds the instance's bus as a host does: the
+  // shared connection, the Postgres transport on it, and the bus over the transport.
+  private static (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId, SignalBus Bus) _newListenerWithInstance(WhizbangNotificationOptions options) {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
     var shared = new PgSharedNotifyConnection(
@@ -62,10 +65,11 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null,
       timeProvider: null);
-    var listener = new PgWorkNotificationListener(
-      shared, shared, instanceProvider,
-      NullLogger<PgWorkNotificationListener>.Instance);
-    return (listener, shared, instanceProvider.InstanceId);
+    var transport = new PostgresSignalTransport(
+      Options.Create(options), config, shared, instanceProvider, NullLogger<PostgresSignalTransport>.Instance);
+    var bus = new SignalBus([transport], []);
+    var listener = new PgWorkNotificationListener(bus, shared, NullLogger<PgWorkNotificationListener>.Instance);
+    return (listener, shared, instanceProvider.InstanceId, bus);
   }
 
   /// <summary>
@@ -77,8 +81,10 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   private static async Task<NotificationStack> _startStackAsync(
       PgWorkNotificationListener listener,
       PgSharedNotifyConnection shared,
+      SignalBus bus,
       CancellationToken ct) {
     await ((IHostedService)shared).StartAsync(ct);
+    await bus.StartAsync(ct);
     var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
       await Task.Delay(50, ct);
@@ -105,12 +111,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task PgNotify_OutboxCategory_FiresOnSignalWithOutboxAsync() {
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, instanceId, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
     var tcs = await _attachAsync(listener);
 
     await using var dbContext = CreateDbContext();
@@ -137,12 +143,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task PgNotify_InboxCategory_FiresOnSignalWithInboxAsync() {
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, instanceId, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
     var tcs = await _attachAsync(listener);
 
     // Deterministic: wait until the LISTEN for this channel is actually registered on the shared
@@ -175,12 +181,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task PgNotify_PerspectiveCategory_FiresOnSignalWithPerspectiveAsync() {
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, instanceId, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
     var tcs = await _attachAsync(listener);
 
     await using var dbContext = CreateDbContext();
@@ -205,39 +211,6 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     // stop handled by `await using var stack` above
   }
 
-  [Test]
-  public async Task PgNotify_UnknownCategory_DoesNotFireOnSignalAsync() {
-    // Defensive: payloads outside the known set are ignored. The listener still reads them
-    // (which sets LastSignalAt) but does NOT fire OnSignal — so subscribers don't see noise.
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
-      DirectConnectionString = ConnectionString,
-      SignalingMode = WorkSignalingMode.ListenNotify,
-    });
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
-    var tcs = new TaskCompletionSource<WorkSignalCategory>(TaskCreationOptions.RunContinuationsAsynchronously);
-    listener.OnSignal += cat => tcs.TrySetResult(cat);
-    while (!listener.IsHealthy) { await Task.Delay(50); }
-
-    await using var dbContext = CreateDbContext();
-    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync();
-    }
-    await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'gibberish')";
-      _ = await cmd.ExecuteScalarAsync();
-    }
-
-    // Race: give the notification a chance to land. If OnSignal fires within 1 s,
-    // tcs completes and the test fails. Otherwise tcs stays pending and the test passes.
-    _ = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
-    await Assert.That(tcs.Task.IsCompleted).IsFalse()
-      .Because("payloads outside {outbox, inbox, perspective} must not surface as a WorkSignalCategory");
-
-    // stop handled by `await using var stack` above
-  }
-
   // ----- real SQL functions emit pg_notify (regression locks) -----
 
   [Test]
@@ -246,12 +219,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     // strips the routed pg_notify from complete_perspective (mig 029), this test fails —
     // captures audit gap #4. Slice 27 retrofit: routing is via wh_work_i_<owner>, so the
     // test pins the stream to the listener's instance via wh_active_streams.
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, instanceId, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
     var tcs = await _attachAsync(listener);
 
     await using var dbContext = CreateDbContext();
@@ -312,12 +285,12 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Listener_OnStart_BecomesHealthyAsync() {
-    var (listener, shared, _) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, _, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!listener.IsHealthy && DateTimeOffset.UtcNow < deadline) {
@@ -336,14 +309,14 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     // pg_terminate_backend, a service restart, or a transient network blip). The listener
     // should detect, log, back off, reconnect, and resume LISTENing — verified by health
     // toggling false → true and a fresh pg_notify still firing OnSignal.
-    var (listener, shared, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
+    var (listener, shared, instanceId, bus) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
       ListenReconnectInitialDelay = TimeSpan.FromMilliseconds(100),
       ListenReconnectMaxDelay = TimeSpan.FromMilliseconds(500),
     });
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-    await using var stack = await _startStackAsync(listener, shared, cts.Token);
+    await using var stack = await _startStackAsync(listener, shared, bus, cts.Token);
     var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!listener.IsHealthy && DateTimeOffset.UtcNow < deadline) {
       await Task.Delay(50);

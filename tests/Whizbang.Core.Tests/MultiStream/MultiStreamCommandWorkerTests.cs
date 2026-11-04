@@ -342,11 +342,10 @@ public class MultiStreamCommandWorkerTests {
   public async Task RequestImmediateRun_WhenAWakeIsAlreadyPending_IsHarmlessAsync() {
     var worker = new Harness().Build();
 
-    worker.OnNotification("run-1");
+    worker.RequestImmediateRun();
 
     await Assert.That(() => worker.RequestImmediateRun()).ThrowsNothing()
       .Because("one pending wake already covers every run announced before the pass starts");
-    await Assert.That(worker.ChannelName).IsEqualTo(MultiStreamCommandWorker.CHANNEL);
   }
 
   [Test]

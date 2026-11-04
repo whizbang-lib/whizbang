@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.DataPostgres;
 /// </summary>
 /// <remarks>No database: the shared connection is a fake that counts subscriptions and releases.</remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgAppSignalChannel.cs</code-under-test>
 [Category("Shard5")]
 public class SignalChannelLifecycleBranchTests {
   private static readonly IOptions<WhizbangNotificationOptions> _options = Options.Create(new WhizbangNotificationOptions());
@@ -46,17 +45,18 @@ public class SignalChannelLifecycleBranchTests {
 
     transport.Dispose();
 
-    await Assert.That(shared.SubscribeCount).IsEqualTo(2)
-      .Because("the transport listens on the broadcast channel and on its own instance channel");
-    await Assert.That(shared.ReleaseCount).IsEqualTo(2);
+    await Assert.That(shared.SubscribeCount).IsEqualTo(2 + PgSignalWire.Bindings.Count)
+      .Because("the transport listens on the broadcast channel, on its own instance channel, and on each coordination "
+        + "channel bound to the bus (#2046)");
+    await Assert.That(shared.ReleaseCount).IsEqualTo(2 + PgSignalWire.Bindings.Count);
   }
 
   // ISharedNotifyConnection is a public seam. A host-supplied implementation that hands back no
   // handle must not turn the last unsubscribe from a topic into a NullReferenceException.
   [Test]
   public async Task AppChannel_TopicWhoseSharedConnectionReturnedNoHandle_UnsubscribesCleanlyAsync() {
-    var channel = new PgAppSignalChannel(_options, _configuration, new HandlelessSharedConnection(), NullLogger<PgAppSignalChannel>.Instance);
-    var handle = channel.Subscribe("branch_handleless", (_, _) => Task.CompletedTask);
+    using var transport = _transport(new HandlelessSharedConnection());
+    var handle = transport.SubscribeTopic("branch_handleless", (_, _) => Task.CompletedTask);
 
     await Assert.That(() => handle.Dispose()).ThrowsNothing();
   }

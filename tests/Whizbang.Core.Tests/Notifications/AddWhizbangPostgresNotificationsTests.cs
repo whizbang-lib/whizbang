@@ -61,10 +61,12 @@ public class AddWhizbangPostgresNotificationsTests {
 
   [Test]
   public async Task AddWhizbangPostgresNotifications_RegistersAppSignalChannelAsync() {
+    // #2046: application topics ride the signal bus: the channel is the bus itself, whose Postgres transport
+    // carries each topic.
     var sp = _build();
     var channel = sp.GetService<IAppSignalChannel>();
     await Assert.That(channel).IsNotNull();
-    await Assert.That(channel).IsTypeOf<PgAppSignalChannel>();
+    await Assert.That(channel).IsSameReferenceAs(sp.GetRequiredService<Whizbang.Core.Signals.SignalBus>());
   }
 
   [Test]

@@ -116,7 +116,7 @@ public class MultiStreamCommandWorkerLoopTests {
       store.Claims.Enqueue([_item(run, Guid.CreateVersion7())]);
       store.Completions.Enqueue([new MultiStreamRunCompletion(run, _commandType, 1, 1, 0)]);
 
-      worker.OnNotification(run.ToString());
+      worker.RequestImmediateRun();
 
       var completion = await completed.Task.WaitAsync(_deadline);
       await Assert.That(completion.RunId).IsEqualTo(run)
