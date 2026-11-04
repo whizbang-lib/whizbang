@@ -27,8 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Coverage-round-23 targeted tests for <see cref="IntegrityCheckpointReceptor"/>: the branches
 /// <see cref="IntegrityCheckpointReceptorTests"/> never exercises — the feature-disabled early
-/// return, the no-subscribed-types early return (and the <c>_subscribedTypeNames</c> helper's
-/// null-provider fallback that feeds it), and the sender's-own-infrastructure guard inside
+/// return, the nothing-consumed early return (no consumer registry: every bucket is unconsumed, #2058),
+/// and the sender's-own-infrastructure guard inside
 /// <c>_sendRepairRequestAsync</c>. No live database: every dependency is an interface satisfied by
 /// an in-memory fake, exactly like the sibling suite.
 /// </summary>
@@ -85,14 +85,12 @@ public class IntegrityCheckpointReceptorCoverageTests {
   }
 
   /// <summary>
-  /// If <c>_subscribedTypeNames</c> stopped defaulting to empty for a missing
-  /// <see cref="IEventTypeProvider"/> (or the empty-set early return stopped short-circuiting), a
-  /// host that boots before its generated type catalog is wired would either throw resolving
-  /// <c>GetEventTypes()</c> on a null provider, or silently register (and eventually confirm and
-  /// report) pendings for types this instance can never legitimately verify.
+  /// With no consumer registry registered nothing is consumed (#2058), so every bucket is someone else's contract. If
+  /// the filter instead treated a missing registry as "everything", a host that boots before its registry is wired
+  /// would register (and eventually confirm and report) pendings for types it can never legitimately verify.
   /// </summary>
   [Test]
-  public async Task NoEventTypeProviderRegistered_TreatsEveryBucketAsUnsubscribedAsync() {
+  public async Task NoConsumerRegistryRegistered_TreatsEveryBucketAsUnconsumedAsync() {
     var coordinator = new FakeCoordinator();
     var dispatcher = new FakeDispatcher();
 
@@ -102,7 +100,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IntegrityRepairLedger>();
-    // Deliberately NOT registered: IEventTypeProvider.
+    // Deliberately NOT registered: IConsumerRegistry.
     services.AddSingleton(Options.Create(new StreamIntegrityOptions { PublishReportEvents = true }));
     var sp = services.BuildServiceProvider();
     var receptor = new IntegrityCheckpointReceptor(
@@ -114,7 +112,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     await receptor.HandleAsync(_checkpoint(originId, "origin-svc", from: 5, to: 5, count: 0, emptyBuckets: true));
 
     await Assert.That(dispatcher.Published).IsEmpty()
-      .Because("with no event-type provider registered, every bucket is someone else's contract — " +
+      .Because("with no consumer registry registered, every bucket is someone else's contract — " +
                "exactly like an explicitly unsubscribed type — and must never confirm a gap.");
   }
 
@@ -141,7 +139,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IntegrityRepairLedger>();
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new FakeEventTypeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new FakeInstanceProvider("consumer-svc"));
     // Deliberately NOT registered: TransportConsumerOptions, and StreamIntegrityOptions.RepairTopic
     // is left null below. Together those are THIS service's own reply address; with neither
@@ -219,6 +217,113 @@ public class IntegrityCheckpointReceptorCoverageTests {
     housekeeping.End(HousekeepingCoordinator.Activity.Integrity);
   }
 
+  // ── #2058: only what this service consumes is verified ─────────────────
+
+  private const string UNCONSUMED_TYPE = "Contracts.KnownButUnconsumed, Contracts";
+  private const string RECEPTOR_ONLY_TYPE = "Contracts.ReceptorOnly, Contracts";
+
+  /// <summary>
+  /// A consumer with no perspectives, whose receptor handles A, receives a checkpoint naming A and B with a deficit in
+  /// both. A is verified (and confirms on the next checkpoint); B, which nothing here consumes, is never verified:
+  /// its redelivery would be discarded at the receive boundary, so the deficit could never heal.
+  /// </summary>
+  [Test]
+  public async Task NoPerspectives_VerifiesTheConsumedType_AndNeverTheTypeNothingHereConsumesAsync() {
+    var dispatcher = new FakeDispatcher();
+    var receptor = _consumerReceptor(dispatcher, perspectives: null, consumed: [_verifiedType]);
+    var originId = Guid.NewGuid();
+
+    await receptor.HandleAsync(_checkpointOf(originId, from: 0, to: 5, (_verifiedType, 3), (UNCONSUMED_TYPE, 4)));
+    await receptor.HandleAsync(_checkpointOf(originId, from: 5, to: 5));
+
+    var reported = dispatcher.Published.OfType<IntegrityGapDetected>().Select(r => r.EventType).ToList();
+    await Assert.That(reported).IsEquivalentTo([_verifiedType])
+      .Because("the consumed type is verified even without a perspective, and the unconsumed one never is");
+  }
+
+  /// <summary>A consumer with a perspective for A and a receptor for R verifies R too.</summary>
+  [Test]
+  public async Task PerspectiveAndReceptor_VerifiesTheReceptorOnlyTypeAsync() {
+    var dispatcher = new FakeDispatcher();
+    var receptor = _consumerReceptor(dispatcher, perspectives: new PerspectiveEvents(),
+      consumed: [_verifiedType, RECEPTOR_ONLY_TYPE]);
+    var originId = Guid.NewGuid();
+
+    await receptor.HandleAsync(_checkpointOf(originId, from: 0, to: 5, (RECEPTOR_ONLY_TYPE, 2)));
+    await receptor.HandleAsync(_checkpointOf(originId, from: 5, to: 5));
+
+    var reported = dispatcher.Published.OfType<IntegrityGapDetected>().Select(r => r.EventType).ToList();
+    await Assert.That(reported).IsEquivalentTo([RECEPTOR_ONLY_TYPE])
+      .Because("an event only a receptor consumes is stored here, so its count is this service's contract");
+  }
+
+  /// <summary>
+  /// A consumer that absorbs a namespace stores its events though nothing consumes them, so it verifies them too: the
+  /// receive boundary's decision (the discard policy) is the filter, not the receptor list alone.
+  /// </summary>
+  [Test]
+  public async Task AbsorbedNamespace_WithNothingConsumingIt_IsVerifiedAsync() {
+    const string absorbedType = "Contracts.Jobs.JobStarted, Contracts";
+    var dispatcher = new FakeDispatcher();
+    var receptor = _consumerReceptor(dispatcher, perspectives: null, consumed: [], absorbedNamespaces: ["contracts.jobs"]);
+    var originId = Guid.NewGuid();
+
+    await receptor.HandleAsync(_checkpointOf(originId, from: 0, to: 5, (absorbedType, 3), (UNCONSUMED_TYPE, 4)));
+    await receptor.HandleAsync(_checkpointOf(originId, from: 5, to: 5));
+
+    var reported = dispatcher.Published.OfType<IntegrityGapDetected>().Select(r => r.EventType).ToList();
+    await Assert.That(reported).IsEquivalentTo([absorbedType])
+      .Because("an absorbed namespace's events are stored here, so a deficit in them is a real gap");
+  }
+
+  private static IntegrityCheckpointReceptor _consumerReceptor(
+      FakeDispatcher dispatcher, IEventTypeProvider? perspectives, string[] consumed, string[]? absorbedNamespaces = null) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new FakeCoordinator());
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton(new IntegrityGapTracker());
+    services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
+    services.AddSingleton<IntegrityRepairLedger>();
+    if (perspectives is not null) {
+      services.AddSingleton(perspectives);
+    }
+    var registry = new ConsumedRegistry([.. consumed.Select(t => new ConsumedMessageInfo(t, IsEvent: true))]);
+    services.AddSingleton<IConsumerRegistry>(registry);
+    if (absorbedNamespaces is not null) {
+      services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
+        registry, NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
+        new System.Diagnostics.Metrics.Meter("integrity-checkpoint-absorbed-test"),
+        Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces(absorbedNamespaces)),
+        new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+    }
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { PublishReportEvents = true }));
+    var sp = services.BuildServiceProvider();
+    return new IntegrityCheckpointReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
+  }
+
+  private static IntegrityCheckpoint _checkpointOf(
+      Guid originId, long from, long to, params (string EventType, int Count)[] buckets) => new() {
+        CheckpointStreamId = originId,
+        OriginServiceId = originId,
+        OriginServiceName = "origin-svc",
+        FromCommitSequence = from,
+        ToCommitSequence = to,
+        Buckets = [.. buckets.Select(b => new CheckpointBucket { TenantScope = "tenant-a", EventType = b.EventType, Count = b.Count })],
+      };
+
+  /// <summary>The perspective event types: the perspective folds the verified event only.</summary>
+  private sealed class PerspectiveEvents : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(CoverageEvent)];
+  }
+
+  private sealed class ConsumedRegistry(ConsumedMessageInfo[] consumed) : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
+  }
+
   // ── fixture helpers ────────────────────────────────────────────────────
 
   private static IntegrityCheckpoint _checkpoint(
@@ -237,8 +342,12 @@ public class IntegrityCheckpointReceptorCoverageTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class FakeEventTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(CoverageEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class FakeEventTypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(CoverageEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class FakeInstanceProvider(string serviceName) : IServiceInstanceProvider {

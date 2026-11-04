@@ -371,6 +371,41 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(manifest.Digests[0].DigestLo).IsEqualTo(41L);
   }
 
+  /// <summary>
+  /// #2058: a requester that absorbs a namespace asks for it by namespace; the origin adds its own audited types in that
+  /// namespace (nested types included, other namespaces not) to the requested types.
+  /// </summary>
+  [Test]
+  public async Task RequestReceptor_AbsorbedNamespaces_AddTheOriginsOwnTypesInThemAsync() {
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [_typeDigest("Contracts.Jobs.JobStarted, Contracts", 41, 42, 5)],
+      OwnAuditedTypes = [
+        "Contracts.Jobs.JobStarted, Contracts",
+        "Contracts.Jobs.Outer+JobNested, Contracts",
+        "Contracts.Jobs.Archive.JobArchived, Contracts",
+        "Contracts.Orders.OrderShipped, Contracts",
+      ],
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.Consumed, Contracts"],
+      EventNamespaces = ["contracts.jobs"],
+      Level = ManifestLevel.Types,
+    });
+
+    await Assert.That(coordinator.LastOwnTypeQuery).IsEquivalentTo([
+      "Contracts.Consumed, Contracts",
+      "Contracts.Jobs.JobStarted, Contracts",
+      "Contracts.Jobs.Outer+JobNested, Contracts",
+    ]).Because("the requester's consumed types plus every type this origin emits in the namespace it absorbs, and no other");
+  }
+
   [Test]
   public async Task RequestReceptor_TypesLevelWithRecompute_RollsUpComputedRowsAsync() {
     var coordinator = new AuditCoordinator();
@@ -585,6 +620,57 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(request.UseRecompute).IsFalse().Because("Table-driven cycles drill down table-driven.");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(dispatcher.Published).IsEmpty().Because("Type-level mismatches escalate; they never report directly.");
+  }
+
+  /// <summary>
+  /// #2058: a manifest that names a type nothing here consumes (an origin answering a request from before the audit
+  /// was narrowed) never drills down, reports or repairs it: its redelivery would be discarded at the receive boundary,
+  /// so the divergence could never heal.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_OfATypeNothingHereConsumes_IsNeverEscalatedAsync() {
+    var coordinator = new AuditCoordinator();   // nothing stored locally: both types mismatch
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 10 }, tracker: tracker,
+      consumers: new ConsumesOnly("Contracts.TypeX"));
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _typeDigest("Contracts.TypeX", 41, 42, 5),
+      _typeDigest("Contracts.TypeY", 51, 52, 2),
+    ], ManifestLevel.Types));
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.EventTypes).IsEquivalentTo(["Contracts.TypeX"])
+      .Because("only the consumed type is escalated; the other is not this service's contract");
+  }
+
+  /// <summary>#2058: the stream-level compare skips the buckets of a type nothing here consumes.</summary>
+  [Test]
+  public async Task ManifestReceptor_StreamLevelDivergence_OfATypeNothingHereConsumes_IsNeverRepairedAsync() {
+    var coordinator = new AuditCoordinator();
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var ledger = new IntegrityRepairLedger();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      tracker: tracker, ledger: ledger, consumers: new ConsumesOnly("Contracts.TypeX"));
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _digest(TrackedGuid.New().Value, 11, 21, 2),
+      _digest(TrackedGuid.New().Value, 12, 22, 3) with { EventType = "Contracts.TypeY" },
+    ]));
+
+    var repairs = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    await Assert.That(repairs.SelectMany(r => r.EventTypes ?? []).Distinct()).IsEquivalentTo(["Contracts.TypeX"])
+      .Because("the consumed type's divergence is repaired; the other type's never is");
   }
 
   [Test]
@@ -2470,16 +2556,26 @@ public class IntegrityManifestReceptorTests {
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
   }
 
+  /// <summary>A consumer registry that consumes the named types only.</summary>
+  private sealed class ConsumesOnly(params string[] typeNames) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => typeNames.Contains(messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. typeNames.Select(t => new ConsumedMessageInfo(t, IsEvent: true))];
+  }
+
   private static ServiceProvider _provider(
       AuditCoordinator coordinator, CaptureTransport transport,
       StreamIntegrityOptions? options = null, CaptureDispatcher? dispatcher = null,
       IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null,
-      Whizbang.Core.Routing.RoutingOptions? routing = null) {
+      Whizbang.Core.Routing.RoutingOptions? routing = null, IConsumerRegistry? consumers = null) {
     var services = new ServiceCollection();
     if (routing is not null) {
       services.AddSingleton(Options.Create(routing));
     }
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    // What this service consumes. These tests compare whatever types they name, so by default everything is consumed;
+    // the #2058 tests pass a registry that consumes a subset.
+    services.AddSingleton<IConsumerRegistry>(consumers ?? new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher ?? new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -2644,10 +2740,18 @@ public class IntegrityManifestReceptorTests {
       Task.FromResult(originServiceId is null ? OwnTableDigests : ReceivedTableDigests);
 
     public int TypeTableReads;
+    public IReadOnlyList<string> OwnAuditedTypes { get; set; } = [];
+    public IReadOnlyList<string>? LastOwnTypeQuery { get; private set; }
+
+    public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(OwnAuditedTypes);
 
     public Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
-      Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) {
+        Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref TypeTableReads);
+      if (originServiceId is null) {
+        LastOwnTypeQuery = eventTypes;
+      }
       return Task.FromResult(originServiceId is null ? OwnTypeDigests : ReceivedTypeDigests);
     }
 

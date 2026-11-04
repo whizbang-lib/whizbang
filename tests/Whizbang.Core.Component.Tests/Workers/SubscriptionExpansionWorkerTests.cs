@@ -124,13 +124,50 @@ public class SubscriptionExpansionWorkerTests {
              + "stops the host from ever serving");
   }
 
+  // ── #2058: the consumed set is what the service consumes, not what its perspectives fold ──
+
+  [Test]
+  public async Task FirstBoot_NoPerspectives_BaselinesTheEventAReceptorConsumesAsync() {
+    var coordinator = new RegistryCoordinator();
+    var worker = _buildWorker(coordinator, new CaptureTransport(), perspectives: null);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Registry.Keys).Contains(_expandedType)
+      .Because("a service with no perspectives still consumes the events its receptors handle; it must baseline them, " +
+               "or a later expansion is never detected and never backfilled");
+  }
+
+  [Test]
+  public async Task FirstBoot_PerspectiveConsumer_AlsoBaselinesAReceptorOnlyEvent_ButNoCommandAsync() {
+    var coordinator = new RegistryCoordinator();
+    var worker = _buildWorker(coordinator, new CaptureTransport(), perspectives: new TypeProvider(),
+      consumed: [
+        new ConsumedMessageInfo(_expandedWireType, IsEvent: true),
+        new ConsumedMessageInfo(RECEPTOR_ONLY_WIRE_TYPE, IsEvent: true),
+        new ConsumedMessageInfo("Contracts.ShipOrder, Contracts", IsEvent: false),
+      ]);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Registry.Keys).IsEquivalentTo([_expandedType, "Contracts.ReceptorOnlyEvent"])
+      .Because("an event only a receptor consumes is part of the consumed set; a command is not an event and has no history to backfill");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
+  private const string RECEPTOR_ONLY_WIRE_TYPE = "Contracts.ReceptorOnlyEvent, Contracts";
+
   private static SubscriptionExpansionWorker _buildWorker(
-      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null) {
+      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null,
+      IEventTypeProvider? perspectives = null, ConsumedMessageInfo[]? consumed = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    if (perspectives is not null) {
+      services.AddSingleton(perspectives);
+    }
+    services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(
+      consumed ?? [new ConsumedMessageInfo(_expandedWireType, IsEvent: true)]));
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
     }
@@ -146,6 +183,13 @@ public class SubscriptionExpansionWorkerTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
+  /// <summary>The consumer registry: what this service consumes.</summary>
+  private sealed class ConsumedRegistry(ConsumedMessageInfo[] consumed) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
+  }
+
+  /// <summary>The perspective event types: the perspectives fold the expanded event.</summary>
   private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(ExpandedEvent)];
   }

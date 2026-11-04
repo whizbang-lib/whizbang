@@ -40,8 +40,12 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     public StreamIntegrityOptions Value => null!;
   }
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(CatalogEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(CatalogEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
@@ -98,7 +102,7 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
       RegistryCoordinator coordinator, CaptureTransport transport, StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanded-svc"));

@@ -169,6 +169,24 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   }
 
   [Test]
+  public async Task GetConsumedMessages_DelegatesToGeneratedStaticAsync() {
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
+
+    var direct = ((IReceptorRegistryQuery)sut).GetConsumedMessages();
+    var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
+
+    await Assert.That(direct.SequenceEqual(static_)).IsTrue()
+      .Because("the adapter is the registry's DI face: it must surface the same consumed set");
+  }
+
+  [Test]
+  public async Task CustomPredicatesOnlyImplementation_GetConsumedMessages_DefaultsToEmptyAsync() {
+    IReceptorRegistryQuery predicatesOnly = new PredicatesOnlyQueryFake();
+
+    await Assert.That(predicatesOnly.GetConsumedMessages()).IsEmpty();
+  }
+
+  [Test]
   public async Task CustomPredicatesOnlyImplementation_GetHandledMessages_DefaultsToEmptyAsync() {
     // Default-interface-member contract: implementations that predate the enumeration
     // surface (custom/test fakes with predicates only) keep compiling AND degrade to an

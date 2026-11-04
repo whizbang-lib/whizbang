@@ -454,7 +454,7 @@ public class IntegrityCheckpointReceptorTests {
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
@@ -562,8 +562,12 @@ public class IntegrityCheckpointReceptorTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(VerifiedEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(VerifiedEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {

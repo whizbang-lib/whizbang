@@ -158,27 +158,77 @@ public class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
-  public async Task RunAuditOnce_NoEventTypeProvider_RequestCarriesNoTypeFilterAsync() {
+  public async Task RunAuditOnce_ConsumerWithNoPerspectives_RequestsOnlyTheEventItsReceptorConsumesAsync() {
     var transport = new CaptureTransport();
-    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null);
+    // The application knows A and B (a shared contracts assembly) but only a receptor for A is registered, and no
+    // perspective: the perspective event-type provider is unavailable.
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: NullEventTypeProvider.Instance,
+      consumed: [_event(TYPE_A), new ConsumedMessageInfo(COMMAND, IsEvent: false)]);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var request = _deserializeRequest(transport.Published.Single().Envelope);
-    await Assert.That(request.EventTypes).IsNull()
-      .Because("with no provider the request asks for every type rather than for an empty list");
+    await Assert.That(request.EventTypes).IsEquivalentTo([TYPE_A])
+      .Because("the audit asks for what this service consumes, never for every type (null) and never for B, which nothing here consumes");
   }
 
   [Test]
-  public async Task RunAuditOnce_UnavailableEventTypeProvider_RequestCarriesNoTypeFilterAsync() {
+  public async Task RunAuditOnce_PerspectiveAndReceptorConsumer_RequestIncludesTheReceptorOnlyEventAsync() {
     var transport = new CaptureTransport();
-    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: NullEventTypeProvider.Instance);
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: new PerspectiveTypes(),
+      consumed: [_event(TYPE_A), _event(TYPE_R)]);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var request = _deserializeRequest(transport.Published.Single().Envelope);
-    await Assert.That(request.EventTypes).IsNull()
-      .Because("a provider that is not available must not narrow the request to the empty set it reports");
+    await Assert.That(request.EventTypes).IsEquivalentTo([TYPE_A, TYPE_R])
+      .Because("an event only a receptor consumes is still stored here, so it is audited like a perspective's");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_ConsumesNoEvents_RequestsNothingAsync() {
+    var transport = new CaptureTransport();
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null,
+      consumed: [new ConsumedMessageInfo(COMMAND, IsEvent: false)], coordinator: coordinator);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("a service that consumes no events has nothing to audit; an empty filter must never widen to 'every type'");
+    await Assert.That(coordinator.ForgetCalls.Single()).IsEmpty()
+      .Because("every ledger row of such a service is for a type it does not consume");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_ForgetsTheLedgerRowsOfEveryTypeOutsideTheConsumedSetAsync() {
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(new CaptureTransport(), typeProvider: null,
+      consumed: [_event(TYPE_A)], coordinator: coordinator);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgetCalls.Single()).IsEquivalentTo([TYPE_A])
+      .Because("the audit hands the ledger the consumed set each cycle, so rows recorded for other types go away");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_AbsorbedNamespace_WithNothingConsumingIt_IsStillAuditedAsync() {
+    var transport = new CaptureTransport();
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null,
+      consumed: [new ConsumedMessageInfo(COMMAND, IsEvent: false)], coordinator: coordinator,
+      absorbedNamespaces: ["Contracts.Jobs"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.EventNamespaces).IsEquivalentTo(["contracts.jobs"])
+      .Because("an absorbed namespace's events are stored here on purpose, so they are audited though nothing consumes them");
+    await Assert.That(request.EventTypes).IsEmpty()
+      .Because("the type list stays the consumed events: empty, never null (which an origin reads as every type)");
+    await Assert.That(coordinator.ForgetNamespaces.Single()).IsEquivalentTo(["contracts.jobs"])
+      .Because("the ledger keeps the rows of an absorbed namespace's types");
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────
@@ -195,12 +245,20 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
   }
 
-  private static IntegrityAuditWorker _buildWorkerWithOneOrigin(CaptureTransport transport, IEventTypeProvider? typeProvider) {
+  private const string TYPE_A = "Contracts.OrderShipped, Contracts";
+  private const string TYPE_R = "Contracts.OrderAudited, Contracts";
+  private const string COMMAND = "Contracts.ShipOrder, Contracts";
+
+  private static ConsumedMessageInfo _event(string typeName) => new(typeName, IsEvent: true);
+
+  private static IntegrityAuditWorker _buildWorkerWithOneOrigin(
+      CaptureTransport transport, IEventTypeProvider? typeProvider, ConsumedMessageInfo[] consumed,
+      AuditCoordinator? coordinator = null, string[]? absorbedNamespaces = null) {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    return _buildWorker(new AuditCoordinator(), new CaptureDispatcher(), transport,
+    return _buildWorker(coordinator ?? new AuditCoordinator(), new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, tracker,
-      typeProvider: typeProvider, registerTypeProvider: true);
+      typeProvider: typeProvider, registerTypeProvider: true, consumed: consumed, absorbedNamespaces: absorbedNamespaces);
   }
 
   private static IntegrityAuditWorker _buildWorker(
@@ -210,8 +268,14 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       ILogger<IntegrityAuditWorker>? logger = null,
       bool registerInstanceProvider = true,
       IEventTypeProvider? typeProvider = null,
-      bool registerTypeProvider = false) {
+      bool registerTypeProvider = false,
+      ConsumedMessageInfo[]? consumed = null,
+      string[]? absorbedNamespaces = null) {
     var services = new ServiceCollection();
+    if (absorbedNamespaces is not null) {
+      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces(absorbedNamespaces)));
+    }
+    services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(consumed ?? [_event(TYPE_A)]));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
@@ -235,6 +299,19 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       Options.Create(options),
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
+
+  /// <summary>The consumer registry: what this service consumes.</summary>
+  private sealed class ConsumedRegistry(ConsumedMessageInfo[] consumed) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
+  }
+
+  /// <summary>A perspective event-type provider that knows A only (the perspective folds A).</summary>
+  private sealed class PerspectiveTypes : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(PerspectiveFoldedEvent)];
+  }
+
+  private sealed record PerspectiveFoldedEvent : IEvent;
 
   private sealed class NullValueOptions : IOptions<StreamIntegrityOptions> {
     public StreamIntegrityOptions Value => null!;
@@ -271,6 +348,16 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int EpochVerifyCalls { get; private set; }
+    public List<IReadOnlyList<string>> ForgetCalls { get; } = [];
+    public List<IReadOnlyCollection<string>> ForgetNamespaces { get; } = [];
+
+    public Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+        IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+        CancellationToken cancellationToken = default) {
+      ForgetCalls.Add(consumedEventTypes);
+      ForgetNamespaces.Add(absorbedNamespaces);
+      return Task.FromResult(0);
+    }
 
     public EpochVerificationResult EpochResult { get; init; } = new(0, 0);
 

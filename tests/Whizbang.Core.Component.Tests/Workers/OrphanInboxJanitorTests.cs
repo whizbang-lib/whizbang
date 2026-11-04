@@ -210,6 +210,28 @@ public class OrphanInboxJanitorTests {
   }
 
   /// <summary>
+  /// #2058: the handled names include everything the consumer registry says this service consumes, so a type that
+  /// only a perspective, a tag or the collective sink consumes is never purged as an orphan.
+  /// </summary>
+  [Test]
+  public async Task StartAsync_HandledNames_IncludeEveryTypeTheConsumerRegistryEnumeratesAsync() {
+    var coordinator = new RecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(
+      new ConsumedMessageInfo("Contracts.TaggedNotice, Contracts", IsEvent: false),
+      new ConsumedMessageInfo("Contracts.FoldedEvent, Contracts", IsEvent: true)));
+    await using var sp = services.BuildServiceProvider();
+    var janitor = new OrphanInboxJanitor(sp, new HandledReceptorTypeSnapshot([]), NullLogger<OrphanInboxJanitor>.Instance);
+
+    await _runToCompletionAsync(janitor);
+
+    await Assert.That(coordinator.LastHandledTypeNames).IsEquivalentTo(
+      ["Contracts.TaggedNotice, Contracts", "Contracts.FoldedEvent, Contracts"])
+      .Because("what the service consumes comes from the one consumer registry, not from the perspective list");
+  }
+
+  /// <summary>
   /// The old shape ran the purge inline in <c>StartAsync</c>, so every later hosted service
   /// waited on it. StartAsync must now return without purging — the sweep is background work.
   /// </summary>
@@ -320,6 +342,11 @@ public class OrphanInboxJanitorTests {
       }
       return Task.FromResult(PurgeResult);
     }
+  }
+
+  private sealed class ConsumedRegistry(params ConsumedMessageInfo[] consumed) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
   }
 
   private sealed class StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
