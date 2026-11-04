@@ -1353,6 +1353,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
+  origin, so a store that received other services' events before origins were recorded advertised them as its own,
+  counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
+  type's namespace is not in `RoutingOptions.OwnedDomains` is now never local: checkpoints count only owned types,
+  manifest answers advertise only owned types, and redelivery ships only owned types. A service with no owned domains
+  registered keeps the earlier behavior exactly. The namespace rule is `OwnedNamespaceMatcher` (new `IsLocalEventType`
+  and `NormalizeDomain`), which the dispatcher, the receptor invoker and the transport consumer now share instead of
+  each keeping a copy.
+- **Pre-origin history is re-attributed to the service that wrote it (#2008).** A new maintainer worker
+  (`OriginReattributionWorker`) walks the store in commit-sequence batches under the housekeeping idle gate (forced
+  through after `Whizbang:Housekeeping:MaxDeferral`), only when owned domains are registered. An event with no origin
+  whose type another service owns takes that owner as origin, its digest moves from the local lane to the owner's,
+  sealed local epochs are refolded (advancing the origin generation) and the owner's repair-ledger buckets it lands in
+  have their unhealable and exhausted marks cleared and their attempts and pending answer reset. Ownership is primary:
+  an event whose first hop names a third service is logged and left. A non-owned type with no known owner is counted as
+  unattributed and left (out of the local lane logically). The walk's cursor is durable and restarts when the ownership
+  map changes (migration 325: `wh_integrity_reattribution`, `wh_integrity_reattribution_window`,
+  `wh_integrity_reattribute_origins`). New keys `Whizbang:StreamIntegrity:ReattributionEnabled` (default true),
+  `ReattributionIntervalSeconds` (60), `ReattributionBatchSize` (5000) and `MaxReattributionBatchesPerPass` (20); new
+  counters `origins_reattributed`, `origins_unattributed` and `reattribution_hop_disagreements`.
+- **Owners are exchanged on the integrity checkpoint (#2008).** `IntegrityCheckpoint` gains an additive `OwnedDomains`
+  list (an older origin reads as announcing none). Consumers persist each origin's claims (`wh_integrity_domain_claims`,
+  migration 325): an announcement replaces the origin's claim set and keeps its known request address. A domain two
+  services claim is warned once per pair, counted on `whizbang.stream_integrity.ownership_conflicts`, and used for
+  neither. A consumer neither verifies nor repairs a checkpoint bucket or manifest digest against an origin when another
+  service owns the type.
+- **One checkpoint copy per consumer (#2031).** With owned domains registered the checkpoint rides only the topics of the
+  catalog event types the service owns, instead of every topic of the window's types and of the store's digest lane, so
+  a consumer subscribed to other services' topics no longer receives one copy per topic. With no owned domains the topic
+  set is unchanged.
+- **Redelivery ships only what the origin wrote, and the backfill asks the owner (#2032).** The redelivery selection takes
+  `RedeliveryRequest.AuthoredBy`: only events with no origin and a first hop naming the answering service (or no service)
+  are selected. An origin ignores a redelivery request it made itself (counted on
+  `whizbang.stream_integrity.redelivery_requests_ignored`, reason `own_request`). The subscription-growth backfill
+  directs a request at each known domain owner on its request topic; only types with no usable owner fall back to the
+  broadcast.
 - **The stale-definition line names only a file it re-runs (#1636).** The EF Core schema pass compares each framework
   function in the database with its last-word migration and re-runs a file whose function is missing or older. It
   logged `Migration <file>: re-running because the database's definition of <functions> (missing) does not match this

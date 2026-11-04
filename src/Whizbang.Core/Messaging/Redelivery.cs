@@ -53,6 +53,16 @@ public sealed record RedeliveryRequest {
 
   /// <summary>Keyset continuation partner of <see cref="AfterStreamId"/>.</summary>
   public long? AfterVersion { get; init; }
+
+  /// <summary>
+  /// The answering service's name. When set, only events that service authored are selected: no origin recorded, and
+  /// a stored first hop that names this service, names no service, or is absent (#2032). An event received from
+  /// another service, whether it carries that origin or only a first hop naming it, is refused by every receiver, so
+  /// shipping it is pure cost. Null selects as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#redelivery-ships-only-what-the-origin-wrote</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs:Select_AuthoredBy_ShipsOnlyEventsTheAnsweringServiceWroteAsync</tests>
+  public string? AuthoredBy { get; init; }
 }
 
 /// <summary>

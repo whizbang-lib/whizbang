@@ -1554,21 +1554,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Checks if the given namespace is owned by this service.
   /// Supports hierarchical matching: "A.B" owns "A.B.C.D".
   /// </summary>
-  private bool _isOwnedNamespace(string? ns) {
-    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
-      return false;
-    }
-    if (_ownedDomains.Contains(ns)) {
-      return true;
-    }
-    foreach (var owned in _ownedDomains) {
-      var prefix = owned.EndsWith('.') ? owned : owned + ".";
-      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
-        return true;
-      }
-    }
-    return false;
-  }
+  private bool _isOwnedNamespace(string? ns) =>
+    // The one hierarchical ownership rule, shared with event-subscription discovery and the integrity local lane.
+    Whizbang.Core.Routing.OwnedNamespaceMatcher.IsOwned(ns, _ownedDomains);
 
   /// <summary>
   /// Lazily initializes <see cref="_knownEventTypeNames"/> from <see cref="IEventTypeProvider"/>.

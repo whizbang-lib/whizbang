@@ -415,6 +415,9 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<RepairDrainWorker>();
+    // #2008: re-attributes pre-origin history to its owners, on the maintainer under the idle gate.
+    services.TryAddSingleton<OriginReattributionWorker>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityOwnershipConflicts>();
     // #2001: integrity deliveries recorded on every instance are drained on the maintainer. The registry's
     // presence is what tells the deferring integrity receptors that something drains what they record.
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityDeliveryRegistry>();
@@ -621,6 +624,7 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<RepairDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OriginReattributionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityDeliveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDispatchWorker>());

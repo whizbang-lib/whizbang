@@ -59,12 +59,17 @@ public class MaintenanceWorkerLifecycleTests {
   private sealed class FakeCoordinator : IWorkCoordinator {
     public TaskCompletionSource FirstMaintenance { get; } =
       new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Completes on the second sweep: the loop came back around after the first one.</summary>
+    public TaskCompletionSource SecondMaintenance { get; } =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int MaintenanceCalls;
     public Exception? MaintenanceThrows { get; init; }
     public Exception? BacklogThrows { get; init; }
 
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref MaintenanceCalls);
+      if (Interlocked.Increment(ref MaintenanceCalls) >= 2) {
+        SecondMaintenance.TrySetResult();
+      }
       FirstMaintenance.TrySetResult();
       return MaintenanceThrows is not null
         ? Task.FromException<IReadOnlyList<MaintenanceResult>>(MaintenanceThrows)
@@ -96,7 +101,8 @@ public class MaintenanceWorkerLifecycleTests {
 
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
       FakeCoordinator coord,
-      HousekeepingCoordinator? housekeeping = null) {
+      HousekeepingCoordinator? housekeeping = null,
+      Func<TimeSpan, CancellationToken, Task>? delay = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -106,19 +112,35 @@ public class MaintenanceWorkerLifecycleTests {
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger,
       metrics: null,
-      housekeeping: housekeeping);
+      housekeeping: housekeeping) {
+      DelayAsync = delay ?? MaintenanceWorker.RealDelayAsync,
+    };
     return (worker, logger);
   }
 
   [Test]
   public async Task ExecuteAsync_SweepThrows_LogsAsRetryableAndKeepsTheLoopAliveAsync() {
-    // One bad sweep must not kill maintenance for the life of the process.
+    // One bad sweep must not kill maintenance for the life of the process. Proven by the loop reaching its wait after
+    // the failure and then running a second tick, each observed on its own signal, with no real interval waited out.
     var coord = new FakeCoordinator { MaintenanceThrows = new InvalidOperationException("sweep blew up") };
-    var (worker, logger) = _build(coord);
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waits = 0;
+    var (worker, logger) = _build(coord, delay: (_, ct) => {
+      if (Interlocked.Increment(ref waits) > 1) {
+        return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);   // after the released wait, idle until stopped
+      }
+      waiting.TrySetResult();
+      return release.Task.WaitAsync(ct);
+    });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // The bounds below are hang guards only: each wait is on the transition itself.
+    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    release.TrySetResult();
+    await coord.SecondMaintenance.Task.WaitAsync(TimeSpan.FromSeconds(60));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
@@ -130,6 +152,8 @@ public class MaintenanceWorkerLifecycleTests {
     // Warning, not Error: a failed tick is retryable and the loop says so on the next interval.
     await Assert.That(failures.Any(e =>
       e.Exception is InvalidOperationException && e.Level == LogLevel.Warning)).IsTrue();
+    await Assert.That(coord.MaintenanceCalls).IsGreaterThanOrEqualTo(2)
+      .Because("the loop survived the failed sweep and ran the next tick");
   }
 
   [Test]

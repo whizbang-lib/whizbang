@@ -2046,6 +2046,65 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 
   /// <summary>
+  /// Records the domains an origin announced on its checkpoint as its claim set, replacing the claims it made before:
+  /// a domain it no longer announces is given up, and an empty list gives up all of them (#2008). Domains key without
+  /// case. A null <paramref name="requestTopic"/> keeps the request address already on record.
+  /// </summary>
+  /// <param name="ownerServiceId">The announcing origin's id.</param>
+  /// <param name="ownerServiceName">The announcing origin's logical name.</param>
+  /// <param name="requestTopic">The topic the origin consumes directed integrity requests on, when it announced one.</param>
+  /// <param name="domains">The announced owned domains.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The claims other owners hold on the announced domains (the conflicts); empty when there are none or the
+  /// store keeps no claims.</returns>
+  /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDomainClaimsSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(
+    Guid ownerServiceId, string ownerServiceName, string? requestTopic, IReadOnlyList<string> domains,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityDomainClaim>>([]);
+
+  /// <summary>Every domain claim on record, conflicting ones included; build an <see cref="IntegrityDomainOwnership"/>
+  /// from them to resolve owners (#2008).</summary>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The claims, ordered by domain and owner; empty when none are recorded or the store keeps no claims.</returns>
+  /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDomainClaimsSqlTests.cs:Record_StoresTheOwnersClaims_KeyedWithoutCaseAsync</tests>
+  Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityDomainClaim>>([]);
+
+  /// <summary>
+  /// The next batch of the re-attribution walk (#2008): the rows after the walk's durable cursor by commit sequence, at
+  /// most <paramref name="maxEvents"/> of them, and the distinct types among them that carry no origin. A fingerprint
+  /// other than the one the walk last ran under restarts the walk from the beginning.
+  /// </summary>
+  /// <param name="ownershipFingerprint">The fingerprint of the ownership map and this service's owned domains
+  /// (<see cref="IntegrityDomainOwnership.Fingerprint"/>).</param>
+  /// <param name="maxEvents">The most rows the batch scans.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The batch (empty, at the cursor, once the walk has caught up); null when the store cannot re-attribute.</returns>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginReattributionSqlTests.cs:Window_IsTheNextBatchByCommitSequence_WithTheTypesThatHaveNoOriginAsync</tests>
+  Task<OriginReattributionWindow?> GetOriginReattributionWindowAsync(
+    string ownershipFingerprint, int maxEvents, CancellationToken cancellationToken = default) =>
+    Task.FromResult<OriginReattributionWindow?>(null);
+
+  /// <summary>
+  /// Applies one re-attribution batch (#2008): rows without an origin whose type has a known owner take it as origin
+  /// (unless their stored first hop names a third service), move to the owner's digest lane, refold sealed local
+  /// epochs and re-arm the owner's ledger buckets they land in; rows of a type with no known owner are counted. The
+  /// cursor moves to the batch's ceiling only if it still reads the batch's floor.
+  /// </summary>
+  /// <param name="batch">The window and its non-owned types with their owners.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>What the batch did; null when the store cannot re-attribute.</returns>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginReattributionSqlTests.cs:Reattribute_ARowAnotherServiceOwns_TakesTheOwnerAsOrigin_AndItsDigestMovesLanesAsync</tests>
+  Task<OriginReattributionResult?> ReattributeOriginsAsync(
+    OriginReattributionBatch batch, CancellationToken cancellationToken = default) =>
+    Task.FromResult<OriginReattributionResult?>(null);
+
+  /// <summary>
   /// Records a stream-integrity delivery for the maintainer's drain (#2001). Recorded once: a delivery whose
   /// <paramref name="deliveryId"/> is already recorded is left as it is.
   /// </summary>

@@ -51,6 +51,7 @@ public sealed class RunPermitAuditTests {
   /// <summary>Does fleet-wide work only on its maintainer turn, which a closed permit denies.</summary>
   private static readonly HashSet<string> _obeysThroughTheMaintainerDuty = new(StringComparer.Ordinal) {
     "IntegrityAuditWorker", "IntegrityCheckpointWorker", "IntegrityDeliveryWorker", "RepairDrainWorker", "MaintenanceWorker",
+    "OriginReattributionWorker",
   };
 
   /// <summary>Holds a role, and a closed permit refuses every vote.</summary>

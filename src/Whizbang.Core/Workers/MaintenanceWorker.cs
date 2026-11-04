@@ -38,6 +38,13 @@ public sealed partial class MaintenanceWorker(
   // than failing to start. A missing collaborator must never silently switch maintenance OFF.
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
 
+  /// <summary>The wait between ticks. A test replaces it to observe the loop reaching its wait and to release the next
+  /// tick on a signal, instead of waiting out a real interval.</summary>
+  internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } = RealDelayAsync;
+
+  /// <summary>The production wait between ticks.</summary>
+  internal static readonly Func<TimeSpan, CancellationToken, Task> RealDelayAsync = static (delay, ct) => Task.Delay(delay, ct);
+
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalMinutes);
@@ -58,7 +65,7 @@ public sealed partial class MaintenanceWorker(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromMinutes(_options.IntervalMinutes), stoppingToken);
+        await DelayAsync(TimeSpan.FromMinutes(_options.IntervalMinutes), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

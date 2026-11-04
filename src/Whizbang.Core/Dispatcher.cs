@@ -1194,27 +1194,9 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ThrowsReceptorNotFoundAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync</tests>
-  private bool _isOwnedNamespace(string? ns) {
-    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
-      return false;
-    }
-
-    // Exact match
-    if (_ownedDomains.Contains(ns)) {
-      return true;
-    }
-
-    // Child namespace match: if owned is "Consumer.Contracts.Chat",
-    // then "Consumer.Contracts.Chat.Common" is also owned
-    foreach (var owned in _ownedDomains) {
-      var prefix = owned.EndsWith('.') ? owned : owned + ".";
-      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
+  private bool _isOwnedNamespace(string? ns) =>
+    // The one hierarchical ownership rule, shared with event-subscription discovery and the integrity local lane.
+    Whizbang.Core.Routing.OwnedNamespaceMatcher.IsOwned(ns, _ownedDomains);
 
   /// <summary>
   /// Gets the service provider for receptor resolution.

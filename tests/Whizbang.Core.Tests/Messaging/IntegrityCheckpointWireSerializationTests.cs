@@ -52,4 +52,39 @@ public class IntegrityCheckpointWireSerializationTests {
     await Assert.That(back.Buckets[0].Count).IsEqualTo(42);
     await Assert.That(back.Buckets[1].TenantScope).IsNull();
   }
+
+  [Test]
+  public async Task IntegrityCheckpoint_CarriesTheOriginsOwnedDomainsAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var origin = TrackedGuid.New().Value;
+    var checkpoint = new IntegrityCheckpoint {
+      CheckpointStreamId = origin,
+      OriginServiceId = origin,
+      OriginServiceName = "origin-svc",
+      FromCommitSequence = 1,
+      ToCommitSequence = 2,
+      OwnedDomains = ["App.Contracts.Orders", "App.Contracts.Shipping"],
+    };
+
+    var json = JsonSerializer.Serialize(checkpoint, options.GetTypeInfo(typeof(IntegrityCheckpoint)));
+    var back = (IntegrityCheckpoint)JsonSerializer.Deserialize(json, options.GetTypeInfo(typeof(IntegrityCheckpoint)))!;
+
+    await Assert.That(back.OwnedDomains).IsEquivalentTo(["App.Contracts.Orders", "App.Contracts.Shipping"])
+      .Because("consumers learn who authors each domain from the checkpoint the owner already sends (#2008)");
+  }
+
+  [Test]
+  public async Task IntegrityCheckpoint_FromAnOlderOriginWithoutOwnedDomains_ReadsAsEmptyAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var origin = TrackedGuid.New().Value;
+    var json = $$"""
+      {"CheckpointStreamId":"{{origin}}","OriginServiceId":"{{origin}}","OriginServiceName":"old-svc",
+       "FromCommitSequence":1,"ToCommitSequence":2,"Buckets":[]}
+      """;
+
+    var back = (IntegrityCheckpoint)JsonSerializer.Deserialize(json, options.GetTypeInfo(typeof(IntegrityCheckpoint)))!;
+
+    await Assert.That(back.OwnedDomains).IsEmpty()
+      .Because("the field is additive: an origin built before it announces no domains, and claims nothing");
+  }
 }

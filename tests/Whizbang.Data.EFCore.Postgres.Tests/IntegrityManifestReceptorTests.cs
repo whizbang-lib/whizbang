@@ -2473,8 +2473,12 @@ public class IntegrityManifestReceptorTests {
   private static ServiceProvider _provider(
       AuditCoordinator coordinator, CaptureTransport transport,
       StreamIntegrityOptions? options = null, CaptureDispatcher? dispatcher = null,
-      IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null) {
+      IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null,
+      Whizbang.Core.Routing.RoutingOptions? routing = null) {
     var services = new ServiceCollection();
+    if (routing is not null) {
+      services.AddSingleton(Options.Create(routing));
+    }
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher ?? new CaptureDispatcher());
@@ -2528,6 +2532,10 @@ public class IntegrityManifestReceptorTests {
       return Task.CompletedTask;
     }
     public IReadOnlyList<StreamDigest> OwnDigests { get; set; } = [];
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; set; } = [];
+
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Claims);
     public IReadOnlyList<StreamDigest> ReceivedDigests { get; set; } = [];
     public IReadOnlyList<StreamDigest> OwnTableDigests { get; set; } = [];
     public IReadOnlyList<StreamDigest> ReceivedTableDigests { get; set; } = [];
@@ -2635,9 +2643,13 @@ public class IntegrityManifestReceptorTests {
       Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(originServiceId is null ? OwnTableDigests : ReceivedTableDigests);
 
+    public int TypeTableReads;
+
     public Task<IReadOnlyList<StreamDigest>> GetTypeDigestsAsync(
-      Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) =>
-      Task.FromResult(originServiceId is null ? OwnTypeDigests : ReceivedTypeDigests);
+      Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref TypeTableReads);
+      return Task.FromResult(originServiceId is null ? OwnTypeDigests : ReceivedTypeDigests);
+    }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
@@ -2774,5 +2786,96 @@ public class IntegrityManifestReceptorTests {
   private sealed class NullScope : IDisposable {
     public static readonly NullScope Instance = new();
     public void Dispose() { }
+  }
+
+  // ── #2008: the local lane follows ownership; #2032: compare only what the origin owns ──
+
+  [Test]
+  public async Task RequestReceptor_OwnedDomainsRegistered_AdvertisesOnlyOwnedTypesAsync() {
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [
+        _typeDigest("App.Contracts.Orders.Placed, App.Contracts", 1, 2, 3),
+        _typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6),
+      ],
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport, routing: new Whizbang.Core.Routing.RoutingOptions().OwnDomains("App.Contracts.Orders"));
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+
+    var manifest = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(manifest.Digests.Select(d => d.EventType)).IsEquivalentTo(["App.Contracts.Orders.Placed, App.Contracts"])
+      .Because("events of a type this service does not own were received, not authored; advertising them as its own "
+             + "makes consumers count them as surplus and ask this service to redeliver them (#2008)");
+  }
+
+  [Test]
+  public async Task RequestReceptor_OnlyForeignTypesHeld_StaysSilentAsync() {
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [_typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6)],
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport, routing: new Whizbang.Core.Routing.RoutingOptions().OwnDomains("App.Contracts.Orders"));
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_DigestsOfATypeAnotherServiceOwns_AreNotComparedAsync() {
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [],
+      Claims = [new IntegrityDomainClaim {
+        Domain = "app.contracts.billing",
+        OwnerServiceId = TrackedGuid.New().Value,
+        OwnerServiceName = "billing-svc",
+      }],
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator,
+      [_typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6)], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsEqualTo(0)
+      .Because("an older origin still advertising another service's type is not authoritative for it, so nothing is "
+             + "folded or compared against it (#2032)");
+    await Assert.That(dispatcher.Published).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+
+    coordinator.Claims = [];
+    await receptor.HandleAsync(_manifest(coordinator,
+      [_typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6)], ManifestLevel.Types));
+    await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsGreaterThan(0)
+      .Because("the control: with no known owner the same digest is compared as before");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_MixedDigests_ComparesOnlyThoseNoOtherServiceOwnsAsync() {
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [],
+      Claims = [new IntegrityDomainClaim {
+        Domain = "app.contracts.billing",
+        OwnerServiceId = TrackedGuid.New().Value,
+        OwnerServiceName = "billing-svc",
+      }],
+    };
+    var sp = _provider(coordinator, new CaptureTransport());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _typeDigest("App.Contracts.Billing.Raised, App.Contracts", 4, 5, 6),
+      _typeDigest("App.Contracts.Orders.Placed, App.Contracts", 7, 8, 9),
+    ], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsGreaterThan(0)
+      .Because("the digest no other service owns is still compared");
   }
 }

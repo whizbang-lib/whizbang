@@ -53,6 +53,16 @@ public sealed partial class RedeliveryRequestReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.RedeliveryRequestsReceived.Add(1);
 
+    // #2032: a backfill broadcast on a shared topic reaches its sender too, and answering it re-ships this store to
+    // itself. Service names compare without case, as the transport consumer compares them.
+    var instanceProvider = services.GetService<IServiceInstanceProvider>()
+      ?? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance;
+    if (string.Equals(message.RequesterService, instanceProvider.ServiceName, StringComparison.OrdinalIgnoreCase)) {
+      metrics?.RedeliveryRequestsIgnored.Add(1, new KeyValuePair<string, object?>("reason", "own_request"));
+      LogOwnRequestIgnored(logger, message.RequesterService);
+      return;
+    }
+
     // Report-only is bilateral: serving a re-delivery request is the repair act on the origin side (and
     // the memory-heavy one), so an origin that opted down declines. Returning completes the inbox row; a
     // declined request is discarded, never retried. Report-only opts out of AUTOMATIC repair, so a request
@@ -79,8 +89,7 @@ public sealed partial class RedeliveryRequestReceptor(
         // A host with no telemetry identity still redelivers; the bundle names an explicitly
         // unknown origin, which is what passing null used to produce. Requiring the provider
         // here turned an absent identity into a failed redelivery.
-        services.GetService<IServiceInstanceProvider>()
-          ?? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance,
+        instanceProvider,
         // A host that never registered the event mint still redelivers with the default grouping,
         // which is what the pump's own fallback used to supply.
         compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>()
@@ -91,7 +100,11 @@ public sealed partial class RedeliveryRequestReceptor(
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter
       // how wide the request is — materializing the whole cap at once has OOM-killed origins.
+      // #2008: only events of types this service owns are its own; the rest were received from their authors.
+      var ownedDomains = services.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()?
+        .Value.OwnedDomains ?? new HashSet<string>();
       var totalSelected = 0;
+      var totalShipped = 0;
       var totalComposites = 0;
       Guid? afterStream = null;
       long? afterVersion = null;
@@ -104,28 +117,34 @@ public sealed partial class RedeliveryRequestReceptor(
           ToCommitSequence = message.ToCommitSequence,
           MaxEvents = Math.Min(pageSize, maxEvents - totalSelected),
           AfterStreamId = afterStream,
-          AfterVersion = afterVersion
+          AfterVersion = afterVersion,
+          // #2032: the bundle names this service as origin, so it carries only events this service wrote.
+          AuthoredBy = instanceProvider.ServiceName,
         }, cancellationToken).ConfigureAwait(false);
         if (page.Count == 0) {
           break;
         }
 
-        totalComposites += await pump
-          .PublishAsync(page, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
-          .ConfigureAwait(false);
+        var owned = page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, ownedDomains)).ToList();
+        if (owned.Count > 0) {
+          totalComposites += await pump
+            .PublishAsync(owned, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
+            .ConfigureAwait(false);
+        }
+        totalShipped += owned.Count;
         totalSelected += page.Count;
         var last = page[page.Count - 1];
         afterStream = last.StreamId;
         afterVersion = last.Version;
       }
 
-      if (totalSelected == 0) {
+      if (totalShipped == 0) {
         LogNothingSelected(logger, message.RequesterService);
         return;
       }
-      metrics?.RedeliveryEventsShipped.Add(totalSelected);
+      metrics?.RedeliveryEventsShipped.Add(totalShipped);
       metrics?.RedeliveryBuildDuration.Record(buildTimer.Elapsed.TotalSeconds);
-      LogRedeliveryPublished(logger, totalSelected, totalComposites, message.RequesterService, message.Topic);
+      LogRedeliveryPublished(logger, totalShipped, totalComposites, message.RequesterService, message.Topic);
     } finally {
       _buildGate.Release();
     }
@@ -143,6 +162,10 @@ public sealed partial class RedeliveryRequestReceptor(
   [LoggerMessage(EventId = 49, Level = LogLevel.Information,
     Message = "Re-delivered {EventCount} events as {CompositeCount} composites to {RequesterService} on {Topic}")]
   static partial void LogRedeliveryPublished(ILogger logger, int eventCount, int compositeCount, string requesterService, string topic);
+
+  [LoggerMessage(EventId = 51, Level = LogLevel.Debug,
+    Message = "Re-delivery request from {RequesterService} ignored: it is this service's own request, come back on a shared topic")]
+  static partial void LogOwnRequestIgnored(ILogger logger, string requesterService);
 
   [LoggerMessage(EventId = 50, Level = LogLevel.Information,
     Message = "Re-delivery request from {RequesterService} on {Topic} declined: RepairMode is ReportOnly, so this origin serves no repair (the request is discarded, not retried)")]

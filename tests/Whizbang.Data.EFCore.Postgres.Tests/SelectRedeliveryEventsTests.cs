@@ -181,6 +181,74 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     }
   }
 
+
+  // ── #2032: the selection ships only what the answering service authored ──
+
+  /// <summary>Seeds one event with an origin and a stored first hop naming <paramref name="firstHopService"/>.</summary>
+  private static async Task<Guid> _seedAuthoredAsync(
+      NpgsqlConnection conn, Guid streamId, int version, Guid? origin, string? firstHopService) {
+    var eventId = TrackedGuid.New().Value;
+    await using (var store = conn.CreateCommand()) {
+      store.CommandText = """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, origin_service_id)
+        VALUES (@event, @stream, @stream, 'TestAggregate', 'Contracts.ThingCreated', '{"t":"tenant-a"}'::jsonb, @version, nextval('wh_commit_seq'), @origin)
+        """;
+      store.Parameters.AddWithValue("event", eventId);
+      store.Parameters.AddWithValue("stream", streamId);
+      store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(origin), (object?)origin ?? DBNull.Value);
+      await store.ExecuteNonQueryAsync();
+    }
+    var hops = firstHopService is null
+      ? "[]"
+      : $$"""[{"ty":0,"si":{"sn":"{{firstHopService}}","ii":"{{TrackedGuid.New().Value}}","hn":"host","pi":1},"ts":"2026-06-01T12:00:00+00:00"}]""";
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
+      INSERT INTO wh_event_body (event_id, event_data, metadata)
+      VALUES (@event, '{}'::jsonb, jsonb_build_object('Hops', @hops::jsonb))
+      """;
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue(nameof(hops), hops);
+    await body.ExecuteNonQueryAsync();
+    return eventId;
+  }
+
+  [Test]
+  public async Task Select_AuthoredBy_ShipsOnlyEventsTheAnsweringServiceWroteAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+
+    var ownNamed = await _seedAuthoredAsync(conn, stream, 1, origin: null, firstHopService: "orders-svc");
+    var ownUnnamed = await _seedAuthoredAsync(conn, stream, 2, origin: null, firstHopService: null);
+    var ownOtherCase = await _seedAuthoredAsync(conn, stream, 3, origin: null, firstHopService: "ORDERS-SVC");
+    var ownUnknown = await _seedAuthoredAsync(conn, stream, 4, origin: null, firstHopService: "Unknown");
+    var received = await _seedAuthoredAsync(conn, stream, 5, origin: TrackedGuid.New().Value, firstHopService: "billing-svc");
+    var preOriginForeign = await _seedAuthoredAsync(conn, stream, 6, origin: null, firstHopService: "billing-svc");
+
+    var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { StreamIds = [stream], AuthoredBy = "orders-svc" });
+
+    await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([ownNamed, ownUnnamed, ownOtherCase, ownUnknown])
+      .Because("an event another service authored, whether it carries that origin or only a first hop naming it, is "
+             + "refused by every receiver (#1844), so shipping it is pure cost");
+    await Assert.That(rows.Any(r => r.EventId == received || r.EventId == preOriginForeign)).IsFalse();
+  }
+
+  [Test]
+  public async Task Select_WithoutAuthoredBy_KeepsTheEarlierSelectionAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+    var own = await _seedAuthoredAsync(conn, stream, 1, origin: null, firstHopService: "orders-svc");
+    var received = await _seedAuthoredAsync(conn, stream, 2, origin: TrackedGuid.New().Value, firstHopService: "billing-svc");
+
+    var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { StreamIds = [stream] });
+
+    await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([own, received]);
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   /// <summary>Seeds one event: store pointer + (unless <paramref name="reapBody"/>) its body row.</summary>

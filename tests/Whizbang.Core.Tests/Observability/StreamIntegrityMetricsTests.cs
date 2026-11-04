@@ -117,6 +117,13 @@ public class StreamIntegrityMetricsTests {
     // #2029: buckets whose request is out, and buckets answered and waiting for the next comparison.
     await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answer_pending_buckets");
     await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answered_buckets");
+    // #2008, #2032: domains two services claim, and redelivery requests an origin declined to answer (its own).
+    await Assert.That(observed).Contains("whizbang.stream_integrity.ownership_conflicts");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.redelivery_requests_ignored");
+    // #2008: re-attribution of pre-origin history: moved, left without a known owner, and left on a first-hop disagreement.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.origins_reattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.origins_unattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.reattribution_hop_disagreements");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }
