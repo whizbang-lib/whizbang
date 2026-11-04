@@ -84,7 +84,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
         SET last_heartbeat_at = EXCLUDED.last_heartbeat_at;", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
     // Aged from the database clock, which the liveness rule compares against, not the host clock.
-    cmd.Parameters.AddWithValue("age", age);
+    cmd.Parameters.AddWithValue(nameof(age), age);
     await cmd.ExecuteNonQueryAsync();
   }
 
