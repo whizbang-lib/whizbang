@@ -9,7 +9,7 @@ namespace Whizbang.Core.RunControl;
 /// unit of work is finished. Disposing it releases the hold once; a second dispose does nothing.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Enter_WhileRunning_CountsTheHoldUntilItIsDisposedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunPermitTests.cs:Enter_WhileRunning_CountsTheHoldUntilItIsDisposedAsync</tests>
 public sealed class RunPermitHold : IDisposable {
   private WhizbangRunPermit? _permit;
 

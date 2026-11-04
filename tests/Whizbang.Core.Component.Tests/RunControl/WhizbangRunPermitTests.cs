@@ -15,6 +15,7 @@ namespace Whizbang.Core.Tests.RunControl;
 /// based: no timers, no delays.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/RunControl/WhizbangRunPermit.cs</code-under-test>
+[Category("Component")]
 [Category("RunControl")]
 public class WhizbangRunPermitTests {
 

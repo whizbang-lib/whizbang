@@ -5,7 +5,7 @@ namespace Whizbang.Core.RunControl;
 
 /// <summary>Why the run-control path halts the instance (#2045).</summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_ClosesThePermit_ReleasesWorkThenRoles_ThenWritesTheSettledPhaseAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_ClosesThePermit_ReleasesWorkThenRoles_ThenWritesTheSettledPhaseAsync</tests>
 public enum RunHaltReason {
   /// <summary>An operator paused the instance. Resumable; the settled phase is <see cref="LifecyclePhase.Paused"/>.</summary>
   Pause,
@@ -29,7 +29,7 @@ public enum RunHaltReason {
 /// until every one is lifted. A resume lifts a pause or a stand-down, never a stop.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs</tests>
 public interface IWhizbangRunController {
   /// <summary>The permit this path closes and reopens: the one every claiming worker obeys.</summary>
   WhizbangRunPermit Permit { get; }
@@ -69,7 +69,7 @@ public interface IWhizbangRunController {
 /// single unit of work, such as the claim worker's leased streams.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_AReleaserThatFails_IsLoggedAndTheRestStillRunAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_AReleaserThatFails_IsLoggedAndTheRestStillRunAsync</tests>
 public interface IReleasesHeldWork {
   /// <summary>Releases the held work that has not been started.</summary>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -82,7 +82,7 @@ public interface IReleasesHeldWork {
 /// a stop hands each role off at once. Implemented by the role elector.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_ClosesThePermit_ReleasesWorkThenRoles_ThenWritesTheSettledPhaseAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_ClosesThePermit_ReleasesWorkThenRoles_ThenWritesTheSettledPhaseAsync</tests>
 public interface IReleasesHeldRoles {
   /// <summary>Releases every held role. Idempotent; a release that cannot reach the database leaves the lease to lapse.</summary>
   /// <param name="cancellationToken">Cancellation token.</param>

@@ -9,9 +9,9 @@ namespace Whizbang.Core.RunControl;
 /// run-control path (<see cref="IWhizbangRunController"/>) changes it; the lifecycle phase is what that path reports.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Paused_BlocksUntilResumedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_CancelsAwaitersAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_NeverReopensAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunPermitTests.cs:Paused_BlocksUntilResumedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_CancelsAwaitersAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_NeverReopensAsync</tests>
 public enum RunState {
   /// <summary>Permit open — awaiters proceed.</summary>
   Running,

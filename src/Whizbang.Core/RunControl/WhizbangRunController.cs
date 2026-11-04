@@ -27,7 +27,7 @@ namespace Whizbang.Core.RunControl;
 /// </para>
 /// </remarks>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs</tests>
 public sealed partial class WhizbangRunController : IWhizbangRunController, IDisposable {
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly IReadOnlyList<IReleasesHeldWork> _work;

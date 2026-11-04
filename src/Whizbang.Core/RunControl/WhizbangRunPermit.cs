@@ -17,7 +17,7 @@ namespace Whizbang.Core.RunControl;
 /// <see cref="Obey"/> and acts on each change; the change completes only when every obeyer has acted on it.
 /// </remarks>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunPermitTests.cs</tests>
 public sealed class WhizbangRunPermit {
   private readonly Lock _lock = new();
   private readonly List<Func<RunState, CancellationToken, Task>> _obeyers = [];

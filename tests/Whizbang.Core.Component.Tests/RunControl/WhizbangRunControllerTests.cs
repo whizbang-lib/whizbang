@@ -16,6 +16,7 @@ namespace Whizbang.Core.Tests.RunControl;
 /// writing the settled phase. Each test records the steps in one log, so the order itself is what is asserted.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/RunControl/WhizbangRunController.cs</code-under-test>
+[Category("Component")]
 [Category("RunControl")]
 public class WhizbangRunControllerTests {
 
@@ -287,8 +288,12 @@ public class WhizbangRunControllerTests {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task Entered => _entered.Task;
     public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
+      // Blocks until the caller's token ends it, on a signal rather than a timer: the token's own registration completes
+      // the wait as canceled.
+      var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      await using var registration = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
       _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+      await canceled.Task;
     }
   }
 

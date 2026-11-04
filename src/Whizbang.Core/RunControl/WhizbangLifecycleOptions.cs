@@ -25,6 +25,6 @@ public sealed class WhizbangLifecycleOptions {
   /// confirms the halt. Work still in hand after this keeps its leases, which lapse to a peer. Default 20s, which leaves a
   /// host's default 30-second shutdown budget time to stop its workers and deregister.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_AHoldThatOutlastsTheBound_IsLeftAndTheHaltGoesOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangRunControllerTests.cs:Halt_AHoldThatOutlastsTheBound_IsLeftAndTheHaltGoesOnAsync</tests>
   public TimeSpan HeldWorkTimeout { get; set; } = TimeSpan.FromSeconds(20);
 }
