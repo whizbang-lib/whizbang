@@ -117,6 +117,8 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
     services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+    // The receive path classifies a declared type it does not consume (an absorbed event) by its catalog kind (#2074).
+    services.TryAddSingleton(sp => new Messaging.CatalogMessageKinds(sp.GetRequiredService<IMessageTypeCatalog>()));
     // The live audit path and the audit ledger rebuild resolve event types through the same catalog (#2040).
     services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
     // The payload limit reads the options, the catalog and every registered hook once, at first use.

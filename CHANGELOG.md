@@ -1448,6 +1448,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer, including events in an absorbed namespace, which are stored on purpose so a later perspective can rebuild
   from them. The janitor now asks the receive boundary's keep decision about each pending type
   (`IWorkCoordinator.GetPendingInboxMessageTypesAsync`).
+- **An absorbed event received as JSON reaches the event store (#2074).** A type the consumer registry does not know,
+  such as an event in an absorbed namespace (stored on purpose with no consumer), was classified by the perspective
+  list and then by the payload's own marker. A transport payload arrives as JSON, so the marker could not say, and the
+  absorbed event was stored as a non-event and never copied into the event store. The message type catalog's declared
+  kind now decides for a type the application declares (by its current or a former name), before the payload marker.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

@@ -40,14 +40,14 @@ internal static class ReceivedInboxMessageBuilder {
 
   /// <summary>
   /// Whether a received message is an event the inbox copies into the event store: the consumer registry's event flag
-  /// decides for a type this service consumes (#2064); for any other type the perspective list or the payload's own marker
-  /// says it is an event. The
+  /// decides for a type this service consumes (#2064), the message type catalog's declared kind for a type it declares
+  /// (#2074); for any other type the perspective list or the payload's own marker says it is an event. The
   /// one classification both consumer workers and dead-letter recovery use, so a recovered message is classified
   /// exactly as its delivery was (#1664).
   /// </summary>
-  /// <param name="scope">The scope the consumer registry and the perspective list are resolved from.</param>
+  /// <param name="scope">The scope the consumer registry, the catalog's kinds and the perspective list are resolved from.</param>
   /// <param name="messageTypeName">The payload type name.</param>
-  /// <param name="payload">The payload; its marker is consulted only for a type this service does not consume.</param>
+  /// <param name="payload">The payload; its marker is consulted only for a type nothing here consumes or declares.</param>
   /// <returns><see langword="true"/> for an event.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
@@ -58,8 +58,13 @@ internal static class ReceivedInboxMessageBuilder {
     if (scope.GetService<IConsumerRegistry>()?.FindConsumedMessage(messageTypeName) is { } consumed) {
       return consumed.IsEvent;
     }
-    // A type this service does not consume (an absorbed namespace, a recovered dead letter): the perspective list, kept
-    // as a positive signal for hosts without the registry, then the payload's own marker.
+    // #2074: a type this service does not consume but the application declares (an absorbed namespace's event, stored
+    // on purpose and received as JSON): the catalog's declared kind.
+    if (scope.GetService<CatalogMessageKinds>()?.IsEvent(messageTypeName) is { } declared) {
+      return declared;
+    }
+    // A type nobody here declares or consumes (a recovered dead letter): the perspective list, kept as a positive signal
+    // for hosts without the registry, then the payload's own marker.
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
     return (eventTypeProvider is { IsAvailable: true }
         && EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes()))
