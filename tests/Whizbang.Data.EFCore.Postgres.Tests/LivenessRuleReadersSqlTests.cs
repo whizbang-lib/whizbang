@@ -27,7 +27,7 @@ public class LivenessRuleReadersSqlTests : EFCoreTestBase {
   // --- claim_work ----------------------------------------------------------------------------------
 
   [Test]
-  public async Task Rank_ADirectPeerThatLostItsLock_IsJudgedByItsOwnWindowAsync() {
+  public async Task Rank_ADirectPeerThatLostItsLock_IsNotCountedPastOneBeatAsync() {
     var (self, peer) = _pair();
     await using var conn = await _openAsync();
     await _registerAsync(conn, peer, InstanceConnectionModes.DIRECT, TimeSpan.FromSeconds(45), windowSeconds: 150);
@@ -36,8 +36,23 @@ public class LivenessRuleReadersSqlTests : EFCoreTestBase {
 
     var (partitions, _) = await _claimAsync(conn, self, aliveLockHeld: false);
 
+    await Assert.That(partitions).Count().IsEqualTo(10)
+      .Because("the peer holds no lock and its heartbeat is past one beat, so the caller is the only live instance and "
+        + "takes every partition after about 30 seconds, not after the peer's 150 second window");
+  }
+
+  [Test]
+  public async Task Rank_ADirectPeerWithoutItsLock_IsCountedInsideOneBeatAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, InstanceConnectionModes.DIRECT, TimeSpan.FromSeconds(20), windowSeconds: 150);
+    await _registerAsync(conn, self, InstanceConnectionModes.DIRECT, TimeSpan.Zero, windowSeconds: 150);
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, _) = await _claimAsync(conn, self, aliveLockHeld: false);
+
     await Assert.That(partitions).IsEquivalentTo(_oddPartitions)
-      .Because("a 45 second heartbeat is inside the 150 second window the peer declared, so the caller is rank 1 of 2");
+      .Because("a 20 second heartbeat is inside one beat, so the peer is still counted and the caller is rank 1 of 2");
   }
 
   [Test]

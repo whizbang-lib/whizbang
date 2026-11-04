@@ -84,6 +84,39 @@ public class InstanceLivenessRuleSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Liveness_ADirectInstanceWithoutItsLock_IsLiveForOneBeatAsync() {
+    var instance = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, instance, InstanceConnectionModes.DIRECT, TimeSpan.FromSeconds(20), windowSeconds: 150);
+
+    await Assert.That(await _isLiveAsync(conn, instance)).IsTrue()
+      .Because("a direct instance without its lock is still live while its heartbeat is inside one beat (30 seconds)");
+  }
+
+  [Test]
+  public async Task Liveness_ADirectInstanceWithoutItsLock_PastOneBeat_IsNotLiveInsideItsWindowAsync() {
+    var instance = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    // 45 seconds is inside the 150 second window the instance declared, but past one beat: the window is for
+    // instances that cannot hold the lock, and a direct instance whose lock is gone is taken over after one beat.
+    await _registerAsync(conn, instance, InstanceConnectionModes.DIRECT, TimeSpan.FromSeconds(45), windowSeconds: 150);
+
+    await Assert.That(await _isLiveAsync(conn, instance)).IsFalse()
+      .Because("owner decision on #2022: a direct instance whose lock is gone is dead after one beat, not its window");
+    await Assert.That(await _liveIdsAsync(conn)).DoesNotContain(instance);
+  }
+
+  [Test]
+  public async Task Liveness_APooledInstance_IsLiveInsideItsWindowPastOneBeatAsync() {
+    var instance = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, instance, InstanceConnectionModes.POOLED, TimeSpan.FromSeconds(45), windowSeconds: 90);
+
+    await Assert.That(await _isLiveAsync(conn, instance)).IsTrue()
+      .Because("an instance behind a transaction pooler cannot hold the lock, so its own window decides");
+  }
+
+  [Test]
   public async Task Liveness_ADirectInstanceHoldingItsAliveLock_PastTheDefinitiveCutoff_IsNotLiveAsync() {
     var instance = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync();
