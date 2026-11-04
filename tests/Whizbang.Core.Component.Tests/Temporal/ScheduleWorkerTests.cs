@@ -210,6 +210,29 @@ public class ScheduleWorkerTests {
   }
 
   [Test]
+  public async Task TickOnce_WhileTheRunPermitIsClosed_FiresNothingUntilItReopensAsync() {
+    // #2045: firing a due schedule claims it for this instance, so the schedule worker obeys the run permit.
+    var claimer = new FakeClaimer(2);
+    var services = new ServiceCollection();
+    services.AddSingleton<IScheduleClaimer>(claimer);
+    var provider = services.BuildServiceProvider();
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    var worker = new ScheduleWorker(
+      provider.GetRequiredService<IServiceScopeFactory>(), Options.Create(new TemporalOptions { ClaimBatchLimit = 100 }),
+      NullLogger<ScheduleWorker>.Instance, NullLoggerFactory.Instance, NullSignalBus.Instance, runPermit: permit);
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Paused, CancellationToken.None);
+
+    var tick = worker.TickOnceAsync();
+    await Assert.That(tick.IsCompleted).IsFalse();
+    await Assert.That(claimer.Calls).IsEqualTo(0);
+
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Running, CancellationToken.None);
+    await Assert.That(await tick).IsEqualTo(2);
+    await Assert.That(permit.Held).IsEqualTo(0);
+    await Assert.That(((Whizbang.Core.RunControl.IObeysRunPermit)worker).RunPermit).IsSameReferenceAs(permit);
+  }
+
+  [Test]
   public async Task TickOnce_StopsWhenBelowBatchLimitAsync() {
     var claimer = new FakeClaimer(2);   // one short batch => drained after a single call
     var (worker, _) = _create(new TemporalOptions { ClaimBatchLimit = 100 }, claimer: claimer);

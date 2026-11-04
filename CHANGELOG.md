@@ -830,6 +830,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
+  (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
+  claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,
+  default 20 seconds), release unstarted work, release roles, then write Paused, StandingBy or Stopped. The
+  killswitch (pause, resume, stop), the standby watcher, the startup stand-down and host shutdown all call it; a stop
+  is final. Every claiming worker, the transport consumer, the host-registered `ServiceBusConsumerWorker`, the
+  maintenance workers and the role elector (new refusal `DutyRefusal.Halted`) obey the permit, and a test fails when
+  a hosted service does not. A pause now stops claiming in the process, not only in the claim SQL. On host shutdown
+  Stopped is written once held work and roles are released, before the workers stop; revival writes Resuming before
+  Running, and a stand-down writes Pausing before StandingBy. The transport consumer's public pause and resume are
+  now internal (pause through the killswitch). Removed: `RunPermitControl`, `DutyShutdownReleaseService`, and
+  `IReleasesDutiesOnShutdown` (replaced by `IReleasesHeldRoles`).
 - **Every duty is held in the role table; no duty is held by an advisory lock (#2044).** The session-lock duty
   elector, the legacy-lock bridge in the role elector, the commit-order stamper's own lock and the migrator watch's
   lock probe are gone: every duty, a host's own included, is a role assignment with a lease and epoch fencing, and a

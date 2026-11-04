@@ -95,7 +95,9 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetService<ILibraryVersionProvider>(),
       sp.GetService<INotificationConnectionStringFallback>(),
       sp.GetService<INotificationDataSource>(),
-      metrics: sp.GetRequiredService<RoleAssignmentMetrics>()));
+      metrics: sp.GetRequiredService<RoleAssignmentMetrics>(),
+      // #2045: the instance's one run permit, when the host runs the worker pipeline (which registers it).
+      runPermit: sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>()));
     services.AddSingleton<IRoleAssignmentReader>(sp => sp.GetRequiredService<PgRoleElector>());
     // The health source reads through a deferred reader: listing health sources must not build the
     // elector, whose construction resolves the notification data source (and through it, under
@@ -131,8 +133,8 @@ public static class RoleAssignmentServiceCollectionExtensions {
     // the vacuum on winning, ran against tables the migration was altering and, on a fresh database, before they
     // existed. The migrator is never held here: it is elected in Elect, by the initializer.
     services.AddHostedServiceAtStage(StartupStage.Coordinate, sp => sp.GetRequiredService<DutyHolderWorker>());
-    services.AddSingleton<IReleasesDutiesOnShutdown>(sp => sp.GetRequiredService<PgRoleElector>());
-    services.AddHostedService<DutyShutdownReleaseService>();
+    // #2045: the run-control path's role step releases every role on a stand-down, a pause or a stop.
+    services.AddSingleton<Whizbang.Core.RunControl.IReleasesHeldRoles>(sp => sp.GetRequiredService<PgRoleElector>());
   }
 }
 

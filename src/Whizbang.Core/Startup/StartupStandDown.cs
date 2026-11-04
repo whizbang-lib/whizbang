@@ -91,6 +91,12 @@ public sealed partial class StartupStandDown {
   public string? ApplicationVersion { get; init; }
 
   /// <summary>
+  /// The run-control path the stand-down takes (#2045), or <see langword="null"/> in a host without the worker pipeline,
+  /// where only the phase is recorded.
+  /// </summary>
+  public IWhizbangRunController? RunControl { get; init; }
+
+  /// <summary>
   /// The liveness window each beat declares (#2027): the one liveness rule judges a stood-down instance by it, so it is
   /// derived from this beat's own cadence the way the heartbeat worker derives its own (three beats; no slow cadence).
   /// </summary>
@@ -122,6 +128,7 @@ public sealed partial class StartupStandDown {
       services.GetService<TimeProvider>() ?? TimeProvider.System,
       services.GetService<ILogger<StartupStandDown>>()!) {
       ApplicationVersion = services.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
+      RunControl = services.GetService<IWhizbangRunController>(),
     };
   }
 
@@ -136,7 +143,14 @@ public sealed partial class StartupStandDown {
     ArgumentNullException.ThrowIfNull(assessment);
     LogStandingDown(_logger, assessment.Reason);
     await _stages.EnterAsync(StartupStage.Preflight, STANDING_DOWN + assessment.Reason, cancellationToken).ConfigureAwait(false);
-    await _stages.EnterPhaseAsync(LifecyclePhase.StandingBy, cancellationToken).ConfigureAwait(false);
+    if (RunControl is { } runControl) {
+      // #2045: the same path as a stand-down while running, a pause or a stop. At Preflight nothing is held, so it
+      // closes the permit and writes the phase.
+      await runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
+    } else {
+      // A host without the worker pipeline has no permit, no held work and no roles: only the report applies.
+      await _stages.EnterPhaseAsync(LifecyclePhase.StandingBy, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>

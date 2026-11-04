@@ -128,7 +128,7 @@ public sealed class StartupHostedServiceAuditTests {
     // none, and a check the application asks for is the application's to time.
     "HealthCheckPublisherHostedService",
     // Work done only when the host stops.
-    "BatchStrategyShutdownFlush", "DutyShutdownReleaseService",
+    "BatchStrategyShutdownFlush",
   };
 
   [Test]

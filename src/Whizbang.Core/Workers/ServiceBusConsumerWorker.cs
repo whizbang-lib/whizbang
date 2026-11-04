@@ -47,8 +47,11 @@ public partial class ServiceBusConsumerWorker(
   IEventMarkerResolver eventMarkerResolver,
   IEphemeralModeResolver ephemeralModeResolver,
   ServiceBusConsumerOptions? options = null,
-  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
-  Whizbang.Core.Startup.IStartAbandonedObserver {
+  MessageProcessingOptions? messageProcessingOptions = null,
+  // #2045: the instance's run permit. A host registers this worker itself; the container gives it the one permit
+  // whenever the worker pipeline registered it, so it obeys a stand-down, a pause and a stop by default.
+  Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
+  Whizbang.Core.Startup.IStartAbandonedObserver, Whizbang.Core.RunControl.IObeysRunPermit {
 #pragma warning restore S107
   private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -117,23 +120,81 @@ public partial class ServiceBusConsumerWorker(
     }
   }
 
+  /// <summary>The run permit this consumer obeys (#2045): nothing is received while it is closed.</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; } = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
+
+  private readonly SemaphoreSlim _permitGate = new(1, 1);
+  private IDisposable? _obedience;
+
   /// <summary>
-  /// Pauses all subscriptions to temporarily stop receiving messages.
-  /// Useful for test cleanup scenarios where draining is needed without competing consumers.
+  /// Pauses receiving. Not a second path (#2045): when the run-control path is registered over this consumer's permit,
+  /// this pauses the instance through it (no claim, no receive, roles handed off), and <see cref="ResumeAllSubscriptionsAsync"/>
+  /// resumes it. Only a consumer under no run-control path pauses its own subscriptions alone.
   /// </summary>
   public async Task PauseAllSubscriptionsAsync() {
-    foreach (var subscription in _subscriptions) {
-      await subscription.PauseAsync();
+    if (_runControl() is { } path) {
+      await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None).ConfigureAwait(false);
+      return;
     }
+    await _applyAsync(pause: true).ConfigureAwait(false);
   }
 
   /// <summary>
-  /// Resumes all subscriptions to continue receiving messages.
+  /// Resumes receiving: through the run-control path when it is registered over this consumer's permit, otherwise this
+  /// consumer's own subscriptions.
   /// </summary>
   public async Task ResumeAllSubscriptionsAsync() {
-    foreach (var subscription in _subscriptions) {
-      await subscription.ResumeAsync();
+    if (_runControl() is { } path) {
+      await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None).ConfigureAwait(false);
+      return;
     }
+    await _applyAsync(pause: false).ConfigureAwait(false);
+  }
+
+  /// <summary>The registered run-control path, when it closes this consumer's permit; otherwise null.</summary>
+  private Whizbang.Core.RunControl.IWhizbangRunController? _runControl() {
+    using var scope = _scopeFactory.CreateScope();
+    return scope.ServiceProvider.GetService<Whizbang.Core.RunControl.IWhizbangRunController>() is { } path
+      && ReferenceEquals(path.Permit, RunPermit) ? path : null;
+  }
+
+  /// <summary>Brings every subscription in line with the run permit (#2045), serialized with subscribing.</summary>
+  private Task _obeyRunPermitAsync() => _applyAsync(pause: !RunPermit.IsRunning);
+
+  private async Task _applyAsync(bool pause) {
+    await _permitGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try {
+      foreach (var subscription in _subscriptions) {
+        await (pause ? subscription.PauseAsync() : subscription.ResumeAsync()).ConfigureAwait(false);
+      }
+    } finally {
+      _permitGate.Release();
+    }
+  }
+
+  /// <summary>Records a new subscription, paused at once while the permit is closed (#2045).</summary>
+  private async Task _addSubscriptionAsync(ISubscription subscription, string topic) {
+    await _permitGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try {
+      _subscriptions.Add(subscription);
+      if (!RunPermit.IsRunning) {
+        try {
+          await subscription.PauseAsync().ConfigureAwait(false);
+        } catch (Exception ex) {
+          LogPauseUnderClosedPermitFailed(_logger, ex, topic);
+        }
+      }
+    } finally {
+      _permitGate.Release();
+    }
+  }
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _obedience?.Dispose();
+    _permitGate.Dispose();
+    base.Dispose();
+    GC.SuppressFinalize(this);
   }
 
   /// <summary>
@@ -157,6 +218,8 @@ public partial class ServiceBusConsumerWorker(
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
     LogWorkerStarting(_logger);
+    // #2045: obey the run permit from before the first subscription; a subscription added while it is closed is paused.
+    _obedience ??= RunPermit.Obey((_, _) => _obeyRunPermitAsync());
 
     try {
       foreach (var topicConfig in _options.Subscriptions) {
@@ -203,7 +266,7 @@ public partial class ServiceBusConsumerWorker(
           stoppingToken
         );
 
-        _subscriptions.Add(subscription);
+        await _addSubscriptionAsync(subscription, topicConfig.TopicName);
 
         LogSubscribedToTopic(_logger, topicConfig.TopicName, topicConfig.SubscriptionName);
       }
@@ -756,6 +819,8 @@ public partial class ServiceBusConsumerWorker(
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
+    // Stop obeying the run permit first: the subscriptions it would pause or resume are about to be disposed.
+    _obedience?.Dispose();
     // Dispose all subscriptions first so no new messages enter the serializer.
     foreach (var subscription in _subscriptions) {
       subscription.Dispose();
@@ -773,6 +838,14 @@ public partial class ServiceBusConsumerWorker(
   // ========================================
   // High-Performance LoggerMessage Delegates
   // ========================================
+
+  [LoggerMessage(
+    EventId = 30,
+    Level = LogLevel.Warning,
+    Message = "A subscription to {Topic} established while the run permit is closed could not be paused; it receives until "
+      + "the permit reopens or the instance stops"
+  )]
+  private static partial void LogPauseUnderClosedPermitFailed(ILogger logger, Exception exception, string topic);
 
   [LoggerMessage(
     EventId = 1,

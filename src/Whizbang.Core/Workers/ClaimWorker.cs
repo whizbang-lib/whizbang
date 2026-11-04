@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerMetricsTests.cs:AClaim_RecordsItsDurationAsync</tests>
-public sealed partial class ClaimWorker : BackgroundService {
+public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit, Whizbang.Core.RunControl.IReleasesHeldWork {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
@@ -136,6 +136,12 @@ public sealed partial class ClaimWorker : BackgroundService {
   private bool _budgetEngaged =>
     _options.AdaptiveOutstandingBudget && _completionMeter is not null && !_outstandingUnmeasurable;
 
+  /// <summary>The run permit every claim takes a hold of (#2045).</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
+
+  /// <summary>The last claim's batch: the streams this instance holds, which the run-control path releases (#2045).</summary>
+  private WorkBatch? _lastClaimed;
+
   /// <summary>Constructor.</summary>
 #pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
@@ -162,7 +168,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     // #1535: each claim's round trip is recorded as whizbang.perspective.claim.duration.
     PerspectiveMetrics? perspectiveMetrics = null,
     // #1986: when a run of transient database failures escalates to one Error; null takes the defaults.
-    DatabaseFailureEscalationOptions? databaseFailureEscalation = null) {
+    DatabaseFailureEscalationOptions? databaseFailureEscalation = null,
+    // #2045: the instance's run permit; every claim is a hold of it. A worker built without one is under no run control.
+    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
     _priorityHooks = priorityHooks;
     _perspectiveMetrics = perspectiveMetrics;
 #pragma warning restore S107
@@ -448,7 +457,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     var startupCatchUpFired = false;
     while (!stoppingToken.IsCancellationRequested) {
       try {
+        // #2045: no claim while the run permit is closed, and the claim and its hand-off are a hold the run-control path
+        // waits for. A stopped permit cancels the wait and ends the loop below.
+        using var hold = await RunPermit.EnterAsync(stoppingToken);
         var batch = await _claimOnceAsync(stoppingToken);
+        Volatile.Write(ref _lastClaimed, batch);
         // The claim reached the database and came back: whatever run of failures came before has ended.
         _databaseFailures.Succeeded();
         var hadWork = batch.OutboxWork.Count > 0
@@ -847,6 +860,30 @@ public sealed partial class ClaimWorker : BackgroundService {
       LogReleaseUnstartedFailed(_logger, ex, inboxStreams.Count + perspectiveStreams.Count);
     }
   }
+
+  /// <summary>
+  /// The run-control path's held-work step (#2045): once no claim is in hand, the streams of the last claim that no drain
+  /// has started are released, as the #724 release does, so a peer takes them over at once. A stream a drain has begun is
+  /// finished here, never released under it.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the release is done.</returns>
+  public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
+    if (Volatile.Read(ref _lastClaimed) is not { } held) {
+      return;
+    }
+    var inboxStreams = _notInFlight(held.InboxStreamIds, _inboxDrainChannel.IsInFlight);
+    var perspectiveStreams = _notInFlight(held.PerspectiveStreamIds, _perspectiveDrainChannel.IsInFlight);
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var released = await coordinator.ReleaseUnstartedLeasesAsync(
+      _instanceProvider.InstanceId, inboxStreams, perspectiveStreams, cancellationToken).ConfigureAwait(false);
+    LogReleasedHeldWork(_logger, released.InboxReleased, released.PerspectiveReleased);
+  }
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "Run control: released {InboxReleased} inbox and {PerspectiveReleased} perspective rows this instance had leased and not started, so a peer takes them over")]
+  private static partial void LogReleasedHeldWork(ILogger logger, int inboxReleased, int perspectiveReleased);
 
   // Both callers pass a drain channel's IsInFlight method group, so the predicate always exists.
   private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool> isInFlight) =>

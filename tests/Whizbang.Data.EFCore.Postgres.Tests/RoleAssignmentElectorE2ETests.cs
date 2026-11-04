@@ -388,6 +388,42 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task WhileTheRunPermitIsClosed_EveryVoteIsRefusedAsHalted_UntilItReopensAsync(CancellationToken cancellationToken) {
+    // #2045: a paused, stood-down or stopping instance holds no role. The elector is the one way to hold a duty, so the
+    // permit is obeyed here once for every role holder (the duty loop, the partition assigner, the commit-order stamper).
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    var path = new Whizbang.Core.RunControl.WhizbangRunController(permit, new NoLifecycle(), [], [],
+      new Whizbang.Core.RunControl.WhizbangLifecycleOptions(), null,
+      NullLogger<Whizbang.Core.RunControl.WhizbangRunController>.Instance);
+    var elector = new PgRoleElector(
+      Options.Create(new WhizbangNotificationOptions()),
+      Options.Create(new RoleAssignmentOptions()),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      new Pod(),
+      NullLogger<PgRoleElector>.Instance,
+      libraryVersion: null,
+      runPermit: permit);
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, cancellationToken);
+
+    var one = await elector.TryAcquireAsync(ROLE, cancellationToken);
+    var many = await elector.TryAcquireManyAsync([ROLE, "other"], cancellationToken);
+
+    await Assert.That(one.Refusal).IsEqualTo(DutyRefusal.Halted);
+    await Assert.That(many.Select(a => a.Refusal ?? DutyRefusal.Contended)).IsEquivalentTo([DutyRefusal.Halted, DutyRefusal.Halted]);
+
+    await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, cancellationToken);
+    await Assert.That((await elector.TryAcquireAsync(ROLE, cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Unavailable)
+      .Because("a reopened permit votes again; with no connection configured that vote is unavailable");
+  }
+
+  private sealed class NoLifecycle : Whizbang.Core.RunControl.IWhizbangLifecycleState {
+    public Whizbang.Core.RunControl.LifecyclePhase Phase => Whizbang.Core.RunControl.LifecyclePhase.Running;
+    public ValueTask AdvanceToAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task NoConnection_IsUnavailable_NotContendedAsync(CancellationToken cancellationToken) {
     var pod = new Pod();
     var elector = new PgRoleElector(

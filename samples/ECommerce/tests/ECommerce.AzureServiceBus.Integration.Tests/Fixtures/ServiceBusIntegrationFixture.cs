@@ -927,35 +927,24 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       Console.WriteLine("[ServiceBusFixture] Workers not idle before cleanup — proceeding with truncation");
     }
 
-    // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
-    // This ensures the transport receivers are inactive while we drain stale messages
-    Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
-    var inventoryConsumer = _inventoryHost!.Services.GetHostedWorker<Whizbang.Core.Workers.TransportConsumerWorker>();
-    var bffConsumer = _bffHost!.Services.GetHostedWorker<Whizbang.Core.Workers.TransportConsumerWorker>();
-
-    if (inventoryConsumer != null) {
-      await inventoryConsumer.PauseAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] Inventory consumer paused.");
-    }
-    if (bffConsumer != null) {
-      await bffConsumer.PauseAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] BFF consumer paused.");
-    }
+    // CRITICAL: Pause both hosts BEFORE draining to prevent competing consumers. The pause is the one run-control path
+    // (#2045): the consumers' subscriptions pause, nothing is claimed, and the resume reopens both.
+    Console.WriteLine("[ServiceBusFixture] Pausing both hosts before draining...");
+    var inventoryRunControl = _inventoryHost!.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangKillswitch>();
+    var bffRunControl = _bffHost!.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangKillswitch>();
+    await inventoryRunControl.PauseAsync(cancellationToken);
+    await bffRunControl.PauseAsync(cancellationToken);
+    Console.WriteLine("[ServiceBusFixture] Both hosts paused.");
 
     // Drain Service Bus subscriptions to prevent cross-contamination between tests
     Console.WriteLine("[ServiceBusFixture] Draining subscriptions between tests...");
     await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
-    // Resume consumer workers after draining
-    if (inventoryConsumer != null) {
-      await inventoryConsumer.ResumeAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] Inventory consumer resumed.");
-    }
-    if (bffConsumer != null) {
-      await bffConsumer.ResumeAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] BFF consumer resumed.");
-    }
+    // Resume both hosts after draining
+    await inventoryRunControl.ResumeAsync(cancellationToken);
+    await bffRunControl.ResumeAsync(cancellationToken);
+    Console.WriteLine("[ServiceBusFixture] Both hosts resumed.");
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once

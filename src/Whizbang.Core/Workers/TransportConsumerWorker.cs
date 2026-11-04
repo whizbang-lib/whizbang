@@ -50,7 +50,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
-  Whizbang.Core.Startup.IStartAbandonedObserver {
+  Whizbang.Core.Startup.IStartAbandonedObserver, Whizbang.Core.RunControl.IObeysRunPermit {
   /// <summary>
   /// The active body cleanups this worker started and that are still running. Its stop waits for them, so they finish
   /// while the services they resolve are still alive (#1721). Replaces a bag nothing ever added to.
@@ -184,7 +184,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null,
     TimeProvider? timeProvider = null,
-    DeadLetterLoggingOptions? deadLetterLogging = null
+    DeadLetterLoggingOptions? deadLetterLogging = null,
+    // #2045: the instance's run permit. A close pauses every subscription and a reopening resumes them; a consumer built
+    // without one is under no run control.
+    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -233,6 +236,54 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_transport is ITransportWithRecovery recoveryTransport) {
       recoveryTransport.SetRecoveryHandler(_onConnectionRecoveredAsync);
     }
+
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
+    _obedience = RunPermit.Obey((_, _) => _obeyRunPermitAsync());
+  }
+
+  /// <summary>The run permit this consumer obeys (#2045): nothing is received while it is closed.</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
+
+  private readonly IDisposable _obedience;
+  private readonly SemaphoreSlim _permitGate = new(1, 1);
+
+  /// <summary>
+  /// Brings every subscription in line with the run permit (#2045): paused while it is closed, receiving while it is
+  /// open. Level-triggered and serialized, so a change that lands while the consumer is subscribing is applied once the
+  /// subscriptions exist.
+  /// </summary>
+  private async Task _obeyRunPermitAsync() {
+    await _permitGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try {
+      if (RunPermit.IsRunning) {
+        await ResumeAllSubscriptionsAsync().ConfigureAwait(false);
+      } else {
+        await PauseAllSubscriptionsAsync().ConfigureAwait(false);
+      }
+    } finally {
+      _permitGate.Release();
+    }
+  }
+
+  private async Task _pauseEstablishedAsync(ISubscription subscription, string address) {
+    try {
+      await subscription.PauseAsync().ConfigureAwait(false);
+    } catch (Exception ex) {
+      LogPauseUnderClosedPermitFailed(_logger, ex, address);
+    }
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "A subscription to {Address} established while the run permit is closed could not be paused; it receives until "
+      + "the permit reopens or the instance stops")]
+  private static partial void LogPauseUnderClosedPermitFailed(ILogger logger, Exception exception, string address);
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _obedience.Dispose();
+    _permitGate.Dispose();
+    base.Dispose();
+    GC.SuppressFinalize(this);
   }
 
   /// <summary>The level this worker logs a dead-lettered message's record at (#1901).</summary>
@@ -285,6 +336,11 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// one is logged and cannot reach the subscribe and retry path that changed the status.
   /// </summary>
   private void _raiseSubscriptionStatusChanged(SubscriptionState state, SubscriptionStatus previousStatus, SubscriptionStatus status) {
+    // #2045: a subscription (re)established while the run permit is closed (a reconnect, a recovery, the health monitor)
+    // is paused at once, so nothing is received until the permit reopens.
+    if (status == SubscriptionStatus.Healthy && !RunPermit.IsRunning && state.Subscription is { } established) {
+      _ = _pauseEstablishedAsync(established, state.Destination.Address);
+    }
     var handlers = SubscriptionStatusChanged;
     if (handlers is null) {
       return;
@@ -1345,10 +1401,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   }
 
   /// <summary>
-  /// Pauses all active subscriptions.
-  /// Messages will not be processed until resumed.
+  /// Pauses all active subscriptions. Messages will not be processed until resumed. The run permit is what calls this
+  /// (#2045): pause, stand down or stop the instance through the run-control path rather than pausing the consumer alone.
   /// </summary>
-  public async Task PauseAllSubscriptionsAsync() {
+  internal async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
     // S3267: Loop contains await — LINQ doesn't support async lambdas
@@ -1364,10 +1420,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   }
 
   /// <summary>
-  /// Resumes all paused subscriptions.
-  /// Message processing will continue.
+  /// Resumes all paused subscriptions. Message processing will continue. Called when the run permit reopens (#2045).
   /// </summary>
-  public async Task ResumeAllSubscriptionsAsync() {
+  internal async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
     // S3267: Loop contains await — LINQ doesn't support async lambdas

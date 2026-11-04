@@ -44,6 +44,50 @@ public class StartupStandDownTests {
   }
 
   [Test]
+  public async Task Record_WithTheRunControlPath_StandsDownThroughItAsync() {
+    // #2045: a stand-down found by Assess takes the same path as one found while running, a pause or a stop. The stage
+    // keeps the reason; the path closes the permit, releases what is held (nothing, at Preflight) and writes the phase.
+    var stages = new RecordingStageReporter();
+    var lifecycle = new PhaseLog();
+    var permit = new WhizbangRunPermit();
+    var path = new WhizbangRunController(permit, lifecycle, [], [], new WhizbangLifecycleOptions(), null,
+      NullLogger<WhizbangRunController>.Instance);
+    var standDown = _create(new BeatingCoordinator(), stages, new FakeTimeProvider(), path);
+
+    await standDown.RecordAsync(_obsolete, CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo([
+      "Enter Preflight: standing down: the ledger records version 2.0.0, newer than this binary's 1.0.0",
+    ]).Because("the phase is the path's to write; the stage keeps the reason");
+    await Assert.That(lifecycle.Phases).IsEquivalentTo([LifecyclePhase.Pausing, LifecyclePhase.StandingBy],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(path.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
+  }
+
+  [Test]
+  public async Task FromServices_TakesTheRegisteredRunControlPathAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(_instance);
+    services.AddWhizbangRunControl();
+    await using var provider = services.BuildServiceProvider();
+
+    var standDown = StartupStandDown.FromServices(provider)!;
+
+    await Assert.That(standDown.RunControl).IsSameReferenceAs(provider.GetRequiredService<IWhizbangRunController>());
+  }
+
+  private sealed class PhaseLog : IWhizbangLifecycleState {
+    public List<LifecyclePhase> Phases { get; } = [];
+    public LifecyclePhase Phase => Phases.Count == 0 ? LifecyclePhase.Starting : Phases[^1];
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
+      Phases.Add(phase);
+      return ValueTask.CompletedTask;
+    }
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  }
+
+  [Test]
   public async Task KeepVisible_RegistersAtOnce_ThenOnEveryBeat_UntilTheHostStopsAsync() {
     var clock = new FakeTimeProvider();
     var coordinator = new BeatingCoordinator();
@@ -203,13 +247,14 @@ public class StartupStandDownTests {
 
   private static readonly FixedInstance _instance = new();
 
-  private static StartupStandDown _create(BeatingCoordinator coordinator, IStartupStageReporter stages, TimeProvider clock) {
+  private static StartupStandDown _create(
+      BeatingCoordinator coordinator, IStartupStageReporter stages, TimeProvider clock, IWhizbangRunController? runControl = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     var provider = services.BuildServiceProvider();
     return new StartupStandDown(
       provider.GetRequiredService<IServiceScopeFactory>(), _instance, stages, "1.0.0", TimeSpan.FromSeconds(5), clock,
-      NullLogger<StartupStandDown>.Instance);
+      NullLogger<StartupStandDown>.Instance) { RunControl = runControl };
   }
 
   /// <summary>Hands out each beat's outcome in order, as the stand-down announces it.</summary>

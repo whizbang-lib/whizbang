@@ -143,6 +143,7 @@ Whizbang:Housekeeping:MaxConsecutiveDeferrals
 Whizbang:Housekeeping:MaxDeferral
 Whizbang:Housekeeping:SettledCooldown
 Whizbang:Lifecycle:FaultRecordWindow
+Whizbang:Lifecycle:HeldWorkTimeout
 Whizbang:Lifecycle:TransitionAckTimeout
 Whizbang:MessageSecurity:AllowAnonymous
 Whizbang:MessageSecurity:EnableAuditLogging
