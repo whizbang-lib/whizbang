@@ -22,6 +22,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | OSSF Scorecard | `security-scorecard.yml` | schedule, dispatch | Repository security posture |
 | Mutation Testing | `mutation.yml` | dispatch | Stryker mutation runs (see `ai-docs/mutation-testing.md`) |
 | Analyzer Sweep | `analyzer-sweep.yml` | dispatch | Runs every analyzer across the solution |
+| Build Cost Timing | `build-cost-timing.yml` | PRs and `develop` pushes that change a generator project, the repository's analyzers or the benchmark; schedule (weekly); dispatch | Advisory: times every generator and analyzer over a large generated consumer against `build-cost-thresholds.json` (#1651). Not required and not read by `Gate · CI result`; moved out of CI so it no longer runs on every event (#2068) |
 | Test Shard Report | `test-shard-report.yml` | schedule (monthly), dispatch | Measures every test suite and the EFCore shards, and posts the report on the tracking issue (`ai-docs/test-sharding.md`) |
 | Cache Cleanup | `cache-cleanup-scheduled.yml` | schedule, dispatch | Prunes stale Actions caches |
 | Mirror CI images | `mirror-ci-images.yml` | dispatch, schedule (weekly), `develop` pushes and PRs that change `.github/ci-images.txt` | Copies the Docker Hub images CI pulls to `ghcr.io/whizbang-lib/ci-mirror` (`ai-docs/ci-image-mirror.md`) |
@@ -151,7 +152,7 @@ test passes; `.github/scripts/Test-CoverageCollected.ps1` fails such a suite. Re
 Windows paths; the quality gate's merge normalizes them to repository-relative paths.
 
 Not routed, always `ubuntu-latest`: the planning and gate jobs (small, and the gate must not depend on a
-machine), `Build · Generator and analyzer timing` (its thresholds were measured on GitHub-hosted runners),
+machine), `Build · Generator and analyzer timing` (`build-cost-timing.yml`; its thresholds were measured on GitHub-hosted runners),
 `Build · Verify rebuild matches the tested build`, `Build · Pack` and every publish, release, signing and
 attestation job (what reaches nuget.org is built and attested on GitHub-hosted runners), and the report
 and notification jobs.

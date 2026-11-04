@@ -515,8 +515,9 @@ large consumer in memory (1,000 features of messages, receptors and perspectives
 loads every generator package from its build output as a consumer's compiler does, and times each generator
 (`GeneratorDriver.GetTimingInfo`) and each analyzer assembly (`CompilationWithAnalyzers` with
 `logAnalyzerExecutionTime`), median of 5 runs after a warm-up. It checks them against `build-cost-thresholds.json`
-and exits 1 when one is over; the advisory CI job "Build · Generator and analyzer timing" runs it and puts the table
-in the job summary.
+and exits 1 when one is over; the advisory job "Build · Generator and analyzer timing" (`.github/workflows/build-cost-timing.yml`)
+runs it and puts the table in the job summary. That job runs when a pull request or a develop push changes a
+generator project, the repository's analyzers or the benchmark, weekly, and on demand, not on every CI run.
 
 ```bash
 dotnet build -c Release benchmarks/Whizbang.BuildCost.Benchmarks
