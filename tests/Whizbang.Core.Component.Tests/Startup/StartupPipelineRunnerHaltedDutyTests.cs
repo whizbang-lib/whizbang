@@ -79,6 +79,68 @@ public class StartupPipelineRunnerHaltedDutyTests {
     }
   }
 
+  /// <summary>Records every wait notice with what the permit said at that moment, and signals the first.</summary>
+  private sealed class NoticeObserver(WhizbangRunPermit permit) : IStartupStepObserver {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<(StartupStepWaitContext Context, bool PermitOpen)> Notices { get; } = [];
+    public Task FirstNotice => _first.Task;
+    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask OnStepWaitingAsync(StartupStepWaitContext context, CancellationToken cancellationToken) {
+      lock (Notices) {
+        Notices.Add((context, permit.IsRunning));
+      }
+      _first.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  [Test]
+  public async Task AnAwaitedStepRefusedAsHalted_NarratesTheWaitOnce_BeforeWaitingForThePermitAsync() {
+    // The contract the docs cite (#2045): a halted refusal is told to observers through OnStepWaitingAsync exactly once,
+    // and before the wait, so an operator sees why the step is waiting while it waits rather than after it ends. If the
+    // notice came only after the permit reopened, FirstNotice would never complete while the permit is closed.
+    var permit = new WhizbangRunPermit();
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    var elector = new PermitElector(permit);
+    var observer = new NoticeObserver(permit);
+    var step = new Step();
+    var runner = new StartupPipelineRunner(steps: [step], observers: [observer], dutyElector: elector);
+
+    var run = runner.RunAsync(CancellationToken.None);
+    await observer.FirstNotice.WaitAsync(_deadline);
+
+    await Assert.That(run.IsCompleted).IsFalse().Because("the notice is raised before the wait, while the step still waits");
+    await Assert.That(observer.Notices).Count().IsEqualTo(1);
+    var (notice, permitOpen) = observer.Notices[0];
+    await Assert.That(permitOpen).IsFalse().Because("the notice is raised while the permit is still closed");
+    await Assert.That(notice.Duty).IsEqualTo("migrator");
+    await Assert.That(notice.Descriptor.Name).IsEqualTo("Migrate2");
+    await Assert.That(notice.LastRefusalDetail).IsEqualTo("the run permit is closed");
+    await Assert.That(step.Executions).IsEqualTo(0);
+
+    await permit.ChangeAsync(RunState.Running, CancellationToken.None);
+    await run.WaitAsync(_deadline);
+
+    await Assert.That(observer.Notices).Count().IsEqualTo(1).Because("the halted wait is narrated once, not per vote");
+    await Assert.That(step.Executions).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AnAwaitedStepThatIsNotHalted_IsNeverNarratedAsWaitingAsync() {
+    // The other half of the contract: a step granted on its first vote never waited, so no wait notice is raised.
+    var permit = new WhizbangRunPermit();
+    var observer = new NoticeObserver(permit);
+    var step = new Step();
+    var runner = new StartupPipelineRunner(steps: [step], observers: [observer], dutyElector: new PermitElector(permit));
+
+    var results = await runner.RunAsync(CancellationToken.None);
+
+    await Assert.That(results[0].Outcome).IsEqualTo(StartupStepOutcome.Completed);
+    await Assert.That(observer.Notices).IsEmpty();
+  }
+
   [Test]
   public async Task AnAwaitedStepRefusedAsHalted_WaitsForThePermitToReopen_ThenRunsAsync() {
     var permit = new WhizbangRunPermit();
