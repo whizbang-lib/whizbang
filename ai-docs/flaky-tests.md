@@ -251,11 +251,12 @@ var unitId2 = await strategy.QueueMessageAsync(message2);
 Many parallel tests competing for PostgreSQL connections can exhaust the connection pool, causing cancellation tokens to trigger.
 
 ### Fix
-```csharp
-// Add NotInParallel for test classes that heavily use PostgreSQL
-[NotInParallel("PostgresWorkCoordinator")]
-public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
-```
+Size the parallelism to the container, not the other way round, and never serialize a class because it "uses
+PostgreSQL". Each test owns a database, so the container's capacity is what tests share: the EF Core project runs
+under one assembly-wide `[ParallelLimiter<EFCorePostgresParallelism>]` sized to `max_connections`, and a guard test
+reads the live container's `max_connections` against that limit. A class serializes only on what it really shares,
+with a key named for that resource and the reason on the attribute's line. See
+[efcore-test-parallelism.md](efcore-test-parallelism.md) (#2069).
 
 ---
 
@@ -476,5 +477,5 @@ run rather than once in a thousand.
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Workflows/SeedProductsWorkflowTests.cs` | Increased waiter timeouts to 200s |
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Infrastructure/ServiceBusIntegrationFixtureSanityTests.cs` | Added `InventoryRestockedEvent` waiter |
 | `tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
-| `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool |
+| `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool (superseded by #2069: parallel under a container-sized limit) |
 | `tests/Whizbang.Sagas.Tests/SagaItemCompletionReconcilerTests.cs` | Explicit per-item stream deriver instead of the process-wide namespace; the race reproduced by `ProcessWideSagaNamespace` |

@@ -21,6 +21,7 @@ This directory contains focused documentation topics to help Claude Code underst
 - [catalog-existence-checks.md](catalog-existence-checks.md): when `to_regclass` and other name lookups read a stale answer inside a transaction, the rule for new checks, and the per-site audit (#2038)
 - [schema-initialization-connections.md](schema-initialization-connections.md) — two traps that each shipped once: statements that need a commit between them, and why there is almost never a connection string to open a second connection from
 - [load-under-bulk-import.md](load-under-bulk-import.md) — where a bulk load's database CPU went, measured: the claim poll priced by the backlog, maintenance running at the peak, the stamper sorting on every wake, DDL at startup under load, idle polling; the rule each became, and how to measure without being misled by cumulative counters
+- [efcore-test-parallelism.md](efcore-test-parallelism.md) — the EF Core Postgres tests run in parallel by default; when a test serializes, on what, and the guards that enforce it
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
 - [ci-image-mirror.md](ci-image-mirror.md): how CI pulls Docker Hub images from a GHCR mirror, the guard that fails on an unlisted image, and how to add one
 - [coverage-exclusions.md](coverage-exclusions.md) — when `[ExcludeFromCodeCoverage]` is right, when it hides real coverage, and how to pin the invariant that makes a guard unreachable
