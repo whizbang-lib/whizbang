@@ -210,6 +210,46 @@ public class WhizbangRunControllerTests {
   }
 
   [Test]
+  public async Task Halt_CanceledWhileAnObeyerActs_ThrowsAsync() {
+    // A cancellation is the caller's, not an obeyer's failure: it ends the path rather than being logged and passed.
+    var h = _build();
+    using var cts = new CancellationTokenSource();
+    using var subscription = h.Permit.Obey(async (_, token) => {
+      await cts.CancelAsync();
+      token.ThrowIfCancellationRequested();
+    });
+
+    await Assert.That(async () => await h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token)).Throws<OperationCanceledException>();
+    await Assert.That(h.Log.Steps).IsEmpty();
+  }
+
+  [Test]
+  public async Task Halt_CanceledWhileReleasing_ThrowsAsync() {
+    var log = new StepLog();
+    using var cts = new CancellationTokenSource();
+    var h = _build([new CancelingWorkReleaser(cts)], log: log);
+
+    await Assert.That(async () => await h.Controller.HaltAsync(RunHaltReason.Pause, cts.Token)).Throws<OperationCanceledException>();
+    await Assert.That(h.Log.Steps).DoesNotContain("phase:Paused:Paused");
+  }
+
+  private sealed class CancelingWorkReleaser(CancellationTokenSource cts) : IReleasesHeldWork {
+    public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
+      await cts.CancelAsync();
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+  }
+
+  [Test]
+  public async Task Dispose_ThenHalt_IsRefusedAsync() {
+    var h = _build();
+    h.Controller.Dispose();
+
+    await Assert.That(async () => await h.Controller.HaltAsync(RunHaltReason.Pause, CancellationToken.None))
+      .Throws<ObjectDisposedException>();
+  }
+
+  [Test]
   [Arguments(RunHaltReason.Pause)]
   [Arguments(RunHaltReason.StandDown)]
   public async Task Resume_AfterAPauseOrAStandDown_ReopensThePermitAsync(RunHaltReason reason) {

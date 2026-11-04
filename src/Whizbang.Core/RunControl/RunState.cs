@@ -4,22 +4,19 @@
 namespace Whizbang.Core.RunControl;
 
 /// <summary>
-/// The gate vocabulary of a <see cref="WhizbangRunPermit"/> — a subsystem-internal mechanism, NOT the
-/// run-control interface currency. A resource interprets the lifecycle <see cref="LifecyclePhase"/>
-/// (in its <c>IWhizbangRunControl.OnPhaseAsync</c>) and drives its permit to one of these: open
-/// (<see cref="Running"/>), closed-but-resumable (<see cref="Paused"/>), or draining/cancelling
-/// (<see cref="Stopped"/>). The lifecycle phase is what crosses the interface; this is how a permit
-/// expresses the resulting gate state.
+/// The state of the instance's <see cref="WhizbangRunPermit"/> (#2045): open (<see cref="Running"/>), closed but
+/// resumable (<see cref="Paused"/>, after a pause or a stand-down), or closed for good (<see cref="Stopped"/>). Only the
+/// run-control path (<see cref="IWhizbangRunController"/>) changes it; the lifecycle phase is what that path reports.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Paused_BlocksUntilResumedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_CancelsAwaitersAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:ForWorkers_InterpretationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunPermitTests.cs:Stopped_NeverReopensAsync</tests>
 public enum RunState {
   /// <summary>Permit open — awaiters proceed.</summary>
   Running,
   /// <summary>Permit closed but resumable — awaiters block until re-opened.</summary>
   Paused,
-  /// <summary>Permit draining — awaiters are canceled (finish in-flight, take no new).</summary>
+  /// <summary>Permit closed for good: awaiters are canceled, held work is finished, nothing new is taken.</summary>
   Stopped
 }

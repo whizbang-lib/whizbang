@@ -338,7 +338,7 @@ public static class WorkerPipelineExtensions {
     // instance is alive and not yet eligible for work.
     services.AddWhizbangWorkerAtSchemaReady(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<IWhizbangRunController>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),

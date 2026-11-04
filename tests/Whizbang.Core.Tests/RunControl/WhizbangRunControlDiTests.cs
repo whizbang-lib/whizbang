@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

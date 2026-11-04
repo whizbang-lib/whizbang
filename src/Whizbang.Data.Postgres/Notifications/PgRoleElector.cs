@@ -54,7 +54,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
-public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutdown, IRoleAssignmentReader {
+public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunControl.IReleasesHeldRoles, IRoleAssignmentReader {
   /// <summary>The vote outcome that hands this instance a role it did not hold.</summary>
   private const string OUTCOME_GRANTED = "granted";
 
@@ -234,10 +234,11 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   }
 
   /// <summary>
-  /// Releases every role this elector still holds, so a graceful stop hands each one off at once.
-  /// Idempotent; a release that cannot reach the database leaves the lease to lapse.
+  /// Releases every role this elector still holds, so a stand-down, a pause or a stop hands each one off at once: the
+  /// role step of the run-control path (#2045). Idempotent; a release that cannot reach the database leaves the lease to
+  /// lapse.
   /// </summary>
-  /// <param name="cancellationToken">The host's stop token.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
   public async Task ReleaseAllAsync(CancellationToken cancellationToken) {
     foreach (var tenure in _tenures.Values) {
       cancellationToken.ThrowIfCancellationRequested();
