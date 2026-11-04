@@ -44,6 +44,8 @@ public sealed class RunPermitAuditTests {
   /// <summary>Takes work for this instance and obeys the permit itself.</summary>
   private static readonly HashSet<string> _obeysThePermit = new(StringComparer.Ordinal) {
     "ClaimWorker", "CoalesceShipWorker", "MultiStreamCommandWorker", "ScheduleWorker", "TransportConsumerWorker",
+    // Registered by the host itself rather than the library; it obeys the container's permit by default all the same.
+    "ServiceBusConsumerWorker",
   };
 
   /// <summary>Does fleet-wide work only on its maintainer turn, which a closed permit denies.</summary>
@@ -135,6 +137,9 @@ public sealed class RunPermitAuditTests {
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     _ = builder.Services.AddWhizbang().WithRouting(static r => r.OwnDomains("audit.commands"))
       .WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres.AddTransportConsumer();
+    // The legacy Service Bus consumer is registered by a host, the way a host registers it, not by the library: the
+    // permit must still reach it through the container.
+    builder.Services.AddHostedService<ServiceBusConsumerWorker>();
     return builder.Build();
   }
 }

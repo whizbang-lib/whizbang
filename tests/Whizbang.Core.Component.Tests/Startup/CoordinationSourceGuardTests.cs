@@ -149,6 +149,31 @@ public partial class CoordinationSourceGuardTests {
         + "MaintainerDuty.IsThisInstancesTurn: " + string.Join(", ", offenders));
   }
 
+  [GeneratedRegex(@":\s*BackgroundService\b")]
+  private static partial Regex _hostedWorker();
+
+  [GeneratedRegex(@"\.SubscribeBatchAsync\(|SubscribeWithRetryAsync\(")]
+  private static partial Regex _subscribes();
+
+  [Test]
+  public async Task EveryHostedConsumer_ObeysTheRunPermitAsync() {
+    // #2045: a hosted worker that subscribes to a transport is called back rather than looping, so it obeys the run
+    // permit by acting on each change (RunPermit.Obey). A consumer that subscribes without it keeps receiving through a
+    // stand-down, a pause and a stop, whoever registers it.
+    var offenders = _csharpSources()
+      .Where(f => _hostedWorker().IsMatch(f.Value) && _subscribes().IsMatch(f.Value) && !f.Value.Contains("RunPermit.Obey(", StringComparison.Ordinal))
+      .Select(f => f.Key)
+      .ToList();
+    await Assert.That(offenders).IsEmpty()
+      .Because("a hosted consumer that does not obey the run permit: " + string.Join(", ", offenders));
+    var consumers = _csharpSources().Where(f => _hostedWorker().IsMatch(f.Value) && _subscribes().IsMatch(f.Value))
+      .Select(f => f.Key).Order(StringComparer.Ordinal).ToList();
+    await Assert.That(consumers).IsEquivalentTo([
+      "src/Whizbang.Core/Workers/ServiceBusConsumerWorker.cs",
+      "src/Whizbang.Core/Workers/TransportConsumerWorker.cs",
+    ]).Because("the scan must see the consumers it vouches for, or it vouches for nothing");
+  }
+
   [Test]
   public async Task HaltingPhases_AreWrittenOnlyByTheRunControlPathAsync() {
     // #2045: Pausing, Paused, StandingBy, Stopping, Stopped and Resuming are reported by the one path, after the permit
