@@ -262,19 +262,46 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task Tick_HeartbeatFortySecondsOldWithoutLock_IsNotDeadUnderTheDerivedThresholdAsync(CancellationToken cancellationToken) {
-    // Under the old 30 s constant this row was a corpse; a writer on the 60 s slow cadence produced
-    // one every minute. The threshold is now derived from the cadence (150 s with the defaults).
+  public async Task Tick_ADirectInstanceFortySecondsLateWithoutItsLock_IsAnnouncedDeadAsync(CancellationToken cancellationToken) {
+    // Owner decision on #2022: a direct instance whose alive-lock is gone is taken over one beat (30 s) after its last
+    // heartbeat, not at its 150 s window, so a hard crash hands its work over about as fast as before.
+    var goneId = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(goneId, DateTimeOffset.UtcNow.AddSeconds(-40));
+    var bus = new CountingBus();
+    var monitor = _createMonitor(bus);
+
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(monitor.AnnouncedDeaths.Contains(goneId)).IsTrue()
+      .Because("a direct instance without its lock is live for one beat only; forty seconds is past it");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_APooledInstanceFortySecondsLate_IsNotDeadInsideItsWindowAsync(CancellationToken cancellationToken) {
+    // Under the old 30 s constant this row was a corpse. An instance behind a transaction pooler cannot hold the lock,
+    // so the rule judges it by the window it declares from its own cadence, and one late beat is late, not missing.
     var lateId = Guid.CreateVersion7();
     await _insertHeartbeatAsync(lateId, DateTimeOffset.UtcNow.AddSeconds(-40));
+    await _makePooledAsync(lateId, windowSeconds: 90);
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
 
     await monitor.TickForTestsAsync(cancellationToken);
 
     await Assert.That(bus.Published.Contains(typeof(InstanceDiedSignal))).IsFalse()
-      .Because("forty seconds is inside two slow intervals plus a fast one; the beat is late, not missing");
+      .Because("forty seconds is inside the 90 second window a pooled instance declares");
     await Assert.That(monitor.StaleThreshold).IsEqualTo(TimeSpan.FromSeconds(150));
+  }
+
+  private async Task _makePooledAsync(Guid instanceId, int windowSeconds) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "UPDATE wh_service_instances SET connection_mode = 'pooled', liveness_window_seconds = @w WHERE instance_id = @id", conn);
+    cmd.Parameters.AddWithValue("id", instanceId);
+    cmd.Parameters.AddWithValue("w", windowSeconds);
+    await cmd.ExecuteNonQueryAsync();
   }
 
   [Test]
