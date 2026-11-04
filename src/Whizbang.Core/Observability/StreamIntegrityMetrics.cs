@@ -155,6 +155,16 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
   public PassiveCounter<long> IntegrityDeliveriesDropped { get; }
 
+  /// <summary>Domains two services claim on their checkpoints, counted once per contesting pair and domain; neither
+  /// claimant is used for the domain. Tagged by domain.</summary>
+  /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
+  public PassiveCounter<long> OwnershipConflicts { get; }
+
+  /// <summary>Redelivery requests an origin declined to answer. Tagged by reason (<c>own_request</c>: the service's
+  /// own backfill broadcast came back to it).</summary>
+  /// <docs>resilience/stream-integrity#redelivery-ships-only-what-the-origin-wrote</docs>
+  public PassiveCounter<long> RedeliveryRequestsIgnored { get; }
+
   private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
@@ -260,6 +270,12 @@ public sealed class StreamIntegrityMetrics {
     IntegrityDeliveriesDropped = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.deliveries_dropped",
       description: "Integrity deliveries dropped (attempts spent, or no handler); tagged by type + reason");
+    OwnershipConflicts = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ownership_conflicts",
+      description: "Domains two services claim, once per contesting pair and domain; neither claimant is used; tagged by domain");
+    RedeliveryRequestsIgnored = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivery_requests_ignored",
+      description: "Redelivery requests an origin declined to answer; tagged by reason (own_request)");
 
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.sealed_through",

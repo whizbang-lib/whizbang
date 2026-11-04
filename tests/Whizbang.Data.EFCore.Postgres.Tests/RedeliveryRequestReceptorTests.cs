@@ -550,7 +550,7 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(coordinator.Requests).IsEmpty()
       .Because("a backfill broadcast on a shared topic reaches its sender too; answering it re-ships the sender's own store to itself");
     await Assert.That(transport.Published).IsEmpty();
-    await Assert.That(ignored.Last()).IsEqualTo((1L, (string?)"own_request"));
+    await Assert.That(ignored[^1]).IsEqualTo((1L, (string?)"own_request"));
   }
 
   [Test]

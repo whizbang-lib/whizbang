@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// domains key without case, an absent request address keeps the known one, and a domain another owner already claims
 /// comes back as a conflict.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/321_LocalLaneFollowsOwnership.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/325_LocalLaneFollowsOwnership.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]

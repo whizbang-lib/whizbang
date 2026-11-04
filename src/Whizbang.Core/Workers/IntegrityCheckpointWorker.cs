@@ -100,6 +100,9 @@ public sealed partial class IntegrityCheckpointWorker(
     }
 
     var originServiceName = scope.ServiceProvider.GetService<IServiceInstanceProvider>()?.ServiceName ?? string.Empty;
+    // #2008: the local lane follows registered ownership. A type this service does not own was received, not authored,
+    // so it is not counted as an emission; the owned domains ride the checkpoint so consumers learn who authors what.
+    var ownedDomains = _ownedDomains(scope.ServiceProvider);
 
     var checkpoint = new IntegrityCheckpoint {
       CheckpointStreamId = originServiceId,
@@ -111,16 +114,17 @@ public sealed partial class IntegrityCheckpointWorker(
       RequestTopic = RepairTopicResolver.Resolve(_options.RepairTopic, scope.ServiceProvider),
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
-      Buckets = [.. window.Buckets],
+      Buckets = [.. window.Buckets.Where(b => OwnedNamespaceMatcher.IsLocalEventType(b.EventType, ownedDomains))],
+      OwnedDomains = [.. ownedDomains.Select(OwnedNamespaceMatcher.NormalizeDomain).Distinct(StringComparer.OrdinalIgnoreCase)],
     };
 
     // ROUTING: the checkpoint rides the ORIGIN'S OWN event topics — the topics its consumers
     // already subscribe to. Namespace-routing it (the dispatcher default) sends it to a
     // control-plane topic that, in a domain-ownership topology, no consumer subscribes to — the
     // broker silently drops every copy, origin tracking never populates, and the deep audit is
-    // permanently inert. One publish per DISTINCT topic across the window's types UNION the
-    // historically-emitted (own-lane digest) types, so quiet periods still heartbeat every
-    // covered topic. Falls back to the dispatcher when the transport infrastructure (or any
+    // permanently inert. One publish per DISTINCT topic of the types this service owns (#2031: other services' types
+    // would land a copy on every topic a consumer subscribes to); with no owned domains registered, the window's types
+    // UNION the historically-emitted (own-lane digest) types, so quiet periods still heartbeat every covered topic. Falls back to the dispatcher when the transport infrastructure (or any
     // resolvable topic) is absent — in-memory hosts keep the original behavior.
     // CONTROL CLASS (topology arc phase 9): the checkpoint is the archetypal supersedable control
     // signal — the next cycle re-derives it from the same watermarks, so a copy that outlives its
@@ -134,7 +138,7 @@ public sealed partial class IntegrityCheckpointWorker(
       });
 
     var topicsPublished = await _tryPublishToOwnEventTopicsAsync(
-      scope.ServiceProvider, coordinator, checkpoint, window, minted?.TimeToLive, cancellationToken).ConfigureAwait(false);
+      scope.ServiceProvider, coordinator, checkpoint, ownedDomains, minted?.TimeToLive, cancellationToken).ConfigureAwait(false);
     if (topicsPublished == 0) {
       await dispatcher.PublishAsync(checkpoint).ConfigureAwait(false);
     }
@@ -170,13 +174,13 @@ public sealed partial class IntegrityCheckpointWorker(
       : destination;
 
   /// <summary>
-  /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's audited event
-  /// types. Returns the number of topics published to; 0 means the caller should use the
+  /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's owned (or, with no owned domains,
+  /// audited) event types. Returns the number of topics published to; 0 means the caller should use the
   /// dispatcher fallback (missing transport infrastructure, or no type resolved to a topic).
   /// </summary>
   private async Task<int> _tryPublishToOwnEventTopicsAsync(
       IServiceProvider services, IWorkCoordinator coordinator, IntegrityCheckpoint checkpoint,
-      IntegrityCheckpointWindow window, TimeSpan? timeToLive, CancellationToken cancellationToken) {
+      HashSet<string> ownedDomains, TimeSpan? timeToLive, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var catalog = services.GetService<IMessageTypeCatalog>();
@@ -189,27 +193,15 @@ public sealed partial class IntegrityCheckpointWorker(
       return 0;
     }
 
-    var typeNames = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var bucket in window.Buckets) {
-      typeNames.Add(bucket.EventType);
-    }
-    foreach (var emitted in await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false)) {
-      typeNames.Add(emitted);
-    }
-    if (typeNames.Count == 0) {
+    var eventTypes = await _checkpointEventTypesAsync(coordinator, catalog, checkpoint, ownedDomains, cancellationToken)
+      .ConfigureAwait(false);
+    if (eventTypes.Count == 0) {
       return 0;
     }
 
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(
-      [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
-    var ownedDomains = services.GetOptionsValue<RoutingOptions>()?
-      .OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     var topicStrategy = services.GetService<ITopicRoutingStrategy>();
     var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);
-    foreach (var typeName in typeNames) {
-      if (!EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
-        continue;
-      }
+    foreach (var eventType in eventTypes) {
       // Session-enabled subscriptions dead-letter sessionless deliveries — the checkpoint's own
       // stream identity (one homogeneous checkpoint stream per origin) is the session key.
       if (routing is not null) {
@@ -247,9 +239,42 @@ public sealed partial class IntegrityCheckpointWorker(
       await transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
     }
-    LogPublishedToTopics(_logger, destinations.Count, typeNames.Count);
+    LogPublishedToTopics(_logger, destinations.Count, eventTypes.Count);
     return destinations.Count;
   }
+
+  /// <summary>
+  /// The event types whose topics the checkpoint rides. With owned domains registered: every catalog event type the
+  /// service owns, so each consumer of an owned topic gets the beat and no consumer gets a copy per topic of another
+  /// service's types (#2031). Without: the window's types and the store's own-lane digest types, as before.
+  /// </summary>
+  private static async Task<List<Type>> _checkpointEventTypesAsync(
+      IWorkCoordinator coordinator, IMessageTypeCatalog catalog, IntegrityCheckpoint checkpoint,
+      HashSet<string> ownedDomains, CancellationToken cancellationToken) {
+    var catalogEvents = catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type).ToList();
+    if (ownedDomains.Count > 0) {
+      return catalogEvents.Where(t => OwnedNamespaceMatcher.IsOwned(t.Namespace, ownedDomains)).ToList();
+    }
+
+    var typeNames = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var bucket in checkpoint.Buckets) {
+      typeNames.Add(bucket.EventType);
+    }
+    foreach (var emitted in await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false)) {
+      typeNames.Add(emitted);
+    }
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(catalogEvents);
+    var resolved = new List<Type>();
+    foreach (var typeName in typeNames) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
+        resolved.Add(eventType);
+      }
+    }
+    return resolved;
+  }
+
+  private static HashSet<string> _ownedDomains(IServiceProvider services) =>
+    services.GetOptionsValue<RoutingOptions>()?.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
 
   [LoggerMessage(EventId = 60, Level = LogLevel.Information,
     Message = "Integrity checkpoint publisher started (interval {IntervalSeconds}s)")]

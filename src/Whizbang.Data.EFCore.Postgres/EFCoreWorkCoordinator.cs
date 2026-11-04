@@ -1225,6 +1225,59 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(
+      Guid ownerServiceId, string ownerServiceName, string? requestTopic, IReadOnlyList<string> domains,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ownerServiceName);
+    ArgumentNullException.ThrowIfNull(domains);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var fn = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_record_domain_claims");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant; every argument is bound.
+    cmd.CommandText = $"SELECT domain, owner_service_id, owner_service_name, request_topic FROM {fn}(@p_owner, @p_owner_name, @p_request_topic, @p_domains)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("p_owner", ownerServiceId);
+    cmd.Parameters.AddWithValue("p_owner_name", ownerServiceName);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_request_topic", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)requestTopic ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_domains", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = domains.ToArray()
+    });
+    return await _readDomainClaimsAsync(cmd, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified table name built from a validated schema constant; no argument.
+    cmd.CommandText = $"SELECT domain, owner_service_id, owner_service_name, request_topic FROM {schema}.wh_integrity_domain_claims ORDER BY domain, owner_service_id";
+#pragma warning restore S2077
+    return await _readDomainClaimsAsync(cmd, cancellationToken).ConfigureAwait(false);
+  }
+
+  private static async Task<IReadOnlyList<IntegrityDomainClaim>> _readDomainClaimsAsync(
+      System.Data.Common.DbCommand cmd, CancellationToken cancellationToken) {
+    var claims = new List<IntegrityDomainClaim>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      claims.Add(new IntegrityDomainClaim {
+        Domain = reader.GetString(0),
+        OwnerServiceId = reader.GetGuid(1),
+        OwnerServiceName = reader.GetString(2),
+        RequestTopic = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(3),
+      });
+    }
+    return claims;
+  }
+
+  /// <inheritdoc />
   public async Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
       Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(deliveryType);
@@ -3286,6 +3339,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
         AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
         AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+        AND (@p_authored_by::text IS NULL OR (
+          es.origin_service_id IS NULL
+          AND COALESCE(NULLIF(lower(btrim(COALESCE(
+                (eb.metadata -> 'Hops') -> 0 -> 'si' ->> 'sn',
+                (eb.metadata -> 'Hops') -> 0 -> 'ServiceInstance' ->> 'ServiceName'))), ''), 'unknown')
+              IN ('unknown', lower(btrim(@p_authored_by::text)))))
       ORDER BY es.stream_id, es.version
       LIMIT @p_max
       """;
@@ -3318,6 +3377,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, NpgsqlTypes.NpgsqlDbType.Integer) {
       Value = request.MaxEvents
+    });
+    // #2032: only events the answering service authored (no origin, and a first hop naming it or no service).
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_authored_by", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)request.AuthoredBy ?? DBNull.Value
     });
 
     var results = new List<RedeliveryEvent>();

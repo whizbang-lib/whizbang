@@ -58,7 +58,8 @@ public class SubscriptionExpansionTargetingTests {
     await Assert.That(sent[1].Command.EventTypes).IsEquivalentTo([_placedWire]);
     await Assert.That(sent.All(s => s.Command.StateOnly && s.Command.Topic == "inbox" && s.Command.RequesterService == "expanding-svc"))
       .IsTrue().Because("the answer still comes back state-only to this service's reply topic");
-    await Assert.That(coordinator.Registry.Values.All(s => s == ConsumedTypeBackfillStatus.Requested)).IsTrue();
+    await Assert.That(coordinator.Registry.Where(kv => kv.Key != "Contracts.PriorType").All(kv => kv.Value == ConsumedTypeBackfillStatus.Requested))
+      .IsTrue().Because("both expansions were asked of their owners, so both are marked requested");
   }
 
   [Test]

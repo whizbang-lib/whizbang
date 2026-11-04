@@ -189,9 +189,10 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid streamId, int version, Guid? origin, string? firstHopService) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
-      store.CommandText = @"
+      store.CommandText = """
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, origin_service_id)
-        VALUES (@event, @stream, @stream, 'TestAggregate', 'Contracts.ThingCreated', '{""t"":""tenant-a""}'::jsonb, @version, nextval('wh_commit_seq'), @origin)";
+        VALUES (@event, @stream, @stream, 'TestAggregate', 'Contracts.ThingCreated', '{"t":"tenant-a"}'::jsonb, @version, nextval('wh_commit_seq'), @origin)
+        """;
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue(nameof(version), version);
