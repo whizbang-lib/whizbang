@@ -16,6 +16,7 @@ using Whizbang.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -25,6 +26,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// an <see cref="IStreamPrefixTruncator.CloseAsync"/> call, and <see cref="ScheduledPrefixTruncateReceptorRegistrar"/>
 /// runtime-registers it at the three default lifecycle stages.
 /// </summary>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [Category("Shard2")]
 public class ScheduledPrefixTruncateReceptorTests {

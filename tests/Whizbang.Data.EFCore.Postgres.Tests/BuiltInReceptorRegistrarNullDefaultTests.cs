@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -29,11 +30,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// It only bites a host that declares no receptors, because any assembly that declares one gets a
 /// generated registry that replaces the default — which is why it reached a deployed service
-/// (JDX's system-management service, a pure API surface) rather than a test. The host died before
+/// (a pure API surface) rather than a test. The host died before
 /// binding its port, so the platform saw only a refused connection on the startup probe.
 /// </para>
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
@@ -133,8 +134,10 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
     await using var sp = _hostWithoutReceptors();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
-    var registrars = typeof(IntegrityCheckpointReceptorRegistrar).Assembly
-      .GetTypes()
+    // Both assemblies that ship a registrar: this driver's, and the shared Postgres one the scheduled prefix truncate
+    // moved to so the Dapper driver registers it too (#2043).
+    var registrars = new[] { typeof(IntegrityCheckpointReceptorRegistrar).Assembly, typeof(ScheduledPrefixTruncateReceptorRegistrar).Assembly }
+      .SelectMany(assembly => assembly.GetTypes())
       .Where(t => t is { IsClass: true, IsAbstract: false } && typeof(IHostedService).IsAssignableFrom(t))
       .Select(t => (Type: t, Ctor: t.GetConstructors().FirstOrDefault()))
       // The registrar shape, stated precisely: it needs the provider, a scope factory and loggers,
