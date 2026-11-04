@@ -83,6 +83,24 @@ public class MultiStreamCommandWorkerLoopTests {
   }
 
   [Test]
+  public async Task Loop_ACanceledClaimThatIsNotAStop_IsAFailedPass_AndTheLoopGoesOnAsync() {
+    // #2045: only the host stopping or a stopped run permit ends the loop. A claim canceled for its own reasons is a
+    // failed pass like any other, and the next pass claims again.
+    var store = new LoopStore { ClaimFailure = new OperationCanceledException("the statement was canceled") };
+    var worker = _worker(store);
+    var (second, _) = _nextPass(worker, _ => store.ClaimCount >= 2);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      worker.RequestImmediateRun();
+      await second.WaitAsync(_deadline);
+      await Assert.That(store.ClaimCount).IsGreaterThanOrEqualTo(2);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
   public async Task Loop_ANewRunNotice_WakesTheWorkerAsync() {
     var store = new LoopStore();
     var worker = _worker(store);

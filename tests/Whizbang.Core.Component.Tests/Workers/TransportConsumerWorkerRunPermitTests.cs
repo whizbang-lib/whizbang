@@ -129,6 +129,19 @@ public class TransportConsumerWorkerRunPermitTests {
   }
 
   [Test]
+  public async Task AHealthyStatusWithNoSubscriptionYet_UnderAClosedPermit_PausesNothingAsync() {
+    var transport = new FakeTransport();
+    var permit = new WhizbangRunPermit();
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    var worker = _worker(transport, permit);
+
+    worker.SubscriptionStates.Values.First().Status = SubscriptionStatus.Healthy;
+
+    await Assert.That(transport.Subscriptions).IsEmpty()
+      .Because("a status with nothing subscribed has nothing to pause, and is not an error");
+  }
+
+  [Test]
   public async Task ASubscriptionThatCannotBePaused_UnderAClosedPermit_IsLogged_AndTheConsumerStillStartsAsync() {
     var transport = new UnpausableTransport();
     var permit = new WhizbangRunPermit();

@@ -224,6 +224,25 @@ public class WhizbangRunControllerTests {
   }
 
   [Test]
+  public async Task Halt_AnOperationCanceledThatIsNotTheCallers_IsAFailedStep_AndTheHaltGoesOnAsync() {
+    // An obeyer or a releaser whose own operation was canceled has failed that step; only the caller's token ends the
+    // path. Each is logged, and the halt is still confirmed.
+    var log = new StepLog();
+    var h = _build([new ThrowingWorkReleaser(new OperationCanceledException("the release statement was canceled"))],
+      [new RecordingRoleReleaser(log, "elector")], log: log);
+    using var subscription = h.Permit.Obey((_, _) => Task.FromException(new OperationCanceledException("the pause was canceled")));
+
+    await h.Controller.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+
+    await Assert.That(h.Log.Steps).IsEquivalentTo(["phase:Pausing:Paused", "roles:elector", "phase:Paused:Paused"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  private sealed class ThrowingWorkReleaser(Exception exception) : IReleasesHeldWork {
+    public Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) => Task.FromException(exception);
+  }
+
+  [Test]
   public async Task Halt_CanceledWhileReleasing_ThrowsAsync() {
     var log = new StepLog();
     using var cts = new CancellationTokenSource();
