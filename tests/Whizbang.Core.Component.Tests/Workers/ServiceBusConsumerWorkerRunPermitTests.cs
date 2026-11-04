@@ -170,6 +170,23 @@ public class ServiceBusConsumerWorkerRunPermitTests {
     await Assert.That(transport.PauseAttempts).IsEqualTo(pausesBefore);
   }
 
+  [Test]
+  public async Task StopAndDispose_OfAConsumerThatNeverStarted_ReleaseNothingAndThrowNothingAsync() {
+    // The consumer starts obeying the run permit when it starts. One stopped and disposed without ever starting (a host
+    // that stopped first, or a worker built with no permit and never hosted) has no obedience to end: both are harmless,
+    // and a later change of the permit reaches no subscription.
+    var transport = new PermitTransport();
+    var worker = _worker(transport, permit: null);
+
+    await worker.StopAsync(CancellationToken.None);
+    worker.Dispose();
+    worker.Dispose();
+    await worker.RunPermit.ChangeAsync(RunState.Paused, CancellationToken.None);
+
+    await Assert.That(transport.Subscriptions).IsEmpty();
+    await Assert.That(transport.PauseAttempts).IsEqualTo(0);
+  }
+
   private sealed class PermitTransport : ITransport {
     private int _pauseAttempts;
     public bool RefusePause { get; init; }
