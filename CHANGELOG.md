@@ -1351,6 +1351,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
   explicit signal, and a new test reproduces the window on purpose.
 
+- **A redelivery bundle no longer creates and drops a temporary table (#2047).** The bundle answer recorded at commit
+  (migration 320) and the redelivery reconcile (301) each built their working table with `ON COMMIT DROP`, so every
+  bundle wrote and deleted a set of system catalog rows, invalidated every other connection's caches, and planned each
+  of its statements afresh. A consumer receiving hundreds of one-event bundles a minute spent most of each call on that
+  churn. Migration 321 keeps each working table for the connection (`ON COMMIT DELETE ROWS`) and empties it per call.
+
 - **Integrity repair waits for the answer to its request (#2029).** The paced repair drain re-asked for a bucket while
   the answer to its previous request was still on the way, and a received answer stopped nothing until the next audit.
   A sent request now marks its buckets answer-pending for `Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes`
