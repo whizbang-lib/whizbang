@@ -81,8 +81,8 @@ internal static class CoordinatorFleetSql {
       CancellationToken cancellationToken) {
     cmd.CommandText = $"SELECT inbox_released, perspective_released FROM {prefix}release_unstarted_leases(@p_instance, @p_inbox, @p_persp)";
     cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlDbType.Uuid) { Value = instanceId });
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_inbox", inboxStreamIds.ToArray()));
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_persp", perspectiveStreamIds.ToArray()));
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_inbox", [.. inboxStreamIds]));
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_persp", [.. perspectiveStreamIds]));
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return new UnstartedLeaseRelease(reader.GetInt32(0), reader.GetInt32(1));
