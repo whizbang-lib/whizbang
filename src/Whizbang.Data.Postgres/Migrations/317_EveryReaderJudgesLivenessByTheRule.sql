@@ -81,6 +81,7 @@ SELECT __SCHEMA__.drop_all_overloads('claim_work');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkEligibilitySqlTests.cs:Notice_ADrainingCallerWhoseRowSaysSo_IsNotAskedToRegisterAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkEligibilitySqlTests.cs:Notice_ACallerThatSaysNothingOfItsPhase_IsJudgedAsBeforeAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Rank_ADirectPeerThatLostItsLock_IsNotCountedPastOneBeatAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Rank_ADirectPeerWithoutItsLock_IsCountedInsideOneBeatAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Rank_APeerInsideItsOwnWindow_IsCountedPastTheOldThirtySecondCutoffAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Caller_LiveByTheRule_IsNotAskedToReRegisterAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(

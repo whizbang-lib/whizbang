@@ -13,11 +13,14 @@
 --              could call the same instance dead and alive at the same moment.
 --
 --              The rule, defined once:
---                * wh_instance_liveness(row, alive_lock_held): an instance is live while its heartbeat is newer than
---                  the window it declares for itself (liveness_window_seconds, which its heartbeat records from its own
---                  cadence: HeartbeatLivenessThreshold), or while it is a direct instance holding its alive-lock and its
---                  heartbeat is newer than the definitive-dead cutoff (twice its window, at least five minutes). A row
---                  that records no window (an older build) is judged by 30 seconds, the cutoff the claim always used.
+--                * wh_instance_liveness(row, alive_lock_held): a direct instance is live while it holds its
+--                  alive-lock and its heartbeat is newer than the definitive-dead cutoff (twice its window, at least
+--                  five minutes), or while its heartbeat is newer than one beat (30 seconds), so a direct instance
+--                  whose lock is gone is taken over after one beat (owner decision on #2022). Any other instance
+--                  cannot hold the lock and is live while its heartbeat is newer than the window it declares for
+--                  itself (liveness_window_seconds, recorded from its own cadence: HeartbeatLivenessThreshold), so a
+--                  single late beat never reads it as dead. A row that records no window (an older build) is judged
+--                  by 30 seconds, the cutoff the claim always used.
 --                * wh_live_instance_ids(): the instances the rule calls live, reading the alive-locks through 204's
 --                  wh_direct_alive_lock_holders only for a direct row past its window.
 --                * wh_instance_is_live(id): the same rule for one instance; no row is not live.
@@ -105,7 +108,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_direct_alive_lock_holders() IS
 -- wh_instance_liveness: THE liveness rule. Every reader judges an instance through it.
 -- ---------------------------------------------------------------------------------------------
 -- A plain SQL expression with no subquery of its own, so the planner inlines it: the alive-lock answer is the caller's
--- argument, evaluated last and only for a direct row inside the definitive-dead cutoff that is past its window.
+-- argument, evaluated last and only for a direct row past one beat and inside the definitive-dead cutoff.
 -- <docs>fundamentals/workers/instance-liveness</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_AFreshHeartbeatWithinTheInstancesOwnWindow_IsLiveAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_AHeartbeatPastTheInstancesOwnWindow_IsNotLiveAsync</tests>
@@ -113,6 +116,9 @@ COMMENT ON FUNCTION __SCHEMA__.wh_direct_alive_lock_holders() IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_ADirectInstanceHoldingItsAliveLock_IsLivePastItsWindowAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_ADirectInstanceHoldingItsAliveLock_PastTheDefinitiveCutoff_IsNotLiveAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_APooledInstanceHoldingALock_IsJudgedByItsHeartbeatAloneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_ADirectInstanceWithoutItsLock_IsLiveForOneBeatAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_ADirectInstanceWithoutItsLock_PastOneBeat_IsNotLiveInsideItsWindowAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceLivenessRuleSqlTests.cs:Liveness_APooledInstance_IsLiveInsideItsWindowPastOneBeatAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_instance_liveness(
   p_instance __SCHEMA__.wh_service_instances,
   p_alive_lock_held BOOLEAN
@@ -120,18 +126,23 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_instance_liveness(
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT p_instance.last_heartbeat_at >= now() - make_interval(secs => COALESCE(p_instance.liveness_window_seconds, 30))
-      OR (p_instance.connection_mode = 'direct'
-          AND p_instance.last_heartbeat_at >= now() - GREATEST(INTERVAL '5 minutes',
-                make_interval(secs => 2 * COALESCE(p_instance.liveness_window_seconds, 30)))
+  SELECT CASE
+    WHEN p_instance.connection_mode = 'direct' THEN
+      p_instance.last_heartbeat_at >= now() - INTERVAL '30 seconds'
+      OR (p_instance.last_heartbeat_at >= now() - GREATEST(INTERVAL '5 minutes',
+            make_interval(secs => 2 * COALESCE(p_instance.liveness_window_seconds, 30)))
           AND p_alive_lock_held)
+    ELSE p_instance.last_heartbeat_at >= now() - make_interval(secs => COALESCE(p_instance.liveness_window_seconds, 30))
+  END
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_instance_liveness(__SCHEMA__.wh_service_instances, BOOLEAN) IS
-  '316 (#2027): the one liveness rule. Live while the heartbeat is newer than the instance''s own window '
-  '(liveness_window_seconds, 30 seconds when unrecorded), or while a direct instance holds its alive-lock and its '
-  'heartbeat is newer than the definitive-dead cutoff (twice its window, at least five minutes). The caller passes '
-  'whether the alive-lock is held; wh_live_instance_ids reads it from wh_direct_alive_lock_holders.';
+  '316 (#2027): the one liveness rule. A direct instance is live while it holds its alive-lock and its heartbeat is '
+  'newer than the definitive-dead cutoff (twice its window, at least five minutes), or while its heartbeat is newer '
+  'than one beat (30 seconds): a direct instance whose lock is gone is taken over after one beat. Any other instance '
+  '(behind a transaction pooler, unable to hold the lock) is live while its heartbeat is newer than its own window '
+  '(liveness_window_seconds, 30 seconds when unrecorded). The caller passes whether the alive-lock is held; '
+  'wh_live_instance_ids reads it from wh_direct_alive_lock_holders.';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_live_instance_ids: the instances the rule calls live.
