@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
-public class JsonbContainmentNamingTests {
+public sealed class JsonbContainmentNamingTests : IDisposable {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=naming;Username=u;Password=p";
 
   [SuppressIndexAdvisory("compiled, never run")]
@@ -92,6 +92,9 @@ public class JsonbContainmentNamingTests {
 
   // One context per test: a DbContext is not thread-safe, and the tests of this class run in parallel (#2069).
   private readonly NamingDbContext _db = new(_options);
+
+  /// <summary>Releases this test's context.</summary>
+  public void Dispose() => _db.Dispose();
   private IQueryable<PerspectiveRow<RenamedModel>> _rows => _db.Set<PerspectiveRow<RenamedModel>>();
 
   /// <summary>
