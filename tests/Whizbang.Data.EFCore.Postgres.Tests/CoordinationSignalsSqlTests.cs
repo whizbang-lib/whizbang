@@ -188,6 +188,53 @@ public class CoordinationSignalsSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Rolling deploy: an instance's tail meets a durable signal whose name it does not know (a newer release's, like
+  /// 330's role-released on an instance from before 330). It delivers nothing for it, advances past it, and still
+  /// delivers the known signal recorded after it, so the unknown row neither stalls the cursor nor is replayed forever.
+  /// </summary>
+  /// <remarks>
+  /// An older release's tail cannot be run here. This exercises the current tail, whose handling of an unknown name is
+  /// the older one unchanged: 330 added only the payload column to the read, and the skip-and-advance loop is as it was.
+  /// </remarks>
+  [Test]
+  public async Task TheTail_SkipsASignalNameItDoesNotKnow_AndAdvancesPastItAsync(CancellationToken cancellationToken) {
+    var instance = Guid.CreateVersion7();
+    var sink = new RecordingSink();
+    var options = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var tail = new PgDurableSignalTailWorker(Options.Create(options), configuration,
+      new ServiceInstanceProvider(instance, "tail-svc", "tail-host", processId: 1), sink, NullLogger<PgDurableSignalTailWorker>.Instance);
+    // This instance knows only the release, as an older one knows only the signals of its own release.
+    tail.UseWireMap(SignalTypeRegistry.GetAll().Where(e => e.WireName == "role-released")
+      .ToDictionary(e => e.WireName, StringComparer.Ordinal));
+    var plan = NotificationConnectionPlan.Create(null, NotificationConnectionStringResolver.Resolve(options, configuration));
+    await using (var conn = await _openAsync(cancellationToken))
+    await using (var cursor = new NpgsqlCommand(
+        "INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id) VALUES (@id, (SELECT COALESCE(MAX(id), 0) FROM wh_signals))", conn)) {
+      cursor.Parameters.AddWithValue("id", instance);
+      _ = await cursor.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using (var conn = await _openAsync(cancellationToken))
+    await using (var publish = new NpgsqlCommand(
+        "SELECT wh_publish_signal('wh_some_newer_channel', 'x', 'a-signal-from-a-newer-release'), "
+        + "wh_publish_signal('wh_role_released', 'whizbang:maintainer', 'role-released')", conn)) {
+      _ = await publish.ExecuteScalarAsync(cancellationToken);
+    }
+    var last = await _maxSignalIdAsync(cancellationToken);
+
+    var first = await tail.TickOnceAsync(plan, cancellationToken);
+    var second = await tail.TickOnceAsync(plan, cancellationToken);
+
+    await Assert.That(first).IsEqualTo(1).Because("only the known signal is delivered");
+    await Assert.That(sink.Received).IsEquivalentTo(new object[] { new RoleReleasedSignal("whizbang:maintainer") });
+    await Assert.That(second).IsEqualTo(0).Because("the cursor moved past both rows, so neither is read again");
+    await using var check = await _openAsync(cancellationToken);
+    await using var read = new NpgsqlCommand("SELECT last_delivered_signal_id FROM wh_signal_cursors WHERE instance_id = @id", check);
+    read.Parameters.AddWithValue("id", instance);
+    await Assert.That((long)(await read.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(last);
+  }
+
+  /// <summary>
   /// A decision published through the bus from C# takes the same path: recorded durably with its payload, and notified
   /// on the channel an older release listens on.
   /// </summary>

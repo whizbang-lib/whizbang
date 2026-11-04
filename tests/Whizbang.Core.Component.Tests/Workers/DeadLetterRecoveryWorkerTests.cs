@@ -477,6 +477,38 @@ public class DeadLetterRecoveryWorkerTests {
   }
 
   /// <summary>
+  /// #2046: the dead-letter doorbell is best-effort because the scan has a poll behind it. A dead letter whose doorbell
+  /// was lost (no DeadLetterReady signal ever arrives) is still recovered, by the next backstop scan.
+  /// </summary>
+  [Test]
+  public async Task ADeadLetterWhoseDoorbellIsLost_IsRecoveredByTheBackstopScanAsync() {
+    var listener = new FakeNotificationListener();
+    var clock = new ManualTimeProvider();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      timeProvider: clock);
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([]);       // scan 1: startup, before the dead letter is recorded
+    svc.FetchBatches.Enqueue([entry]);  // scan 2: the backstop finds it
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.TimerRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    // No signal is raised: the doorbell was lost. Only the backstop interval passes.
+    clock.Advance(TimeSpan.FromMinutes(60));
+
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("the backstop scan, not the doorbell, is what guarantees a dead letter is recovered");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
   /// #728: each backstop timeout used to abandon the loop's <c>WaitAsync</c> on a
   /// <c>SemaphoreSlim</c>, queuing one more stale waiter; <c>Release()</c> then woke the oldest of
   /// them, which nothing awaited, and the live iteration slept on. Two expired backstops, then ONE

@@ -238,7 +238,8 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   }
 
   private void _onSignal(WorkSignalCategory category) {
-    // OrphanRedistribute has no typed signal yet, so it always wakes via this legacy path.
+    // OrphanRedistribute reaches the claim worker through the work listener (#2046: the listener hears
+    // WorkOrphanedSignal on the bus); a lost orphan doorbell is covered by the backstop poll.
     // Outbox/Inbox/Perspective: post-unify-now they wake via the bus (see ctor
     // _signalBus.Subscribe calls). When the bus isn't wired (legacy DI / tests), fall through
     // to the legacy wake so the pre-unify-now NOTIFY→ClaimWorker regression tests stay green.
