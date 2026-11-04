@@ -14,7 +14,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
 /// The Postgres <see cref="IDutyElector"/>, and the one way a duty is held (#2044): every duty is won
-/// by <c>wh_vote_role</c> (migrations 184 and 321) and held as an assignment row with an epoch and a
+/// by <c>wh_vote_role</c> (migrations 184 and 326) and held as an assignment row with an epoch and a
 /// lease in database time (its own, when the duty declares one). No duty is held by a session
 /// advisory lock, and no session has to stay open while a duty is held.
 /// </summary>
@@ -506,7 +506,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       string? renewed;
       try {
         // A holder on an older release that took the duty outside the table after the vote is seen by
-        // the renewal (321), and this one steps aside.
+        // the renewal (326), and this one steps aside.
         renewed = await _callAsync(plan, "SELECT wh_renew_role_lease(@role, @id, @epoch)", role, InstanceId, Epoch, cancellationToken)
           .ConfigureAwait(false) as string;
       } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

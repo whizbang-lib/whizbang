@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// sleeps, polls or races.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/184_RoleAssignmentResilience.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/321_EveryDutyIsARoleAssignment.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/326_EveryDutyIsARoleAssignment.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
@@ -401,7 +401,7 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task EndLapsedBridge_EndsOnlyTheLapsedHoldersLockSession_AndOnlyOnceAsync(CancellationToken cancellationToken) {
     // #2044: there is no bridge. An older bridged instance may still call the expiry; it answers that nothing was
-    // ended, and the session that holds the old lock is left alone: since 321 the expiry ends no session at all. (The
+    // ended, and the session that holds the old lock is left alone: since 326 the expiry ends no session at all. (The
     // name is kept because migration 184 links to it.)
     const long legacyKey = 0x5EED_2044_0003;
     var a = await _joinAsync(cancellationToken);

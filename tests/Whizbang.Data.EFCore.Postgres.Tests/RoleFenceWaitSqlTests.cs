@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/198_LapsedBridgeLooksBeforeItLocks.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/321_EveryDutyIsARoleAssignment.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/326_EveryDutyIsARoleAssignment.sql</code-under-test>
 [Category("Shard3")]
 public class RoleFenceWaitSqlTests : EFCoreTestBase {
   private const string ROLE = "commit-stamper";

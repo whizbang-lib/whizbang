@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 321_EveryDutyIsARoleAssignment.sql
+-- Migration: 326_EveryDutyIsARoleAssignment.sql
 -- Date: 2026-11-03
 -- Description: One way to hold a duty (#2044, part 2 of the coordination standard, #2027). Every duty is a role
 --              assignment with a lease and an epoch; no duty is held by a session advisory lock, and no role
@@ -51,7 +51,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._role_held_outside_assignment(TEXT, UUID) IS
-  '321 (#2044): whether a live instance other than the caller holds the role outside the role table (an older release''s '
+  '326 (#2044): whether a live instance other than the caller holds the role outside the role table (an older release''s '
   'recorded session-lock holding). Judged by the one liveness rule; no lock is read.';
 
 -- ============================================================================
