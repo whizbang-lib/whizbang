@@ -840,7 +840,7 @@ public partial class ServiceBusConsumerWorker(
   // ========================================
 
   [LoggerMessage(
-    EventId = 27,
+    EventId = 30,
     Level = LogLevel.Warning,
     Message = "A subscription to {Topic} established while the run permit is closed could not be paused; it receives until "
       + "the permit reopens or the instance stops"
