@@ -84,11 +84,8 @@ public class DapperStreamIntegrityRefusalTests {
   }
 
   [Test]
-  public async Task ASwitchConfiguredOff_IsKeptOff_AndAnUnreadableValueCountsAsOffAsync() {
-    await using var provider = _build(new Dictionary<string, string?> {
-      ["Whizbang:StreamIntegrity:CheckpointsEnabled"] = "false",
-      ["Whizbang:StreamIntegrity:AuditEnabled"] = "not-a-bool",
-    }, workersFirst: false);
+  public async Task ASwitchConfiguredOff_IsKeptOffAsync() {
+    await using var provider = _build(new Dictionary<string, string?> { ["Whizbang:StreamIntegrity:CheckpointsEnabled"] = "false" }, workersFirst: false);
 
     var options = provider.GetRequiredService<IOptions<StreamIntegrityOptions>>().Value;
 

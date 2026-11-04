@@ -434,6 +434,7 @@ public static class ServiceCollectionExtensions {
   private static void _addSchemaInitialization(
       IServiceCollection services, string connectionString, PostgresOptions options, bool initializeSchema,
       Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) {
+    _addUnsupportedFeatureRefusals(services);
     services.AddWhizbangInstanceIdentity();
     // #1992: the Assess verdict, as the EF Core driver gives it, so a Dapper instance stands down rather than migrate a
     // newer schema, and skips the election and the migration on a current one.
@@ -448,6 +449,20 @@ public static class ServiceCollectionExtensions {
         sp));
     }
     services.AddWhizbangSchemaInitialization();
+  }
+
+  /// <summary>
+  /// Defaults off, and refuses at start when configuration turns on, every feature this driver cannot serve (#2051): the
+  /// stream-integrity switches. Validated through the options pipeline at host start, as the other option checks are.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <docs>data/drivers#what-dapper-refuses-at-startup</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamIntegrityRefusalTests.cs</tests>
+  private static void _addUnsupportedFeatureRefusals(IServiceCollection services) {
+    services.AddOptions<StreamIntegrityOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IConfigureOptions<StreamIntegrityOptions>, DapperStreamIntegrityDefaults>(
+      sp => new DapperStreamIntegrityDefaults(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IValidateOptions<StreamIntegrityOptions>, DapperStreamIntegrityRefusal>());
   }
 
   // The event store, by its constructor (a type-based registration is activated reflectively). The book closer (#1741)
