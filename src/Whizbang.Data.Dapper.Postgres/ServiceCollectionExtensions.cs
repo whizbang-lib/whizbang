@@ -460,8 +460,11 @@ public static class ServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamIntegrityRefusalTests.cs</tests>
   private static void _addUnsupportedFeatureRefusals(IServiceCollection services) {
     services.AddOptions<StreamIntegrityOptions>().ValidateOnStart();
+    // A host that registers no configuration gets an empty one (as the core registration does), so the defaults always
+    // read a configuration and an unset key reads as off.
+    services.TryAddSingleton<IConfiguration>(_ => new ConfigurationBuilder().Build());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IConfigureOptions<StreamIntegrityOptions>, DapperStreamIntegrityDefaults>(
-      sp => new DapperStreamIntegrityDefaults(sp.GetService<IConfiguration>())));
+      sp => new DapperStreamIntegrityDefaults(sp.GetRequiredService<IConfiguration>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IValidateOptions<StreamIntegrityOptions>, DapperStreamIntegrityRefusal>());
   }
 

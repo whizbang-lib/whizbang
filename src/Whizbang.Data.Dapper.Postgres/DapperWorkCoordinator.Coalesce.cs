@@ -53,7 +53,7 @@ public partial class DapperWorkCoordinator {
       var prefix = await _prefixAsync(connection, cancellationToken);
       await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)) {
         await CoalesceSql.StoreCompositeAndCompleteSinglesAsync(
-          connection, transaction, prefix, json, DateTime.UtcNow, partitionCount, ids, cancellationToken).ConfigureAwait(false);
+          transaction, prefix, json, DateTime.UtcNow, partitionCount, ids, cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
       }
       await DoorbellRinger.RingAsync(connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);

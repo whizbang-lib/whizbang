@@ -125,8 +125,10 @@ internal static class CoalesceSql {
   /// still pending or folded, never both and never neither. The caller commits, then rings the doorbells the store queued.
   /// </summary>
   internal static async Task StoreCompositeAndCompleteSinglesAsync(
-      DbConnection connection, DbTransaction transaction, string prefix, string compositeMessagesJson, DateTime now,
+      DbTransaction transaction, string prefix, string compositeMessagesJson, DateTime now,
       int partitionCount, Guid[] foldedIds, CancellationToken cancellationToken) {
+    // The caller's transaction is open, so its connection is set: both coordinators begin it on that connection.
+    var connection = transaction.Connection!;
     await using (var store = CoordinatorCommandTimeout.Apply(connection.CreateCommand())) {
       store.Transaction = transaction;
       store.CommandText = $"SELECT * FROM {prefix}store_outbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitions)";

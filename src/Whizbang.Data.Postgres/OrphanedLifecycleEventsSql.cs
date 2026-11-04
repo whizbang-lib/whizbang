@@ -35,8 +35,9 @@ internal static class OrphanedLifecycleEventsSql {
   /// <summary>
   /// The query text for the given tables: events inside the lookback window whose expected perspectives all have a
   /// cursor at or past them and that have no completion marker, oldest first. The markers name the expected event types
-  /// and the expected perspective names (parallel arrays), the window's start, and the row cap; by default they are the
-  /// EF Core positional placeholders <c>{0}</c> to <c>{3}</c>.
+  /// and the expected perspective names (parallel arrays), the window's start, and the row cap: the EF Core positional
+  /// placeholders <c>{0}</c> to <c>{3}</c> by default, or the named parameters <c>@types</c>, <c>@names</c>,
+  /// <c>@start</c> and <c>@cap</c> when <paramref name="named"/> is set.
   /// </summary>
   /// <remarks>
   /// The window (<c>created_at &gt;= start</c>) is the selective predicate: thirty minutes of a store that keeps every
@@ -45,9 +46,9 @@ internal static class OrphanedLifecycleEventsSql {
   /// <docs>operations/infrastructure/storage-maintenance#brin-indexes</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/BrinIndexCandidatesTests.cs:TheOrphanedLifecycleQuery_ReadsTheWindowThroughTheBrinIndexAsync</tests>
   internal static string Build(
-      string eventStoreTable, string bodyTable, string cursorsTable, string completionsTable,
-      string types = "{0}", string names = "{1}", string start = "{2}", string cap = "{3}") =>
-    $@"
+      string eventStoreTable, string bodyTable, string cursorsTable, string completionsTable, bool named = false) {
+    var (types, names, start, cap) = named ? ("@types", "@names", "@start", "@cap") : ("{0}", "{1}", "{2}", "{3}");
+    return $@"
       WITH expected AS (
         SELECT * FROM unnest({types}::text[], {names}::text[]) AS x(event_type, perspective_name)
       ),
@@ -71,6 +72,7 @@ internal static class OrphanedLifecycleEventsSql {
         ) = ec.cnt
       ORDER BY e.created_at
       LIMIT {cap}";
+  }
 
   /// <summary>
   /// The expectation pairs the query takes as parallel arrays: one (event type, perspective) per expected perspective.
@@ -93,7 +95,7 @@ internal static class OrphanedLifecycleEventsSql {
       DbCommand cmd, string prefix, string[] types, string[] names, DateTimeOffset start, int cap, CancellationToken cancellationToken) {
     cmd.CommandText = Build(
       prefix + "wh_event_store", prefix + "wh_event_body", prefix + "wh_perspective_cursors", prefix + "wh_lifecycle_completions",
-      "@types", "@names", "@start", "@cap");
+      named: true);
     cmd.Parameters.Add(new NpgsqlParameter(nameof(types), NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = types });
     cmd.Parameters.Add(new NpgsqlParameter(nameof(names), NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = names });
     cmd.Parameters.Add(new NpgsqlParameter(nameof(start), NpgsqlDbType.TimestampTz) { Value = start });

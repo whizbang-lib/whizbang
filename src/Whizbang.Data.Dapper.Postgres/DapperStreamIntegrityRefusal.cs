@@ -64,15 +64,15 @@ internal static class DapperUnsupportedIntegrity {
 /// worker pipeline's binding, so the outcome does not depend on which of the two is registered first: a key set to true
 /// stays true, and <see cref="DapperStreamIntegrityRefusal"/> then refuses the host.
 /// </remarks>
-/// <param name="configuration">The host configuration, or null when the host registers none.</param>
+/// <param name="configuration">The host configuration; the core registration supplies an empty one when the host registers none.</param>
 /// <docs>data/drivers#what-dapper-refuses-at-startup</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamIntegrityRefusalTests.cs</tests>
-internal sealed class DapperStreamIntegrityDefaults(IConfiguration? configuration) : IConfigureOptions<StreamIntegrityOptions> {
+internal sealed class DapperStreamIntegrityDefaults(IConfiguration configuration) : IConfigureOptions<StreamIntegrityOptions> {
   /// <inheritdoc />
   public void Configure(StreamIntegrityOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     foreach (var @switch in DapperUnsupportedIntegrity.SWITCHES) {
-      var configured = configuration?[$"{DapperUnsupportedIntegrity.SECTION}:{@switch.Key}"];
+      var configured = configuration[$"{DapperUnsupportedIntegrity.SECTION}:{@switch.Key}"];
       @switch.Set(options, bool.TryParse(configured, out var on) && on);
     }
   }

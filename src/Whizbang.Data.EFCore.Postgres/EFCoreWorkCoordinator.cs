@@ -4125,7 +4125,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await strategy.ExecuteAsync(async () => {
       await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
       await CoalesceSql.StoreCompositeAndCompleteSinglesAsync(
-        _dbContext.Database.GetDbConnection(), transaction.GetDbTransaction(), PgIdentifier.QualifyPrefix(schema), json,
+        transaction.GetDbTransaction(), PgIdentifier.QualifyPrefix(schema), json,
         DateTime.UtcNow, partitionCount, foldedIdArray, cancellationToken).ConfigureAwait(false);
       await transaction.CommitAsync(cancellationToken);
       // #720: ring the doorbells the fold queued, after the commit.
