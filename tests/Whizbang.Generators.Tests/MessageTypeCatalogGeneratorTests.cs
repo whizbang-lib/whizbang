@@ -112,6 +112,33 @@ public class MessageTypeCatalogGeneratorTests {
     await Assert.That(code).DoesNotContain("FormerNames");
   }
 
+  /// <summary>
+  /// #2074: a message that is neither a command nor an event is catalogued as a plain "message", never as an event,
+  /// so the receive path never classifies it as an event or copies it into the event store.
+  /// </summary>
+  [Test]
+  public async Task Generator_APlainMessage_IsKindMessage_NotEventAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+
+      namespace MyApp;
+
+      public record Ping : IMessage;
+      public record Pinged : IEvent;
+      public record DoPing : ICommand;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+
+    await Assert.That(code).Contains("new(typeof(global::MyApp.Ping), \"MyApp.Ping\", \"message\"")
+      .Because("a plain message is not an event");
+    await Assert.That(code).Contains("new(typeof(global::MyApp.Pinged), \"MyApp.Pinged\", \"event\"");
+    await Assert.That(code).Contains("new(typeof(global::MyApp.DoPing), \"MyApp.DoPing\", \"command\"");
+  }
+
   [Test]
   public async Task Generator_SkipsAbstractTypesAsync() {
     const string source = """

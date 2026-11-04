@@ -108,6 +108,14 @@ public class ReceivedInboxMessageBuilderClassificationTests {
   }
 
   [Test]
+  public async Task AnUnconsumedPlainMessage_IsNotAnEventAsync() {
+    await using var provider = _withCatalog(_entry(typeof(CatalogedEvent), "message"));
+
+    await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, TypeNameFormatter.Format(typeof(CatalogedEvent)), _json))
+      .IsFalse().Because("a plain message is neither command nor event, and only an event is stored");
+  }
+
+  [Test]
   public async Task ATypeKnownByAFormerName_IsClassifiedByItsCatalogEntryAsync() {
     await using var provider = _withCatalog(_entry(typeof(CatalogedEvent), "event") with { FormerNames = ["Old.Contracts.Renamed"] });
 
