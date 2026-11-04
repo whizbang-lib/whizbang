@@ -26,6 +26,13 @@ namespace Whizbang.Data.Postgres;
 /// then reads the schema to tell which. A database whose role functions do not exist yet (one the
 /// bootstrap could not bring up) has no migrator to watch.
 /// </para>
+/// <para>
+/// The functions are found by reading <c>pg_proc</c>, never by <c>to_regprocedure</c>: a waiter may call
+/// this inside a transaction that began before another session committed them, and a name lookup is
+/// answered from the session's catalog cache, which keeps a "no such function" until a statement opens a
+/// relation. The catalog read is answered from the statement's snapshot, and opening <c>pg_proc</c>
+/// brings the cache current for the statement that then calls the functions (#2038).
+/// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorWatchTests.cs</tests>
@@ -41,8 +48,11 @@ public static class MigratorWatch {
 
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty, StringComparison.Ordinal);
     var quoted = "\"" + target.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
-    await using (var exists = new NpgsqlCommand("SELECT to_regprocedure($1) IS NOT NULL", connection)) {
-      exists.Parameters.AddWithValue($"{quoted}._role_held_outside_assignment(text, uuid)");
+    await using (var exists = new NpgsqlCommand(
+        "SELECT count(DISTINCT p.proname) = 2 FROM pg_catalog.pg_proc p "
+        + "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+        + "WHERE n.nspname = $1 AND p.proname IN ('_role_lapse_reason', '_role_held_outside_assignment')", connection)) {
+      exists.Parameters.AddWithValue(target);
       if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
         return false;
       }
