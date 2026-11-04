@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -177,6 +178,27 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
     await Assert.That(direct.SequenceEqual(static_)).IsTrue()
       .Because("the adapter is the registry's DI face: it must surface the same consumed set");
+  }
+
+  [Test]
+  public async Task Defaults_TheConsumerRegistry_IsTheReceptorRegistryQueryAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    await using var provider = services.BuildServiceProvider();
+
+    var consumers = provider.GetRequiredService<IConsumerRegistry>();
+    var query = provider.GetRequiredService<IReceptorRegistryQuery>();
+
+    await Assert.That(consumers).IsSameReferenceAs(query)
+      .Because("one registry: the receive boundary's gate and every list reader must see the same answer");
+  }
+
+  [Test]
+  public async Task PermissiveQuery_ListsTheGeneratedConsumedMessagesAsync() {
+    var permissive = new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery();
+
+    await Assert.That(permissive.GetConsumedMessages().SequenceEqual(
+      Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages())).IsTrue();
   }
 
   [Test]

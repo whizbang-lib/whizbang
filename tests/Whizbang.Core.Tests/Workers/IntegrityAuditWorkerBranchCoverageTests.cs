@@ -231,6 +231,20 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       .Because("the ledger keeps the rows of an absorbed namespace's types");
   }
 
+  [Test]
+  public async Task RunAuditOnce_ForgottenLedgerRows_AreLoggedAsync() {
+    var coordinator = new AuditCoordinator { ForgetResult = 3 };
+    var logger = new MessageLogger();
+    var tracker = new IntegrityGapTracker();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, tracker, logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Saw("forgot 3 repair-ledger row(s)")).IsTrue()
+      .Because("rows removed from the ledger change the unhealed gauge, so the audit says why it moved");
+  }
+
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static double _sum(MetricAssertionHelper helper, string instrument, string? kind = null) =>
@@ -349,6 +363,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public int VerifyCalls { get; private set; }
     public int EpochVerifyCalls { get; private set; }
     public List<IReadOnlyList<string>> ForgetCalls { get; } = [];
+    public int ForgetResult { get; init; }
     public List<IReadOnlyCollection<string>> ForgetNamespaces { get; } = [];
 
     public Task<int> IntegrityForgetUnconsumedEventTypesAsync(
@@ -356,7 +371,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
         CancellationToken cancellationToken = default) {
       ForgetCalls.Add(consumedEventTypes);
       ForgetNamespaces.Add(absorbedNamespaces);
-      return Task.FromResult(0);
+      return Task.FromResult(ForgetResult);
     }
 
     public EpochVerificationResult EpochResult { get; init; } = new(0, 0);

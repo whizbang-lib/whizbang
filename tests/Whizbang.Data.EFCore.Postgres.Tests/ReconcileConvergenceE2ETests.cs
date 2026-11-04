@@ -379,6 +379,8 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     services.AddSingleton(Options.Create(options));
     services.AddSingleton<IIntegrityRepairLedger>(new IntegrityRepairLedger());
+    // The consumer consumes the probe type (#2058: only what the receive boundary keeps is compared).
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     if (tracker is not null) {
       services.AddSingleton(tracker);
     }

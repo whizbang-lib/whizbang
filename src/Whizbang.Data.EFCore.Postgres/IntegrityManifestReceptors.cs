@@ -135,6 +135,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     }
 
     var settle = TimeSpan.FromMinutes(options.AuditSettleWindowMinutes);
+    var eventTypes = await _requestedTypesAsync(coordinator, message, cancellationToken).ConfigureAwait(false);
     IReadOnlyList<StreamDigest> digests;
     var recomputed = message.UseRecompute;
     long? computedThrough = null;
@@ -148,10 +149,10 @@ public sealed partial class IntegrityManifestRequestReceptor(
       // fabricated watermark the engine cannot stand behind.
       var windowed = message.Level == ManifestLevel.Types
         ? await coordinator.ComputeTypeDigestsWindowedAsync(
-            null, message.EventTypes, message.SinceSequence, message.UntilSequence, settle,
+            null, eventTypes, message.SinceSequence, message.UntilSequence, settle,
             cancellationToken).ConfigureAwait(false)
         : await coordinator.ComputeStreamDigestsWindowedAsync(
-            null, message.EventTypes, message.SinceSequence, message.UntilSequence,
+            null, eventTypes, message.SinceSequence, message.UntilSequence,
             message.ResumeAfterStreamId, message.MaxDigests ?? options.MaxDigestsPerManifest, settle,
             cancellationToken).ConfigureAwait(false);
       if (windowed is not null) {
@@ -173,8 +174,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
     if (!answeredWindowed) {
       if (!message.UseRecompute) {
         digests = message.Level == ManifestLevel.Types
-          ? await coordinator.GetTypeDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false)
-          : await coordinator.GetStreamDigestsAsync(null, message.EventTypes, cancellationToken).ConfigureAwait(false);
+          ? await coordinator.GetTypeDigestsAsync(null, eventTypes, cancellationToken).ConfigureAwait(false)
+          : await coordinator.GetStreamDigestsAsync(null, eventTypes, cancellationToken).ConfigureAwait(false);
         // Empty table read: either genuinely nothing emitted OR the provider has no digest table
         // (the DIM default). The recompute distinguishes them — cheap when truly empty.
         recomputed = digests.Count == 0;
@@ -183,8 +184,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
         // Types-level answers roll up AT THE STORE — materializing one row per stream to answer a
         // types-level request has memory-killed origins with large stores.
         digests = message.Level == ManifestLevel.Types
-          ? await coordinator.ComputeTypeDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false)
-          : await coordinator.ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false);
+          ? await coordinator.ComputeTypeDigestsAsync(null, eventTypes, settle, cancellationToken).ConfigureAwait(false)
+          : await coordinator.ComputeStreamDigestsAsync(null, eventTypes, settle, cancellationToken).ConfigureAwait(false);
       }
       // #2008: only owned types are this origin's emissions; the rest of the local lane was received from its authors.
       digests = _ownedOnly(services, digests);
@@ -258,6 +259,23 @@ public sealed partial class IntegrityManifestRequestReceptor(
     return owned is not { Count: > 0 }
       ? digests
       : [.. digests.Where(d => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(d.EventType, owned))];
+  }
+
+  /// <summary>
+  /// The types to answer for: the requester's <see cref="RequestIntegrityManifest.EventTypes"/>, plus, for each
+  /// namespace it absorbs (#2058), every type this origin audits in that namespace. Without namespaces the request's
+  /// list is answered as it came, null (every type) included, so an older requester is answered as before.
+  /// </summary>
+  private static async Task<IReadOnlyList<string>?> _requestedTypesAsync(
+      IWorkCoordinator coordinator, RequestIntegrityManifest message, CancellationToken cancellationToken) {
+    if (message.EventNamespaces is not { Count: > 0 } namespaces) {
+      return message.EventTypes;
+    }
+    var absorbed = new HashSet<string>(namespaces, StringComparer.OrdinalIgnoreCase);
+    var own = await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false);
+    return [.. (message.EventTypes ?? [])
+      .Concat(own.Where(t => TypeNameFormatter.GetPayloadNamespace(t) is { } ns && absorbed.Contains(ns)))
+      .Distinct(StringComparer.Ordinal)];
   }
 
   [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
@@ -351,6 +369,18 @@ public sealed partial class IntegrityManifestReceptor(
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     if (message.OriginServiceId == self) {
       return;   // own manifest looping back — nothing to compare against ourselves.
+    }
+
+    // #2058: compare only what the receive boundary keeps (what this service consumes, or a namespace it absorbs). An
+    // origin answering an older, wider request still names other types; a divergence in one of them can never heal,
+    // because its redelivery is discarded on receive.
+    var keeps = ConsumedMessageTypes.Keeps(services);
+    var kept = message.Digests.Where(d => keeps(d.EventType)).ToList();
+    if (kept.Count == 0) {
+      return;
+    }
+    if (kept.Count < message.Digests.Count) {
+      message = message with { Digests = kept };
     }
 
     // #80-F: the generation guard runs before ANY comparison. A changed generation means the

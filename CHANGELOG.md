@@ -1415,6 +1415,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration, and a pass that failed and retried logged one for every file after the failure, each blaming a replay
   that never happened. The line is now written only for a file the comparison adds to the run; a file already in it
   (new, changed, or not yet reached) is not named. Which files run is unchanged.
+- **Stream integrity audits what the service consumes, not every type it knows (#2058).** The audit request, the
+  checkpoint verification and the manifest comparison took their types from the perspective event-type provider. A
+  consumer with no perspectives asked every origin for every type (the request's type list was null), and a consumer
+  with perspectives never audited the events only a receptor handles. A type nothing here consumes is never stored
+  here, so each of its buckets read as a deficit whose redelivery the receive boundary discarded: its repair-ledger
+  rows never healed, held `whizbang.stream_integrity.unhealed_buckets` up and kept the repair budget cycling. The
+  integrity surface is now the consumer registry (`IConsumerRegistry`, the predicate the receive boundary keeps or
+  discards by, with its new list form `GetConsumedMessages` / `GetConsumedEventTypes`, generated from the same data)
+  plus the namespaces the service absorbs (`RoutingOptions.AbsorbNamespaces`), which the request carries as the new
+  `RequestIntegrityManifest.EventNamespaces` (an origin that predates it answers the type list alone). A service that
+  consumes nothing requests nothing, never every type. Each audit cycle forgets the ledger rows of types outside that
+  surface (`wh_integrity_forget_unconsumed`, migration 331), so an existing ledger heals itself. The
+  subscription-expansion backfill and the orphan-inbox janitor read the same registry: a service with no perspectives
+  now baselines and backfills the events its receptors consume, and the janitor no longer counts on the perspective
+  list for what is handled.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

@@ -175,6 +175,7 @@ public class IntegrityReceptorsPriorityTests {
       AuditCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions? options = null, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));

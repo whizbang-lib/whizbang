@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <see cref="IntegrityRepairMode.AutoRepairCapped"/> a scoped
 /// <see cref="RequestRedeliveryCommand"/> goes back to the origin WIRE-ONLY, directed via the R0
 /// target (a lost request simply re-fires on the next confirmation cycle). Only types this
-/// consumer subscribes to are verified; a service's own checkpoints are ignored (locally
+/// consumer keeps at the receive boundary (#2058: what it consumes, or a namespace it absorbs) are verified; a service's own checkpoints are ignored (locally
 /// originated events carry no origin stamp to count against).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
@@ -254,20 +254,20 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
 
     // 2) Evaluate THIS window: deficits become pendings the NEXT checkpoint confirms or clears.
-    var subscribed = _subscribedTypeNames(services);
-    if (subscribed.Count == 0) {
+    // #2058: only what the receive boundary keeps is this service's contract (what it consumes, or a namespace it
+    // absorbs). A type it only knows is never stored here, so a count against it is a deficit that cannot heal.
+    // #2032: and a type another service owns is asked of its owner, not counted against an older origin still counting it.
+    var keeps = ConsumedMessageTypes.Keeps(services);
+    var verified = message.Buckets
+      .Where(b => keeps(b.EventType) && !ownership.IsOwnedByAnother(b.EventType, message.OriginServiceId))
+      .ToList();
+    if (verified.Count == 0) {
       return;
     }
     var actualBuckets = await coordinator
       .CountReceivedFromOriginAsync(message.OriginServiceId, message.FromCommitSequence, message.ToCommitSequence, cancellationToken)
       .ConfigureAwait(false);
-    foreach (var bucket in message.Buckets) {
-      if (!subscribed.Contains(bucket.EventType)) {
-        continue;   // not consumed here — the origin's count is someone else's contract
-      }
-      if (ownership.IsOwnedByAnother(bucket.EventType, message.OriginServiceId)) {
-        continue;   // #2032: an older origin still counting a type another service owns; asked of the owner instead.
-      }
+    foreach (var bucket in verified) {
       var actual = _bucketCount(actualBuckets, bucket.TenantScope, bucket.EventType);
       if (actual < bucket.Count) {
         tracker.AddPending(new IntegrityGapTracker.PendingGap {
@@ -368,16 +368,6 @@ public sealed partial class IntegrityCheckpointReceptor(
 
   private static int _bucketCount(IReadOnlyList<CheckpointBucket> buckets, string? tenantScope, string eventType) =>
     buckets.Where(b => b.EventType == eventType && b.TenantScope == tenantScope).Sum(b => b.Count);
-
-  private static HashSet<string> _subscribedTypeNames(IServiceProvider services) {
-    var provider = services.GetService<IEventTypeProvider>();
-    if (provider is not { IsAvailable: true }) {
-      return [];
-    }
-    // Wire form ("Type, Assembly") — checkpoint buckets carry wh_event_store.event_type values,
-    // so this filter must speak the same form or every bucket silently skips verification.
-    return [.. provider.GetEventTypes().Select(TypeNameFormatter.Format)];
-  }
 
   [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "CONFIRMED integrity gap reports capped for origin '{OriginServiceName}': {ConfirmedGaps} confirmed, " +

@@ -81,12 +81,12 @@ public interface IMessageDiscardPolicy {
 
 /// <summary>
 /// Default policy: routes the "any consumer locally?" check through
-/// <see cref="IReceptorRegistryQuery.HasAnyConsumer"/> for the receive and inbox gates.
+/// the consumer registry's <see cref="IConsumerRegistry.HasAnyConsumer"/> for the receive and inbox gates.
 /// Outbox gate is a safe-default no-op until a future <c>IEventCatalog</c> seam is
 /// supplied.
 /// </summary>
 public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
-  private readonly IReceptorRegistryQuery _registry;
+  private readonly IConsumerRegistry _registry;
   private readonly ILogger<MessageDiscardPolicy> _logger;
   private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
@@ -128,7 +128,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// here is a tag this host acts on is kept rather than dropped for having no receptor. Optional —
   /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
   public MessageDiscardPolicy(
-      IReceptorRegistryQuery registry,
+      IConsumerRegistry registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
       IOptions<RoutingOptions> routingOptions,

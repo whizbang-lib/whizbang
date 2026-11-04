@@ -188,16 +188,17 @@ public class OrphanInboxJanitorTests {
   }
 
   /// <summary>
-  /// Perspective + raw-receptor registries union into the handled-type-names
-  /// list passed to the coordinator. Asserts both contributors land in the
-  /// argument.
+  /// Consumer-registry + raw-receptor registries union into the handled-type-names list passed to the coordinator,
+  /// alongside the receptor snapshot. The perspective list is not a source of its own (#2058): the consumer registry
+  /// already lists every type a perspective folds, so a perspective registry adds nothing.
   /// </summary>
   [Test]
-  public async Task StartAsync_UnionsPerspectiveAndRawRegistries_IntoHandledNamesAsync() {
+  public async Task StartAsync_UnionsConsumerAndRawRegistries_IntoHandledNamesAsync() {
     var coordinator = new RecordingCoordinator();
     var perspectives = new StaticPerspectiveRegistry([typeof(int)]);
     var raw = new StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
-    await using var sp = _buildProviderWith(coordinator, perspectives, raw);
+    await using var sp = _buildProviderWith(coordinator, perspectives, raw,
+      new ConsumedRegistry(new ConsumedMessageInfo("Contracts.Folded, Contracts", IsEvent: true)));
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -206,7 +207,9 @@ public class OrphanInboxJanitorTests {
 
     await _runToCompletionAsync(janitor);
 
-    await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(4);
+    await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(4)
+      .Because("the snapshot's type, the consumer registry's and the two raw types; the perspective list adds none");
+    await Assert.That(coordinator.LastHandledTypeNames).Contains("Contracts.Folded, Contracts");
   }
 
   /// <summary>
@@ -265,9 +268,13 @@ public class OrphanInboxJanitorTests {
   private static ServiceProvider _buildProviderWith(
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry? perspectives = null,
-      IRawReceptorRegistry? raw = null) {
+      IRawReceptorRegistry? raw = null,
+      IConsumerRegistry? consumers = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    if (consumers != null) {
+      services.AddSingleton(consumers);
+    }
     if (perspectives != null) {
       services.AddSingleton(perspectives);
     }

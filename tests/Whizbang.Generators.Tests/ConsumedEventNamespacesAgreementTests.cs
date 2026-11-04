@@ -14,7 +14,8 @@ namespace Whizbang.Generators.Tests;
 /// The event namespaces a service subscribes to cover every event it consumes (#2058). The event-namespace registry
 /// decides the transport subscriptions; the consumer registry decides what the receive boundary keeps. Subscriptions
 /// are namespace-granular and may cover more than is consumed, but never less: an event consumed in a namespace with
-/// no subscription is never delivered. One direction only, by design.
+/// no subscription is never delivered. One direction only, by design. The fixture covers the consumers the
+/// event-namespace generator discovers: inbox receptors, lifecycle receptors and perspectives.
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/EventNamespaceRegistryGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Generators/ReceptorRegistryQueryGenerator.cs</code-under-test>

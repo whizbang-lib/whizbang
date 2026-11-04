@@ -800,13 +800,14 @@ public class IntegrityCheckpointReceptorTests {
     }
     var total = scans;
 
-    // Every checkpoint still pays a first-sight count of its OWN window (both halves of each pair,
-    // so 12 across six cycles); those windows advance in production and are per-checkpoint cost,
-    // not per-gap cost. The governor bounds the repeated CONFIRMATION recount of the same stale
-    // window: two (the unchanged threshold), then the cooldown holds.
-    await Assert.That(total).IsEqualTo(14)
-      .Because("detection cost on an unchanged answer must be bounded: 12 first-sight counts + 2 "
-             + "confirmation recounts, then the cooldown holds. Unbounded is 18");
+    // Every checkpoint that names a bucket this service keeps pays a first-sight count of its OWN window (one per
+    // pair here, so 6 across six cycles: an empty checkpoint names nothing to verify, and since #2058 it counts
+    // nothing). Those windows advance in production and are per-checkpoint cost, not per-gap cost. The governor
+    // bounds the repeated CONFIRMATION recount of the same stale window: two (the unchanged threshold), then the
+    // cooldown holds.
+    await Assert.That(total).IsEqualTo(8)
+      .Because("detection cost on an unchanged answer must be bounded: 6 first-sight counts + 2 "
+             + "confirmation recounts, then the cooldown holds. Unbounded is 12");
   }
 
 

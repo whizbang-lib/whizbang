@@ -12,7 +12,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Workers;
 
@@ -26,8 +25,8 @@ namespace Whizbang.Core.Workers;
 /// Built once during <c>AddOrphanInboxJanitor</c> by walking the
 /// <see cref="IServiceCollection"/> for <c>IReceptor&lt;TMessage&gt;</c> /
 /// <c>IReceptor&lt;TMessage,TResponse&gt;</c> registrations and collecting their generic
-/// message-type arguments. Perspective Apply target types are unioned at janitor run time
-/// from <see cref="IPerspectiveRunnerRegistry.GetEventTypes"/>.
+/// message-type arguments. Everything the consumer registry enumerates
+/// (<see cref="IConsumerRegistry.GetConsumedMessages"/>) is unioned at janitor run time.
 /// </remarks>
 public sealed class HandledReceptorTypeSnapshot {
   /// <summary>The set of CLR types known to be handled by an <c>IReceptor</c> in this service.</summary>
@@ -113,13 +112,12 @@ public sealed class OrphanInboxJanitor : BackgroundService {
       }
     }
 
-    var perspectiveRegistry = scopedProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (perspectiveRegistry != null) {
-      foreach (var t in perspectiveRegistry.GetEventTypes()) {
-        var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
-        if (!string.IsNullOrEmpty(qualified)) {
-          names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
-        }
+    // #2058: what this service consumes comes from the one consumer registry (perspectives, lifecycle receptors, tags,
+    // composites and collectives included), not from the perspective event list alone.
+    var consumerRegistry = scopedProvider.GetService<IConsumerRegistry>();
+    if (consumerRegistry != null) {
+      foreach (var consumed in consumerRegistry.GetConsumedMessages()) {
+        names.Add(consumed.TypeName);
       }
     }
 

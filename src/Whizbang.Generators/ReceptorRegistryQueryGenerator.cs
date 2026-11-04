@@ -45,6 +45,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string GLOBAL_PREFIX = "global::";
   private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
+  private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
 
@@ -143,12 +144,25 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// (topology arc phase 3).
   /// </summary>
   private sealed record ReceptorRegistryEntry(
-      string MessageType,
+      ConsumedTypeEntry Message,
       EquatableArray<string> Stages,
       bool IsInboxHandler,
       string ContractNamespace,
       string Kind
-  );
+  ) {
+    public string MessageType => Message.Name;
+  }
+
+  /// <summary>
+  /// One consumed type in the two forms the registry needs (#2058): the C# display name the receive boundary's
+  /// predicate keys on, and the assembly-qualified wire form the enumeration carries, with whether it is an event.
+  /// </summary>
+  private sealed record ConsumedTypeEntry(string Name, string WireType, bool IsEvent);
+
+  private static ConsumedTypeEntry _consumedType(ITypeSymbol symbol) => new(
+    TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, ""),
+    TypeNameUtilities.FormatTypeNameForRuntime(symbol),
+    symbol.AllInterfaces.Any(i => TypeNameUtilities.FullyQualified(i) == IEVENT_INTERFACE));
 
   private static ReceptorRegistryEntry? _extractReceptorEntry(
       GeneratorSyntaxContext context,
@@ -168,8 +182,6 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
 
     var messageTypeSymbol = receptorInterface.TypeArguments[0];
-    var messageType = TypeNameUtilities.FullyQualified(messageTypeSymbol)
-      .Replace(GLOBAL_PREFIX, "");
     // Classification is shared with the ownership analyzer (WHIZ151) via
     // CompileTimeMessageClassification — one mirror, no drift.
     var contractNamespace = CompileTimeMessageClassification.ContractNamespaceOf(messageTypeSymbol);
@@ -178,14 +190,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     var stages = CompileTimeMessageClassification.FireAtStagesOf(classSymbol);
     var isInboxHandler = CompileTimeMessageClassification.IsInboxHandler(stages);
 
-    return new ReceptorRegistryEntry(messageType, [.. stages], isInboxHandler, contractNamespace, kind);
+    return new ReceptorRegistryEntry(_consumedType(messageTypeSymbol), [.. stages], isInboxHandler, contractNamespace, kind);
   }
 
   // ===== Discovery: perspectives =====
 
   /// <summary>One entry per (perspective × event type). Perspectives consume events even when
   /// no receptor is registered for that type.</summary>
-  private sealed record PerspectiveRegistryEntry(string EventType);
+  private sealed record PerspectiveRegistryEntry(ConsumedTypeEntry Event);
 
   private static EquatableArray<PerspectiveRegistryEntry>? _extractPerspectiveEntry(
       GeneratorSyntaxContext context,
@@ -204,9 +216,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       }
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> — first type arg is the model, rest are events
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
-        var eventType = TypeNameUtilities.FullyQualified(iface.TypeArguments[i])
-          .Replace(GLOBAL_PREFIX, "");
-        entries.Add(new PerspectiveRegistryEntry(eventType));
+        entries.Add(new PerspectiveRegistryEntry(_consumedType(iface.TypeArguments[i])));
       }
     }
     return entries.Count == 0 ? null : entries.ToArray();
@@ -219,7 +229,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// These have a downstream consumer (the SignalR tagged-notification dispatcher) even without
   /// a receptor or perspective.
   /// </summary>
-  private static string? _extractTaggedMessageEntry(
+  private static ConsumedTypeEntry? _extractTaggedMessageEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
@@ -232,7 +242,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!hasTag) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
+    return _consumedType(symbol);
   }
 
   // ===== Discovery: composite events =====
@@ -243,7 +253,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// tag of its own, so without this it would be dropped at the receive-boundary drop-gate before
   /// it could fan out. The abstract <c>CompositeEventBase</c> itself is skipped (never dispatched).
   /// </summary>
-  private static string? _extractCompositeEntry(
+  private static ConsumedTypeEntry? _extractCompositeEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
@@ -255,7 +265,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!implementsComposite) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
+    return _consumedType(symbol);
   }
 
   // ===== Discovery: collective events =====
@@ -267,7 +277,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// dropped at the inbox/receive drop-gate before it could be stored and routed (migration 061). The
   /// abstract <c>CollectiveEventBase</c> itself is skipped (never dispatched).
   /// </summary>
-  private static string? _extractCollectiveEntry(
+  private static ConsumedTypeEntry? _extractCollectiveEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
@@ -279,7 +289,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!implementsCollective) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
+    return _consumedType(symbol);
   }
 
   // ===== Emission =====
@@ -289,9 +299,12 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<ReceptorRegistryEntry?> receptors,
       ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
-      ImmutableArray<string?> taggedTypes,
-      ImmutableArray<string?> compositeTypes,
-      ImmutableArray<string?> collectiveTypes) {
+      ImmutableArray<ConsumedTypeEntry?> taggedTypes,
+      ImmutableArray<ConsumedTypeEntry?> compositeTypes,
+      ImmutableArray<ConsumedTypeEntry?> collectiveTypes) {
+
+    // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
+    var consumed = new System.Collections.Generic.Dictionary<string, ConsumedTypeEntry>(System.StringComparer.Ordinal);
 
     // Per-stage type sets (Pre/PostInbox only — those are what the receive boundary gates on)
     var stageTypes = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>(System.StringComparer.Ordinal);
@@ -317,6 +330,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         continue;
       }
       allReceptorMessageTypes.Add(entry.MessageType);
+      consumed[entry.MessageType] = entry.Message;
       foreach (var stage in entry.Stages) {
         if (stageTypes.TryGetValue(stage, out var set)) {
           set.Add(entry.MessageType);
@@ -346,22 +360,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         continue;
       }
       foreach (var p in perspectiveEntries) {
-        anyConsumerTypes.Add(p.EventType);
+        anyConsumerTypes.Add(p.Event.Name);
+        consumed[p.Event.Name] = p.Event;
       }
     }
-    foreach (var taggedType in taggedTypes) {
-      if (taggedType is not null) {
-        anyConsumerTypes.Add(taggedType);
-      }
-    }
-    foreach (var compositeType in compositeTypes) {
-      if (compositeType is not null) {
-        anyConsumerTypes.Add(compositeType);
-      }
-    }
-    foreach (var collectiveType in collectiveTypes) {
-      if (collectiveType is not null) {
-        anyConsumerTypes.Add(collectiveType);
+    foreach (var other in taggedTypes.Concat(compositeTypes).Concat(collectiveTypes)) {
+      if (other is not null) {
+        anyConsumerTypes.Add(other.Name);
+        consumed[other.Name] = other;
       }
     }
 
@@ -421,6 +427,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine("      },");
     sb.AppendLine("      StageTypes = stageTypes,");
+    // ConsumedMessages: the list form of AnyConsumerTypes, one entry per name, in the same order (#2058).
+    sb.AppendLine("      ConsumedMessages = new global::Whizbang.Core.Messaging.ConsumedMessageInfo[] {");
+    foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
+      var entry = consumed[type];
+      sb.AppendLine($"        new global::Whizbang.Core.Messaging.ConsumedMessageInfo(\"{entry.WireType}\", {(entry.IsEvent ? "true" : "false")}),");
+    }
+    sb.AppendLine("      },");
     // HandledMessages: fully-qualified type references so consumer types named
     // HandledMessageInfo / MessageKind can never collide with the emitted code.
     sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");

@@ -11,11 +11,11 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// The repair ledger keeps rows only for the event types this service consumes (#2058, migration 327). A type nothing
+/// The repair ledger keeps rows only for the event types this service consumes (#2058, migration 331). A type nothing
 /// here consumes is never stored here, so its every bucket reads as a deficit, and its redelivery is discarded at the
 /// receive boundary: the row can never heal. The audit hands the consumed set to the ledger each cycle and the rest go.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/327_LedgerKeepsOnlyConsumedTypes.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/331_LedgerKeepsOnlyConsumedTypes.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
 [Category("Shard5")]
@@ -102,6 +102,30 @@ public class IntegrityLedgerForgetUnconsumedSqlTests : EFCoreTestBase {
     await Assert.That(forgotten).IsEqualTo(0)
       .Because("only an explicit consumed set may empty the ledger; a caller that lost it must not");
     await Assert.That(await _ledgerTypesAsync()).IsEquivalentTo([UNCONSUMED]);
+  }
+
+  [Test]
+  public async Task Forget_ACanceledCall_IsCanceled_NotSwallowedAsync() {
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    await Assert.That(async () => await _coordinator().IntegrityForgetUnconsumedEventTypesAsync([CONSUMED], [], canceled.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a canceled audit stops; it is not a failed prune to log and shrug off");
+  }
+
+  [Test]
+  public async Task Forget_ThroughAThroughputGatedCoordinator_ForgetsAsync() {
+    await _trackAsync(TrackedGuid.New().Value, UNCONSUMED);
+    await using var ctx = CreateDbContext();
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1,
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    IWorkCoordinator coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
+
+    var forgotten = await coordinator.IntegrityForgetUnconsumedEventTypesAsync([CONSUMED], []);
+
+    await Assert.That(forgotten).IsEqualTo(1);
   }
 
   [Test]

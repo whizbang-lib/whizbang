@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Stream-integrity Phase S: the startup subscription-expansion reconciler. Diffs this service's
-/// consumed event-type catalog against the persisted consumed-type registry. FIRST boot baselines
+/// consumed event types (its consumer registry, #2058) against the persisted consumed-type registry. FIRST boot baselines
 /// the whole catalog (nothing existed to miss). A type appearing on a LATER boot is an EXPANSION —
 /// history exists this service never received — recorded as Pending and, when
 /// <see cref="StreamIntegrityOptions.BackfillOnSubscriptionGrowth"/> (default true), repaired via
@@ -52,17 +52,18 @@ public sealed partial class SubscriptionExpansionWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
-    var typeProvider = services.GetRequiredService<IEventTypeProvider>();
-    if (coordinator is null || !typeProvider.IsAvailable) {
+    if (coordinator is null) {
       return;   // schema-only / diagnostic hosts: nothing to reconcile with.
     }
 
+    // The consumed event types (#2058): what the consumer registry says this service consumes, receptors included, not
+    // the perspective event list, which is empty for a service with no perspectives.
     // The registry keys on the no-assembly CLR name (persisted rows predate any form change and
     // must not re-baseline), but the ORIGIN matches redelivery types against event_type in the
     // assembly-qualified WIRE form — so the outgoing request maps through this table.
     var wireByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
-    foreach (var type in typeProvider.GetEventTypes()) {
-      wireByClrName.TryAdd(TypeNameFormatter.FormatClrTypeName(type), TypeNameFormatter.Format(type));
+    foreach (var wire in ConsumedMessageTypes.EventTypeNames(services)) {
+      wireByClrName.TryAdd(TypeNameFormatter.GetFullName(wire), wire);
     }
     var catalogTypes = wireByClrName.Keys.ToList();
     if (catalogTypes.Count == 0) {

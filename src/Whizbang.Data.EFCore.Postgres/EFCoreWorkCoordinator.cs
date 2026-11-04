@@ -1088,6 +1088,37 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Best-effort: a prune that cannot reach the ledger is logged and answers 0; the next audit cycle prunes.</remarks>
+  public async Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+      IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(consumedEventTypes);
+    ArgumentNullException.ThrowIfNull(absorbedNamespaces);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_forget_unconsumed");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      cmd.Parameters.AddWithValue("p_consumed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, consumedEventTypes.ToArray());
+      cmd.Parameters.AddWithValue("p_absorbed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, absorbedNamespaces.ToArray());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_consumed,@p_absorbed)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_forget_unconsumed failed; rows of unconsumed event types stay until the next audit cycle.");
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
   /// out their backoff only, as before.</remarks>
   public async Task<int> IntegrityMarkAnswerPendingAsync(

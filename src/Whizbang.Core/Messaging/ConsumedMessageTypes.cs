@@ -1,7 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Messaging;
 
@@ -37,7 +40,7 @@ public static class ConsumedMessageTypes {
   /// <returns>The consumed event type names.</returns>
   public static IReadOnlyList<string> EventTypeNames(IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
-    return [];
+    return services.GetService<IConsumerRegistry>()?.GetConsumedEventTypes() ?? [];
   }
 
   /// <summary>
@@ -48,7 +51,8 @@ public static class ConsumedMessageTypes {
   /// <returns>The absorbed namespaces.</returns>
   public static IReadOnlyList<string> AbsorbedNamespaces(IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
-    return Array.Empty<string>();
+    var absorbed = services.GetService<IOptions<RoutingOptions>>()?.Value.AbsorbedNamespaces ?? new HashSet<string>();
+    return [.. absorbed.Order(StringComparer.Ordinal)];
   }
 
   /// <summary>
@@ -60,6 +64,10 @@ public static class ConsumedMessageTypes {
   /// <returns>The predicate.</returns>
   public static Predicate<string> Keeps(IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
-    return _ => false;
+    var registry = services.GetService<IConsumerRegistry>();
+    var runtime = services.GetService<IReceptorRegistry>() ?? NullReceptorRegistry.Instance;
+    var markers = services.GetService<IEventMarkerResolver>();
+    var policy = services.GetService<IMessageDiscardPolicy>();
+    return typeName => ReceiveConsumerGate.Keeps(typeName, registry, runtime, markers, policy);
   }
 }

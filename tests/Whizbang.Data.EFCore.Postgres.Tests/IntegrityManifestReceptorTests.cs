@@ -406,6 +406,53 @@ public class IntegrityManifestReceptorTests {
     ]).Because("the requester's consumed types plus every type this origin emits in the namespace it absorbs, and no other");
   }
 
+  /// <summary>
+  /// #2058: absorbed namespaces with no type list add the origin's types in them alone; a type with no namespace is in
+  /// none.
+  /// </summary>
+  [Test]
+  public async Task RequestReceptor_AbsorbedNamespacesWithoutATypeList_AnswerTheNamespacesTypesAsync() {
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [_typeDigest("Contracts.Jobs.JobStarted, Contracts", 41, 42, 5)],
+      OwnAuditedTypes = ["Contracts.Jobs.JobStarted, Contracts", "GlobalEvent, Contracts"],
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventNamespaces = ["contracts.jobs"],
+      Level = ManifestLevel.Types,
+    });
+
+    await Assert.That(coordinator.LastOwnTypeQuery).IsEquivalentTo(["Contracts.Jobs.JobStarted, Contracts"]);
+  }
+
+  /// <summary>#2058: an empty namespace list adds nothing; the request's type list is answered as it came.</summary>
+  [Test]
+  public async Task RequestReceptor_EmptyAbsorbedNamespaces_AnswerTheTypeListAsItCameAsync() {
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+      OwnAuditedTypes = ["Contracts.Jobs.JobStarted, Contracts"],
+    };
+    var sp = _provider(coordinator, new CaptureTransport());
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      EventTypes = ["Contracts.TypeX"],
+      EventNamespaces = [],
+      Level = ManifestLevel.Types,
+    });
+
+    await Assert.That(coordinator.LastOwnTypeQuery).IsEquivalentTo(["Contracts.TypeX"]);
+  }
+
   [Test]
   public async Task RequestReceptor_TypesLevelWithRecompute_RollsUpComputedRowsAsync() {
     var coordinator = new AuditCoordinator();
@@ -647,6 +694,25 @@ public class IntegrityManifestReceptorTests {
     var request = _deserializeRequest(transport.Published.Single().Envelope);
     await Assert.That(request.EventTypes).IsEquivalentTo(["Contracts.TypeX"])
       .Because("only the consumed type is escalated; the other is not this service's contract");
+  }
+
+  /// <summary>#2058: a manifest naming only types nothing here consumes is not compared at all.</summary>
+  [Test]
+  public async Task ManifestReceptor_OnlyTypesNothingHereConsumes_ComparesNothingAsync() {
+    var coordinator = new AuditCoordinator();
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions(), tracker: tracker,
+      consumers: new ConsumesOnly("Contracts.TypeX"));
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeY", 51, 52, 2)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(coordinator.TypeComputeCalls).IsEqualTo(0)
+      .Because("nothing this service keeps is in the manifest, so no local fold is computed for it");
   }
 
   /// <summary>#2058: the stream-level compare skips the buckets of a type nothing here consumes.</summary>
@@ -2238,6 +2304,7 @@ public class IntegrityManifestReceptorTests {
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -2298,6 +2365,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new CaptureDispatcher();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -2389,6 +2457,7 @@ public class IntegrityManifestReceptorTests {
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -2471,6 +2540,7 @@ public class IntegrityManifestReceptorTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));

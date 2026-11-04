@@ -40,8 +40,9 @@ public sealed class RoutingOptions {
   private bool _legacyTopologySelected;
 
   /// <summary>
-  /// Gets the command namespaces owned by this service.
-  /// Commands matching these namespaces are filtered from the shared inbox to this service.
+  /// Gets the contract namespaces this service owns: the commands it handles and the events it authors.
+  /// Commands matching these namespaces are filtered from the shared inbox to this service, and events in them are
+  /// this service's own, so it publishes them rather than subscribing to them.
   /// </summary>
   /// <example>
   /// opts.OwnDomains("myapp.users.commands"); // This service handles user commands
@@ -100,10 +101,11 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
-  /// Declares command namespaces owned by this service.
-  /// Commands matching these namespaces are filtered from the shared inbox to this service.
+  /// Declares the contract namespaces this service owns: the commands it handles and the events it authors.
+  /// Commands matching these namespaces are filtered from the shared inbox to this service, and events in them are
+  /// this service's own, so it publishes them rather than subscribing to them.
   /// </summary>
-  /// <param name="namespaces">Command namespace patterns (case-insensitive).
+  /// <param name="namespaces">Contract namespace patterns (case-insensitive).
   /// Use ".*" suffix for wildcards (e.g., "myapp.users.*" matches all myapp.users.* namespaces).</param>
   /// <returns>This options instance for chaining.</returns>
   /// <exception cref="ArgumentNullException">Thrown when namespaces is null.</exception>

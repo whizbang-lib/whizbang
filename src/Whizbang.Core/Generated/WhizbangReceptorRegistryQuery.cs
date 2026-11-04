@@ -84,7 +84,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// <returns>The consumed message types, deduplicated by type name and in ordinal order.</returns>
   /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs</tests>
-  public static IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => [];
+  public static IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => _currentSnapshot().ConsumedMessages;
 
   /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
