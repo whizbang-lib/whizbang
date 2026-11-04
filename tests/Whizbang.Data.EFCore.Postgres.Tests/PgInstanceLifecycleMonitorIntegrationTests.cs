@@ -70,7 +70,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
-  private async Task _insertHeartbeatAsync(Guid instanceId, DateTimeOffset lastHeartbeatAt) {
+  private async Task _insertHeartbeatAsync(Guid instanceId, TimeSpan age) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(@"
@@ -79,12 +79,12 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
         connection_mode)
       -- #2027: a default-cadence direct instance, as its heartbeat registers it: the 150 s window the one liveness rule
       -- judges it by, and the direct connection whose alive-lock the rule reads.
-      VALUES (@id, 'utest-svc', 'utest-host', 1, @started, @last, 150, 'direct')
+      VALUES (@id, 'utest-svc', 'utest-host', 1, now() - @age, now() - @age, 150, 'direct')
       ON CONFLICT (instance_id) DO UPDATE
         SET last_heartbeat_at = EXCLUDED.last_heartbeat_at;", conn);
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("started", lastHeartbeatAt);
-    cmd.Parameters.AddWithValue("last", lastHeartbeatAt);
+    // Aged from the database clock, which the liveness rule compares against, not the host clock.
+    cmd.Parameters.AddWithValue("age", age);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -100,7 +100,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
   public async Task Tick_StaleInstance_PublishesInstanceDiedSignalAsync() {
     // Insert a heartbeat that is well past the 30s stale threshold.
     var deadId = Guid.NewGuid();
-    await _insertHeartbeatAsync(deadId, DateTimeOffset.UtcNow.AddMinutes(-5));
+    await _insertHeartbeatAsync(deadId, TimeSpan.FromMinutes(5));
 
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -115,7 +115,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
   public async Task Tick_FreshInstance_DoesNotPublishAsync() {
     // Heartbeat well inside the stale window.
     var liveId = Guid.NewGuid();
-    await _insertHeartbeatAsync(liveId, DateTimeOffset.UtcNow.AddSeconds(-1));
+    await _insertHeartbeatAsync(liveId, TimeSpan.FromSeconds(1));
 
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -131,7 +131,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // Same stale row, ticked twice. The second tick must NOT republish — the monitor tracks
     // announced deaths in-process to keep observability + wh_signals growth clean.
     var deadId = Guid.NewGuid();
-    await _insertHeartbeatAsync(deadId, DateTimeOffset.UtcNow.AddMinutes(-5));
+    await _insertHeartbeatAsync(deadId, TimeSpan.FromMinutes(5));
 
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -152,7 +152,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // the pod's death is never broadcast and its owned streams are never taken over. Two ticks,
     // two attempts.
     var bus = new ThrowingBus(new InvalidOperationException("signal bus unavailable"));
-    await _insertHeartbeatAsync(Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddMinutes(-30));
+    await _insertHeartbeatAsync(Guid.CreateVersion7(), TimeSpan.FromMinutes(30));
     var monitor = _createMonitor(bus);
 
     await monitor.TickForTestsAsync(cancellationToken);
@@ -173,7 +173,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // What must not happen is the shutdown being absorbed as a publish failure, which would keep
     // the tick loop running against a bus that is going away.
     var bus = new ThrowingBus(new OperationCanceledException());
-    await _insertHeartbeatAsync(Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddMinutes(-30));
+    await _insertHeartbeatAsync(Guid.CreateVersion7(), TimeSpan.FromMinutes(30));
     var monitor = _createMonitor(bus);
 
     await Assert.That(async () => await monitor.TickForTestsAsync(cancellationToken))
@@ -196,7 +196,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // again". Absorb it as a tick failure and the monitor scans on a dying bus indefinitely; the
     // task below would simply never complete.
     var bus = new ThrowingBus(new OperationCanceledException());
-    await _insertHeartbeatAsync(Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddMinutes(-30));
+    await _insertHeartbeatAsync(Guid.CreateVersion7(), TimeSpan.FromMinutes(30));
     var monitor = _createMonitor(bus);
 
     await monitor.StartAsync(cancellationToken);
@@ -248,7 +248,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // the timestamp alone announced it dead while it was running, and its work was handed away.
     var stuckId = Guid.CreateVersion7();
     // Past its 150 s window, inside the rule's five-minute definitive-dead cutoff, where only the lock keeps it live.
-    await _insertHeartbeatAsync(stuckId, DateTimeOffset.UtcNow.AddMinutes(-4));
+    await _insertHeartbeatAsync(stuckId, TimeSpan.FromMinutes(4));
     await using var lockHolder = await _holdAliveLockAsync(stuckId, cancellationToken);
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -266,7 +266,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // Owner decision on #2022: a direct instance whose alive-lock is gone is taken over one beat (30 s) after its last
     // heartbeat, not at its 150 s window, so a hard crash hands its work over about as fast as before.
     var goneId = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(goneId, DateTimeOffset.UtcNow.AddSeconds(-40));
+    await _insertHeartbeatAsync(goneId, TimeSpan.FromSeconds(40));
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
 
@@ -282,7 +282,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // Under the old 30 s constant this row was a corpse. An instance behind a transaction pooler cannot hold the lock,
     // so the rule judges it by the window it declares from its own cadence, and one late beat is late, not missing.
     var lateId = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(lateId, DateTimeOffset.UtcNow.AddSeconds(-40));
+    await _insertHeartbeatAsync(lateId, TimeSpan.FromSeconds(40));
     await _makePooledAsync(lateId, windowSeconds: 90);
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
@@ -311,13 +311,13 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // published, the monitor publishes InstanceJoined so subscribers that reassigned the
     // instance's work can let it back in, and forgets the death so a later real one is announced.
     var id = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await _insertHeartbeatAsync(id, TimeSpan.FromMinutes(10));
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
     await monitor.TickForTestsAsync(cancellationToken);
     await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue().Because("precondition: the stale row was announced");
 
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await _insertHeartbeatAsync(id, TimeSpan.Zero);
     await monitor.TickForTestsAsync(cancellationToken);
 
     await Assert.That(bus.Published).Contains(typeof(InstanceJoinedSignal))
@@ -332,13 +332,13 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     // A retraction that cannot be published must not be forgotten: the death stays announced so the
     // next tick tries again, otherwise a subscriber that reassigned the instance's work never lets it back in.
     var id = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await _insertHeartbeatAsync(id, TimeSpan.FromMinutes(10));
     var bus = new RetractFailingOnceBus(new InvalidOperationException("signal transport down"));
     var monitor = _createMonitor(bus);
     await monitor.TickForTestsAsync(cancellationToken);
     await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue().Because("precondition: the stale row was announced");
 
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await _insertHeartbeatAsync(id, TimeSpan.Zero);
     await monitor.TickForTestsAsync(cancellationToken);
     await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue()
       .Because("the failed retraction re-arms the announcement so the next tick retries it");
@@ -355,11 +355,11 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task Tick_RetractionCanceledByShutdown_SurfacesRatherThanRetryingAsync(CancellationToken cancellationToken) {
     var id = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await _insertHeartbeatAsync(id, TimeSpan.FromMinutes(10));
     var bus = new RetractFailingOnceBus(new OperationCanceledException("shutting down"));
     var monitor = _createMonitor(bus);
     await monitor.TickForTestsAsync(cancellationToken);
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await _insertHeartbeatAsync(id, TimeSpan.Zero);
 
     await Assert.That(async () => await monitor.TickForTestsAsync(cancellationToken))
       .Throws<OperationCanceledException>()
@@ -370,14 +370,14 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task Tick_RetractedThenDeadAgain_AnnouncesASecondTimeAsync(CancellationToken cancellationToken) {
     var id = Guid.CreateVersion7();
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await _insertHeartbeatAsync(id, TimeSpan.FromMinutes(10));
     var bus = new CountingBus();
     var monitor = _createMonitor(bus);
     await monitor.TickForTestsAsync(cancellationToken);
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await _insertHeartbeatAsync(id, TimeSpan.Zero);
     await monitor.TickForTestsAsync(cancellationToken);
 
-    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await _insertHeartbeatAsync(id, TimeSpan.FromMinutes(10));
     await monitor.TickForTestsAsync(cancellationToken);
 
     var deaths = bus.Published.Count(t => t == typeof(InstanceDiedSignal));
