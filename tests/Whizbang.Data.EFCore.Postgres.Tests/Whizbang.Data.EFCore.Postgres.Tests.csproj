@@ -88,5 +88,7 @@
   <!-- The fake clock the outbox batcher's retry waits run on (#1871), shared with the component tests. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Core.Component.Tests/Workers/TimerAdvancingClock.cs" Link="Shared/Workers/TimerAdvancingClock.cs" />
+    <!-- #2029: the repair-ladder contract both ledgers run, so the in-memory fallback and the durable ledger cannot drift. -->
+    <Compile Include="../Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerContractTests.cs" Link="Shared/Messaging/IntegrityRepairLedgerContractTests.cs" />
   </ItemGroup>
 </Project>

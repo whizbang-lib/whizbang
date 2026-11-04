@@ -23,6 +23,18 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
   private static readonly DateTimeOffset _now = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
   private sealed class MarkingCoordinator : IWorkCoordinator {
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, long? From, long? Until, TimeSpan Timeout)> PendingMarks { get; } = [];
+
+    public Task<int> IntegrityMarkAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+        DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+      if (Failure is not null) {
+        return Task.FromException<int>(Failure);
+      }
+      PendingMarks.Add((originServiceId, keys, windowFrom, windowUntil, timeout));
+      return Task.FromResult(keys.Count);
+    }
+
     public IReadOnlyList<IntegrityRepairLedger.DivergenceKey>? Answer { get; set; }
     public Exception? Failure { get; set; }
     public int Calls { get; private set; }
@@ -137,5 +149,67 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
 
     await Assert.That(async () => await ledger.MarkUnhealableBatchAsync([_key(TrackedGuid.New().Value)], _now))
       .Throws<OperationCanceledException>();
+  }
+
+  // #2029: the answer states go to the store, one round trip per origin.
+
+  [Test]
+  public async Task MarkAnswerPending_GoesToTheStore_OncePerOrigin_WithTheWindowAndTimeoutAsync() {
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    var coordinator = new MarkingCoordinator();
+    var (ledger, _, sp) = _build(coordinator);
+    await using var owned = sp;
+
+    var marked = await ledger.MarkAnswerPendingAsync([_key(first), _key(second), _key(first)], 10, 20, _now, TimeSpan.FromMinutes(7));
+
+    await Assert.That(marked).IsEqualTo(3);
+    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(2);
+    var forFirst = coordinator.PendingMarks.Single(m => m.Origin == first);
+    await Assert.That(forFirst.Keys.Count).IsEqualTo(2);
+    await Assert.That(forFirst.From).IsEqualTo(10L);
+    await Assert.That(forFirst.Until).IsEqualTo(20L);
+    await Assert.That(forFirst.Timeout).IsEqualTo(TimeSpan.FromMinutes(7));
+  }
+
+  [Test]
+  public async Task MarkAnswerPending_WithoutAStore_MarksNothingAsync() {
+    var (ledger, _, sp) = _build(null);
+    await using var owned = sp;
+
+    await Assert.That(await ledger.MarkAnswerPendingAsync([_key(TrackedGuid.New().Value)], null, null, _now, TimeSpan.FromMinutes(1)))
+      .IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MarkAnswerPending_AStoreFailure_IsLogged_AndMarksNothingAsync() {
+    var (ledger, logger, sp) = _build(new MarkingCoordinator { Failure = new InvalidOperationException("db down") });
+    await using var owned = sp;
+
+    var marked = await ledger.MarkAnswerPendingAsync([_key(TrackedGuid.New().Value)], null, null, _now, TimeSpan.FromMinutes(1));
+
+    await Assert.That(marked).IsEqualTo(0);
+    await Assert.That(logger.Entries.Single(e => e.Level == LogLevel.Warning).Message).Contains("answer-pending");
+  }
+
+  [Test]
+  public async Task MarkAnswerPending_Canceled_PropagatesAsync() {
+    var (ledger, _, sp) = _build(new MarkingCoordinator { Failure = new OperationCanceledException() });
+    await using var owned = sp;
+
+    await Assert.That(async () => await ledger.MarkAnswerPendingAsync([_key(TrackedGuid.New().Value)], null, null, _now, TimeSpan.FromMinutes(1)))
+      .Throws<OperationCanceledException>();
+  }
+
+  [Test]
+  public async Task MarkAnswered_IsLeftToTheStoresCommitTimeRecord_AndAsksNothingAsync() {
+    var coordinator = new MarkingCoordinator();
+    var (ledger, _, sp) = _build(coordinator);
+    await using var owned = sp;
+
+    await ledger.MarkAnsweredAsync([_key(TrackedGuid.New().Value)], _now);
+
+    await Assert.That(coordinator.Calls).IsEqualTo(0);
+    await Assert.That(coordinator.PendingMarks).IsEmpty();
   }
 }

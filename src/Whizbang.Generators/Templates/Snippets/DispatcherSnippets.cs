@@ -17,6 +17,9 @@ public class DispatcherSnippets {
   // Placeholder properties to make snippets compile
   protected IServiceProvider ServiceProvider => null!;
   protected IServiceScopeFactory _scopeFactory => null!;
+  protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
+      object? envelope, System.Threading.CancellationToken cancellationToken) => new(true);
+  protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) => true;
 
   /// <summary>
   /// Example method showing snippet structure for Send routing.
@@ -43,6 +46,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return default!;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -261,6 +268,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -309,6 +320,11 @@ public class DispatcherSnippets {
         // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
         // This enables receptors to access UserId, TenantId via IMessageContext
         global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+        // The receptor interceptors decide before the receptor is resolved (#1996); a synchronous receptor needs
+        // interceptors that answer synchronously
+        if (!AdmitReceptor(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider)) {
+          return default!;
+        }
 
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
@@ -360,6 +376,11 @@ public class DispatcherSnippets {
         // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
         // This enables receptors to access UserId, TenantId via IMessageContext
         global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+        // The receptor interceptors decide before the receptor is resolved (#1996); a synchronous receptor needs
+        // interceptors that answer synchronously
+        if (!AdmitReceptor(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider)) {
+          return;
+        }
 
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
@@ -451,7 +472,9 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -486,7 +509,9 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -560,7 +585,9 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -632,7 +659,9 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -667,6 +696,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return null;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -718,6 +751,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return null;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__

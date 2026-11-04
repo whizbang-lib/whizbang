@@ -310,6 +310,7 @@ Whizbang:StreamIntegrity:MaxManifestPagesPerAudit
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
 Whizbang:StreamIntegrity:MaxRepairDrainBacklog
 Whizbang:StreamIntegrity:PublishReportEvents
+Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes
 Whizbang:StreamIntegrity:RepairDrainBatchSize
 Whizbang:StreamIntegrity:RepairDrainEnabled
 Whizbang:StreamIntegrity:RepairDrainRatePerSecond

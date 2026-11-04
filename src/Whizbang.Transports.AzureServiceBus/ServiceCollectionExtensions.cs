@@ -394,7 +394,9 @@ public static class ServiceCollectionExtensions {
       discardPolicy: discardPolicy,
       absorbedNamespaces: absorbedNamespaces,
       timeProvider: null,
-      poisonDetector: poisonDetector);
+      poisonDetector: poisonDetector,
+      // #1996: the receptor interceptors gate a raw receptor as they gate every other receptor
+      receptorInterceptors: sp.GetService<Whizbang.Core.Security.ReceptorInterceptorPipeline>());
   }
 
   /// <summary>

@@ -44,7 +44,8 @@ public sealed partial class AuditRebuildRequestReceptor(
     var rebuild = new AuditLedgerRebuild(
       services.GetService<IMessageTypeCatalog>() ?? NullMessageTypeCatalog.Instance,
       services.GetService<IOptions<SystemEventOptions>>()?.Value ?? new SystemEventOptions(),
-      services.GetService<TimeProvider>());
+      services.GetService<TimeProvider>(),
+      services.GetService<ILogger<AuditLedgerRebuild>>());
     var pump = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var result = await rebuild.RunAsync(
       coordinator.SelectRedeliveryEventsAsync, channel, message, pump.MaxEventsPerRequest, Math.Max(1, pump.SelectPageSize),

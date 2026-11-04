@@ -43,7 +43,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
   DetachedLifecycleWork detachedWork,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
-  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
+  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
+  AuditTypeResolver? auditEventTypes = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
   private const string STRATEGY_NAME = "immediate";
@@ -62,7 +63,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver, auditEventTypes);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.

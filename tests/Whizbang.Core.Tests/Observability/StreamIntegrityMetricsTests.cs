@@ -111,6 +111,12 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_processed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_failed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_dropped");
+    // #2035: the deliveries waiting for the maintainer, and how long the oldest has waited.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_pending");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.oldest_delivery_age_seconds");
+    // #2029: buckets whose request is out, and buckets answered and waiting for the next comparison.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answer_pending_buckets");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answered_buckets");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }

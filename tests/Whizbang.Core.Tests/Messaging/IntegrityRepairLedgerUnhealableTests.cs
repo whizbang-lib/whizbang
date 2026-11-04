@@ -112,6 +112,16 @@ public class IntegrityRepairLedgerUnhealableTests {
   }
 
   [Test]
+  public async Task AnswerStates_DefaultImplementation_RememberNothingAsync() {
+    IIntegrityRepairLedger ledger = new MinimalLedger();
+
+    var marked = await ledger.MarkAnswerPendingAsync([_key()], null, null, _now, TimeSpan.FromHours(1));
+    await ledger.MarkAnsweredAsync([_key()], _now);
+
+    await Assert.That(marked).IsEqualTo(0).Because("a ledger without answer states marks nothing, which leaves repair on its backoff");
+  }
+
+  [Test]
   public async Task MarkUnhealable_DefaultImplementation_RemembersNothingAsync() {
     IIntegrityRepairLedger ledger = new MinimalLedger();
 

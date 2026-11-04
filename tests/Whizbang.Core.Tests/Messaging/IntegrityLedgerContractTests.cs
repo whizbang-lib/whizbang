@@ -48,7 +48,7 @@ public class IntegrityLedgerContractTests {
   }
 
   [Test]
-  public async Task ChangedSignature_ReportsImmediatelyAndReopensTheRepairBudgetAsync() {
+  public async Task ChangedSignature_ReportsImmediately_AndOnlyALocalChangeReopensTheBudgetAsync() {
     var ledger = new IntegrityRepairLedger();
     var t0 = DateTimeOffset.UtcNow;
     var cooldown = TimeSpan.FromMinutes(60);
@@ -65,15 +65,21 @@ public class IntegrityLedgerContractTests {
       }
     }
     await Assert.That(recorded).IsEqualTo(8).Because("the budget must actually be spent for the next assertion to mean anything");
-    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(7).AddHours(5), backoff, maxAttempts: 8)).IsFalse()
-      .Because("a bucket that has exhausted its attempts holds the terminal wait (base x 2^6, ~5.3h "
-               + "here) — inside it the requester stays quiet, or repair becomes its own storm");
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(30), backoff, maxAttempts: 8)).IsFalse()
+      .Because("a bucket that has spent its attempts is exhausted and is not asked again on any cadence (#2029)");
 
-    // Either side's digest moving means real movement — progress or fresh damage.
+    // The origin's digest moving is reported at once, but it does not reopen the budget (#2030): a busy
+    // origin moves on every audit, and resetting on it would restart the ladder forever.
     await Assert.That(await ledger.TryBeginReportAsync(_key(), 9, 9, 3, 4, t0.AddDays(30), cooldown)).IsTrue()
       .Because("a changed signature is a new incident and must be reported without waiting out the cooldown");
-    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(30), backoff, maxAttempts: 8)).IsTrue()
-      .Because("a new incident reopens the repair budget; otherwise a bucket that breaks again is never fixed");
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(30), backoff, maxAttempts: 8)).IsFalse()
+      .Because("an origin-side change alone keeps the spent budget, or every audit of a busy stream restarts the ladder");
+
+    // This store's digest moving is a change repair can act on, so it reopens the budget.
+    await Assert.That(await ledger.TryBeginReportAsync(_key(), 9, 9, 5, 6, t0.AddDays(31), cooldown)).IsTrue()
+      .Because("a changed local signature is a new incident and is reported at once");
+    await Assert.That(await ledger.TryBeginRepairAsync(_key(), t0.AddDays(31), backoff, maxAttempts: 8)).IsTrue()
+      .Because("a local change reopens the repair budget; otherwise a bucket that breaks again is never fixed");
   }
 
   [Test]

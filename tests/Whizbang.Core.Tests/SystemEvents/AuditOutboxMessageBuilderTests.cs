@@ -31,7 +31,7 @@ public class AuditOutboxMessageBuilderTests {
     var message = _createOutboxMessage(isEvent: true, messageType: "Nonexistent.EventType, Nonexistent.Assembly");
     var options = _createOptions(auditEnabled: true);
 
-    AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options, captured);
+    _build(message, options, captured);
 
     await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
       .Because("an unresolvable audit type name must be logged, not silently defaulted");
@@ -54,7 +54,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -67,7 +67,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: false);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -80,7 +80,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: false);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -100,7 +100,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -120,7 +120,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - Unresolvable types are audited (eventType == null path)
     await Assert.That(result).IsNotNull();
@@ -136,7 +136,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -152,7 +152,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -172,7 +172,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -188,7 +188,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -204,7 +204,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNull();
@@ -224,7 +224,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -242,7 +242,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -259,7 +259,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -274,7 +274,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -296,7 +296,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - Verify the audit envelope was built (correlation ID is inside the serialized EventAudited payload)
     await Assert.That(result).IsNotNull();
@@ -312,7 +312,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -325,7 +325,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -348,7 +348,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -370,7 +370,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - The event type name in payload should be just "MyApp.Events.OrderCreated"
     await Assert.That(result).IsNotNull();
@@ -388,7 +388,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - Returns the full string as-is when no comma
     await Assert.That(result).IsNotNull();
@@ -406,7 +406,7 @@ public class AuditOutboxMessageBuilderTests {
     options.AuditBodyDefault = AuditBodyDefault.Include; // the body is kept only when asked for (#1588)
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -424,7 +424,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -440,7 +440,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - the record rides its tenant's ledger, not a stream of its own (#1485)
     await Assert.That(result).IsNotNull();
@@ -454,7 +454,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - Hops should include original hops + new audit relay hop
     await Assert.That(result).IsNotNull();
@@ -472,7 +472,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -489,7 +489,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -505,7 +505,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -521,7 +521,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -538,7 +538,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - The result scope should reference the source scope
     await Assert.That(result).IsNotNull();
@@ -551,9 +551,9 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_TwoRecordsOfOneTenant_ShareTheLedgerStreamAsync() {
     var options = _createOptions(auditEnabled: true);
 
-    var first = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
-    var second = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
-    var other = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-b"), options);
+    var first = _build(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
+    var second = _build(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
+    var other = _build(_createOutboxMessage(isEvent: true, tenantId: "tenant-b"), options);
 
     await Assert.That(second!.StreamId).IsEqualTo(first!.StreamId)
       .Because("one tenant's audit records form one orderable ledger");
@@ -563,7 +563,7 @@ public class AuditOutboxMessageBuilderTests {
 
   [Test]
   public async Task TryBuildAuditMessage_NoScope_LandsOnTheEmptyTenantLedgerAsync() {
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true), _createOptions(auditEnabled: true));
+    var result = _build(_createOutboxMessage(isEvent: true), _createOptions(auditEnabled: true));
 
     await Assert.That(result!.StreamId).IsEqualTo(AuditLedger.StreamFor(null));
   }
@@ -573,7 +573,7 @@ public class AuditOutboxMessageBuilderTests {
     var causation = MessageId.New();
     var message = _createOutboxMessage(isEvent: true, causationIdInHop: causation);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.GetProperty("CausationId").GetString()).IsEqualTo(causation.ToString())
       .Because("the record names what caused the audited event, as the other audit writers do");
@@ -584,7 +584,7 @@ public class AuditOutboxMessageBuilderTests {
     var correlation = CorrelationId.New();
     var message = _createOutboxMessage(isEvent: true, correlationIdOnHop: correlation);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.GetProperty("CorrelationId").GetString()).IsEqualTo(correlation.ToString())
       .Because("the envelope carries correlation on the hop itself; reading only the hop's metadata dictionary lost it");
@@ -596,7 +596,7 @@ public class AuditOutboxMessageBuilderTests {
       isEvent: true,
       messageType: typeof(TestMarkedForAuditEvent).AssemblyQualifiedName);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     var payload = result!.Envelope.Payload;
     await Assert.That(payload.GetProperty("AuditReason").GetString()).IsEqualTo("Financial transaction");
@@ -630,7 +630,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
 
     // Act
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     // Assert - When eventType is null, the audit check is skipped (event IS audited)
     await Assert.That(result).IsNotNull();
@@ -665,7 +665,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_ByDefault_LeavesTheBodyOutAsync() {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.TryGetProperty("OriginalBody", out _)).IsFalse();
     await Assert.That(result.Envelope.Payload.GetProperty("OriginalEventId").GetGuid()).IsEqualTo(message.MessageId);
@@ -675,7 +675,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_ATypeThatAsksForItsBody_KeepsItAsync() {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestBodyKeptEvent).AssemblyQualifiedName);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
   }
@@ -686,7 +686,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
     options.AuditBodyDefault = AuditBodyDefault.Include;
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
   }
@@ -699,7 +699,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_TheRecordId_IsDerivedFromTheAuditedEventAsync() {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.GetProperty("Id").GetGuid()).IsEqualTo(AuditLedger.RecordIdFor(message.MessageId));
   }
@@ -709,8 +709,8 @@ public class AuditOutboxMessageBuilderTests {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true);
 
-    var first = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
-    var second = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var first = _build(message, options);
+    var second = _build(message, options);
 
     await Assert.That(second!.Envelope.Payload.GetProperty("Id").GetGuid()).IsEqualTo(first!.Envelope.Payload.GetProperty("Id").GetGuid())
       .Because("the audit perspective keys a record by its id, so a record built again replaces the first instead of adding one");
@@ -724,7 +724,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_AnEphemeralEvent_IsNotAuditedAsync() {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName, flags: EventFlags.Ephemeral);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result).IsNull()
       .Because("the dispatcher stamped the event ephemeral, and a pointer to it dangles once it is reaped");
@@ -734,7 +734,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_AnEphemeralEventThatKeepsItsBody_IsAuditedWithItAsync() {
     var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestBodyKeptEvent).AssemblyQualifiedName, flags: EventFlags.Ephemeral);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
   }
@@ -745,7 +745,7 @@ public class AuditOutboxMessageBuilderTests {
     var options = _createOptions(auditEnabled: true);
     options.AuditBodyDefault = AuditBodyDefault.Include;
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+    var result = _build(message, options);
 
     await Assert.That(result).IsNull()
       .Because("the opt-in is the type's own IncludeBody; a process-wide default does not turn high-churn ephemeral traffic into audit");
@@ -756,9 +756,54 @@ public class AuditOutboxMessageBuilderTests {
     // An unresolvable type cannot have asked for its body, so the ephemeral flag alone decides.
     var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly", flags: EventFlags.Ephemeral);
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result).IsNull();
+  }
+
+  /// <summary>
+  /// Under OptIn an event type the live path cannot resolve is not audited, as the ledger rebuild decides it (#1980):
+  /// OptIn audits only marked types, and a type that cannot be resolved carries no mark. The choice is documented at
+  /// <c>docs/fundamentals/security/audit-logging#unresolvable-event-types</c>; this test fails if the live path goes back
+  /// to auditing it.
+  /// </summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptInMode_UnresolvableType_IsNotAuditedAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    var result = _build(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn));
+
+    await Assert.That(result).IsNull()
+      .Because("OptIn audits only marked types, and the rebuild skips the same type; the two paths must agree");
+  }
+
+  /// <summary>
+  /// The skip is never silent (#1980): a type that could not be resolved looks, in the ledger, exactly like one nobody
+  /// opted in, so every skip warns naming the type.
+  /// </summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptInMode_UnresolvableType_WarnsThatItWasNotAuditedNamingTheTypeAsync() {
+    var captured = new CapturingLogger();
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    _build(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn), captured);
+
+    await Assert.That(captured.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("NonExistent.FakeEvent, NonExistent.Assembly", StringComparison.Ordinal)
+        && e.Message.Contains("was not audited", StringComparison.Ordinal))).IsTrue()
+      .Because("a record not written because its type could not be resolved must say so, and name the type");
+  }
+
+  /// <summary>Under OptOut nothing changes: a type that cannot be resolved is audited, and the skip warning is not logged.</summary>
+  [Test]
+  public async Task TryBuildAuditMessage_OptOutMode_UnresolvableType_IsAuditedWithoutTheSkipWarningAsync() {
+    var captured = new CapturingLogger();
+    var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
+
+    var result = _build(message, _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut), captured);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(captured.Entries.Any(e => e.Message.Contains("was not audited", StringComparison.Ordinal))).IsFalse();
   }
 
   [Test]
@@ -766,12 +811,30 @@ public class AuditOutboxMessageBuilderTests {
     // The control for the test above: without the flag an unresolvable type is audited, as it always was.
     var message = _createOutboxMessage(isEvent: true, messageType: "NonExistent.FakeEvent, NonExistent.Assembly");
 
-    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+    var result = _build(message, _createOptions(auditEnabled: true));
 
     await Assert.That(result).IsNotNull();
   }
 
   #endregion
+
+  /// <summary>
+  /// The builder, resolving through a catalog of this file's event types, as the strategies resolve through the
+  /// application's catalog (#2040). A type outside it, such as the placeholder name most tests use, is unresolvable.
+  /// </summary>
+  private static OutboxMessage? _build(
+      OutboxMessage message, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) =>
+    AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options, logger, auditDecisionHook, new AuditTypeResolver(new TestEventCatalog()));
+
+  /// <summary>The event types these tests resolve.</summary>
+  private sealed class TestEventCatalog : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
+      _entry(typeof(EventAudited)), _entry(typeof(TestBodyKeptEvent)), _entry(typeof(TestExcludedFromAuditEvent)),
+      _entry(typeof(TestMarkedForAuditEvent)), _entry(typeof(TestUnmarkedEvent)),
+    ];
+
+    private static MessageTypeCatalogEntry _entry(Type type) => new(type, TypeNameFormatter.FormatClrTypeName(type), "event", null);
+  }
 
   private static OutboxMessage _createOutboxMessage(
       bool isEvent,

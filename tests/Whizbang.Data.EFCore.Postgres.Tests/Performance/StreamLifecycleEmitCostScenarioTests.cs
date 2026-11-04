@@ -28,7 +28,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// <para>
 /// The ceilings are design properties: the ledger writes one row per stream per batch, every update of a stream that
 /// already has a row is heap-only even when the batch rewrites every row on the row's page, and the ledger's own blocks
-/// are a few per stream, whatever the events carry. Measured (three alternating rounds, medians): existing streams
+/// are a few per stream, whatever the events carry. "A few" is measured: a descent of the ledger's key (one block per
+/// level of <c>wh_stream_lifecycle_pkey</c>) and four more for the row, per stream, plus at most one block per batch. The key gains a
+/// level as the ledger grows, so the ceiling is derived from the depth the key has when the batch runs, read with
+/// <c>pageinspect</c>; a ceiling fixed at 6 per stream was measured on a one-level key and left no room at all once the
+/// scenario's own inserts gave it a second (#2037 follow-up, a round at 301 against 300).
+/// </para>
+/// <para>
+/// Autovacuum is kept off every measured table, and a run in which any vacuum or analyze touched one fails. A vacuum
+/// changes the count in two ways (its own reads, charged to whichever window its counters are flushed in, and the
+/// visibility-map read an update of an all-visible page adds); <see cref="LedgerBlocks_FollowTheKeysDepth_AndMoveWithVacuumAsync"/>
+/// shows both. Measured (three alternating rounds, medians): existing streams
 /// 31,921 blocks and 58.2 ms before, 32,186 blocks (250 of them the ledger's) and 61.0 ms after; new streams 33,298 blocks
 /// and 56.8 ms before, 36,278 blocks (3,040 the ledger's) and 66.0 ms after.
 /// </para>
@@ -61,6 +71,8 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     var withLedger = _chainAsMigrationDefinedIt("260_");
     var withoutLedger = _chainAsMigrationDefinedIt("216_");
 
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pageinspect");
     // A perspective subscribes to the event, so the chain does its whole job: store, body, digest and projection work.
     await _executeAsync(conn, $"""
       INSERT INTO wh_message_associations
@@ -109,19 +121,95 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       await Assert.That(run.Existing.LedgerHotUpdates).IsEqualTo((long)WARM_STREAMS)
         .Because("an append inside the hour changes no indexed column, and every page has room for its rows' new versions");
       await Assert.That(run.New.LedgerRows).IsEqualTo((long)EVENTS);
-      // Measured at 5 blocks per stream (the arbiter's key probe, the row's page, its heap-only rewrite) for 10 events a
-      // stream, and 6 per new stream (the insert and its key entry). Per stream, never per event.
-      await Assert.That(run.Existing.LedgerBlocks).IsLessThanOrEqualTo(6L * WARM_STREAMS)
-        .Because("the ledger costs its rows' pages and one key probe per stream, not anything per event");
+      // Measured at one block per key level plus four per stream (the row's page and its heap-only rewrite) for 10 events
+      // a stream, plus at most one per batch; 6 per new stream (the insert and its key entry). Per stream, never per event: a cost
+      // per event would add hundreds of blocks to this batch of 500, not one.
+      await Assert.That(run.Existing.LedgerBlocks).IsLessThanOrEqualTo(_existingStreamsCeiling(run.Existing.KeyLevels))
+        .Because("the ledger costs one key descent and its row's pages per stream, not anything per event");
       await Assert.That(run.New.LedgerBlocks).IsLessThanOrEqualTo(8L * EVENTS)
         .Because("a new stream costs one row insert and one key entry");
     }
     foreach (var run in before) {
       await Assert.That(run.Existing.LedgerRows).IsEqualTo(0L).Because("the control runs really are the chain without the ledger");
     }
+    await Assert.That(await _vacuumsAndAnalyzesAsync(conn)).IsEqualTo(0L)
+      .Because("a vacuum or analyze during the run moves the block counts; every measured table keeps autovacuum off");
   }
 
-  private sealed record Shape(long Blocks, long LedgerBlocks, long LedgerRows, long LedgerHotUpdates, double ExecutionMs);
+  /// <summary>Per stream: one block per level of the ledger's key, and four for the row's page and its rewrite.</summary>
+  private const long LEDGER_BLOCKS_PER_STREAM_BEYOND_THE_KEY = 4;
+
+  /// <summary>
+  /// Per batch, at every key depth measured: at most one block (0 in some rounds, 1 in others), not per stream and not
+  /// per event.
+  /// </summary>
+  private const long LEDGER_BLOCKS_PER_BATCH = 1;
+
+  private static long _existingStreamsCeiling(long keyLevels) =>
+    (WARM_STREAMS * (keyLevels + LEDGER_BLOCKS_PER_STREAM_BEYOND_THE_KEY)) + LEDGER_BLOCKS_PER_BATCH;
+
+  /// <summary>
+  /// What moves the ledger's block count (#2037 follow-up), each effect made deterministic. The key's depth: on a ledger
+  /// the size of the scenario's last round, the key has two levels and the clean batch costs one block per stream more
+  /// than it did on a one-level key, which is what took a round to 301 against a fixed ceiling of 300. And vacuum:
+  /// <c>pg_statio_user_tables</c> counts a table's blocks across every backend and every fork, so a vacuum in the window
+  /// adds every page it scans (an autovacuum worker's reads land in whichever window is open when it flushes its
+  /// counters), and one that ran before marks pages all-visible, so the next update of a row there also reads the
+  /// visibility map. Here the vacuum is run on purpose and its counters flushed.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task LedgerBlocks_FollowTheKeysDepth_AndMoveWithVacuumAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    var recorder = new WorkCostRecorder(ConnectionString);
+    await _executeAsync(conn, _chainAsMigrationDefinedIt("260_"));
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pageinspect");
+    var oneLevel = await _seedWarmStreamsAsync(conn);
+    var shallow = await _measureAsync(conn, recorder, _batchOver(oneLevel));
+    var untouched = await _seedWarmStreamsAsync(conn);
+    var vacuumedBefore = await _seedWarmStreamsAsync(conn);
+    var vacuumedDuring = await _seedWarmStreamsAsync(conn);
+    // The ledger as large as the scenario's is by its last round: each earlier round inserted a batch of new streams.
+    for (var round = 0; round < ROUNDS; round++) {
+      var (ids, instance) = await _queueAsync(conn, [.. Enumerable.Range(0, EVENTS).Select(_ => (Guid)TrackedGuid.New())]);
+      _ = await _emitAsync(conn, ids, instance);
+    }
+
+    var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
+    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    var afterVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedBefore));
+    var ledgerPages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::bigint");
+    var duringVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedDuring), duringTheWindow: async () => {
+      // Another backend, as an autovacuum worker is.
+      await using var other = new NpgsqlConnection(ConnectionString);
+      await other.OpenAsync(cancellationToken);
+      await _executeAsync(other, "VACUUM (DISABLE_PAGE_SKIPPING) wh_stream_lifecycle");
+      // A backend's counters reach pg_statio when it flushes them, on its own schedule; forced here, so they land in this
+      // window: the flush completes before the reply.
+      await _executeAsync(other, "SELECT pg_stat_force_next_flush()");
+    });
+    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+      $"ledger blocks: {shallow.KeyLevels}-level key {shallow.LedgerBlocks}; {clean.KeyLevels}-level key {clean.LedgerBlocks}, " +
+      $"vacuumed before {afterVacuum.LedgerBlocks}, vacuum in the window {duringVacuum.LedgerBlocks} ({ledgerPages} heap pages)"));
+
+    await Assert.That(clean.KeyLevels).IsEqualTo(shallow.KeyLevels + 1).Because("precondition: the ledger's growth gave its key a level");
+    foreach (var run in new[] { shallow, clean }) {
+      await Assert.That(run.LedgerBlocks).IsBetween(_existingStreamsCeiling(run.KeyLevels) - LEDGER_BLOCKS_PER_BATCH, _existingStreamsCeiling(run.KeyLevels))
+        .Because("with no vacuum the cost is one key descent and four blocks per stream, plus at most one per batch");
+    }
+    await Assert.That(clean.LedgerBlocks - shallow.LedgerBlocks).IsGreaterThanOrEqualTo(WARM_STREAMS - LEDGER_BLOCKS_PER_BATCH)
+      .Because("a key with one more level costs one more block per stream: the fixed ceiling of 6 per stream was measured on the shallower key");
+    await Assert.That(afterVacuum.LedgerBlocks).IsGreaterThan(clean.LedgerBlocks)
+      .Because("an update on an all-visible page also reads the visibility map, which pg_statio counts as the table's");
+    await Assert.That(duringVacuum.LedgerBlocks).IsGreaterThanOrEqualTo(clean.LedgerBlocks + ledgerPages)
+      .Because("a vacuum in the window reads every heap page of the ledger, and pg_statio charges those reads to the window");
+  }
+
+  private static Guid[] _batchOver(Guid[] streams) => [.. Enumerable.Range(0, EVENTS).Select(i => streams[i % streams.Length])];
+
+  private sealed record Shape(long Blocks, long LedgerBlocks, long LedgerRows, long LedgerHotUpdates, double ExecutionMs, long KeyLevels);
 
   private sealed record Shapes(Shape Existing, Shape New);
 
@@ -136,18 +224,26 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     return new Shapes(existing, fresh);
   }
 
-  private async Task<Shape> _measureAsync(NpgsqlConnection conn, WorkCostRecorder recorder, Guid[] streamPerEvent) {
+  private async Task<Shape> _measureAsync(
+      NpgsqlConnection conn, WorkCostRecorder recorder, Guid[] streamPerEvent, Func<Task>? duringTheWindow = null) {
     var (ids, instance) = await _queueAsync(conn, streamPerEvent);
+    var keyLevels = await _keyLevelsAsync(conn);
     var hotBefore = await _hotUpdatesAsync(conn);
     var executionMs = 0.0;
-    var window = await recorder.MeasureAsync(conn, _tables, async () => executionMs = await _emitAsync(conn, ids, instance));
+    var window = await recorder.MeasureAsync(conn, _tables, async () => {
+      executionMs = await _emitAsync(conn, ids, instance);
+      if (duringTheWindow is not null) {
+        await duringTheWindow();
+      }
+    });
     var ledger = window.Tables["wh_stream_lifecycle"];
     return new Shape(
       window.Tables.Values.Sum(t => t.Blocks),
       ledger.Blocks,
       ledger.RowsInserted + ledger.RowsUpdated,
       await _hotUpdatesAsync(conn) - hotBefore,
-      executionMs);
+      executionMs,
+      keyLevels);
   }
 
   /// <summary>Fifty streams with five events each, stored through the chain in one batch, so their rows share pages.</summary>
@@ -211,6 +307,35 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     var start = sql.IndexOf(FUNCTION_START, StringComparison.Ordinal);
     var end = sql.IndexOf(FUNCTION_END, start, StringComparison.Ordinal) + FUNCTION_END.Length;
     return sql[start..end];
+  }
+
+  /// <summary>Keeps autovacuum off every measured table, so no vacuum runs inside a window or between rounds.</summary>
+  private static async Task _disableAutovacuumAsync(NpgsqlConnection conn) {
+    foreach (var table in _tables) {
+      await _executeAsync(conn, $"ALTER TABLE {table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false)");
+    }
+  }
+
+  /// <summary>The levels of the ledger's key: one when its root is its only leaf.</summary>
+  private static Task<long> _keyLevelsAsync(NpgsqlConnection conn) =>
+    _scalarAsync(conn, "SELECT level + 1 FROM bt_metap('wh_stream_lifecycle_pkey')");
+
+  /// <summary>Vacuums and analyzes of the measured tables, manual or automatic, since the database was created.</summary>
+  private async Task<long> _vacuumsAndAnalyzesAsync(NpgsqlConnection conn) {
+    await _executeAsync(conn, "SELECT pg_stat_force_next_flush()");
+    await using var other = new NpgsqlConnection(ConnectionString);
+    await other.OpenAsync();
+    await using var cmd = other.CreateCommand();
+    // The explicit ANALYZE before the rounds is the scenario's own; it ran before any window, so it is not counted.
+    cmd.CommandText = "SELECT COALESCE(SUM(vacuum_count + autovacuum_count + autoanalyze_count), 0) FROM pg_stat_user_tables WHERE relname = ANY(@tables)";
+    cmd.Parameters.AddWithValue("tables", _tables);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<long> _scalarAsync(NpgsqlConnection conn, string sql) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private static async Task _executeAsync(NpgsqlConnection conn, string sql) {

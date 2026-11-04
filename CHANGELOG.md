@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Security
+- **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
+  singleton `ReceptorInterceptorPipeline`) are asked immediately before every receptor invocation: `SendAsync`,
+  `LocalInvokeAsync` and `PublishAsync` through the generated dispatcher, the receptors of a message a receptor
+  returned, receptors registered at runtime, and every lifecycle stage the receptor invoker runs, inbox delivery
+  included. The interceptor sees the scope context the receptor reads through `IScopeContextAccessor`. A denied receptor
+  does not run, so nothing it would have returned is appended or cascaded. `DeniedAction.DropQuiet` skips the receptor
+  with a warning; on a local dispatch every other action throws the new `ReceptorInvocationDeniedException` (an
+  `UnauthorizedAccessException`). Inbox delivery asks before it completes the row (`IReceptorInvoker.EvaluateAdmissionAsync`):
+  `DeadLetter` moves the row to the dead-letter store (new reason `ReceptorDenied`, 28) and `Quarantine` holds it there
+  (new reason `ReceptorQuarantined`, 29), neither retried and both held for review by the default recovery policy;
+  `Throw` fails the attempt so the attempts bound retries it; `DropQuiet` completes the row. With no interceptor
+  registered no path does any interceptor work. `ReceptorInfo` gains `ReceptorType`, which generated entries set.
+  The Service Bus consumer worker asks before it runs a message's inbox stages and honors the same actions (a denied
+  `Throw` fails the delivery for the broker's redelivery). Raw receptors (`IRawReceptor`) are gated with the message's
+  envelope and scope: `DeadLetter` and `Quarantine` dead-letter the message at the broker under the reasons
+  `ReceptorDenied` and `ReceptorQuarantined`. A control-class message whose comparison is denied is dropped, as a failed
+  comparison is. `ReceptorInterceptorPipeline.AdmitAsync` applies the same decision for custom invocation code.
+  **Upgrade note:** registering `DefaultRequirePermissionInterceptor` now enforces every `[RequirePermission]` on every
+  path, where the attribute was inert before; grant the permissions those receptors declare before registering it.
+  An interceptor that applies to an `ISyncReceptor` must complete synchronously.
+
 #### Rebuilds
 - **A rebuild reads archived data only when it opts in (#1931).** `RebuildArchivedData` on `RebuildOrigin` and
   `RebuildPerspectiveCommand`: `Skip` (the default) never reads the archive, starting a stream archived through a
@@ -809,6 +831,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The process-wide saga per-item stream namespace is first-registration-wins (#2021).** The first `AddWhizbangSagas`
+  call in a process sets `SagaItemStreams.AppDefaultNamespace`, which `SagaItemStreams.Of` without a namespace reads. A
+  later registration with a different namespace no longer overwrites it: its host logs a warning at start naming both
+  namespaces. A later registration with the same namespace is silent. The set is atomic, so hosts built in parallel
+  settle on one namespace. No API is removed, and a host's own saga services still derive under their own options
+  through `ISagaItemStreamIdDeriver`. **Upgrade note:** a process that relied on a later registration replacing the
+  namespace now keeps the first one; inject `ISagaItemStreamIdDeriver` to derive under a host's own namespace.
+
+- **The live outbox audit path skips an unresolvable event type under OptIn, as the ledger rebuild does (#1980).** An
+  event type the live path cannot resolve was audited under both modes, while the rebuild skips it under `OptIn`, so a
+  rebuilt ledger could be missing records the live path wrote. Under `OptIn` it is now not audited, and every such skip
+  logs a warning naming the type, so a resolution failure is never silent. The rebuild now warns the same way: a new
+  `AuditLedgerRebuild` constructor overload takes an `ILogger<AuditLedgerRebuild>`, which the built-in rebuild receptor
+  resolves from the container. `OptOut` is unchanged: the type is audited.
+
 - **Stream-integrity work runs on the maintainer, idle-gated (#2001).** Received checkpoints, manifest requests,
   manifest chunks, redelivery requests and bundle reconciles are recorded in `wh_integrity_deliveries` (migration 302)
   and drained one at a time by `IntegrityDeliveryWorker` on the maintainer duty's holder, with retry backoff and an
@@ -1277,6 +1314,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The live audit path resolves event types through the same catalog as the audit ledger rebuild (#2040).** The
+  outbox audit builder resolved an event's type with `Type.GetType` (under an IL2057 suppression) while the rebuild
+  resolved through the message-type catalog, so a loaded type outside the catalog was audited by its attribute live and
+  by the mode alone on rebuild, and a catalog type written by its full name alone the other way round: the two
+  disagreed about whether the event was audited. Both now resolve through `AuditTypeResolver`, built once from the
+  catalog and registered as a singleton, and passed by the work coordinator strategy factory to every strategy that
+  builds audit records. `TryBuildAuditMessage` takes it as a new optional `eventTypes` argument; without one, every type
+  is decided by the audit mode alone. No reflection remains on the audit path. **Upgrade note:** an event type that is
+  not in a generated message-type catalog is now audited under `OptOut` and not under `OptIn`, whatever attribute it
+  carries, as the rebuild already decided it.
+- **A destruction hook is honored on the Dapper data layer (#2039).** The ephemeral reap's destruction seam ran on the
+  EF Core driver only: on Dapper a registered `IDestructionHook` was offered nothing, its Cancel and Defer held nothing,
+  a throwing hook forced the delete at once, and the maintenance cycle reaped every eligible body, including ones no
+  hook had seen. The Dapper coordinator now runs the same statements as the EF Core one, from one shared copy
+  (`EphemeralDestructionSql`): the bodies about to be reaped, the hold, the failure count with its retry cap and
+  policy, and the reap restricted to the bodies the hook was offered. Archive, purge and close already offered the hook
+  on both drivers, and perspective rows since #1505.
+- **Finding perspective tables to rebuild no longer reads a stale answer inside a caller's transaction (#2038).** A
+  name lookup (`to_regclass`, `to_regprocedure`) is answered from the session's catalog cache, which a transaction
+  refreshes only when it starts, when a statement opens a relation, or when a name fails to resolve.
+  `ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync` takes any open connection; inside a transaction that
+  looked before another session committed the managed-object ledger, it reported nothing to rebuild and a start took
+  the fast path past a dropped index. It now reads `pg_class` under the statement's snapshot (`CatalogPresence`, which
+  the schema bootstrap now shares), as the bootstrap has since #2009. Every other catalog lookup in the library was
+  audited and kept, each for a recorded reason (`ai-docs/catalog-existence-checks.md`); `MigratorWatch` is kept and its
+  ordering locked by a test. No migration changes.
+- **A positional record whose base record has its own members compiles in the generated JSON context (#2016).** An
+  event such as `public sealed record AccountOpened(decimal Balance) : OpeningBalance;` failed with CS7036 because the
+  generator fell back to a parameterless constructor the record does not have. The constructor now receives the
+  leading writable properties in order and the rest are set in an object initializer. A constructor is used only when
+  its parameters are those leading properties in order; before, one matched by name alone could receive its arguments
+  in the wrong positions.
+
+- **The initialization-registry test for a second concurrent call is deterministic (#2019).** It asserted the first
+  call's task had completed the moment the second returned, which depended on thread timing; it now waits on an
+  explicit signal, and a new test reproduces the window on purpose.
+
+- **Integrity repair waits for the answer to its request (#2029).** The paced repair drain re-asked for a bucket while
+  the answer to its previous request was still on the way, and a received answer stopped nothing until the next audit.
+  A sent request now marks its buckets answer-pending for `Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes`
+  (default 180), and a committed redelivery bundle marks them answered: neither is requested again until the answer
+  times out or the next comparison re-sights the bucket. Both ledgers keep the pending answer: the durable one and
+  the in-memory fallback, where a reconciled bundle clears it. Gauges `repair_answer_pending_buckets` and
+  `repair_answered_buckets` (durable ledger). Migration 320.
+- **The repair attempt budget ends the asking (#2029).** Past `MaxRepairAttemptsPerBucket` a bucket was re-requested
+  every 5 h 20 m forever (the terminal cadence of migration 099). It is now never requested again until a change repair
+  can act on resets it, and counts in `repair_exhausted_buckets`. Both ledgers, the durable one and the in-memory
+  fallback, run one shared contract test, so their ladders cannot drift. **Behavior change:** a bucket whose budget burned
+  against an unreachable origin is re-armed by its next local change or a grown deficit, not by time.
+- **An origin's new events no longer reset the repair ladder (#2030).** Any change in either side's digest reset a
+  bucket's attempts and lifted its unhealable mark, so every audit of an active, still-divergent stream started a fresh
+  ladder. In both ledgers, the durable one and the in-memory fallback, only a change in this store's digest of the
+  bucket, or a deficit that grew (the comparison now records its size), resets it.
+- **A redelivery bundle that changed nothing is marked when it commits (#2033).** The unhealable mark waited for the
+  maintainer's idle-gated reconcile, up to `MaxDeferral` under load, while repair kept asking. The bundle's answer is
+  now recorded when its children commit (one small query by primary key); only origin adoption and digest moves stay
+  deferred. "Changed nothing" is judged on what the store held at commit, because by the time the deferred reconcile
+  runs the bundle's own children are stored and read as present, which could mark a bucket the bundle had just repaired.
+- **Smaller duplicate-redelivery paths are closed (#2034).** A granted bulk backfill and a checkpoint gap request mark
+  the per-stream drain rows of their type inside their window as answer-pending; a type-lane request stands down while
+  per-stream requests of its type await their answers; the checkpoint path's ledger entry heals with its window; and
+  the drain groups requests by window, so no stream is re-shipped over a wider range than its own divergence.
+- **Integrity deliveries waiting for the maintainer are visible (#2035).** Gauges `deliveries_pending` and
+  `oldest_delivery_age_seconds` (meter `Whizbang.StreamIntegrity`), read with the ledger gauges at the start of every
+  maintenance tick on every instance.
+- **The integrity ledger gauges no longer read 0 while divergences are unhealed (#2024).** `unhealed_buckets`,
+  `repair_exhausted_buckets`, `oldest_unhealed_age_seconds` and `sealed_through` were refreshed only inside the
+  maintainer's sweep, so every other instance reported 0 unhealed for as long as it ran, and every instance reported 0
+  for up to `Whizbang:Housekeeping:MaxDeferral` after a restart under load: the reading of a fully healed service. The
+  refresh now runs at the start of every maintenance tick on every instance, ahead of the duty check and the idle gate.
+
+- **The destruction hook is offered only the ephemeral bodies the reap deletes (#2018).** The about-to-reap query had no
+  TTL gate, so an `AfterTtl` body that was consumed, aged and covered but not yet expired was offered to the hook and
+  reported destroyed while the reap kept it. The query now applies the reap's TTL floor, so offered, deleted and
+  reported destroyed agree.
+
 - **Reconciling a redelivery bundle no longer reads the whole local digest lane (#2000).** Each bundle's reconcile
   reached `wh_stream_digests` through the primary key's leading column and read every local bucket to change a handful;
   during the catch-up after automatic repair is turned on, a steady stream of bundles held a shared database server's

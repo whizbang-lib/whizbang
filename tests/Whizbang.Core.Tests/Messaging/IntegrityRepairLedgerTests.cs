@@ -101,44 +101,101 @@ public class IntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task RepairAttempts_CapExhausted_StopsClimbingTheLadderAsync() {
+  public async Task RepairAttempts_PastCap_AreRefusedForGood_WithNoTerminalCadenceAsync() {
+    // #2029: past the cap the ladder used to flatten to a terminal cadence (base x 2^6) and ask again forever, which
+    // re-shipped the same events several times a day per bucket. The cap now ends the asking until a change repair
+    // can act on resets it (a moved local digest or a deficit that grew), as the durable ledger does.
     var ledger = new IntegrityRepairLedger();
     var key = _key();
-    var now = DateTimeOffset.UtcNow;
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
     for (var i = 0; i < MAX_ATTEMPTS; i++) {
       await Assert.That(ledger.TryBeginRepair(key, now + TimeSpan.FromHours(i), _backoff, MAX_ATTEMPTS)).IsTrue();
     }
     var lastGrant = now + TimeSpan.FromHours(MAX_ATTEMPTS - 1);
     var terminalWait = _backoff * Math.Pow(2, 6);
 
-    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait - TimeSpan.FromSeconds(1), _backoff, MAX_ATTEMPTS)).IsFalse()
-      .Because("past the cap the exponential ladder stops climbing — inside the terminal wait the " +
-               "requester stays quiet instead of hammering a bucket that has already burned its budget.");
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait, _backoff, MAX_ATTEMPTS)).IsFalse()
+      .Because("the old terminal cadence no longer earns an ask");
+    await Assert.That(ledger.TryBeginRepair(key, lastGrant + TimeSpan.FromDays(30), _backoff, MAX_ATTEMPTS)).IsFalse()
+      .Because("the cap is the end of asking, not a slower cadence");
   }
 
   [Test]
-  public async Task RepairAttempts_PastCap_RetriesAtTerminalCadenceAsync() {
-    // A bucket that burns its whole attempt budget against an unreachable origin has a STATIC
-    // signature — nothing ever changes to reset it — so a permanent deny would shadow-ban a real,
-    // repairable deficit forever. Past the cap the ladder flattens to its terminal cadence
-    // (base × 2^6) instead of going silent: convergence stays eventually-true at bounded cost.
+  public async Task MarkAnswered_ClearsThePendingAnswer_SoOnlyTheBackoffGovernsTheNextAskAsync() {
+    // #2029: a bundle that lands for the bucket answers the request; the answer timeout no longer holds it back.
     var ledger = new IntegrityRepairLedger();
     var key = _key();
-    var now = DateTimeOffset.UtcNow;
-    for (var i = 0; i < MAX_ATTEMPTS; i++) {
-      ledger.TryBeginRepair(key, now + TimeSpan.FromHours(i), _backoff, MAX_ATTEMPTS);
-    }
-    var lastGrant = now + TimeSpan.FromHours(MAX_ATTEMPTS - 1);
-    var terminalWait = _backoff * Math.Pow(2, 6);
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+    _ = ledger.TryBeginReport(key, 11, 21, 0, 0, now, _cooldown);
+    _ = ledger.TryBeginRepair(key, now, _backoff, MAX_ATTEMPTS);
+    _ = await ledger.MarkAnswerPendingAsync([key], null, null, now, TimeSpan.FromHours(3));
 
-    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait, _backoff, MAX_ATTEMPTS)).IsTrue()
-      .Because("once the terminal wait has fully elapsed the bucket earns one more ask — an origin " +
-               "that was down while the budget burned is still repairable when it comes back.");
-    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait + TimeSpan.FromMinutes(1), _backoff, MAX_ATTEMPTS)).IsFalse()
-      .Because("the terminal grant is a cadence, not a reopened floodgate — the next ask waits out " +
-               "another full terminal interval.");
-    await Assert.That(ledger.TryBeginRepair(key, lastGrant + terminalWait + terminalWait, _backoff, MAX_ATTEMPTS)).IsTrue()
-      .Because("each terminal interval earns exactly one more ask, forever.");
+    await ledger.MarkAnsweredAsync([key], now.AddMinutes(1));
+
+    await Assert.That(ledger.TryBeginRepair(key, now + _backoff, _backoff, MAX_ATTEMPTS)).IsTrue()
+      .Because("the answer landed, so only the backoff stands between the bucket and its next ask");
+  }
+
+  [Test]
+  public async Task TypeLane_StandsDownOnlyForItsOwnOriginAndTenant_AndANullTenantIsTheEmptyOneAsync() {
+    var ledger = new IntegrityRepairLedger();
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+    var origin = TrackedGuid.New().Value;
+    var otherOrigin = new IntegrityRepairLedger.DivergenceKey(TrackedGuid.New().Value, null, "Contracts.TypeX", TrackedGuid.New().Value);
+    var otherTenant = new IntegrityRepairLedger.DivergenceKey(origin, "tenant-b", "Contracts.TypeX", TrackedGuid.New().Value);
+    var emptyTenant = new IntegrityRepairLedger.DivergenceKey(origin, "", "Contracts.TypeY", TrackedGuid.New().Value);
+    foreach (var key in new[] { otherOrigin, otherTenant, emptyTenant }) {
+      _ = ledger.TryBeginReport(key, 11, 21, 0, 0, now, _cooldown);
+    }
+    _ = await ledger.MarkAnswerPendingAsync([otherOrigin, otherTenant, emptyTenant], null, null, now, TimeSpan.FromHours(3));
+
+    var lane = ledger.TryBeginRepair(new IntegrityRepairLedger.DivergenceKey(origin, null, "Contracts.TypeX", Guid.Empty), now, _backoff, MAX_ATTEMPTS);
+    var nullTenantLane = ledger.TryBeginRepair(new IntegrityRepairLedger.DivergenceKey(origin, null, "Contracts.TypeY", Guid.Empty), now, _backoff, MAX_ATTEMPTS);
+
+    await Assert.That(lane).IsTrue().Because("the pending rows of TypeX belong to another origin or another tenant");
+    await Assert.That(nullTenantLane).IsFalse().Because("no tenant and an empty tenant are the same bucket, as the durable ledger keys it");
+  }
+
+  [Test]
+  public async Task MarkAnswered_ABucketTheLedgerDoesNotTrack_IsNotAddedAsync() {
+    var ledger = new IntegrityRepairLedger();
+
+    await ledger.MarkAnsweredAsync([_key()], new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero));
+
+    await Assert.That(ledger.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MarkAnswerPending_OnTheTypeLane_WithAWindow_CoversNoInMemoryRow_WhichCarriesNoWindowAsync() {
+    // Per-stream rows here carry no compared window (only the durable store stamps one), and a bounded request cannot
+    // be shown to cover an unbounded row, the same rule the durable store applies to its pre-stamp rows.
+    var ledger = new IntegrityRepairLedger();
+    var origin = TrackedGuid.New().Value;
+    var perStream = _key(origin);
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+    _ = ledger.TryBeginReport(perStream, 11, 21, 0, 0, now, _cooldown);
+
+    var marked = await ledger.MarkAnswerPendingAsync([_key(origin, Guid.Empty)], 0, 100, now, TimeSpan.FromHours(3));
+
+    await Assert.That(marked).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ReportBatch_RecordsEachDeficitsSize_AndASizeOnlyTheBatchCarriesAsync() {
+    // The batch carries the deficit size the single-key report cannot; an unknown size keeps the recorded one.
+    var ledger = new IntegrityRepairLedger();
+    var key = _key();
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+    _ = await ledger.TryBeginReportBatchAsync([new IntegrityReportObservation(key, 11, 21, 0, 0, true, 3)], now, _cooldown);
+    _ = await ledger.TryBeginRepairAsync(key, now, _backoff, maxAttempts: 1);
+
+    _ = await ledger.TryBeginReportBatchAsync([new IntegrityReportObservation(key, 12, 22, 0, 0, true)], now.AddMinutes(1), _cooldown);
+    var unknownSize = await ledger.TryBeginRepairAsync(key, now.AddDays(1), _backoff, maxAttempts: 1);
+    _ = await ledger.TryBeginReportBatchAsync([new IntegrityReportObservation(key, 13, 23, 0, 0, true, 4)], now.AddDays(1), _cooldown);
+    var grown = await ledger.TryBeginRepairAsync(key, now.AddDays(1), _backoff, maxAttempts: 1);
+
+    await Assert.That(unknownSize).IsFalse().Because("a report without a size says nothing about growth");
+    await Assert.That(grown).IsTrue().Because("4 is more than the 3 recorded before the unsized report");
   }
 
   [Test]

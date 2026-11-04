@@ -18,7 +18,7 @@ using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
-/// <summary>An event the call-site hook tests audit; public so its assembly-qualified name resolves.</summary>
+/// <summary>An event the call-site hook tests audit, resolved through the probe catalog the tests register.</summary>
 public sealed record HookCallSiteProbeEvent([property: StreamId] Guid ProbeId) : IEvent;
 
 /// <summary>
@@ -108,7 +108,8 @@ public class AuditDecisionHookCallSiteTests {
       outboxBatch: batch,
       logger: NullLogger.Instance,
       auditDecisionHook: new FixedHook(AuditDecision.Skip),
-      systemEventOptions: _auditOptions());
+      systemEventOptions: _auditOptions(),
+      auditEventTypes: _probeTypes());
 
     await sut.QueueOutboxMessageAsync(_auditedEvent());
 
@@ -124,7 +125,8 @@ public class AuditDecisionHookCallSiteTests {
       outboxBatch: batch,
       logger: NullLogger.Instance,
       auditDecisionHook: new FixedHook(AuditDecision.Record(RENAMED)),
-      systemEventOptions: _auditOptions());
+      systemEventOptions: _auditOptions(),
+      auditEventTypes: _probeTypes());
 
     await sut.QueueOutboxMessageAsync(_auditedEvent());
 
@@ -196,7 +198,8 @@ public class AuditDecisionHookCallSiteTests {
       detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = _auditOptions(),
-        AuditDecisionHook = hook
+        AuditDecisionHook = hook,
+        AuditEventTypes = _probeTypes()
       });
 
   private static ImmediateWorkCoordinatorStrategy _immediate(IWorkCoordinator coordinator, IAuditDecisionHook hook) =>
@@ -212,10 +215,14 @@ public class AuditDecisionHookCallSiteTests {
       systemEventOptions: Options.Create(_auditOptions()),
       workChannelWriter: new WorkChannelWriter(),
       auditDecisionHook: hook,
-      detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      auditEventTypes: _probeTypes());
 
   private static ServiceCollection _container(IWorkCoordinator coordinator, IAuditDecisionHook hook) {
     var services = new ServiceCollection();
+    // The catalog the registered AuditTypeResolver is built from: the factory must pass that resolver to every strategy
+    // it builds, or the probe event is unresolvable, the hook is never asked, and these tests fail (#2040).
+    services.AddSingleton<IMessageTypeCatalog>(new ProbeCatalog());
     services.TryAddWhizbangDefaults();
     services.AddSingleton(new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 });
     services.AddSingleton(coordinator);
@@ -244,6 +251,15 @@ public class AuditDecisionHookCallSiteTests {
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },
       IsEvent = true,
     };
+  }
+
+  /// <summary>The audit type resolver over the probe catalog, as the container builds it.</summary>
+  private static AuditTypeResolver _probeTypes() => new(new ProbeCatalog());
+
+  /// <summary>A catalog holding the probe event, so the audit path can resolve it.</summary>
+  private sealed class ProbeCatalog : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
+      [new(typeof(HookCallSiteProbeEvent), TypeNameFormatter.FormatClrTypeName(typeof(HookCallSiteProbeEvent)), "event", null)];
   }
 
   private sealed class FixedHook(AuditDecision decision) : IAuditDecisionHook {

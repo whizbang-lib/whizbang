@@ -286,6 +286,22 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.oldest_unhealed_age_seconds",
       () => _ledger.OldestUnhealedAgeSeconds,
       description: "Age of the longest-standing unhealed divergence; distinguishes a transient blip from a stuck one");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.repair_answer_pending_buckets",
+      () => _ledger.AnswerPendingBuckets,
+      description: "Buckets whose repair request is out and whose answer has not landed; they are not requested again meanwhile");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.repair_answered_buckets",
+      () => _ledger.AnsweredBuckets,
+      description: "Buckets a redelivery answered that wait for the next comparison to decide healed or still divergent");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.deliveries_pending",
+      () => _ledger.IntegrityDeliveriesPending,
+      description: "Integrity deliveries waiting for the maintainer's drain; one value per service");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.oldest_delivery_age_seconds",
+      () => _ledger.OldestIntegrityDeliveryAgeSeconds,
+      description: "How long the oldest integrity delivery has waited for the maintainer's drain");
 
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     RepairsRequested.Touch("source", _repairSources);
@@ -329,6 +345,22 @@ public sealed record LedgerGaugeSnapshot {
 
   /// <summary>Seconds since the oldest unhealed bucket first diverged (0 when none).</summary>
   public double OldestUnhealedAgeSeconds { get; init; }
+
+  /// <summary>Buckets whose repair request is out and whose answer has not landed (#2029).</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  public long AnswerPendingBuckets { get; init; }
+
+  /// <summary>Buckets a redelivery answered that wait for the next comparison (#2029).</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  public long AnsweredBuckets { get; init; }
+
+  /// <summary>Integrity deliveries waiting for the maintainer's drain (#2035).</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  public long IntegrityDeliveriesPending { get; init; }
+
+  /// <summary>Seconds the oldest waiting integrity delivery has waited (0 when none, #2035).</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  public double OldestIntegrityDeliveryAgeSeconds { get; init; }
 
   /// <summary>Per-origin verified watermarks (one gauge series each). Empty until the collector
   /// reads the seals — a tiny table it visits in the same breath as the ledger summary.</summary>

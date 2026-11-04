@@ -91,7 +91,27 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
       Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
       CancellationToken cancellationToken = default) {
     Adoptions.Add((originServiceId, originServiceName, eventIds, commitSequences));
-    return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
+    return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(AdoptionAnswer);
+  }
+
+  /// <summary>What the store answers an adoption with.</summary>
+  public IReadOnlyList<RedeliveredBucketPresence> AdoptionAnswer { get; set; } = [];
+
+  /// <summary>What the store answers a bundle's commit-time record with; null = unsupported.</summary>
+  public IntegrityBundleAnswer? BundleAnswer { get; set; }
+
+  public Exception? BundleAnswerFailure { get; set; }
+
+  /// <summary>Every commit-time record the reconcile asked for.</summary>
+  public List<(Guid Origin, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> Sequences, DateTimeOffset Now)> BundleAnswers { get; } = [];
+
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    BundleAnswers.Add((originServiceId, eventIds, commitSequences, now));
+    return BundleAnswerFailure is { } failure
+      ? Task.FromException<IntegrityBundleAnswer?>(failure)
+      : Task.FromResult(BundleAnswer);
   }
 
   public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

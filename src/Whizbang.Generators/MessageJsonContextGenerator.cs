@@ -379,7 +379,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
               IsSerializable: false,
               IsComposite: false,
               Properties: _mergeSagaEventProperties(shape, baseProperties),
-              HasParameterizedConstructor: false),
+              ConstructorArgumentCount: 0),
           Inheritance: [.. _synthesizeSagaEventInheritance(
               eventFullyQualifiedName, eventBase, inheritedFromBase, shape, context.SemanticModel.Compilation)]));
     }
@@ -1898,15 +1898,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate different code based on constructor type
     sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-    if (message.HasParameterizedConstructor) {
-      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
-      _appendConstructorArgs(sb, writableProperties);
-      sb.AppendLine("      ),");
-    } else {
-      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
-      _appendObjectInitializerArgs(sb, writableProperties);
-      sb.AppendLine("      },");
-    }
+    _appendObjectCreator(sb, message, writableProperties);
     sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
     sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
     sb.AppendLine("  };");
@@ -1923,21 +1915,48 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Appends typed constructor argument casts for parameterized constructors.
+  /// Appends the creator that builds the type from its arguments: the leading
+  /// <see cref="JsonMessageTypeInfo.ConstructorArgumentCount"/> go to the public constructor that takes them, and the
+  /// rest are set in an object initializer after it. A positional record whose base record contributes members of its
+  /// own has only the positional constructor, so it takes both (#2016); a parameterless construction does not compile.
   /// </summary>
-  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
-    for (int i = 0; i < writableProperties.Length; i++) {
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPositionalRecordTests.cs:Generator_APositionalRecordDerivingFromOpeningBalance_PassesThePositionalMemberAndInitializesTheBaseAsync</tests>
+  private static void _appendObjectCreator(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties) {
+    var bound = message.ConstructorArgumentCount;
+    if (bound == 0) {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
+      _appendObjectInitializerArgs(sb, writableProperties, 0);
+      sb.AppendLine("      },");
+      return;
+    }
+
+    sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
+    _appendConstructorArgs(sb, writableProperties, bound);
+    if (bound == writableProperties.Length) {
+      sb.AppendLine("      ),");
+      return;
+    }
+    sb.AppendLine("      ) {");
+    _appendObjectInitializerArgs(sb, writableProperties, bound);
+    sb.AppendLine("      },");
+  }
+
+  /// <summary>
+  /// Appends typed constructor argument casts for the first <paramref name="count"/> writable properties.
+  /// </summary>
+  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties, int count) {
+    for (int i = 0; i < count; i++) {
       var prop = writableProperties[i];
-      var comma = i < writableProperties.Length - 1 ? "," : "";
+      var comma = i < count - 1 ? "," : "";
       sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
     }
   }
 
   /// <summary>
-  /// Appends object initializer assignments for types without parameterized constructors.
+  /// Appends object initializer assignments for the writable properties from <paramref name="start"/> on.
   /// </summary>
-  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
-    for (int i = 0; i < writableProperties.Length; i++) {
+  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties, int start) {
+    for (int i = start; i < writableProperties.Length; i++) {
       var prop = writableProperties[i];
       var comma = i < writableProperties.Length - 1 ? "," : "";
       sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
@@ -2327,7 +2346,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Extract properties and detect constructor
     var nestedProperties = _extractPropertiesFromType(typeSymbol);
-    bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
     var clrTypeName = _getClrTypeName(typeSymbol);
 
     var nestedTypeInfo = new JsonMessageTypeInfo(
@@ -2339,7 +2357,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: false,
         IsComposite: false,
         Properties: nestedProperties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        ConstructorArgumentCount: _constructorArgumentCount(typeSymbol, nestedProperties)
     );
 
     nestedTypes[typeNameToProcess] = nestedTypeInfo;
@@ -2374,7 +2392,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       var derivedProperties = _extractPropertiesFromType(derivedType);
-      var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
       var derivedClrTypeName = _getClrTypeName(derivedType);
 
       var derivedTypeInfo = new JsonMessageTypeInfo(
@@ -2386,7 +2403,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           IsSerializable: false,
           IsComposite: false,
           Properties: derivedProperties,
-          HasParameterizedConstructor: hasDerivedCtor
+          ConstructorArgumentCount: _constructorArgumentCount(derivedType, derivedProperties)
       );
 
       nestedTypes[derivedTypeName] = derivedTypeInfo;
@@ -3561,17 +3578,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         .Select(static p => _toPropertyInfo(p))
         .ToArray();
 
-    // Detect if type has a parameterized constructor matching all writable properties
-    // This is true for records with primary constructors like: record MyRecord(string Prop1, int Prop2)
-    // This is false for records with required properties like: record MyRecord { public required string Prop1 { get; init; } }
-    // Computed properties (CanWrite = false) are excluded from constructor matching
-    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-    bool hasParameterizedConstructor = type.Constructors.Any(c =>
-        c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == writableProperties.Length &&
-        c.Parameters.All(p => writableProperties.Any(prop =>
-            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
     return new JsonMessageTypeInfo(
         FullyQualifiedName: TypeNameUtilities.FullyQualified(type),
         ClrTypeName: _getClrTypeName(type),
@@ -3581,7 +3587,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: isSerializable,
         IsComposite: isComposite,
         Properties: properties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        ConstructorArgumentCount: _constructorArgumentCount(type, properties)
     );
   }
 
@@ -3771,16 +3777,24 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a type has a parameterized constructor matching its writable properties.
-  /// Computed properties (CanWrite = false) are excluded from constructor matching.
+  /// How many of the type's writable properties, from the first, a public constructor takes in that order: all of
+  /// them for a positional record, only the positional ones for a positional record whose base record contributes
+  /// members of its own (#2016), and none when the only fitting constructor is the parameterless one. The properties
+  /// are already ordered with the constructor's parameters first (<see cref="_getAllPropertiesIncludingInherited"/>);
+  /// computed properties (CanWrite = false) are not counted. Names match case-insensitively, as a class's camelCase
+  /// parameters bind to its PascalCase properties.
   /// </summary>
-  private static bool _hasMatchingParameterizedConstructor(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
-    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-    return typeSymbol.Constructors.Any(c =>
-        c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == writableProperties.Length &&
-        c.Parameters.All(p => writableProperties.Any(prop =>
-            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPositionalRecordTests.cs</tests>
+  private static int _constructorArgumentCount(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
+    var writable = properties.Where(static p => p.CanWrite).Select(static p => p.Name).ToArray();
+    return typeSymbol.Constructors
+        .Where(c => c.DeclaredAccessibility == Accessibility.Public
+            && c.Parameters.Length <= writable.Length
+            && c.Parameters.Select(static (p, i) => (p.Name, i))
+                .All(parameter => writable[parameter.i].Equals(parameter.Name, StringComparison.OrdinalIgnoreCase)))
+        .Select(static c => c.Parameters.Length)
+        .DefaultIfEmpty(0)
+        .Max();
   }
 
   // ========================================

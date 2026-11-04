@@ -100,6 +100,12 @@ public class AuditEventTypeResolutionTests {
              + "every message behind it in the drain");
   }
 
+  /// <summary>A catalog of one type: the type the test resolves.</summary>
+  private sealed class SingleTypeCatalog(Type type) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
+      [new(type, Whizbang.Core.TypeNameFormatter.FormatClrTypeName(type), "event", null)];
+  }
+
   [Test]
   public async Task AResolvableEventType_TakesTheNormalDecisionPathAsync() {
     // The contrast: a type this process does have goes through the attribute-driven decision
@@ -108,10 +114,11 @@ public class AuditEventTypeResolutionTests {
     var source = _outboxEvent("Whizbang.Core.Messaging.PerspectiveCoverageGapDetected, Whizbang.Core");
 
     var audit = AuditOutboxMessageBuilder.TryBuildAuditMessage(
-      source, new SystemEventOptions().EnableEventAudit(), logger);
+      source, new SystemEventOptions().EnableEventAudit(), logger,
+      eventTypes: new AuditTypeResolver(new SingleTypeCatalog(typeof(Whizbang.Core.Messaging.PerspectiveCoverageGapDetected))));
 
     await Assert.That(audit).IsNotNull();
-    await Assert.That(logger.Messages.Any(m => m.Contains("unresolved", StringComparison.OrdinalIgnoreCase))).IsFalse()
+    await Assert.That(logger.Messages.Any(m => m.Contains("not in the message-type catalog", StringComparison.Ordinal))).IsFalse()
       .Because("a resolvable type must not report the fallback, or the log stops distinguishing "
              + "the two cases it exists to separate");
   }

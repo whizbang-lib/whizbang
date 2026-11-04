@@ -1822,7 +1822,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
     var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
     var call = receptor.IsSync ? "r.Handle(typedMsg)" : "await r.HandleAsync(typedMsg, cancellationToken)";
-    sb.AppendLine("          {");
+    // The receptor interceptors decide before each receptor runs (#1996); a denied one is skipped or throws
+    sb.AppendLine($"          if (await AdmitReceptorAsync(typeof({receptor.ClassName}), typedMsg, scope.ServiceProvider, sourceEnvelope, cancellationToken)) {{");
     if (receptor.HasSyncAttributes) {
       sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedMsg, typeof({messageType}), \"{receptor.ClassName}\", cancellationToken));");
     }
@@ -1864,7 +1865,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
     var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
     var call = receptor.IsSync ? "r.Handle(typedEvt)" : $"await r.HandleAsync({handleArgs})";
-    sb.AppendLine("          {");
+    // The receptor interceptors decide before each receptor runs (#1996); a denied one is skipped or throws
+    var admitArgs = withEnvelopeAndToken ? "sourceEnvelope, cancellationToken" : "null, default";
+    sb.AppendLine($"          if (await AdmitReceptorAsync(typeof({receptor.ClassName}), typedEvt, scope.ServiceProvider, {admitArgs})) {{");
     if (receptor.IsMessageAnEvent && receptor.SyncAttributes is { Length: > 0 }) {
       // This receptor waits for its perspectives first; the outcome reaches it through its sync context
       var waitToken = withEnvelopeAndToken ? "cancellationToken" : "default";

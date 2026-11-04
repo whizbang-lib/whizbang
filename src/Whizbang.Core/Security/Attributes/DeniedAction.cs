@@ -16,13 +16,16 @@ namespace Whizbang.Core.Security.Attributes;
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_PicksStrictestActionAsync</tests>
 public enum DeniedAction {
   /// <summary>
-  /// Throw <see cref="UnauthorizedAccessException"/>. The message routes through the
-  /// existing inbox-failure / dead-letter pipeline. Default — loud and auditable.
+  /// Refuse loudly. A local dispatch throws <see cref="Exceptions.ReceptorInvocationDeniedException"/> (an
+  /// <see cref="UnauthorizedAccessException"/>) to its caller; inbox delivery moves the message straight to the
+  /// dead-letter store (reason <c>ReceptorDenied</c>) without a retry. The default: loud and auditable.
   /// </summary>
   DeadLetter,
   /// <summary>
-  /// Move the message to a separate "denied" inbox table for forensic review without
-  /// blocking the main stream. Useful for abuse detection.
+  /// Set the message aside for review without blocking the stream. Inbox delivery holds it in the dead-letter
+  /// store under its own reason (<c>ReceptorQuarantined</c>), apart from failures, and never retries it on its
+  /// own; a local dispatch throws <see cref="Exceptions.ReceptorInvocationDeniedException"/> to its caller.
+  /// Useful for abuse detection.
   /// </summary>
   Quarantine,
   /// <summary>
@@ -33,8 +36,9 @@ public enum DeniedAction {
   /// </summary>
   DropQuiet,
   /// <summary>
-  /// Throw <see cref="UnauthorizedAccessException"/> and let the consumer's retry policy
-  /// decide. Rarely the right answer; prefer <see cref="DeadLetter"/>.
+  /// Throw <see cref="Exceptions.ReceptorInvocationDeniedException"/> (an <see cref="UnauthorizedAccessException"/>)
+  /// and let the retry policy decide: inbox delivery fails the attempt, and the attempts bound retries it.
+  /// Rarely the right answer; prefer <see cref="DeadLetter"/>.
   /// </summary>
   Throw,
 }

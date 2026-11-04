@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -44,20 +46,37 @@ public readonly record struct AuditRebuildResult(int Selected, int Rederived);
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
-public sealed class AuditLedgerRebuild {
+public sealed partial class AuditLedgerRebuild {
   private readonly SystemEventOptions _options;
   private readonly TimeProvider _time;
-  private readonly Dictionary<string, Type> _types;
+  private readonly AuditTypeResolver _types;
+  private readonly ILogger _logger;
 
   /// <summary>Creates a rebuild that resolves stored type names against <paramref name="catalog"/>.</summary>
   /// <param name="catalog">The generated message-type catalog; a stored type outside it is decided by the mode alone.</param>
   /// <param name="options">The audit options the live writers use.</param>
   /// <param name="timeProvider">The clock for a record whose stored metadata has no hop time; null is the system clock.</param>
-  public AuditLedgerRebuild(IMessageTypeCatalog catalog, SystemEventOptions options, TimeProvider? timeProvider = null) {
+  public AuditLedgerRebuild(IMessageTypeCatalog catalog, SystemEventOptions options, TimeProvider? timeProvider = null)
+    : this(catalog, options, timeProvider, logger: null) {
+  }
+
+  /// <summary>
+  /// Creates a rebuild that resolves stored type names against <paramref name="catalog"/> and reports, on
+  /// <paramref name="logger"/>, every stored event it does not audit because its type could not be resolved (#1980).
+  /// </summary>
+  /// <param name="catalog">The generated message-type catalog; a stored type outside it is decided by the mode alone.</param>
+  /// <param name="options">The audit options the live writers use.</param>
+  /// <param name="timeProvider">The clock for a record whose stored metadata has no hop time; null is the system clock.</param>
+  /// <param name="logger">Where a skipped unresolvable type is reported; null reports nowhere.</param>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnUnknownTypeUnderOptIn_WarnsNamingTheTypeAsync</tests>
+  public AuditLedgerRebuild(
+      IMessageTypeCatalog catalog, SystemEventOptions options, TimeProvider? timeProvider, ILogger<AuditLedgerRebuild>? logger) {
     ArgumentNullException.ThrowIfNull(catalog);
     _options = ArgumentGuard.NotNull(options);
     _time = timeProvider ?? TimeProvider.System;
-    _types = EventTypeMatchingHelper.BuildTypeLookup([.. catalog.GetAll().Select(e => e.Type)]);
+    _logger = logger ?? (ILogger)NullLogger.Instance;
+    // The resolver the live outbox path uses, so the two agree on which types resolve (#2040).
+    _types = new AuditTypeResolver(catalog);
   }
 
   /// <summary>
@@ -69,8 +88,8 @@ public sealed class AuditLedgerRebuild {
   public OutboxMessage? Rederive(RedeliveryEvent storedEvent) {
     ArgumentNullException.ThrowIfNull(storedEvent);
     var isEphemeral = (storedEvent.Flags & (int)EventFlags.Ephemeral) != 0;
-    EventTypeMatchingHelper.TryResolveType(_types, storedEvent.EventType, out var eventType);
-    if (!_isAudited(eventType, isEphemeral)) {
+    _ = _types.TryResolve(storedEvent.EventType, out var eventType);
+    if (!_isAudited(eventType, isEphemeral, storedEvent.EventType)) {
       return null;
     }
 
@@ -154,12 +173,25 @@ public sealed class AuditLedgerRebuild {
     return new AuditRebuildResult(selected, rederived);
   }
 
-  private bool _isAudited(Type? eventType, bool isEphemeral) {
+  private bool _isAudited(Type? eventType, bool isEphemeral, string storedType) {
     if (eventType is not null) {
       return AuditEligibility.Decide(payload: null, eventType, _options.AuditMode, hook: null, isEphemeral).ShouldAudit;
     }
-    return !isEphemeral && _options.AuditMode == AuditMode.OptOut;
+    if (isEphemeral) {
+      return false;
+    }
+    if (_options.AuditMode == AuditMode.OptIn) {
+      // Never silent (#1980): in the ledger this record's absence looks like a type nobody opted in.
+      LogUnresolvedTypeSkipped(_logger, storedType);
+      return false;
+    }
+    return true;
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Stored event of type '{TypeName}' was not audited by the ledger rebuild: the type could not be resolved, and under OptIn only a type marked [AuditEvent] is audited.")]
+  private static partial void LogUnresolvedTypeSkipped(ILogger logger, string typeName);
 
   private static JsonElement _parse(string json) {
     using var document = JsonDocument.Parse(json);
