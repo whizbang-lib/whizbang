@@ -6,7 +6,7 @@
 
 <#
 .SYNOPSIS
-    Lists, per sliced test suite (each integration suite, and the component suite), the build output
+    Lists, per test suite (each integration suite, the component suite and the unit suite), the build output
     that suite needs, so each suite downloads its own slice of the build instead of all of it.
 
 .DESCRIPTION
@@ -18,8 +18,10 @@
 
     A suite's projects are chosen exactly as Run-Tests.ps1 chooses them for that suite: projects in
     Whizbang.slnx that declare the suite's <WhizbangTestType> and, for an integration suite, carry its
-    tag in <WhizbangTestTags>. The component suite runs every Component project (-Mode Component, no
-    tag), so its slice is every Component project. A new project joins its slice with no change here,
+    tag in <WhizbangTestTags>. The component and unit suites run every project of their type (-Mode
+    Component, -Mode Unit, no tag), so each slice is every project of that type. The unit suite used to
+    download the whole build (about 2.4 GB, 4.2 minutes for 1.5 minutes of tests); its slice leaves out
+    the output of every project it does not run (#2068). A new project joins its slice with no change here,
     and a slice that misses one fails the suite: Run-Tests.ps1 -NoBuild refuses a selected project
     with no build output.
 
@@ -59,11 +61,12 @@ $script:Suites = [ordered]@{
   integration = @{ Type = 'Integration'; Tag = 'Integration';    Extra = @() }
   # Every Component project: real workers and threads, no infrastructure (#1264).
   component  = @{ Type = 'Component';   Tag = '';                Extra = @() }
+  # Every Unit project (#2068).
+  unit       = @{ Type = 'Unit';        Tag = '';                Extra = @() }
 }
 
 # Types that get no slice, and why.
 $script:UnslicedTypes = [ordered]@{
-  Unit      = 'the unit suite runs most projects, so it keeps the full build'
   Benchmark = 'not run in CI (BenchmarkDotNet, on demand)'
   Soak      = 'not run in CI (scripts/Run-Soak.ps1, on demand)'
 }

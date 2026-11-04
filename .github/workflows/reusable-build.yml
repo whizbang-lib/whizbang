@@ -154,9 +154,10 @@ jobs:
       # Per-suite slices. Every test job downloaded the whole build above (about 2.4 GB) though an
       # integration suite runs one or two projects, and the download took anywhere from 40 seconds
       # to over 5 minutes. A test project's bin/Release holds its whole dependency closure, so each
-      # integration suite gets only its projects' output; the unit suite, which runs most projects,
-      # keeps the full build. The slices are derived from the projects' tags, the same way
-      # Run-Tests.ps1 selects them, and a slice missing a selected project fails that suite.
+      # suite gets only its projects' output; the unit suite too, since #2068 (it spent 4.2 minutes
+      # downloading for 1.5 minutes of tests). The full build above is what pack reads. The slices are
+      # derived from the projects' types and tags, the same way Run-Tests.ps1 selects them, and a
+      # slice missing a selected project fails that suite.
       - name: Define per-suite build slices
         if: inputs.upload-slices
         id: slices
@@ -224,6 +225,17 @@ jobs:
         with:
           name: build-component-${{ github.run_id }}
           path: ${{ steps.slices.outputs.component }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
+      - name: Upload build slice (unit)
+        if: inputs.upload-slices
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-unit-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.unit }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 1
