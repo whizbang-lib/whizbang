@@ -22,7 +22,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Wake sources:
 /// </para>
 /// <list type="bullet">
-/// <item><description><strong>The commit doorbell on the signal bus</strong> (<see cref="RowsCommittedSignal"/>, #2046) —
+/// <item><description><strong>The commit doorbell on the signal bus</strong> (<see cref="RowsCommittedSignal"/>, #2046):
 /// sub-ms wake from <c>_emit_event_store_chain</c> after commit. The bus's transport LISTENs on the one shared
 /// connection; the stamper subscribes to the signal and owns no channel.</description></item>
 /// <item><description><strong>Polling tick</strong> — <see cref="CommitOrderStamperOptions.PollingInterval"/>.
