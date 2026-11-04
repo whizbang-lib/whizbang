@@ -19,8 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// once per connection and emptied at commit instead.
 /// </summary>
 /// <remarks>
-/// The catalog counters are read inside the second call's transaction (<c>pg_stat_xact_sys_tables</c>), so they count
-/// that transaction alone and no other session can move them.
+/// The catalog counters are read inside the second call's transaction (<c>pg_stat_xact_sys_tables</c>), so no other
+/// session can move them. They are read before and after the call and the difference is asserted: that view also
+/// includes this connection's counts from earlier transactions that have not been flushed yet (the first call's own
+/// table creation among them), so a single read would count the first call too.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/320_RepairWaitsForItsAnswer.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/301_StreamDigestsAreFoundByStream.sql</code-under-test>
@@ -41,8 +43,9 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
     await _recordAnswerAsync(conn, transaction: null);
 
     await using var tx = await conn.BeginTransactionAsync();
+    var before = await _catalogWritesAsync(conn, tx);
     await _recordAnswerAsync(conn, tx);
-    var writes = await _catalogWritesAsync(conn, tx);
+    var writes = await _catalogWritesAsync(conn, tx) - before;
     await tx.CommitAsync();
 
     await Assert.That(writes).IsEqualTo(0L)
@@ -55,8 +58,9 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
     await _reconcileAsync(conn, transaction: null);
 
     await using var tx = await conn.BeginTransactionAsync();
+    var before = await _catalogWritesAsync(conn, tx);
     await _reconcileAsync(conn, tx);
-    var writes = await _catalogWritesAsync(conn, tx);
+    var writes = await _catalogWritesAsync(conn, tx) - before;
     await tx.CommitAsync();
 
     await Assert.That(writes).IsEqualTo(0L)
