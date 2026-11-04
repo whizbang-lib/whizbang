@@ -24,7 +24,9 @@
                     Build, verify-rebuild and reupload-reports must all be green; build is not required
                     when the change detector found no code (a docs-only merge builds nothing).
       docs-only     a push or PR whose change detector found only inert paths.
-      tested here   anything else: build, every suite and Quality must be green. A skip fails.
+      tested here   anything else: build, the analyzers, every suite and Quality must be green. A skip
+                    fails. Compile builds with the analyzers off (#2068), so Build - Analyzers is the
+                    only job that enforces them; every other path proves a run where it went green.
 
     On every path, any failed or canceled job fails the gate. A push to a release branch must also have
     built and packed, whatever path it took (#1208): that run is the one the stable publish promotes
@@ -154,6 +156,7 @@ function Get-CiVerdict {
     default {
       $why = 'nothing proves this tree was tested anywhere else'
       & $require 'build' $why
+      & $require 'analyzers' $why
       foreach ($suite in $script:Suites) { & $require $suite $why }
       if (-not ($EventName -eq 'pull_request' -and $Actor -eq 'dependabot[bot]')) {
         & $require 'quality' $why

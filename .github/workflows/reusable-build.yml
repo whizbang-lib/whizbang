@@ -18,6 +18,14 @@ on:
         required: false
         type: string
         default: ''
+      run-analyzers:
+        description: >-
+          Run the Roslyn analyzers during the build. CI turns them off here and enforces them in its separate
+          Build · Analyzers job, off the suites' critical path (#2068). Source generators run either way: the
+          compiler's /skipanalyzers skips diagnostic analyzers only.
+        required: false
+        type: boolean
+        default: true
       upload-slices:
         description: >-
           Upload the per-suite build slices. False when no suite will run in this run (a push that reuses an
@@ -40,8 +48,8 @@ jobs:
   build:
     name: Compile and hash
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
-    # The analyzers run in every project now, which roughly doubles the solution build on a
-    # hosted runner (16 minutes observed); the artifact upload follows it.
+    # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
+    # runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 35
 
     steps:
@@ -71,9 +79,12 @@ jobs:
           # Env-var indirection (githubactions:S7630): never interpolate workflow inputs
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
+          RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
           BUILD_ARGS=(--no-restore --configuration Release)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
+          # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
+          if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
           dotnet build "${BUILD_ARGS[@]}"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it

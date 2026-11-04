@@ -919,6 +919,7 @@ Describe 'Which class each ci.yml job takes' {
     $script:CiJobs = Get-WorkflowJobText (Join-Path $Root '.github' 'workflows' 'ci.yml')
     $script:Expected = [ordered]@{
       'build'                  = 'compile'
+      'analyzers'              = 'compile'
       'format'                 = 'any-os'
       'noop-rebuild'           = 'any-os'
       'unit-tests'             = 'any-os'
@@ -937,6 +938,7 @@ Describe 'Which class each ci.yml job takes' {
 
   It 'routes <Job> through the <Class> class' -ForEach @(
     @{ Job = 'build'; Class = 'compile' }
+    @{ Job = 'analyzers'; Class = 'compile' }
     @{ Job = 'format'; Class = 'any-os' }
     @{ Job = 'noop-rebuild'; Class = 'any-os' }
     @{ Job = 'unit-tests'; Class = 'any-os' }

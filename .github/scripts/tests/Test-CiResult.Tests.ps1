@@ -9,7 +9,7 @@ BeforeAll {
   # A run where every job the gate looks at succeeded, with no reuse. Tests override from here.
   function Get-GreenNeed {
     $needs = @{}
-    foreach ($job in @('changes', 'format', 'build', 'unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration',
+    foreach ($job in @('changes', 'format', 'build', 'analyzers', 'unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration',
         'rabbitmq-integration', 'servicebus-integration', 'azureblob-integration', 'general-integration', 'quality', 'pack')) {
       $needs[$job] = @{ result = 'success'; outputs = @{} }
     }
@@ -54,6 +54,19 @@ Describe 'tested here' {
     $v = Get-CiVerdict -NeedsTable $n -EventName pull_request
     $v.Pass | Should -BeFalse
     $v.Problems.Count | Should -Be (1 + $AllSuites.Count) -Because 'the build and every suite are each reported'
+  }
+
+  It 'fails when the analyzers did not run with nothing proving the tree was analyzed elsewhere' {
+    # Compile builds with the analyzers off (#2068), so Build - Analyzers is the only analyzer gate.
+    $n = Get-GreenNeed; Skip-Job $n @('analyzers')
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -Actor someone
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain 'analyzers is skipped, but nothing proves this tree was tested anywhere else'
+  }
+
+  It 'requires the analyzers on a Dependabot PR too, which skips only Quality' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality', 'analyzers')
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -Actor 'dependabot[bot]').Pass | Should -BeFalse
   }
 
   It 'fails when Quality is skipped on an ordinary PR' {
@@ -114,7 +127,7 @@ Describe 'reused (queue-validated)' {
     $n['queue-validated'] = @{ result = 'success'; outputs = @{ validated = 'true' } }
     $n['verify-rebuild'].result = 'success'
     $n['reupload-reports'].result = 'success'
-    Skip-Job $n (@('quality') + $AllSuites)
+    Skip-Job $n (@('quality', 'analyzers') + $AllSuites)
   }
 
   It 'passes when build, verify-rebuild and reupload-reports are green' {
@@ -147,7 +160,7 @@ Describe 'fast-forward (ff-validated)' {
   It 'passes a queue run whose tree the PR run already covered' {
     $n = Get-GreenNeed
     $n['ff-validated'] = @{ result = 'success'; outputs = @{ skip = 'true' } }
-    Skip-Job $n (@('format', 'build', 'quality') + $AllSuites)
+    Skip-Job $n (@('format', 'build', 'analyzers', 'quality') + $AllSuites)
     $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
     $v.Path | Should -Be 'fast-forward'
     $v.Pass | Should -BeTrue

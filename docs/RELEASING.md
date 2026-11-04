@@ -120,7 +120,13 @@ promotes packages from and the release PR takes coverage from, so `Plan · Detec
 nothing (a second PR for the same fix) took the docs-only shape: the run reused the tested results,
 built and packed nothing, and left the release PR's Quality with no coverage and the publish with no
 packages.
-| tested here | everything else | build, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
+| tested here | everything else | build, `Build · Analyzers`, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
+
+**Analyzers run once, beside the suites** (#2068). `Build · Compile` builds with the analyzers off, so
+the suites start as soon as the code compiles, and `Build · Analyzers` builds the same solution with
+every analyzer on and warnings as errors, wherever Compile runs, Dependabot pull requests included.
+The one place it does not run is a push that reuses an already-tested run: that run's gate, which
+required this job, went green on the same tree and SDK. Both publishes require it.
 
 Chaining is safe because each link is a gate: a release PR's gate reads the release-branch run's
 gate, which itself required verified reuse or its own suites. Before this, the gate accepted any

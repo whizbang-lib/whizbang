@@ -778,7 +778,7 @@ jobs:
       # Whitespace and style only. The analyzers pass would run the third-party analyzers too, and
       # this job has not built the tree: the source generators that ship as project references
       # are not on disk yet, so the semantic model is incomplete and those analyzers report
-      # findings that do not exist in a real build. The build job enforces them, with warnings
+      # findings that do not exist in a real build. Build · Analyzers enforces them, with warnings
       # as errors, in every project.
       # pwsh, so the job runs on any runner OS; each exit code is checked, because a pwsh step fails
       # only on its last command's.
@@ -871,6 +871,51 @@ jobs:
       version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
       # The suites skip when this push reuses an already-tested run, so their slices would be read by nothing.
       upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
+      # Analyzers run once per run, in the analyzers job below, not on the suites' critical path (#2068).
+      run-analyzers: false
+
+  # Every Roslyn analyzer (CA, IDE code style, Sonar, Roslynator, the banned-API, AOT and trim analyzers, and the
+  # repository's own) over every project in the solution, with warnings as errors, exactly as Compile enforced
+  # them until #2068. Compile now builds with the analyzers off, so the suites start about as soon as the code
+  # compiles, and this build runs beside them. It runs wherever Compile runs (Dependabot pull requests and pushes
+  # included) except on a push that reuses an already-tested run: queue-validated proved that run green, and its
+  # gate included this job, over the same tree on the same SDK. Gate · CI result fails on any analyzer error,
+  # and both publishes require it.
+  analyzers:
+    name: Build · Analyzers
+    needs: [changes, release-pr, ff-validated, queue-validated, pick-runner]
+    if: >-
+      ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
+      needs.ff-validated.outputs.skip != 'true' && needs.queue-validated.outputs.validated != 'true' &&
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        run: dotnet restore --locked-mode
+
+      # The whole solution, the same projects Compile builds; nothing is uploaded, only the verdict matters.
+      - name: Build every project with the analyzers on
+        run: dotnet build --no-restore --configuration Release
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
@@ -1489,7 +1534,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
+    needs: [changes, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
@@ -1607,17 +1652,18 @@ jobs:
 
   prerelease-publish:
     name: Publish · Alpha (develop)
-    needs: [version, pack, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, queue-validated, verify-rebuild, alpha-floor]
+    needs: [version, pack, format, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, queue-validated, verify-rebuild, alpha-floor]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
-    # the full same-run matrix or the queue-validated + verified-rebuild pair, AND a version that
+    # the full same-run matrix (the analyzers included) or the queue-validated + verified-rebuild
+    # pair, AND a version that
     # does not sort below anything already on nuget.org (alpha-floor).
     if: >-
       !failure() && !cancelled() &&
       github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       needs.pack.result == 'success' && needs.format.result == 'success' &&
       needs.alpha-floor.result == 'success' &&
-      ((needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      ((needs.analyzers.result == 'success' && needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
         needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
         needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success') ||
        (needs.queue-validated.outputs.validated == 'true' && needs.verify-rebuild.result == 'success'))
@@ -1772,7 +1818,7 @@ jobs:
 
   release-publish:
     name: Publish · Hotfix (older line)
-    needs: [version, pack, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, release-guard]
+    needs: [version, pack, format, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, release-guard]
     # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
     # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
     # — and adding the `!failure() && !cancelled()` every other job opens with would have silently
@@ -1784,7 +1830,7 @@ jobs:
       github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created &&
       needs.release-guard.outputs.should_publish == 'true' &&
       needs.version.result == 'success' && needs.pack.result == 'success' && needs.format.result == 'success' &&
-      needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      needs.analyzers.result == 'success' && needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
       needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
       needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success'
     permissions:
@@ -1891,7 +1937,7 @@ jobs:
 
   notify-cancelled:
     name: Notify · Canceled
-    needs: [build, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality]
+    needs: [build, analyzers, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality]
     permissions:
       contents: read
     # merge_group is excluded for a different reason than success: the queue cancels its own runs
