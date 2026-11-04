@@ -443,6 +443,8 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
+    // A fresh warn-once memory per fixture: the receptor's process-wide fallback would leak between tests.
+    services.AddSingleton(new IntegrityOwnershipConflicts());
     var ledger = new RecordingIntegrityRepairLedger();
     services.AddSingleton<IIntegrityRepairLedger>(ledger);
     // A fresh policy per fixture: its window state is the subject under test, and the receptor's
@@ -581,6 +583,20 @@ public class IntegrityCheckpointReceptorTests {
 
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
       ValueTask.FromResult(Backlog);
+
+    public List<(Guid Owner, string Name, string? Topic, IReadOnlyList<string> Domains)> RecordedClaims { get; } = [];
+    public IReadOnlyList<IntegrityDomainClaim> Conflicts { get; set; } = [];
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; set; } = [];
+
+    public Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(
+        Guid ownerServiceId, string ownerServiceName, string? requestTopic, IReadOnlyList<string> domains,
+        CancellationToken cancellationToken = default) {
+      RecordedClaims.Add((ownerServiceId, ownerServiceName, requestTopic, domains));
+      return Task.FromResult(Conflicts);
+    }
+
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Claims);
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);
@@ -786,4 +802,97 @@ public class IntegrityCheckpointReceptorTests {
              + "confirmation recounts, then the cooldown holds. Unbounded is 18");
   }
 
+
+  // ── #2008 / #2032: ownership exchange ──────────────────────────────────
+
+  private const string VERIFIED_DOMAIN = "whizbang.data.efcore.postgres.tests";
+
+  [Test]
+  public async Task Checkpoint_RecordsTheOriginsAnnouncedDomainsAsync() {
+    var fx = _fixture();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests")
+      with { OwnedDomains = ["app.contracts.orders", "app.contracts.shipping"] });
+
+    var recorded = fx.Coordinator.RecordedClaims.Single();
+    await Assert.That(recorded.Owner).IsEqualTo(fx.OriginId);
+    await Assert.That(recorded.Name).IsEqualTo("origin-svc");
+    await Assert.That(recorded.Topic).IsEqualTo("origin.requests")
+      .Because("the owner's request address is kept with its claim, so backfill can be directed at it after a restart");
+    await Assert.That(recorded.Domains).IsEquivalentTo(["app.contracts.orders", "app.contracts.shipping"]);
+  }
+
+  [Test]
+  public async Task Checkpoint_FromAnOlderOrigin_RecordsItsEmptyClaimSetAsync() {
+    var fx = _fixture();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Coordinator.RecordedClaims.Single().Domains).IsEmpty()
+      .Because("an origin that announces nothing holds no claim, and one that stopped claiming a domain gives it up");
+  }
+
+  [Test]
+  public async Task Checkpoint_AContestedDomain_WarnsAndCountsOncePerPairAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var meter = metrics.GapsDetected.Meter;
+    long conflicts = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "whizbang.stream_integrity.ownership_conflicts") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Exchange(ref conflicts, value));
+    listener.Start();
+    var logger = new CaptureLogger();
+    var fx = _fixture(metrics: metrics, logger: logger);
+    var rival = Guid.Parse("0f000000-0000-0000-0000-00000000000f");
+    fx.Coordinator.Conflicts = [new IntegrityDomainClaim {
+      Domain = "app.contracts.orders", OwnerServiceId = rival, OwnerServiceName = "rival-svc",
+    }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true) with { OwnedDomains = ["app.contracts.orders"] });
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 6, count: 0, emptyBuckets: true) with { OwnedDomains = ["app.contracts.orders"] });
+    listener.RecordObservableInstruments();
+
+    var warnings = logger.Entries.Where(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                                         && e.Message.Contains("app.contracts.orders", StringComparison.Ordinal)).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(1)
+      .Because("the same pair contesting the same domain on every checkpoint is one condition, warned once");
+    await Assert.That(warnings[0].Message).Contains("rival-svc");
+    await Assert.That(warnings[0].Message).Contains("origin-svc");
+    await Assert.That(Interlocked.Read(ref conflicts)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task Checkpoint_ABucketOfATypeAnotherServiceOwns_IsNotVerifiedAgainstThisOriginAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Claims = [new IntegrityDomainClaim {
+      Domain = VERIFIED_DOMAIN, OwnerServiceId = Guid.Parse("0f000000-0000-0000-0000-00000000000f"), OwnerServiceName = "owner-svc",
+    }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty()
+      .Because("an origin's count of a type another service owns is not authoritative, so no gap is confirmed against it");
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("repair is asked of the owner, never of a service that merely holds a copy (#2032)");
+  }
+
+  [Test]
+  public async Task Checkpoint_ABucketOfATypeThisOriginOwns_IsVerifiedAsBeforeAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Claims = [new IntegrityDomainClaim {
+      Domain = VERIFIED_DOMAIN, OwnerServiceId = fx.OriginId, OwnerServiceName = "origin-svc",
+    }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Dispatcher.Published.OfType<IntegrityGapDetected>().Count()).IsEqualTo(1);
+  }
 }

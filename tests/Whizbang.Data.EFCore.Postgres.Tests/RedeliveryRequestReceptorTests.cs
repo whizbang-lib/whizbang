@@ -496,4 +496,106 @@ public class RedeliveryRequestReceptorTests {
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
+
+  // ── #2032: redelivery ships only what this origin authored ──────────────
+
+  private static ServiceProvider _buildOwningProvider(
+      SelectingCoordinator coordinator, CaptureTransport transport, CaptureSerializer serializer, string serviceName,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null, params string[] ownedDomains) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IEnvelopeSerializer>(serializer);
+    services.AddSingleton(new RedeliveryPumpOptions { SelectPageSize = 2, MaxEventsPerRequest = 100 });
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }));
+    services.AddSingleton<IServiceInstanceProvider>(new NamedInstance(serviceName));
+    services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().OwnDomains(ownedDomains)));
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
+    return services.BuildServiceProvider();
+  }
+
+  [Test]
+  public async Task Receptor_ARequestThisServiceMadeItself_IsIgnoredAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var ignored = new List<(long Value, string? Reason)>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, metrics.GapsDetected.Meter) && instrument.Name == "whizbang.stream_integrity.redelivery_requests_ignored") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? reason = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "reason") {
+          reason = tag.Value as string;
+        }
+      }
+      lock (ignored) {
+        ignored.Add((value, reason));
+      }
+    });
+    listener.Start();
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    var transport = new CaptureTransport();
+    await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc", metrics);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "Orders-Svc", Topic = "inbox", StateOnly = true });
+    listener.RecordObservableInstruments();
+
+    await Assert.That(coordinator.Requests).IsEmpty()
+      .Because("a backfill broadcast on a shared topic reaches its sender too; answering it re-ships the sender's own store to itself");
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(ignored.Last()).IsEqualTo((1L, (string?)"own_request"));
+  }
+
+  [Test]
+  public async Task Receptor_AsksTheSelectionForEventsThisServiceAuthoredAsync() {
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    await using var sp = _buildOwningProvider(coordinator, new CaptureTransport(), new CaptureSerializer(), "orders-svc");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(coordinator.Requests[0].AuthoredBy).IsEqualTo("orders-svc")
+      .Because("the bundle names this service as origin, so it may carry only events this service wrote");
+  }
+
+  [Test]
+  public async Task Receptor_ShipsOnlyEventsOfOwnedTypes_AndPagesPastTheRestAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    var foreign1 = TrackedGuid.New().Value;
+    var foreign2 = TrackedGuid.New().Value;
+    var owned = TrackedGuid.New().Value;
+    coordinator.Selection = [
+      _evt(s1, foreign1, 1) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" },
+      _evt(s1, foreign2, 2) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" },
+      _evt(s2, owned, 1) with { EventType = "App.Contracts.Orders.Placed, App.Contracts" },
+    ];
+    await using var sp = _buildOwningProvider(coordinator, transport, serializer, "orders-svc", ownedDomains: "App.Contracts.Orders");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds)).IsEquivalentTo([owned])
+      .Because("events of a type this service does not own were authored elsewhere; receivers refuse them (#1844)");
+    await Assert.That(coordinator.Requests.Count).IsGreaterThanOrEqualTo(2)
+      .Because("a page of only foreign events still advances the keyset, so the owned events behind it are reached");
+  }
+
+  private sealed class NamedInstance(string serviceName) : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = Guid.Parse("0d000000-0000-0000-0000-00000000000d");
+    public string ServiceName => serviceName;
+    public string HostName => "test-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
 }

@@ -116,7 +116,8 @@ public class IntegrityCheckpointWorkerBranchCoverageTests {
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
     var strategy = new CapturingOutboxStrategy();
-    var routingOptions = new RoutingOptions().OwnDomains("app.orders");
+    // The probe's own namespace: with owned domains registered the checkpoint rides only owned types' topics (#2031).
+    var routingOptions = new RoutingOptions().OwnDomains("Whizbang.Core.Tests.Workers.CheckpointTopicProbes.Orders");
     var worker = _buildWorker(coordinator, dispatcher, s => {
       _addTransportInfrastructure(s, transport, new Catalog(ordersType));
       s.AddSingleton<IOutboxRoutingStrategy>(strategy);
@@ -126,7 +127,7 @@ public class IntegrityCheckpointWorkerBranchCoverageTests {
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
     await Assert.That(strategy.OwnedDomainsSeen).IsNotNull();
-    await Assert.That(strategy.OwnedDomainsSeen!.Contains("APP.ORDERS")).IsTrue()
+    await Assert.That(strategy.OwnedDomainsSeen!.Contains("WHIZBANG.CORE.TESTS.WORKERS.CHECKPOINTTOPICPROBES.ORDERS")).IsTrue()
       .Because("the configured owned domains reach the routing strategy, matched case-insensitively");
     await Assert.That(transport.Published.Select(p => p.Destination.Address)).IsEquivalentTo(["captured.topic"]);
     await Assert.That(dispatcher.Published).IsEmpty();
