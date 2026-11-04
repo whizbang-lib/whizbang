@@ -123,6 +123,45 @@ Describe 'tested here, in the merge queue (#2070)' {
   }
 }
 
+Describe 'pr-fast: a pull request into develop (#2070)' {
+  # A pull request into develop runs the fast gates; the integration suites, Quality and pack run once, in the
+  # merge queue, which every change into develop passes through.
+  BeforeEach {
+    $script:n = Get-GreenNeed
+    Skip-Job $n @('quality', 'pack', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
+      'servicebus-integration', 'azureblob-integration', 'general-integration')
+  }
+
+  It 'passes with build, the analyzers, the unit and component suites green and the rest left to the queue' {
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop -Actor someone
+    $v.Path | Should -Be 'pr-fast'
+    $v.Pass | Should -BeTrue
+  }
+
+  It 'fails when <job> did not run' -ForEach @(@{ job = 'build' }, @{ job = 'analyzers' }, @{ job = 'unit-tests' }, @{ job = 'component-tests' }) {
+    Skip-Job $n @($job)
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain "$job is skipped, but a pull request into develop runs the fast gates itself"
+  }
+
+  It 'still fails on a failed job the queue would also run' {
+    $n['postgres-integration'].result = 'failure'
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop).Problems | Should -Contain 'postgres-integration failure'
+  }
+
+  It 'is not taken by a pull request into <base>, which has no merge queue' -ForEach @(@{ base = 'main' }, @{ base = 'release/v1.2.3' }, @{ base = '' }) {
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef $base -Actor someone
+    $v.Path | Should -Be 'tested here'
+    $v.Pass | Should -BeFalse
+  }
+
+  It 'leaves a docs-only pull request into develop on the docs-only path' {
+    $n['changes'].outputs.code = 'false'; Skip-Job $n @('build', 'analyzers', 'unit-tests', 'component-tests')
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop).Path | Should -Be 'docs-only'
+  }
+}
+
 Describe 'docs-only' {
   It 'passes a <event> with only inert paths and nothing built' -ForEach @(@{ event = 'push' }, @{ event = 'pull_request' }) {
     $n = Get-GreenNeed; $n['changes'].outputs.code = 'false'; Skip-Job $n (@('build', 'quality', 'pack') + $AllSuites)

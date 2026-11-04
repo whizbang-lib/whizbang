@@ -24,6 +24,9 @@
                     Build, verify-rebuild and reupload-reports must all be green; build is not required
                     when the change detector found no code (a docs-only merge builds nothing).
       docs-only     a push or PR whose change detector found only inert paths.
+      pr-fast       a pull request into develop (#2070): build, the analyzers and the unit and component
+                    suites must be green. The integration suites, Quality and pack run once, in the merge
+                    queue, which every change into develop passes through, and may be skipped here.
       tested here   anything else: build, the analyzers, every suite and Quality must be green. A skip
                     fails. Compile builds with the analyzers off (#2068), so Build - Analyzers is the
                     only job that enforces them; every other path proves a run where it went green.
@@ -49,6 +52,9 @@
 .PARAMETER Ref
     github.ref. A push to refs/heads/release/v* must have built and packed.
 
+.PARAMETER BaseRef
+    github.base_ref: the branch a pull request merges into. develop selects the pr-fast path.
+
 .EXAMPLE
     pwsh .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName pull_request -Actor someone
 #>
@@ -64,7 +70,10 @@ param(
     [string]$Actor = '',
 
     [Parameter()]
-    [string]$Ref = ''
+    [string]$Ref = '',
+
+    [Parameter()]
+    [string]$BaseRef = ''
 )
 
 Set-StrictMode -Version Latest
@@ -97,13 +106,14 @@ function Get-NeedOutput {
 # Which path the run took. Order matters only for the impossible combinations; each planning job is
 # event-exclusive (release-pr: release PR or main push; ff-validated: merge_group; queue-validated: push).
 function Get-CiPath {
-  param([hashtable]$Needs, [string]$EventName)
+  param([hashtable]$Needs, [string]$EventName, [string]$BaseRef = '')
   $needs = $Needs; $eventName = $EventName
   if ((Get-NeedOutput -Needs $needs -Job 'release-pr' -Name 'skip') -eq 'true') { return 'yielded' }
   if ((Get-NeedOutput -Needs $needs -Job 'ff-validated' -Name 'skip') -eq 'true') { return 'fast-forward' }
   if ((Get-NeedOutput -Needs $needs -Job 'queue-validated' -Name 'validated') -eq 'true') { return 'reused' }
   if ($eventName -in @('push', 'pull_request') -and (Get-NeedResult -Needs $needs -Job 'changes') -eq 'success' -and
       (Get-NeedOutput -Needs $needs -Job 'changes' -Name 'code') -ne 'true') { return 'docs-only' }
+  if ($eventName -eq 'pull_request' -and $BaseRef -eq 'develop') { return 'pr-fast' }
   return 'tested here'
 }
 
@@ -117,7 +127,8 @@ function Get-CiVerdict {
       [Parameter(Mandatory)][string]$EventName,
       [string]$Actor = '',
       [string]$CoveringGate = '',
-      [string]$Ref = ''
+      [string]$Ref = '',
+      [string]$BaseRef = ''
   )
   $problems = [System.Collections.Generic.List[string]]::new()
 
@@ -126,7 +137,7 @@ function Get-CiVerdict {
     if ($result -in @('failure', 'cancelled')) { $problems.Add("$job $result") }
   }
 
-  $path = Get-CiPath -Needs $NeedsTable -EventName $EventName
+  $path = Get-CiPath -Needs $NeedsTable -EventName $EventName -BaseRef $BaseRef
   $require = {
     param([string]$job, [string]$why)
     $result = Get-NeedResult -Needs $NeedsTable -Job $job
@@ -155,6 +166,10 @@ function Get-CiVerdict {
       & $require 'reupload-reports' $why
     }
     'docs-only' { }
+    'pr-fast' {
+      $why = 'a pull request into develop runs the fast gates itself'
+      foreach ($job in @('build', 'analyzers', 'unit-tests', 'component-tests')) { & $require $job $why }
+    }
     default {
       $why = 'nothing proves this tree was tested anywhere else'
       & $require 'build' $why
@@ -189,7 +204,7 @@ foreach ($job in ($table.Keys | Sort-Object)) { Write-Output "${job}: $(Get-Need
 # for its gate. Quality already waited for that run's coverage, so this is normally minutes, not the
 # whole matrix. A gate that never appears (the run was canceled before it) counts as not success.
 $covering = ''
-if ((Get-CiPath -Needs $table -EventName $EventName) -eq 'yielded') {
+if ((Get-CiPath -Needs $table -EventName $EventName -BaseRef $BaseRef) -eq 'yielded') {
   $run = Get-NeedOutput -Needs $table -Job 'release-pr' -Name 'coverage-run-id'
   $deadline = (Get-Date).AddMinutes(90)
   while ($true) {
@@ -207,7 +222,7 @@ if ((Get-CiPath -Needs $table -EventName $EventName) -eq 'yielded') {
   Write-Output "yielded to run $run; its gate: $covering"
 }
 
-$verdict = Get-CiVerdict -NeedsTable $table -EventName $EventName -Actor $Actor -CoveringGate $covering -Ref $Ref
+$verdict = Get-CiVerdict -NeedsTable $table -EventName $EventName -Actor $Actor -CoveringGate $covering -Ref $Ref -BaseRef $BaseRef
 $summary = if ($verdict.Pass) { "Gate passed on the **$($verdict.Path)** path." } else { "Gate failed on the **$($verdict.Path)** path." }
 if ($env:GITHUB_STEP_SUMMARY) {
   $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY

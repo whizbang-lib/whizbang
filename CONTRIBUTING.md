@@ -477,14 +477,21 @@ pull request, and every pull request is reviewed against the same standard.
 **How review is conducted**
 
 1. The required checks run automatically on every push to the pull request, and again in the merge
-   queue against the latest `develop` before it lands.
+   queue against the latest `develop` before it lands. Each change is tested once: a pull request into
+   `develop` runs the fast checks (formatting, the build, the analyzers, the unit and component suites,
+   and the review and pull-request gates); the integration suites and the coverage and Sonar gate run in
+   the merge queue, which tests up to five queued pull requests together. The queue's coverage gate
+   posts its PR quality gate comment on each pull request in the group, listing the findings in the files
+   that pull request changed, and a pull request with findings fails the queue run and leaves the queue.
+   A pull request into `main` or a release branch, which has no queue, runs everything itself.
 2. The maintainer reviews pull requests from other contributors, comments on the pull request, and
    either approves, asks for changes, or explains why a change will not be accepted.
 3. The author addresses each comment with a change or a reply. Resolved comments are marked resolved.
 4. When the checks are green and the review is approved, the maintainer adds the pull request to the
    merge queue.
 
-**What the automated checks verify** (all required; none may be skipped or overridden):
+**What the automated checks verify** (all required before a change lands, on the pull request or in the
+merge queue; none may be skipped or overridden):
 
 - the solution builds in Release with every analyzer warning treated as an error;
 - the full test matrix passes (unit, generator, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob,
@@ -526,7 +533,8 @@ that is not signed off, no closing keyword (or one inside backticks), a target b
 a feature's docs pull request, a changelog entry). The job fails while any finding is open, warnings
 included, so each one is fixed or explicitly allowed: a line containing `review-checks:allow` is skipped,
 and `.github/review-checks-ignore.txt` lists paths the checks skip. The PR quality gate comment lists
-uncovered new lines and branches and Sonar findings the same way, and its job fails on them too.
+uncovered new lines and branches and Sonar findings the same way, and its job fails on them too; for a
+pull request into `develop` it is posted from the merge queue run.
 
 Every run posts its own comment and keeps the earlier ones, minimized as outdated, so the pull request
 shows what was found on each commit and when it was fixed; the latest comment is the one the gate

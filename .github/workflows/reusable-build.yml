@@ -26,6 +26,13 @@ on:
         required: false
         type: boolean
         default: true
+      integration-slices:
+        description: >-
+          Upload the integration suites' slices. False on a pull request into develop, which runs only the unit
+          and component suites (the integration suites run in the merge queue).
+        required: false
+        type: boolean
+        default: true
       upload-slices:
         description: >-
           Upload the per-suite build slices. False when no suite will run in this run (a push that reuses an
@@ -176,7 +183,7 @@ jobs:
         run: pwsh -NoProfile -File .github/scripts/Get-TestSlice.ps1 -GitHubOutput
 
       - name: Upload build slice (postgres)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-postgres-${{ github.run_id }}
@@ -187,7 +194,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (inmemory)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-inmemory-${{ github.run_id }}
@@ -198,7 +205,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (rabbitmq)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-rabbitmq-${{ github.run_id }}
@@ -209,7 +216,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (servicebus)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-servicebus-${{ github.run_id }}
@@ -220,7 +227,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (integration)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-integration-${{ github.run_id }}
@@ -253,7 +260,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (azureblob)
-        if: inputs.upload-slices
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-azureblob-${{ github.run_id }}

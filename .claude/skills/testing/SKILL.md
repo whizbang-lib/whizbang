@@ -60,7 +60,9 @@ clock moves to Component, and its pull request says why.
 - When the library has no signal for a transition, add one as a **public** event or callback with
   `<docs>` tags. It is a feature for monitoring as much as for tests, never a test-only internal.
 - A failure in the merge queue that the PR run passed is the race announcing itself. Find it in the
-  change; never re-run past it.
+  change; never re-run past it. (A pull request into develop runs only the unit and component suites
+  (#2070), so an integration suite's first run is in the queue: a failure there may simply be the
+  first time it ran, and is fixed in the change all the same.)
 
 ## Moving a test
 

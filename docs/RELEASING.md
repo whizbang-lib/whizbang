@@ -112,6 +112,7 @@ job fails it on every path. The rules are `.github/scripts/Test-CiResult.ps1`, t
 | fast-forward | a queue run over a tree its PR run covered (`ff-validated`) | `ff-validated` succeeded (it already required the PR run green, Quality included) |
 | reused | a develop push or release cut (`queue-validated`) | `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` green, plus `Build · Compile` unless the change detector found no code (a docs-only merge builds nothing) |
 | docs-only | a push or PR whose change detector found only inert paths | `Plan · Detect changes` succeeded and said so |
+| pr-fast | a pull request into `develop` (#2070) | `Build · Compile`, `Build · Analyzers`, `Test · Unit` and `Test · Component` green; the integration suites, Quality and pack run in the merge queue and may be skipped here |
 
 **A release-branch push always builds and packs** (#1208). Its run is the one the stable publish
 promotes packages from and the release PR takes coverage from, so `Plan · Detect changes` treats every
@@ -120,7 +121,21 @@ promotes packages from and the release PR takes coverage from, so `Plan · Detec
 nothing (a second PR for the same fix) took the docs-only shape: the run reused the tested results,
 built and packed nothing, and left the release PR's Quality with no coverage and the publish with no
 packages.
-| tested here | everything else | build, `Build · Analyzers`, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
+| tested here | everything else | build, `Build · Analyzers`, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR). In the merge queue, Quality is `Analyze · Quality (queue)`, one leg per pull request in the group |
+
+**Each change is tested once** (#2070). A pull request into `develop` runs the fast gates: formatting,
+`Build · Compile`, `Build · Analyzers`, the unit and component suites, and the review and pull-request
+gates. The integration suites, Quality (coverage and Sonar), pack and the no-op rebuild check run once,
+in the merge queue, which builds groups of queued pull requests together. `Plan · Pull requests in this
+queue group` lists the group (the queue's merge commits on its base), the linked-issue, pipeline-owner
+and pull-request-type gates check each of them, and `Analyze · Quality (queue)` runs one leg per pull
+request: the group is built and scanned once, and each leg reports the scan to SonarCloud under its own
+pull request's key, posts the PR quality gate comment on its pull request with the findings in the files
+that pull request changed (plus the library-wide gap), and fails on them, which fails the run and drops
+the group from the queue. The develop push then reuses the queue's results (`queue-validated`). A pull
+request into `main` or a release branch has no queue and keeps the full matrix, so the release paths and
+`require-pr-gate` are unchanged. Escape hatch: `PR_RUN_FULL_MATRIX=true` runs the full matrix on pull
+requests into `develop` too.
 
 **Analyzers run once, beside the suites** (#2068). `Build · Compile` builds with the analyzers off, so
 the suites start as soon as the code compiles, and `Build · Analyzers` builds the same solution with
@@ -472,6 +487,11 @@ quality in the queue run:
   falls through to the full queue matrix, build included.
 
 Escape hatch: repo variable `QUEUE_RUN_FULL_MATRIX=true` forces the full queue matrix.
+
+Since #2070 a pull request into `develop` runs neither Quality nor the integration suites, so its run
+never satisfies "fully green including Quality" and the queue always runs the full matrix: the queue
+is where each change is tested, once. The fast-forward skip still applies when a pull request ran the
+full matrix itself (`PR_RUN_FULL_MATRIX=true`).
 
 ### queue-validated — skip the redundant *push* and *release cut* matrices
 

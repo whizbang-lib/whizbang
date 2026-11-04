@@ -845,9 +845,11 @@ jobs:
   noop-rebuild:
     name: Build · No-op rebuild does no work
     needs: [ff-validated, release-pr, pick-runner]
+    # A pull request into develop leaves it to the merge queue (#2070).
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
-      needs.release-pr.outputs.skip != 'true' }}
+      needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
@@ -909,6 +911,8 @@ jobs:
       upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
       # Analyzers run once per run, in the analyzers job below, not on the suites' critical path (#2068).
       run-analyzers: false
+      # A pull request into develop runs no integration suite (#2070), so their slices would be read by nothing.
+      integration-slices: ${{ (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
 
   # Every Roslyn analyzer (CA, IDE code style, Sonar, Roslynator, the banned-API, AOT and trim analyzers, and the
   # repository's own) over every project in the solution, with warnings as errors, exactly as Compile enforced
@@ -960,6 +964,13 @@ jobs:
   # queue-validated skip: on develop pushes whose exact SHA already passed the full
   # merge-queue matrix, every suite (and quality) skips — see the queue-validated
   # section below for the verification that replaces them on the publish path.
+  #
+  # Test each change once (#2070): a pull request into develop runs the FAST gates only (format, Compile,
+  # the analyzers, the unit and component suites, the review and pull-request gates). The integration
+  # suites, Quality, pack and the no-op rebuild check run once, in the merge queue, which every change into
+  # develop passes through, and Quality there reports to each pull request in the group as the PR run did.
+  # A pull request into main or a release branch has no queue and keeps the full matrix. Escape hatch:
+  # repo variable PR_RUN_FULL_MATRIX=true runs the full matrix on pull requests into develop too.
   unit-tests:
     name: Test · Unit
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
@@ -976,7 +987,8 @@ jobs:
   postgres-integration:
     name: Test · PostgreSQL
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1023,7 +1035,8 @@ jobs:
   inmemory-integration:
     name: Test · InMemory
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1035,7 +1048,8 @@ jobs:
   rabbitmq-integration:
     name: Test · RabbitMQ
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1050,7 +1064,8 @@ jobs:
     # reusable-workflow-call jobs.
     name: Test · Service Bus
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1070,7 +1085,8 @@ jobs:
   azureblob-integration:
     name: Test · Azure Blob
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1081,7 +1097,8 @@ jobs:
   general-integration:
     name: Test · Integration (general)
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       packages: read   # the CI image mirror (reusable workflow needs it)
@@ -1118,6 +1135,7 @@ jobs:
       !failure() && !cancelled() &&
       (github.event_name == 'pull_request' || github.event_name == 'merge_group' ||
        ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')) &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
       needs.ff-validated.outputs.skip != 'true' &&
@@ -1173,6 +1191,7 @@ jobs:
     # The merge queue reports to each pull request in its group: queue-quality, below.
     if: >-
       !failure() && !cancelled() && github.event_name != 'merge_group' &&
+      (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
       needs.ff-validated.outputs.skip != 'true' &&
@@ -1664,9 +1683,10 @@ jobs:
           EVENT: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
           REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: pwsh -NoProfile -File .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName "$EVENT" -Actor "$ACTOR" -Ref "$REF"
+        run: pwsh -NoProfile -File .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName "$EVENT" -Actor "$ACTOR" -Ref "$REF" -BaseRef "$BASE_REF"
 
   # ============================================================================
   # Pack NuGet Packages - validates packability and produces artifacts
@@ -1675,8 +1695,9 @@ jobs:
   pack:
     name: Build · Pack
     needs: [version, build]
-    # version is skipped (not failed) on PRs; pack still validates packability there.
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    # version is skipped (not failed) on PRs. Packability is validated in the merge queue for a change into
+    # develop (#2070), and on its own PR run for a change into main or a release branch.
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read
       actions: read
@@ -2001,7 +2022,9 @@ jobs:
 
   notify-success:
     name: Notify · Success
-    needs: [changes, quality]
+    # The gate, not Quality: a pull request into develop runs no Quality (#2070), and the gate is what says the
+    # run passed on every path.
+    needs: [ci-result]
     permissions:
       contents: read
     # merge_group is excluded because the queue's own run is not a merge. Its ref is
@@ -2015,7 +2038,7 @@ jobs:
       github.event_name != 'merge_group' &&
       github.ref != 'refs/heads/develop' &&
       !startsWith(github.ref, 'refs/heads/release/v') &&
-      (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
+      needs.ci-result.result == 'success' &&
       vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
