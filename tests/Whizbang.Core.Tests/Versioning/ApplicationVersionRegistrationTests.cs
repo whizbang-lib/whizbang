@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Versioning;
 
 namespace Whizbang.Core.Tests.Versioning;
@@ -61,6 +62,16 @@ public class ApplicationVersionRegistrationTests {
     var version = ApplicationVersionRegistration.EntryInformationalVersion(typeof(ApplicationVersion).Assembly);
 
     await Assert.That(version).IsNotNull();
+  }
+
+  [Test]
+  public async Task EntryInformationalVersion_OfAnAssemblyWithoutTheAttribute_IsNullAsync() {
+    // A dynamic assembly declares no attributes at all, like a host built without SDK version stamping.
+    var bare = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+      new System.Reflection.AssemblyName("whizbang-bare-" + (Guid)TrackedGuid.New()), System.Reflection.Emit.AssemblyBuilderAccess.Run);
+
+    await Assert.That(ApplicationVersionRegistration.EntryInformationalVersion(bare)).IsNull()
+      .Because("an entry assembly without an informational version yields none, so the application version is unknown");
   }
 
   [Test]
