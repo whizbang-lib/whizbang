@@ -739,13 +739,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   }
 
   /// <summary>
-  /// Returns the migration files whose last-word function definitions are not what the database holds:
-  /// a deployed body that differs from the last-word body, or a framework function that is missing.
-  /// Bodies are compared whitespace-normalized (the embedded runner indents the file text). Functions
-  /// with more than one overload are left to the duplicate-overload sweep. Logs one Information line per
-  /// stale file naming the functions that made it stale.
-  /// </summary>
-  /// <summary>
   /// Renders the embedded migration text the way <c>ExecuteSqlRawAsync</c> renders it: the generator
   /// doubles every brace so the text survives format-string handling, and the server receives single
   /// braces. Comparisons against deployed bodies must see the single-brace form.
@@ -1053,10 +1046,21 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       cancellationToken);
   }
 
+  /// <summary>
+  /// The migration files whose last-word function definitions are not what the database holds: a deployed body
+  /// that differs from the last-word body, or a framework function that is missing. Bodies are compared
+  /// whitespace-normalized; a function with more than one overload is left to the duplicate-overload sweep. Logs nothing: the caller that
+  /// re-runs a file names it, and only a file it adds to the run (#1636), because on a fresh database, or for the
+  /// steps a retry resumes, every function is missing from a file the pass runs anyway.
+  /// </summary>
+  /// <param name="functionsByFile">Receives, per stale file, the functions that made it stale, for the caller's log line.</param>
+  /// <docs>operations/infrastructure/migrations#stale-sweep-names-only-what-it-adds</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs:AFreshDatabase_LogsNoReRunOfAFileThePassRunsAnywayAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs:AFunctionMissingFromACurrentDatabase_IsTheOneReRunLoggedAsync</tests>
   private static async Task<System.Collections.Generic.IReadOnlyList<string>> _getStaleFunctionDefinitionFilesAsync(
       Npgsql.NpgsqlConnection connection,
       (string Name, string Sql)[] migrations,
-      ILogger? logger,
+      System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>? functionsByFile,
       CancellationToken ct) {
     // Compare what the database HOLDS with what the migration EXECUTES. The embedded text carries
     // doubled braces because ExecuteSqlRawAsync treats it as a format string and un-doubles them on
@@ -1090,14 +1094,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
-    var staleFunctionsByFile = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal);
-    var files = Whizbang.Data.Postgres.MigrationFunctionBodies.FilesToRerun(lastWords, deployed, staleFunctionsByFile);
-    foreach (var file in files) {
-      logger?.LogInformation(
-        "Migration {Migration}: re-running because the database's definition of {Functions} does not match this file, its last word. A replay that predates the redefinition closure left the function on an earlier definition while every hash read unchanged.",
-        file, string.Join(", ", staleFunctionsByFile[file]));
-    }
-    return files;
+    return Whizbang.Data.Postgres.MigrationFunctionBodies.FilesToRerun(
+      lastWords,
+      deployed,
+      functionsByFile ?? new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal));
   }
 
   /// <summary>
@@ -1857,10 +1857,16 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     // Stale-definition sweep: the hashes above describe the FILES; this compares the DATABASE. For each framework
     // function the deployed body must match its last-word migration's body; a mismatch or a missing function puts that
     // last-word file back into the run. Self-limiting: a database that matches its files re-runs nothing.
-    foreach (var staleFile in await _getStaleFunctionDefinitionFilesAsync(connection, migrations, logger, ct)) {
+    // Only a file the sweep adds is named: a file already in the run (new, changed, or not yet reached by a pass that
+    // stopped part way) has its functions missing because it has not run, not because a replay reverted them (#1636).
+    var staleFunctionsByFile = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal);
+    foreach (var staleFile in await _getStaleFunctionDefinitionFilesAsync(connection, migrations, staleFunctionsByFile, ct)) {
       if (!toRun.Contains(staleFile) && mayApply(staleFile)) {
         toRun.Add(staleFile);
         reasons[staleFile] = "stale definition";
+        logger?.LogInformation(
+          "Migration {Migration}: re-running because the database's definition of {Functions} does not match this file, its last word. A replay that predates the redefinition closure left the function on an earlier definition while every hash read unchanged.",
+          staleFile, string.Join(", ", staleFunctionsByFile[staleFile]));
       }
     }
 
