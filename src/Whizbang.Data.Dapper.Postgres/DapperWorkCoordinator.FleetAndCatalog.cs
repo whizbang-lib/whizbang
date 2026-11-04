@@ -49,6 +49,13 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// Calls <c>release_unstarted_leases</c> (migration 145) through the statement EF Core runs too: the claim worker's
+  /// #724 release and the run-control path's held-work step (#2045) behave the same on both drivers. Two empty lists
+  /// cost no round trip.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorGuardAndGateTests.cs:ReleaseUnstartedLeasesAsync_ReleasesThisInstancesUnprocessedInboxLease_AndEndsItsStreamOwnershipAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFleetRecoveryTests.cs</tests>
   public Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
       Guid instanceId, IReadOnlyList<Guid> inboxStreamIds, IReadOnlyList<Guid> perspectiveStreamIds,
       CancellationToken cancellationToken = default) {

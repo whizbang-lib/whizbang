@@ -1135,34 +1135,6 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  /// <remarks>
-  /// Calls <c>release_unstarted_leases</c> (migration 145), as EF Core does: the claim worker's #724 release and the
-  /// run-control path's held-work step (#2045) behave the same on both drivers. Two empty lists cost no round trip.
-  /// </remarks>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorGuardAndGateTests.cs:ReleaseUnstartedLeasesAsync_ReleasesThisInstancesUnprocessedInboxLease_AndEndsItsStreamOwnershipAsync</tests>
-  public async Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
-    Guid instanceId,
-    IReadOnlyList<Guid> inboxStreamIds,
-    IReadOnlyList<Guid> perspectiveStreamIds,
-    CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(inboxStreamIds);
-    ArgumentNullException.ThrowIfNull(perspectiveStreamIds);
-    if (inboxStreamIds.Count == 0 && perspectiveStreamIds.Count == 0) {
-      return new UnstartedLeaseRelease(0, 0);
-    }
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    var connection = __scope.Connection;
-    var prefix = await _prefixAsync(connection, cancellationToken);
-    // The function RETURNS TABLE and always emits exactly one row.
-    var (inboxReleased, perspectiveReleased) = await connection.QuerySingleAsync<(int inbox_released, int perspective_released)>(
-      $"SELECT inbox_released, perspective_released FROM {prefix}release_unstarted_leases(@InstanceId, @Inbox, @Perspective)",
-      new { InstanceId = instanceId, Inbox = inboxStreamIds.ToArray(), Perspective = perspectiveStreamIds.ToArray() },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
-    return new UnstartedLeaseRelease(inboxReleased, perspectiveReleased);
-  }
-
-  /// <inheritdoc />
   public async Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
