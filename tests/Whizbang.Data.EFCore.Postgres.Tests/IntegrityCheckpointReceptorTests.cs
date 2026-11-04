@@ -814,12 +814,12 @@ public class IntegrityCheckpointReceptorTests {
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests")
       with { OwnedDomains = ["app.contracts.orders", "app.contracts.shipping"] });
 
-    var recorded = fx.Coordinator.RecordedClaims.Single();
-    await Assert.That(recorded.Owner).IsEqualTo(fx.OriginId);
-    await Assert.That(recorded.Name).IsEqualTo("origin-svc");
-    await Assert.That(recorded.Topic).IsEqualTo("origin.requests")
+    var (owner, name, topic, domains) = fx.Coordinator.RecordedClaims.Single();
+    await Assert.That(owner).IsEqualTo(fx.OriginId);
+    await Assert.That(name).IsEqualTo("origin-svc");
+    await Assert.That(topic).IsEqualTo("origin.requests")
       .Because("the owner's request address is kept with its claim, so backfill can be directed at it after a restart");
-    await Assert.That(recorded.Domains).IsEquivalentTo(["app.contracts.orders", "app.contracts.shipping"]);
+    await Assert.That(domains).IsEquivalentTo(["app.contracts.orders", "app.contracts.shipping"]);
   }
 
   [Test]

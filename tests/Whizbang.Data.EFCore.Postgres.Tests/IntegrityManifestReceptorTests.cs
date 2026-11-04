@@ -2828,12 +2828,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_DigestsOfATypeAnotherServiceOwns_AreNotComparedAsync() {
-    var coordinator = new AuditCoordinator { ReceivedTypeDigests = [] };
-    coordinator.Claims = [new IntegrityDomainClaim {
-      Domain = "app.contracts.billing",
-      OwnerServiceId = TrackedGuid.New().Value,
-      OwnerServiceName = "billing-svc",
-    }];
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [],
+      Claims = [new IntegrityDomainClaim {
+        Domain = "app.contracts.billing",
+        OwnerServiceId = TrackedGuid.New().Value,
+        OwnerServiceName = "billing-svc",
+      }],
+    };
     var transport = new CaptureTransport();
     var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
@@ -2857,12 +2859,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_MixedDigests_ComparesOnlyThoseNoOtherServiceOwnsAsync() {
-    var coordinator = new AuditCoordinator { ReceivedTypeDigests = [] };
-    coordinator.Claims = [new IntegrityDomainClaim {
-      Domain = "app.contracts.billing",
-      OwnerServiceId = TrackedGuid.New().Value,
-      OwnerServiceName = "billing-svc",
-    }];
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [],
+      Claims = [new IntegrityDomainClaim {
+        Domain = "app.contracts.billing",
+        OwnerServiceId = TrackedGuid.New().Value,
+        OwnerServiceName = "billing-svc",
+      }],
+    };
     var sp = _provider(coordinator, new CaptureTransport());
     var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 

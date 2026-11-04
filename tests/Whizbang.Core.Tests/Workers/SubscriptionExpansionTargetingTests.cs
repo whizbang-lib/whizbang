@@ -90,10 +90,10 @@ public class SubscriptionExpansionTargetingTests {
 
     await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
 
-    var directed = transport.Published.Single(p => p.Envelope.Target == "orders-svc");
-    var broadcast = transport.Published.Single(p => p.Envelope.Target is null);
-    await Assert.That(_command(directed.Envelope).EventTypes).IsEquivalentTo([_placedWire]);
-    await Assert.That(_command(broadcast.Envelope).EventTypes).IsEquivalentTo([_billedWire]);
+    var (directed, _, _) = transport.Published.Single(p => p.Envelope.Target == "orders-svc");
+    var (broadcast, _, _) = transport.Published.Single(p => p.Envelope.Target is null);
+    await Assert.That(_command(directed).EventTypes).IsEquivalentTo([_placedWire]);
+    await Assert.That(_command(broadcast).EventTypes).IsEquivalentTo([_billedWire]);
   }
 
   [Test]
