@@ -65,9 +65,9 @@ internal static class IntegrityRepairSupport {
   }
 
   /// <summary>
-  /// The topic a redelivery is sent back to: the configured
-  /// <see cref="StreamIntegrityOptions.RepairTopic"/>, else this service's first consumer
-  /// destination, else null, which the callers read as "no return address, skip the request".
+  /// The topic a redelivery is sent back to: the configured <see cref="StreamIntegrityOptions.RepairTopic"/>, else this
+  /// service's own command inbox, else its first consumer destination (#2078), else null, which the callers read as
+  /// "no return address, skip the request".
   /// </summary>
   /// <param name="options">The stream-integrity options.</param>
   /// <param name="services">The scope the receptor resolves from.</param>
@@ -78,8 +78,8 @@ internal static class IntegrityRepairSupport {
     if (options.RepairTopic is not null) {
       return options.RepairTopic;
     }
-    var consumer = services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>();
-    return consumer?.Destinations.FirstOrDefault()?.Address;
+    // #2078: the one rule every integrity component uses: this service's own command inbox when it has one.
+    return Whizbang.Core.Workers.RepairTopicResolver.Resolve(options.RepairTopic, services);
   }
 
   /// <summary>
@@ -206,7 +206,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
     // session-enabled subscriptions dead-letter sessionless deliveries, and a shared session
     // keeps chunk order.
-    var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(message.Topic, originServiceId, typeof(IntegrityManifest));
+    var destination = Whizbang.Core.Transports.IntegrityControlDestination.For(message.Topic, originServiceId, typeof(IntegrityManifest), options);
     var chunks = 0;
 
     // do-while: a WINDOWED quiet window (zero digests, watermark advanced) must still publish —
@@ -847,7 +847,7 @@ public sealed partial class IntegrityManifestReceptor(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     LogCursorFollowed(logger, Pages + 1, message.OriginServiceName);
   }
@@ -971,7 +971,7 @@ public sealed partial class IntegrityManifestReceptor(
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
           new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
-        var sent = await _sendBulkBackfillRequestAsync(services, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
+        var sent = await _sendBulkBackfillRequestAsync(services, options, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
           .ConfigureAwait(false);
         if (sent) {
           // #2034: the bulk request answers the type lane and every per-stream drain row of the type inside its window,
@@ -1032,7 +1032,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
@@ -1074,7 +1074,7 @@ public sealed partial class IntegrityManifestReceptor(
     string Topic);
 
   private async Task<bool> _sendBulkBackfillRequestAsync(
-      IServiceProvider services, ControlPlaneSender sender,
+      IServiceProvider services, StreamIntegrityOptions options, ControlPlaneSender sender,
       IntegrityManifest manifest, string? tenantScope, string eventType,
       CancellationToken cancellationToken) {
     var (transport, serializer, instanceProvider, requester, topic) = sender;
@@ -1110,7 +1110,7 @@ public sealed partial class IntegrityManifestReceptor(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     return true;
   }
@@ -1163,7 +1163,7 @@ public sealed partial class IntegrityManifestReceptor(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, streamIds[0], typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, streamIds[0], typeof(RequestRedeliveryCommand), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 

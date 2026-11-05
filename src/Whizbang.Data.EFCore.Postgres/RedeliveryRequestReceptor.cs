@@ -96,6 +96,8 @@ public sealed partial class RedeliveryRequestReceptor(
           ?? new Whizbang.Core.Minting.CompositeFactory(),
         options: options) {
         OperatorRequested = message.OperatorRequested,
+        // #2078: the answer is an integrity control message, so it expires at the broker like the request did.
+        AnswerTimeToLive = TimeSpan.FromMinutes((integrity ?? new StreamIntegrityOptions()).ControlMessageTimeToLiveMinutes),
       };
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter

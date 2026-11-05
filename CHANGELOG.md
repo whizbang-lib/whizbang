@@ -1455,6 +1455,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kind now decides for a type the application declares (by its current or a former name), before the payload marker.
   The catalog gives a plain message (neither command nor event) its own kind, `"message"`, instead of `"event"`, so it
   is never classified as an event or stored; it still publishes where it did, so topology and provisioning are unchanged.
+- **Directed integrity traffic goes to the addressee's own inbox and expires (#2078).** A service's integrity request
+  address defaulted to the first destination it consumes, in practice the shared framework inbox every service reads,
+  so every directed integrity message (manifest and redelivery requests and answers, drill-downs, page follows) was
+  copied to every service, and none expired: a stopped service's subscription grew until the shared topic reached its
+  size cap. The default request address is now the service's own command inbox (the destination the namespace inbox
+  strategy provisions for a command namespace it handles, which only it subscribes to), advertised on the checkpoint
+  as before, so requests and answers reach exactly one service. A broadcast backfill for a type with no known owner
+  still rides the shared topic. An explicit `Whizbang:StreamIntegrity:RepairTopic` still wins; a service with no
+  command inbox of its own keeps the shared fallback and logs once that it does. Every directed integrity message now
+  carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
+  to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
+  topic keeps receiving its traffic there until it upgrades.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

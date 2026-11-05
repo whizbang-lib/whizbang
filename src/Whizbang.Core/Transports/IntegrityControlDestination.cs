@@ -22,6 +22,8 @@ public static class IntegrityControlDestination {
   /// <returns>The destination.</returns>
   public static TransportDestination For(string address, Guid sessionStreamId, Type payloadType, StreamIntegrityOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    return ControlPlaneDestination.For(address, sessionStreamId, payloadType);
+    return ControlMessageTtl.Stamp(
+      ControlPlaneDestination.For(address, sessionStreamId, payloadType),
+      TimeSpan.FromMinutes(options.ControlMessageTimeToLiveMinutes));
   }
 }

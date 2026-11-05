@@ -332,7 +332,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     // #2034: the whole-window request answers the type lane and the per-stream drain rows of the type inside it. The
     // ledger's window is the request's range shifted by one (an exclusive floor and an inclusive ceiling), as the drain

@@ -33,6 +33,8 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
         $"Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes must be at least 1 (was {options.RepairAnswerTimeoutMinutes}); " +
         "a requested bucket waits that long for its answer, and a timeout below one minute asks again at once.");
     }
+    _atLeastOne(failures, "ControlMessageTimeToLiveMinutes", options.ControlMessageTimeToLiveMinutes,
+      "it is how long a directed integrity request lives at the broker, and below a minute it expires before its addressee reads it (#2078)");
     _atLeastOne(failures, "ReattributionIntervalSeconds", options.ReattributionIntervalSeconds,
       "it is the wait between re-attribution passes, and a wait below one second spins the loop");
     _atLeastOne(failures, "ReattributionBatchSize", options.ReattributionBatchSize,

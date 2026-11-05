@@ -301,7 +301,7 @@ public sealed partial class IntegrityAuditWorker(
       // consumes) — never to the requester's own topics (observed live: requests published
       // there were never received by any origin, only fanned out as noise).
       await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+        IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), _options), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),

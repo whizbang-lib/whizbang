@@ -158,7 +158,8 @@ public sealed partial class RepairDrainWorker(
       };
       try {
         await RedeliveryRequestDispatch.PublishAsync(
-          transport, serializer, instanceProvider, command, origin.OriginServiceName, origin.RequestTopic!, items[0].StreamId,
+          transport, serializer, instanceProvider, command, origin.OriginServiceName,
+          IntegrityControlDestination.For(origin.RequestTopic!, items[0].StreamId, typeof(RequestRedeliveryCommand), _options),
           now, cancellationToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         throw;

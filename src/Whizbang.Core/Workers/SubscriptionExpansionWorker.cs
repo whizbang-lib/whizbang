@@ -156,24 +156,29 @@ public sealed partial class SubscriptionExpansionWorker(
     foreach (var (owner, types) in byOwner.Values) {
       var command = new RequestRedeliveryCommand { EventTypes = types, RequesterService = requester, Topic = topic, StateOnly = true };
       await RedeliveryRequestDispatch.PublishAsync(
-        transport, serializer, instanceProvider, command, owner.OwnerServiceName, owner.RequestTopic!, owner.OwnerServiceId,
+        transport, serializer, instanceProvider, command, owner.OwnerServiceName,
+        IntegrityControlDestination.For(owner.RequestTopic!, owner.OwnerServiceId, typeof(RequestRedeliveryCommand), _options),
         DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
       LogBackfillDirected(_logger, types.Count, owner.OwnerServiceName);
     }
     if (unowned.Count == 0) {
       return true;
     }
-    await _broadcastAsync(transport, serializer, instanceProvider, requester, topic, unowned, cancellationToken).ConfigureAwait(false);
+    // #2078: the reply comes back to this service's own inbox, but a broadcast must ride the shared topic every service
+    // reads, never this service's own inbox.
+    // Never null here: the reply topic resolved, so the service has a configured topic or a destination to broadcast on.
+    var broadcastTopic = RepairTopicResolver.ResolveBroadcast(_options.RepairTopic, services)!;
+    await _broadcastAsync(transport, serializer, instanceProvider, requester, topic, broadcastTopic, unowned, cancellationToken).ConfigureAwait(false);
     return true;
   }
 
   /// <summary>ONE broadcast (no Target) for the types with no usable owner; the answering side ships only what it
   /// authored, so in practice only the author answers.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "One broadcast send: the transport and serializer, the sender's identity and name, the reply topic, the types and cancellation, all held separately by the one caller.")]
-  private static async Task _broadcastAsync(
+    Justification = "One broadcast send: the transport and serializer, the sender's identity and name, the reply and broadcast topics, the types and cancellation, all held separately by the one caller.")]
+  private async Task _broadcastAsync(
       ITransport transport, IEnvelopeSerializer serializer, IServiceInstanceProvider? instanceProvider, string requester,
-      string topic, List<string> pendingTypes, CancellationToken cancellationToken) {
+      string topic, string broadcastTopic, List<string> pendingTypes, CancellationToken cancellationToken) {
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -190,7 +195,7 @@ public sealed partial class SubscriptionExpansionWorker(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      ControlPlaneDestination.For(topic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      IntegrityControlDestination.For(broadcastTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), _options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
