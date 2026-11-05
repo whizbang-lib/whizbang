@@ -55,7 +55,7 @@ $ErrorActionPreference = 'Stop'
 
 # The ci.yml jobs that stand for every suite, and so must need each one. The two publishes must also
 # require each suite's success in their condition (see the DESCRIPTION).
-$script:SuiteConsumers = @('ci-result', 'test-results', 'publish-test-status', 'notify-cancelled', 'prerelease-publish', 'release-publish', 'quality', 'queue-quality')
+$script:SuiteConsumers = @('ci-result', 'test-results', 'publish-test-status', 'notify-cancelled', 'prerelease-publish', 'release-publish', 'quality', 'queue-quality')  # review-checks:allow: notify-cancelled is the ci.yml job id
 $script:SuiteGatedPublishes = @('prerelease-publish', 'release-publish')
 
 <#

@@ -264,7 +264,7 @@ public class StartupParityTests {
           await create.ExecuteNonQueryAsync();
         },
         PerTestDatabaseFactory.IsAlreadyCreated,
-        TimeProvider.System,
+        TimeProvider.System, // review-checks:allow: only the contention backoff every per-test database create uses; nothing here waits on it
         CancellationToken.None);
       observer.ReleaseFailure();
 

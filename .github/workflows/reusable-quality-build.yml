@@ -185,11 +185,11 @@ jobs:
           }
           $out = $kept.ToString()
           [System.IO.File]::WriteAllText((Join-Path -Path $PWD -ChildPath 'Whizbang.Analysis.slnx'), $out)
-          $analysed = ([regex]::Matches($out, '<Project Path=')).Count
+          $analyzed = ([regex]::Matches($out, '<Project Path=')).Count
           Write-Output "excluded dirs from sonar.config: $($dirs -join ', ')"
-          Write-Output "dropped $dropped projects; analysing $analysed"
+          Write-Output "dropped $dropped projects; analyzing $analyzed"
           if (-not $out.Contains('<Configurations>')) { throw 'Configurations block must survive (see comment above)' }
-          if ($analysed -eq 0) { throw 'refusing to analyse an empty solution' }
+          if ($analyzed -eq 0) { throw 'refusing to analyze an empty solution' }
 
       - name: Build (analyzed)
         run: dotnet build Whizbang.Analysis.slnx --configuration Release
