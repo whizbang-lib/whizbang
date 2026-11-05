@@ -33,6 +33,118 @@ public class NamespaceInboxStrategyTests {
   private static HandledMessageInfo _command(string typeName, string contractNamespace) =>
     new(typeName, contractNamespace, MessageKind.Command);
 
+  #region #2089 per-namespace inboxes filter to the handled command types
+
+  private static IReadOnlyList<string> _patternsOf(InboxSubscription subscription) =>
+    (IReadOnlyList<string>)subscription.Metadata!["RoutingPatterns"];
+
+  [Test]
+  public async Task GetSubscriptions_PerNamespaceInbox_FiltersToTheHandledCommandTypesAsync() {
+    var strategy = new NamespaceInboxStrategy();
+    var context = _context(handled: [
+      _command("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands"),
+      _command("MyApp.Orders.Commands.CancelOrder", "myapp.orders.commands"),
+    ]);
+
+    var inbox = strategy.GetSubscriptions(context).Single(s => s.Topic == "inbox.myapp.orders.commands");
+
+    await Assert.That(_patternsOf(inbox)).IsEquivalentTo(
+      ["myapp.orders.commands.cancelorder", "myapp.orders.commands.createorder"])
+      .Because("#2089: a service receives only the commands it handles, matched on the wire subject the publisher "
+               + "stamps ({namespace}.{typename}, lowercase), never the whole namespace");
+    await Assert.That(inbox.FilterExpression).IsEqualTo(
+      "myapp.orders.commands.cancelorder,myapp.orders.commands.createorder");
+  }
+
+  [Test]
+  public async Task GetSubscriptions_ForeignNamespace_ReceivesOnlyTheCommandsThisServiceHandlesAsync() {
+    // The incident shape: a service handles two export commands of another service's namespace.
+    var strategy = new NamespaceInboxStrategy();
+    var context = _context(handled: [
+      _command("Billing.Commands.ExportInvoices", "billing.commands"),
+      _command("Billing.Commands.ExportCredits", "billing.commands"),
+    ]);
+
+    var inbox = strategy.GetSubscriptions(context).Single(s => s.Topic == "inbox.billing.commands");
+
+    await Assert.That(_patternsOf(inbox)).IsEquivalentTo(
+      ["billing.commands.exportcredits", "billing.commands.exportinvoices"]);
+    await Assert.That(_patternsOf(inbox).Any(p => p.Contains('#') || p.Contains('*'))).IsFalse()
+      .Because("no wildcard may let the owner's other commands, or anything else sent there, match");
+  }
+
+  [Test]
+  public async Task GetSubscriptions_NestedCommandType_MatchesBothWireSpellingsAsync() {
+    // The outbox stamps the CLR simple name of a nested type ("Outer+Inner"); a direct send stamps Type.Name ("Inner").
+    var strategy = new NamespaceInboxStrategy();
+    var context = _context(handled: [_command("MyApp.Orders.Commands.Orders.Create", "myapp.orders.commands")]);
+
+    var inbox = strategy.GetSubscriptions(context).Single(s => s.Topic == "inbox.myapp.orders.commands");
+
+    await Assert.That(_patternsOf(inbox)).IsEquivalentTo(
+      ["myapp.orders.commands.create", "myapp.orders.commands.orders+create"]);
+  }
+
+  [Test]
+  public async Task GetSubscriptions_TypeNameOutsideItsNamespace_UsesTheSimpleNameAsync() {
+    var strategy = new NamespaceInboxStrategy();
+    var context = _context(handled: [_command("Other.Root.CreateOrder", "myapp.orders.commands")]);
+
+    var inbox = strategy.GetSubscriptions(context).Single(s => s.Topic == "inbox.myapp.orders.commands");
+
+    await Assert.That(_patternsOf(inbox)).IsEquivalentTo(["myapp.orders.commands.createorder"]);
+  }
+
+  #endregion
+
+  #region #2090 each service has its own exclusive control inbox
+
+  [Test]
+  public async Task GetSubscriptions_AlwaysIncludesThisServicesOwnControlInboxAsync() {
+    var strategy = new NamespaceInboxStrategy();
+
+    var subscriptions = strategy.GetSubscriptions(_context());
+
+    var control = subscriptions.Single(s => s.Topic == CommandInboxNaming.ServiceControlTopicFor("OrderService"));
+    await Assert.That(control.Topic).IsEqualTo("inbox.whizbang.service.orderservice");
+    await Assert.That(control.FilterExpression).IsNull()
+      .Because("the entity carries one addressee's traffic, so the topic IS the filter");
+    await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(control.Metadata)).IsTrue();
+    await Assert.That(control.Metadata!.ContainsKey(NamespaceInboxStrategy.OwnedCommandInboxMetadataKey)).IsFalse()
+      .Because("it is not a command inbox; the ownership drift check keys on command inboxes only");
+  }
+
+  [Test]
+  public async Task IsServiceControlInbox_NoMetadataOrNoMarker_IsFalseAsync() {
+    await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(null)).IsFalse();
+    await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(new Dictionary<string, object>())).IsFalse();
+    await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(
+      new Dictionary<string, object> { [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = false })).IsFalse();
+  }
+
+  [Test]
+  public async Task SecondServiceHandlingACommandInTheAddresseesNamespace_NeverReceivesItsIntegrityTrafficAsync() {
+    // #2090: the addressee advertises its own control inbox; the second service handles one of the addressee's
+    // commands. Nothing the second service subscribes to can carry traffic addressed to the addressee.
+    var strategy = new NamespaceInboxStrategy();
+    var addressee = new InboxSubscriptionContext("Billing", new HashSet<string>(),
+      [_command("Billing.Commands.IssueInvoice", "billing.commands")]);
+    var second = new InboxSubscriptionContext("Reporting", new HashSet<string>(),
+      [_command("Billing.Commands.ExportInvoices", "billing.commands")]);
+
+    var addresseeControl = strategy.GetSubscriptions(addressee)
+      .Single(s => NamespaceInboxStrategy.IsServiceControlInbox(s.Metadata)).Topic;
+    var secondSubscriptions = strategy.GetSubscriptions(second);
+
+    await Assert.That(secondSubscriptions.Select(s => s.Topic)).DoesNotContain(addresseeControl)
+      .Because("the addressee's control inbox is an entity only the addressee subscribes to");
+    var sharedNamespaceInbox = secondSubscriptions.Single(s => s.Topic == "inbox.billing.commands");
+    await Assert.That(_patternsOf(sharedNamespaceInbox)).IsEquivalentTo(["billing.commands.exportinvoices"])
+      .Because("even integrity traffic an older peer still sends to the namespace inbox cannot match its filter");
+  }
+
+  #endregion
+
   #region Per-namespace derivation
 
   [Test]

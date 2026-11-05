@@ -49,12 +49,41 @@ public class RepairTopicResolverTests {
 
   // ── #2078: integrity traffic addressed to this service goes to its own command inbox ──
 
-  [Test]
-  public async Task Unset_OwnCommandInbox_IsPreferredOverASharedFirstDestinationAsync() {
-    var services = _destinations(_shared("inbox.whizbang"), _ownInbox("inbox.app.orders"));
+  // ── #2090: integrity traffic addressed to this service goes to its own control inbox, which only it reads ──
 
-    await Assert.That(RepairTopicResolver.Resolve(null, services)).IsEqualTo("inbox.app.orders")
-      .Because("only this service subscribes to its own command inbox, so a directed message reaches it alone");
+  [Test]
+  public async Task Unset_ServiceControlInbox_IsPreferredOverCommandInboxesAndSharedTopicsAsync() {
+    var services = _destinations(_ownInbox("inbox.app.orders"), _shared("inbox.whizbang"), _control("inbox.whizbang.service.orders"));
+
+    await Assert.That(RepairTopicResolver.Resolve(null, services)).IsEqualTo("inbox.whizbang.service.orders")
+      .Because("#2090: a command inbox is not exclusive (any service handling one of its commands reads it), and its "
+               + "subscriptions filter to command types, so directed traffic goes to the service's own control inbox");
+  }
+
+  [Test]
+  public async Task Unset_NoControlInbox_ACommandInboxIsNotChosenOverASharedTopicAsync() {
+    var services = _destinations(_ownInbox("inbox.app.orders"), _shared("inbox.whizbang"));
+
+    await Assert.That(RepairTopicResolver.Resolve(null, services)).IsEqualTo("inbox.whizbang")
+      .Because("a command inbox's type filter would drop control traffic sent to it");
+  }
+
+  [Test]
+  public async Task Broadcast_IsNeverTheServicesOwnControlInboxAsync() {
+    var services = _destinations(_control("inbox.whizbang.service.orders"), _shared("inbox.whizbang"));
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsEqualTo("inbox.whizbang");
+  }
+
+  [Test]
+  public async Task Broadcast_AControlMarkerThatIsNotTrue_IsASharedTopicAsync() {
+    var services = _destinations(
+      _control("inbox.whizbang.service.orders"),
+      new TransportDestination("inbox.marked-false", Metadata: new Dictionary<string, JsonElement> {
+        [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = JsonElement.Parse("false"),
+      }));
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsEqualTo("inbox.marked-false");
   }
 
   [Test]
@@ -135,6 +164,10 @@ public class RepairTopicResolverTests {
   }
 
   private static TransportDestination _shared(string topic) => new(topic);
+
+  private static TransportDestination _control(string topic) => new(topic, Metadata: new Dictionary<string, JsonElement> {
+    [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = JsonElement.Parse("true"),
+  });
 
   private static TransportDestination _ownInbox(string topic) => new(topic, Metadata: new Dictionary<string, JsonElement> {
     [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = JsonElement.Parse("true"),
