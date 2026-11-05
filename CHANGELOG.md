@@ -1377,7 +1377,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.
   Each command inbox subscription now filters by subject to the command types the service handles. On Azure Service Bus
   the filter is split across as many rules as the 1,024-character SQL filter limit needs, and the provisioner converges an
-  existing subscription's rules as well as a new one's.
+  existing subscription's rules as well as a new one's. On RabbitMQ a queue that binds explicit patterns drops its legacy
+  match-all `#` binding. The ownership drift check now flags only a second subscriber that is not filtered to exact command
+  types (Service Bus); RabbitMQ, which cannot read another queue's bindings, no longer records drift.
 - **Directed integrity traffic reaches only its addressee (#2090).** Repair and redelivery requests, manifests and the
   bundles that answer them were addressed to the service's first command inbox, which other services also read. Each
   service now has its own control inbox, `inbox.whizbang.service.<service>`, that only it subscribes to, and advertises it
