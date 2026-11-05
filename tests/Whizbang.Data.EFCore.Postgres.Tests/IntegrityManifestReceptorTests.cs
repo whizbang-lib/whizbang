@@ -689,7 +689,7 @@ public class IntegrityManifestReceptorTests {
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 10 }, tracker: tracker,
       consumers: new ConsumesOnly("Contracts.TypeX"));
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -711,7 +711,7 @@ public class IntegrityManifestReceptorTests {
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport, new StreamIntegrityOptions(), tracker: tracker,
       consumers: new ConsumesOnly("Contracts.TypeX"));
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
@@ -732,7 +732,7 @@ public class IntegrityManifestReceptorTests {
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       tracker: tracker, ledger: ledger, consumers: new ConsumesOnly("Contracts.TypeX"));
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 

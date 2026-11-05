@@ -112,8 +112,8 @@ public class IntegrityCheckpointReceptorCoverageTests {
     await receptor.HandleAsync(_checkpoint(originId, "origin-svc", from: 5, to: 5, count: 0, emptyBuckets: true));
 
     await Assert.That(dispatcher.Published).IsEmpty()
-      .Because("with no consumer registry registered, every bucket is someone else's contract — " +
-               "exactly like an explicitly unsubscribed type — and must never confirm a gap.");
+      .Because("with no consumer registry registered, every bucket is someone else's contract " +
+               "(exactly like an explicitly unsubscribed type) and must never confirm a gap.");
   }
 
   /// <summary>

@@ -110,7 +110,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     var logger = new CapturingLogger();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    // Deliberately no IWorkCoordinator and no IConsumerRegistry — schema-only / diagnostic
+    // Deliberately no IWorkCoordinator and no IConsumerRegistry: schema-only / diagnostic
     // composition. A transport IS present, so "nothing was broadcast" is a fact about the
     // reconciler rather than about there being nowhere to broadcast to.
     services.AddSingleton<ITransport>(transport);
