@@ -39,6 +39,22 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
 
+  /// <summary>Syntax predicate for notification-tag consumers: an attributed class or record. Shares the receptor
+  /// registry generator's test, so the two discover the same candidates.</summary>
+  /// <param name="node">The syntax node.</param>
+  /// <returns><see langword="true"/> for an attributed class or record.</returns>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassOrRecordCandidate(SyntaxNode node) =>
+    ReceptorRegistryQueryGenerator.IsAttributedClassOrRecordCandidate(node);
+
+  /// <summary>Syntax predicate for sync receptors and collective events: a class or record with a base list. Shares the
+  /// receptor registry generator's test, so the two discover the same candidates.</summary>
+  /// <param name="node">The syntax node.</param>
+  /// <returns><see langword="true"/> for a class or record with a base list.</returns>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+    ReceptorRegistryQueryGenerator.IsClassOrRecordWithBaseListCandidate(node);
+
   /// <summary>
   /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
@@ -65,11 +81,11 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     // Pipeline 3 (#2065): events a notification tag or the collective sink consumes. They have no receptor or
     // perspective of their own, and an event consumed in a namespace with no subscription is never delivered.
     var taggedNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => ReceptorRegistryQueryGenerator.IsAttributedClassOrRecordCandidate(node),
+        predicate: static (node, _) => IsAttributedClassOrRecordCandidate(node),
         transform: static (ctx, ct) => _extractConsumedEventNamespace(ctx, collective: false, ct)
     ).Where(static ns => ns is not null);
     var collectiveNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => ReceptorRegistryQueryGenerator.IsClassOrRecordWithBaseListCandidate(node),
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractConsumedEventNamespace(ctx, collective: true, ct)
     ).Where(static ns => ns is not null);
 
