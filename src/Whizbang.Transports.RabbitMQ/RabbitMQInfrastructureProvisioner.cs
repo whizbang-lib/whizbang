@@ -23,7 +23,6 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   private readonly RabbitMQChannelPool _channelPool;
   private readonly ILogger<RabbitMQInfrastructureProvisioner> _logger;
   private readonly RabbitMQOptions _options;
-  private readonly TopologyDriftState? _driftState;
 
   /// <summary>
   /// Per-process existence cache (the provisioner is a DI singleton): once an entity has been
@@ -42,8 +41,8 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   /// argument set (dead-letter exchange, single-active-consumer) as subscribe-time setup;
   /// mismatched arguments would fail the later declare with PRECONDITION_FAILED. Null falls
   /// back to defaults (pre-phase-5 construction sites keep compiling).</param>
-  /// <param name="driftState">Topology-drift accumulator for the ownership probe; null
-  /// disables recording (the error log still fires).</param>
+  /// <param name="driftState">Accepted for compatibility and unused (#2089): a pre-existing command-inbox exchange
+  /// cannot be told apart from a legitimate type-filtered subscriber over AMQP, so the probe records no drift.</param>
   public RabbitMQInfrastructureProvisioner(
       RabbitMQChannelPool channelPool,
       ILogger<RabbitMQInfrastructureProvisioner> logger,
@@ -55,7 +54,9 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
     _channelPool = channelPool;
     _logger = logger;
     _options = options ?? new RabbitMQOptions();
-    _driftState = driftState;
+    // #2089: kept for the construction sites that pass one; RabbitMQ can no longer observe ownership drift (see the
+    // ownership probe), so nothing is recorded into it.
+    _ = driftState;
   }
 
   /// <inheritdoc />
@@ -228,16 +229,22 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   }
 
   /// <summary>
-  /// The census-mandated runtime ownership check, RabbitMQ shape. AMQP cannot enumerate the
-  /// queues bound to an exchange, so the observable is indirect: during the DARK phase only a
-  /// subscribing owner creates <c>inbox.&lt;ns&gt;</c> entities, so a command-inbox exchange
-  /// that ALREADY exists while OUR conventional queue does not means another service claimed
-  /// the entity — structured error log + drift finding (health Degraded via
-  /// <c>TopologyDriftHealthSource</c>). Best-effort by design: a same-name queue recreated by
-  /// an operator can mask it, and it never blocks boot. Each passive probe uses a dedicated
+  /// The ownership probe, RabbitMQ shape. AMQP cannot enumerate the queues bound to an exchange,
+  /// so the observable is indirect: a command-inbox exchange that ALREADY exists while OUR
+  /// conventional queue does not. Since #2089 command inbox queues bind exactly the command types
+  /// each service handles, so another service handling some of the namespace's commands
+  /// legitimately declares the exchange first, and the observable cannot tell it from a match-all
+  /// subscriber: it is logged at Information and never recorded as drift (health is not degraded
+  /// on it). Best-effort by design, and it never blocks boot. Each passive probe uses a dedicated
   /// rented channel because a failed passive declare closes the channel (the pool discards
   /// closed channels on return).
   /// </summary>
+  private static readonly Action<ILogger, string, string, Exception?> _logExchangeDeclaredByAnotherHandler =
+    LoggerMessage.Define<string, string>(
+      LogLevel.Information,
+      new EventId(0, "CommandInboxExchangeDeclaredByAnotherHandler"),
+      "Command inbox exchange '{ExchangeName}' already exists without this service's queue '{QueueName}': another service handling commands of this namespace declared it first");
+
   private async Task _probeOwnershipDriftAsync(
       string exchangeName, string queueName, CancellationToken cancellationToken) {
     try {
@@ -254,15 +261,10 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         await queueProbe.Channel.QueueDeclarePassiveAsync(queueName, cancellationToken);
         // Both exist — a previous boot of THIS service explains the exchange. Not drift.
       } catch (OperationInterruptedException queueMissing) {
-        _logger.LogError(
-          queueMissing,
-          "Topology ownership drift: command inbox exchange '{ExchangeName}' already exists but this service's queue '{QueueName}' does not — another service appears to have claimed the entity; one service owns a command namespace",
-          exchangeName,
-          queueName);
-        _driftState?.Record(new TopologyDriftFinding(
-          exchangeName,
-          $"(unknown queue; exchange pre-existed without '{queueName}')",
-          "command-inbox exchange existed before this service ever provisioned it"));
+        // #2089: command inbox queues bind exactly the command types each service handles, so another service handling
+        // some commands of this namespace legitimately declares the exchange first, and AMQP cannot list its queue's
+        // bindings to tell that from a match-all subscriber. Logged for the record; never recorded as drift.
+        _logExchangeDeclaredByAnotherHandler(_logger, exchangeName, queueName, queueMissing);
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Best-effort probe: broker/channel-pool failures must never block provisioning.

@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using Azure;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -190,6 +191,49 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
     }
   }
 
+  /// <summary>
+  /// True when every rule of a foreign subscription is a SQL filter of exact subject matches (#2089): what the namespace
+  /// inbox strategy provisions for a service that handles some commands of the namespace. The match-all default rule, a
+  /// LIKE with a wildcard (<c>%</c> or <c>_</c>), any other clause (such as <c>1=1</c>), any other filter kind, and a
+  /// subscription with no rules at all are not.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_CommandInbox_ForeignSubscriptionFilteredToExactTypes_IsNotDriftAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_CommandInbox_ForeignSubscriptionMatchingTheNamespace_IsDriftAsync</tests>
+  private async Task<bool> _isFilteredToExactTypesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken) {
+    var any = false;
+    await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+      if (rule.Filter is not SqlRuleFilter sql || !IsExactSubjectExpression(sql.SqlExpression)) {
+        return false;
+      }
+      any = true;
+    }
+    return any;
+  }
+
+  /// <summary>
+  /// True when a SQL filter expression is only <c>sys.Label LIKE '&lt;literal&gt;'</c> clauses joined by <c>OR</c>, with
+  /// no wildcard in any literal: the shape of an exact command-type filter.
+  /// </summary>
+  /// <param name="expression">The SQL filter expression.</param>
+  /// <returns>True for an exact-subject filter.</returns>
+  internal static bool IsExactSubjectExpression(string? expression) {
+    if (string.IsNullOrWhiteSpace(expression)) {
+      return false;
+    }
+    const string clausePrefix = "sys.Label LIKE '";
+    foreach (var clause in expression.Split(" OR ", StringSplitOptions.None)) {
+      var trimmed = clause.Trim();
+      if (!trimmed.StartsWith(clausePrefix, StringComparison.Ordinal) || !trimmed.EndsWith('\'')) {
+        return false;
+      }
+      var literal = trimmed[clausePrefix.Length..^1];
+      if (literal.Length == 0 || literal.IndexOfAny(['%', '_', '\'']) >= 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /// <summary>True when the subscription carries the owned-command-inbox marker stamped by
   /// <see cref="NamespaceInboxStrategy"/>.</summary>
   private static bool _isOwnedCommandInbox(InboxSubscription subscription) =>
@@ -224,8 +268,13 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
         if (string.Equals(subscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
           continue;
         }
+        // #2089: a second service handling some commands of this namespace subscribes filtered to exactly those types.
+        // That is the topology working; only a subscriber that matches more than exact types is drift.
+        if (await _isFilteredToExactTypesAsync(topicName, subscriptionName, cancellationToken)) {
+          continue;
+        }
         _logger.LogError(
-          "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' — one service owns a command namespace; a duplicate subscriber receives (and may double-handle) every command on it",
+          "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' that is not filtered to exact command types; it receives (and may double-handle) commands it does not handle",
           topicName,
           subscriptionName);
         _driftState?.Record(new TopologyDriftFinding(

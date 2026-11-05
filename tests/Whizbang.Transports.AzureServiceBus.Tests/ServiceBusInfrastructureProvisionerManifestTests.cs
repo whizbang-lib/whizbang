@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Azure;
+using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -238,6 +239,27 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
 
     await Assert.That(driftState.HasDrift).IsTrue()
       .Because("a second subscriber that matches more than exact types receives (and may double-handle) the owner's commands");
+  }
+
+  [Test]
+  public async Task ProvisionManifest_CommandInbox_ForeignSubscriptionWithACorrelationRule_IsDriftAsync() {
+    const string foreign = "reporting-service-inbox.myapp.orders.commands";
+    var adminClient = new RecordingProvisioningAdminClient {
+      ExistingTopics = { "inbox.myapp.orders.commands" },
+      ExistingSubscriptions = { ("inbox.myapp.orders.commands", foreign) },
+      RulesBySubscription = {
+        [("inbox.myapp.orders.commands", foreign)] = [
+          ServiceBusModelFactory.RuleProperties("RoutingPatternFilter", new SqlRuleFilter("sys.Label LIKE 'myapp.orders.commands.exportorders'")),
+          ServiceBusModelFactory.RuleProperties("DestinationFilter", new CorrelationRuleFilter { Subject = "x" }),
+        ]
+      }
+    };
+    var driftState = new TopologyDriftState();
+
+    await _provisioner(adminClient, driftState: driftState).ProvisionManifestAsync(_namespaceManifest());
+
+    await Assert.That(driftState.HasDrift).IsTrue()
+      .Because("only SQL filters of exact subjects are recognized as a type-filtered subscriber");
   }
 
   [Test]
