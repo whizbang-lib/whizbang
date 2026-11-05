@@ -70,6 +70,13 @@ DECLARE
   v_refused          INTEGER;
   v_adoptable_count  INTEGER;
   v_unchanged        BOOLEAN;
+  v_key_tenants      TEXT[];
+  v_key_types        TEXT[];
+  v_key_streams      UUID[];
+  v_mark_tenants     TEXT[];
+  v_mark_types       TEXT[];
+  v_mark_streams     UUID[];
+  v_mark_reasons     TEXT[];
 BEGIN
   IF cardinality(p_event_ids) IS DISTINCT FROM cardinality(p_commit_sequences) THEN
     RAISE EXCEPTION 'wh_integrity_record_bundle_answer: % event ids but % commit sequences',
@@ -117,16 +124,24 @@ BEGIN
   FROM _wh_bundle_answer_work r;
   v_unchanged := v_children > 0 AND v_present + v_refused >= v_children AND v_adoptable_count = 0;
 
+  -- 333 (#2093): the covered keys, each bucket once with its stream and once with the empty id (its type lane), are
+  -- collected into arrays first. The working table has no statistics (it is never analyzed, which would write the
+  -- catalog on every call), so a join against it is planned for a large table and reads the ledger by a sequential
+  -- scan; an unnest of parameters is planned as a few rows, so each key is one primary key probe.
+  SELECT array_agg(k.tenant_scope), array_agg(k.event_type), array_agg(k.sid)
+  INTO v_key_tenants, v_key_types, v_key_streams
+  FROM (SELECT DISTINCT r.tenant_scope, r.event_type, ks.sid
+        FROM _wh_bundle_answer_work r
+        CROSS JOIN LATERAL (VALUES (r.stream_id), (__EMPTY_UUID__::uuid)) AS ks(sid)
+        WHERE r.stream_id IS NOT NULL) k;
+
   -- 333 (#2093): the ledger rows either statement below may write are locked first, in primary key order, so two
   -- bundles that cover the same type lanes or buckets queue on them in one order instead of deadlocking (the joins
   -- below visit them in whatever order their plans choose). Rows neither statement will write are not locked.
   PERFORM COUNT(*) FROM (
     SELECT 1
-    FROM __SCHEMA__.wh_integrity_ledger l
-    JOIN (SELECT DISTINCT r.tenant_scope, r.event_type, k.sid
-          FROM _wh_bundle_answer_work r
-          CROSS JOIN LATERAL (VALUES (r.stream_id), (__EMPTY_UUID__::uuid)) AS k(sid)
-          WHERE r.stream_id IS NOT NULL) b
+    FROM unnest(v_key_tenants, v_key_types, v_key_streams) AS b(tenant_scope, event_type, sid)
+    JOIN __SCHEMA__.wh_integrity_ledger l
       ON l.origin_service_id = p_origin_service_id
      AND l.tenant_scope = b.tenant_scope AND l.event_type = b.event_type AND l.stream_id = b.sid
     WHERE l.answered_at IS NULL OR l.answer_pending_until IS NOT NULL
@@ -136,21 +151,30 @@ BEGIN
   ) locked;
 
   -- The answer landed: every bucket the bundle covered stops waiting, and its type lane too.
-  -- 333 (#2093): the covered keys are expanded first (each bucket with its stream and with the empty id), so the
-  -- update matches all four primary key columns by equality instead of an OR on the last one, which no index can
-  -- serve and which read the whole ledger on every bundle. A row already answered with no answer pending is not
-  -- rewritten: answered_at is read only as set or not set, and the type lane row is shared by every bundle of its type.
+  -- 333 (#2093): the update matches all four primary key columns by equality instead of an OR on the last one, which
+  -- no index can serve and which read the whole ledger on every bundle. A row already answered with no answer pending
+  -- is not rewritten: answered_at is read only as set or not set, and the type lane row is shared by every bundle of
+  -- its type.
   UPDATE __SCHEMA__.wh_integrity_ledger l
   SET answer_pending_until = NULL,
       answered_at          = p_now,
       last_touched         = p_now
-  FROM (SELECT DISTINCT r.tenant_scope, r.event_type, k.sid
-        FROM _wh_bundle_answer_work r
-        CROSS JOIN LATERAL (VALUES (r.stream_id), (__EMPTY_UUID__::uuid)) AS k(sid)
-        WHERE r.stream_id IS NOT NULL) b
+  FROM unnest(v_key_tenants, v_key_types, v_key_streams) AS b(tenant_scope, event_type, sid)
   WHERE l.origin_service_id = p_origin_service_id
     AND l.tenant_scope = b.tenant_scope AND l.event_type = b.event_type AND l.stream_id = b.sid
     AND (l.answered_at IS NULL OR l.answer_pending_until IS NOT NULL);
+
+  -- The buckets to mark, collected the same way (333, #2093): a refused bucket, and every bucket of a bundle that
+  -- changed nothing.
+  SELECT array_agg(t.tenant_scope), array_agg(t.event_type), array_agg(t.stream_id),
+         array_agg(CASE WHEN t.refused > 0 THEN 'refused_truncated' ELSE 'unchanged' END)
+  INTO v_mark_tenants, v_mark_types, v_mark_streams, v_mark_reasons
+  FROM (SELECT r.stream_id, r.tenant_scope, r.event_type,
+               COUNT(*) FILTER (WHERE r.present) AS present, COUNT(*) FILTER (WHERE r.refused) AS refused
+        FROM _wh_bundle_answer_work r
+        WHERE r.stream_id IS NOT NULL
+        GROUP BY r.stream_id, r.tenant_scope, r.event_type) t
+  WHERE t.refused > 0 OR (v_unchanged AND t.present > 0);
 
   RETURN QUERY
   WITH buckets AS (
@@ -162,17 +186,11 @@ BEGIN
     FROM _wh_bundle_answer_work r
     GROUP BY r.stream_id, r.tenant_scope, r.event_type
   ),
-  to_mark AS (
-    SELECT b.sid, b.tenant, b.etype,
-           CASE WHEN b.refused > 0 THEN 'refused_truncated' ELSE 'unchanged' END AS reason
-    FROM buckets b
-    WHERE b.sid IS NOT NULL AND (b.refused > 0 OR (v_unchanged AND b.present > 0))
-  ),
   marked_rows AS (
     UPDATE __SCHEMA__.wh_integrity_ledger l
     SET unhealable_at = p_now,
         last_touched  = p_now
-    FROM to_mark t
+    FROM unnest(v_mark_tenants, v_mark_types, v_mark_streams, v_mark_reasons) AS t(tenant, etype, sid, reason)
     WHERE l.origin_service_id = p_origin_service_id
       AND l.tenant_scope = t.tenant AND l.event_type = t.etype AND l.stream_id = t.sid
       AND l.unhealable_at IS NULL

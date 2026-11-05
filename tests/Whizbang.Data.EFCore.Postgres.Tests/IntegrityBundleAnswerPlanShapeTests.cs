@@ -6,6 +6,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -120,14 +121,14 @@ public class IntegrityBundleAnswerPlanShapeTests : EFCoreTestBase {
   /// stored event on the first of those streams: the bundle the calls answer.
   /// </summary>
   private static async Task<(Guid Origin, Guid Stream, Guid EventId)> _seedWideLedgerAsync(NpgsqlConnection conn) {
-    var origin = Guid.CreateVersion7();
-    var eventId = Guid.CreateVersion7();
+    var origin = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     await _execAsync(conn, $"""
       INSERT INTO wh_integrity_ledger
         (origin_service_id, tenant_scope, event_type, stream_id, origin_lo, origin_hi, local_lo, local_hi, is_deficit)
-      SELECT '{origin}', '', '{EVENT_TYPE}', gen_random_uuid(), 1, 1, 0, 0, true FROM generate_series(1, {LEDGER_STREAMS})
+      SELECT '{origin}'::uuid, '', '{EVENT_TYPE}', gen_random_uuid(), 1, 1, 0, 0, true FROM generate_series(1, {LEDGER_STREAMS})
       UNION ALL
-      SELECT '{origin}', '', '{EVENT_TYPE}', '00000000-0000-0000-0000-000000000000', 1, 1, 0, 0, true
+      SELECT '{origin}'::uuid, '', '{EVENT_TYPE}', '00000000-0000-0000-0000-000000000000'::uuid, 1, 1, 0, 0, true
       """);
     await _execAsync(conn, "ANALYZE wh_integrity_ledger");
     var stream = await _scalarAsync<Guid>(conn,
