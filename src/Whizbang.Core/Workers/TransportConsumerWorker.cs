@@ -677,8 +677,18 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // consumer, so the claim copies it into the event store for a perspective added later to rebuild from. The shared
       // discard policy owns that decision; ReceiveConsumerGate asks it, for this worker and ServiceBusConsumerWorker alike.
       string? discardedOnReceive = null;
-      if (ReceiveConsumerGate.UnconsumedMessageType(
-            msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null) {
+      var unconsumed = ReceiveConsumerGate.UnconsumedMessageType(
+        msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null;
+      // #2091: framework control or minted traffic this service cannot use (addressed elsewhere, or consumed by
+      // nothing here) is discarded on receipt: no row, no comparison, no fan-out, and so never a retry.
+      if (ReceiveConsumerGate.FrameworkDiscardOnReceipt(msg.EnvelopeType, msg.Envelope.Target, _serviceName, unconsumed)
+          is { } frameworkDiscard) {
+        var discardedType = TypeNameFormatter.GetSimpleName(msg.EnvelopeType!);
+        _countDiscard(frameworkDiscard, discardedType);
+        LogFrameworkMessageDiscardedOnReceipt(_logger, discardedType, frameworkDiscard, msg.Envelope.Target);
+        continue;
+      }
+      if (unconsumed) {
         discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
         _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType!));
       }
@@ -1514,6 +1524,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     Message = "Self-echo stored settled without processing: {MessageType} from {ServiceName}"
   )]
   private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
+
+  /// <summary>Logs that framework control or minted traffic was discarded on receipt with no row (#2091).</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs:ForeignTarget_FrameworkMintedMessage_IsDiscardedWithoutARowAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Discarded framework message {MessageType} on receipt ({Reason}, target '{Target}'): not stored, compared or retried")]
+  private static partial void LogFrameworkMessageDiscardedOnReceipt(ILogger logger, string messageType, string reason, string? target);
 
   /// <summary>Logs that a directed message targeted at a different service was discarded at the receive seam.</summary>
   /// <docs>fundamentals/messaging/directed-messages</docs>

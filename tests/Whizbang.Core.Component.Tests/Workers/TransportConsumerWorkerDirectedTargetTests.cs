@@ -110,11 +110,11 @@ public class TransportConsumerWorkerDirectedTargetTests {
 
   /// <summary>Wire envelope type of a framework minted message (#2091): the redelivery bundle that was retried and
   /// dead-lettered at services it was never addressed to.</summary>
-  private static readonly string _frameworkCompositeType =
+  private const string FRAMEWORK_COMPOSITE_TYPE =
     "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core";
 
   /// <summary>Wire envelope type of a framework control command (#2091).</summary>
-  private static readonly string _frameworkControlType =
+  private const string FRAMEWORK_CONTROL_TYPE =
     "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RequestRedeliveryCommand, Whizbang.Core]], Whizbang.Core";
 
   [Test]
@@ -125,7 +125,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
     var envelope = _createEnvelope();
     envelope.Target = OTHER_SERVICE;
 
-    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+    await worker.SimulateMessageAsync(envelope, FRAMEWORK_COMPOSITE_TYPE);
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
@@ -141,7 +141,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
     var envelope = _createEnvelope();
     envelope.Target = THIS_SERVICE;
 
-    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+    await worker.SimulateMessageAsync(envelope, FRAMEWORK_COMPOSITE_TYPE);
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
@@ -156,7 +156,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
     var envelope = _createEnvelope();
     envelope.Target = OTHER_SERVICE;
 
-    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+    await worker.SimulateMessageAsync(envelope, FRAMEWORK_COMPOSITE_TYPE);
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
@@ -170,7 +170,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
 
     var envelope = _createEnvelope();
 
-    await worker.SimulateMessageAsync(envelope, _frameworkControlType);
+    await worker.SimulateMessageAsync(envelope, FRAMEWORK_CONTROL_TYPE);
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(0)

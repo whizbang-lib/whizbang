@@ -70,8 +70,16 @@ public class ReceiveConsumerGateFrameworkDiscardTests {
   [Arguments("Whizbang.Core.Minting.RedeliveryComposite")]
   [Arguments("Whizbang.Core.Observability.MessageEnvelope`1[[RedeliveryComposite, Whizbang.Core]], Whizbang.Core")]
   [Arguments("Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Shipped]], Whizbang.Core")]
+  [Arguments("Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.Probe, Whizbang.Core.Tests]], Whizbang.Core")]
   public async Task NotAFrameworkPayload_IsNotFrameworkTrafficAsync(string? envelopeType) {
     await Assert.That(ReceiveConsumerGate.IsFrameworkMessage(envelopeType)).IsFalse();
+  }
+
+  [Test]
+  public async Task FrameworkPayloadWithFullAssemblyIdentity_IsFrameworkTrafficAsync() {
+    await Assert.That(ReceiveConsumerGate.IsFrameworkMessage(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core, "
+      + "Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core")).IsTrue();
   }
 
   [Test]

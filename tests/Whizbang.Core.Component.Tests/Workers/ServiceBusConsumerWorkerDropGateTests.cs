@@ -236,7 +236,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
   private static readonly string _frameworkCompositeEnvelopeType =
     typeof(MessageEnvelope<Whizbang.Core.Minting.RedeliveryComposite>).AssemblyQualifiedName!;
 
-  private static MessageEnvelope<JsonElement> _asReceived(string? target) => new() {
+  private static MessageEnvelope<JsonElement> _frameworkMessage(string? target) => new() {
     MessageId = MessageId.From((Guid)TrackedGuid.New()),
     Payload = JsonElement.Parse("{}"),
     Hops = [],
@@ -256,7 +256,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await transport.BatchHandler!.Invoke(
-        [new TransportMessage(_asReceived("another-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
+        [new TransportMessage(_frameworkMessage("another-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
 
       await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
         .Because("#2091: framework traffic addressed to another service is discarded on receipt, with no row");
@@ -276,7 +276,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       var controlType = typeof(MessageEnvelope<RequestRedeliveryCommand>).AssemblyQualifiedName!;
-      await transport.BatchHandler!.Invoke([new TransportMessage(_asReceived(null), controlType)], cts.Token);
+      await transport.BatchHandler!.Invoke([new TransportMessage(_frameworkMessage(null), controlType)], cts.Token);
 
       await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
         .Because("#2091: framework control traffic nothing here consumes is discarded on receipt");
@@ -294,7 +294,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
       await transport.BatchHandler!.Invoke(
-        [new TransportMessage(_asReceived("test-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
+        [new TransportMessage(_frameworkMessage("test-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
 
       await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1);
 
