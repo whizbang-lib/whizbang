@@ -112,6 +112,38 @@ public partial class CoordinationSourceGuardTests {
     ["wh_publish_signal"] = "the signal bus's SQL publish: notifies at commit, and records a decision in the durable log (#2046)",
   };
 
+  /// <summary>
+  /// C# files that may order versions (#2022): the one rule, and the two version types it orders by. Startup's Assess,
+  /// the running instance's re-assessment, the newer instance's announcement, the standby handshake and the migration
+  /// guard all ask the rule, so a stand-down can never be decided by a second comparison that disagrees with it.
+  /// </summary>
+  private static readonly Dictionary<string, string> _versionOrderAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "THE rule: orders versions and finds a newer one recorded or online",
+    ["src/Whizbang.Core/Versioning/SemanticVersion.cs"] = "the SemVer parser and precedence the rule orders library versions by",
+    ["src/Whizbang.Core/Versioning/ApplicationVersion.cs"] = "the application version's schemes and order, which the rule orders "
+      + "application versions by",
+  };
+
+  [GeneratedRegex(@"\bSemanticVersion\b|ApplicationVersion\??\)?\.CompareTo\(")]
+  private static partial Regex _versionOrder();
+
+  [Test]
+  public async Task VersionOrdering_AppearsOnlyInTheOneRuleAsync() =>
+    await _assertOnlyAllowedAsync(_versionOrder(), _versionOrderAllowlist,
+      "a version comparison outside the one rule; ask UpgradeOrder (FindNewer, OlderThan, CompareLibrary) instead");
+
+  [Test]
+  public async Task TheVersionScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_versionOrder().IsMatch(csharp["src/Whizbang.Core/Versioning/UpgradeOrder.cs"])).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("if (!SemanticVersion.TryParse(request.RequestedVersion, out var requested)) {")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var order = provider.ApplicationVersion.CompareTo(theirs);")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var found = UpgradeOrder.FindNewer(own, seen);")).IsFalse()
+      .Because("asking the rule is the way to compare");
+    var stale = _versionOrderAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_versionOrder().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
   private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
     + "closed run permit denies (#2045)";
   private const string STORE = "the store that implements the claim; its callers obey the run permit";

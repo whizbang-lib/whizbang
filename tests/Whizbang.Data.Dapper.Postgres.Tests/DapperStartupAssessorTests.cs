@@ -156,4 +156,62 @@ public class DapperStartupAssessorTests {
 
     await Assert.That(await _verdictAsync()).IsEqualTo(StartupVerdict.StandDown);
   }
+
+  // ── #2022: a newer version online, read as the EF Core driver reads it ──
+
+  private ServiceProvider _composeAt(string applicationVersion) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IApplicationVersionProvider>(new ApplicationVersionProvider(ApplicationVersion.FromRecorded(applicationVersion)));
+    services.AddLogging();
+    services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
+    services.AddWhizbangPostgres(_database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries,
+      managedObjects: null);
+    return services.BuildServiceProvider();
+  }
+
+  private async Task<Guid> _onlineAsync(string application, string phase = "Running") {
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await db.ExecuteScalarAsync("""
+      SELECT record_heartbeat(@id, 'svc', 'host', 1, '{}'::jsonb, @phase, @library, 90, 'pooled', @application)
+      """, new { id, phase, library = BuildInfo.Version, application });
+    return id;
+  }
+
+  [Test]
+  public async Task ANewerApplicationVersionOnline_StandsAnOlderInstanceDown_AsTheEFCoreDriverDoesAsync() {
+    await _startAsync();
+    var newer = await _onlineAsync("2.0.0");
+
+    await using var provider = _composeAt("1.0.0");
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"instance {newer} is online with application version 2.0.0");
+  }
+
+  [Test]
+  public async Task AnEqualOrOlderVersionOnline_OrOneNotYetServing_StandsNothingDownAsync() {
+    await _startAsync();
+    await _onlineAsync("1.0.0");
+    await _onlineAsync("0.9.0");
+    await _onlineAsync("2.0.0", "Migrating");
+
+    await using var provider = _composeAt("1.0.0");
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current).Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task TheOnlineVersions_AreReadForTheAnnouncementAsync() {
+    await _startAsync();
+    var running = await _onlineAsync("2.0.0");
+    await _onlineAsync("2.0.0", "Migrating");
+
+    await using var provider = _composeAt("1.0.0");
+    var online = await provider.GetRequiredService<IOnlineVersionReader>().ReadOnlineAsync(CancellationToken.None);
+
+    await Assert.That(online).IsEquivalentTo([new VersionSighting(BuildInfo.Version, "2.0.0", running)]);
+  }
 }
