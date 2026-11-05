@@ -45,19 +45,14 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       LeaderElectionRetry = TimeSpan.FromMilliseconds(50),
     };
 
-    var sharedConn = new PgSharedNotifyConnection(
-      Options.Create(notifyOptions),
-      cfg,
-      new ServiceInstanceProvider(cfg),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
-      connectionStringFallback: null);
+    var bus = new Whizbang.Core.Signals.SignalBus([], []);
 
     var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
       cfg,
-      sharedConn,
+      bus,
       logger,
       dutyElector: new GrantingElector(),
       connectionStringFallback: null);
@@ -90,19 +85,14 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       LeaderElectionRetry = TimeSpan.FromMilliseconds(50),
     };
 
-    var sharedConn = new PgSharedNotifyConnection(
-      Options.Create(notifyOptions),
-      cfg,
-      new ServiceInstanceProvider(cfg),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
-      connectionStringFallback: null);
+    var bus = new Whizbang.Core.Signals.SignalBus([], []);
 
     var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
       cfg,
-      sharedConn,
+      bus,
       logger,
       dutyElector: new GrantingElector(),
       connectionStringFallback: null);
@@ -133,19 +123,14 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       LeaderElectionRetry = TimeSpan.FromMilliseconds(50),
     };
 
-    var sharedConn = new PgSharedNotifyConnection(
-      Options.Create(notifyOptions),
-      cfg,
-      new ServiceInstanceProvider(cfg),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
-      connectionStringFallback: null);
+    var bus = new Whizbang.Core.Signals.SignalBus([], []);
 
     var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
       cfg,
-      sharedConn,
+      bus,
       logger,
       dutyElector: new GrantingElector(),
       connectionStringFallback: null);

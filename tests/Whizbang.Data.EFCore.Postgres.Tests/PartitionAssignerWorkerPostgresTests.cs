@@ -146,10 +146,12 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
     var pod = new Pod(Guid.CreateVersion7());
     await _registerAsync(pod.InstanceId);
     var cache = new PartitionAssignmentCache(_store(), NullLogger<PartitionAssignmentCache>.Instance);
-    using var shared = new PgSharedNotifyConnection(Options.Create(_notification()), _config(), pod, NullLogger<PgSharedNotifyConnection>.Instance);
-    using var subscription = shared.Subscribe(cache);
-    await shared.StartAsync(cancellationToken);
-    await shared.WaitForChannelListenedAsync(PartitionAssignmentCache.CHANNEL, cancellationToken);
+    // #2046: the cache hears a publish through the bus, as the host wires it.
+    await using var stack = PgSignalBusStack.Create(ConnectionString, pod);
+    var subscriber = new PartitionAssignmentSubscriber(stack.Bus, cache);
+    await subscriber.StartAsync(cancellationToken);
+    await stack.StartAsync(cancellationToken);
+    await stack.ListenedAsync(PgSignalWire.PARTITION_ASSIGNMENT_CHANNEL, cancellationToken);
     await Assert.That(await cache.ForClaimAsync(pod.InstanceId, cancellationToken)).IsNull().Because("nothing is published yet");
 
     var worker = _workerFor(pod);
@@ -166,7 +168,7 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
       await Assert.That(cache.Current).IsEqualTo(assignment);
     } finally {
       await worker.StopAsync(CancellationToken.None);
-      await shared.StopAsync(CancellationToken.None);
+      await subscriber.StopAsync(CancellationToken.None);
     }
   }
 
@@ -174,23 +176,23 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task SharedConnection_OnADirectConnection_ReportsTheDirectModeAsync(CancellationToken cancellationToken) {
     var pod = new Pod(Guid.CreateVersion7());
-    using var shared = new PgSharedNotifyConnection(Options.Create(_notification()), _config(), pod, NullLogger<PgSharedNotifyConnection>.Instance);
+    await using var stack = PgSignalBusStack.Create(ConnectionString, pod);
+    var shared = stack.Shared;
     var cache = new PartitionAssignmentCache(_store(), NullLogger<PartitionAssignmentCache>.Instance);
-    var subscriber = new PartitionAssignmentSubscriber(shared, cache);
+    var subscriber = new PartitionAssignmentSubscriber(stack.Bus, cache);
     await Assert.That(shared.ConnectionMode).IsEqualTo(InstanceConnectionMode.Pooled).Because("nothing is resolved before it starts");
 
     await subscriber.StartAsync(cancellationToken);
-    await shared.StartAsync(cancellationToken);
+    await stack.StartAsync(cancellationToken);
     try {
       // The signal: the shared connection has resolved its connection and listens on the assignment channel.
-      await shared.WaitForChannelListenedAsync(PartitionAssignmentCache.CHANNEL, cancellationToken).WaitAsync(_signalDeadline, cancellationToken);
+      await stack.ListenedAsync(PgSignalWire.PARTITION_ASSIGNMENT_CHANNEL, cancellationToken).WaitAsync(_signalDeadline, cancellationToken);
 
       await Assert.That(shared.ConnectionMode).IsEqualTo(InstanceConnectionMode.Direct)
         .Because("a connection of its own, not the pooled fallback, makes the instance's alive-lock visible to its peers");
     } finally {
       await subscriber.StopAsync(CancellationToken.None);
       await subscriber.StopAsync(CancellationToken.None);
-      await shared.StopAsync(CancellationToken.None);
     }
   }
 

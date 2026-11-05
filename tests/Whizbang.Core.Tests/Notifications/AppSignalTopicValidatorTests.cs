@@ -59,16 +59,4 @@ public class AppSignalTopicValidatorTests {
     var channel = AppSignalTopicValidator.ToChannelName("user_signup");
     await Assert.That(channel).IsEqualTo("wh_app_user_signup");
   }
-
-  [Test]
-  public async Task NoOpAppSignalChannel_PublishValidatesTopicAsync() {
-    var channel = new NoOpAppSignalChannel();
-    var threw = false;
-    try {
-      await channel.PublishAsync("wh_internal", "payload");
-    } catch (ArgumentException) {
-      threw = true;
-    }
-    await Assert.That(threw).IsTrue();
-  }
 }

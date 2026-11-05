@@ -151,7 +151,7 @@ public class ClaimedEmissionPruneStepTests {
   private static DutyHolderWorker _holder(bool grants, string role = StartupDuties.MAINTAINER) =>
     new(new Elector(grants), new NoOwedWork(), [new Handler(role)], [],
       Options.Create(new RoleAssignmentOptions { Roles = { StartupDuties.MIGRATOR } }),
-      NullLogger<DutyHolderWorker>.Instance, notify: null);
+      NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private sealed record PruneCall(DateTimeOffset ExpiredBefore, IReadOnlyCollection<string> Retained, int MaxClaims);
 

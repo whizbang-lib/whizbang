@@ -1,12 +1,14 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
 
@@ -31,6 +33,18 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// only a kind from the closed doorbell vocabulary.
 /// <see cref="SignalTarget.Instance"/> emits <c>pg_notify</c> directly to that one instance's channel.
 /// </para>
+/// <para>
+/// <strong>Coordination channels (#2046).</strong> The coordination signals travel on channels of their own, by the
+/// names and payloads an older release uses (<see cref="PgSignalWire"/>): this transport LISTENs on each and delivers
+/// the typed signal, and publishes them through the bus's one SQL function, <c>wh_publish_signal</c>, which records a
+/// durable signal (with its payload) in the same statement as its NOTIFY.
+/// </para>
+/// <para>
+/// <strong>Application topics (#2046).</strong> The bus's <see cref="IAppSignalChannel"/> hands each topic here: a topic
+/// travels on <c>wh_app_&lt;topic&gt;</c>, LISTENed while it has a subscriber, with the payload fanned out in memory to
+/// every handler. This is the only place in the library that issues NOTIFY or LISTEN outside the shared connection
+/// itself, and the coordination source guard holds it there.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
@@ -44,7 +58,7 @@ public sealed partial class PostgresSignalTransport(
   INotificationDataSource? notificationDataSource = null,
   SignalBusLivenessState? busLiveness = null,
   TimeProvider? timeProvider = null
-) : ISignalTransport, IDisposable {
+) : ISignalTransport, ISignalTopicTransport, IDisposable {
   /// <summary>Broadcast channel every instance listens on.</summary>
   internal const string BROADCAST_CHANNEL = "wh_signal_broadcast";
 
@@ -61,6 +75,8 @@ public sealed partial class PostgresSignalTransport(
   private ISignalSink? _sink;
   private IDisposable? _broadcastSubscription;
   private IDisposable? _instanceSubscription;
+  private IDisposable[] _boundSubscriptions = [];
+  private readonly ConcurrentDictionary<string, TopicSubscription> _byTopic = new(StringComparer.Ordinal);
   private Dictionary<Type, string>? _typeToWireName;
   private Dictionary<string, SignalTypeEntry>? _wireNameToEntry;
 
@@ -86,6 +102,8 @@ public sealed partial class PostgresSignalTransport(
     // LISTEN on broadcast (all instances) AND this instance's per-owner channel (targeted).
     _broadcastSubscription = _sharedConnection.Subscribe(new BroadcastSubscription(this));
     _instanceSubscription = _sharedConnection.Subscribe(new InstanceSubscription(this));
+    // #2046: and on each coordination channel, by the name an older release uses.
+    _boundSubscriptions = [.. PgSignalWire.Bindings.Select(binding => _sharedConnection.Subscribe(new BoundSubscription(this, binding)))];
     return Task.CompletedTask;
   }
 
@@ -116,6 +134,15 @@ public sealed partial class PostgresSignalTransport(
     }
 
     await using var conn = await plan.OpenAsync(cancellationToken);
+
+    // #2046: a coordination signal travels on its own channel, through the bus's SQL publish, which records a durable
+    // one (payload and all) in the same statement as the NOTIFY.
+    if (PgSignalWire.ForType(typeof(TSignal)) is { } binding) {
+      var payload = signal is IPayloadSignal carried ? carried.Payload : string.Empty;
+      var durableWireName = TSignal.DeliveryClass == SignalDeliveryClass.Durable ? wireName : null;
+      await _publishBoundAsync(conn, binding.Channel, payload, durableWireName, cancellationToken);
+      return;
+    }
 
     // Durable signals persist to wh_signals BEFORE the NOTIFY so a tail on any instance
     // can replay them if the NOTIFY was dropped. Best-effort signals go NOTIFY-only.
@@ -150,6 +177,15 @@ public sealed partial class PostgresSignalTransport(
       Value = (object?)persistedTarget ?? DBNull.Value,
     });
     await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  private static async Task _publishBoundAsync(
+      NpgsqlConnection conn, string channel, string payload, string? durableWireName, CancellationToken ct) {
+    await using var cmd = new NpgsqlCommand("SELECT wh_publish_signal(@channel, @payload, @wire_name)", conn);
+    cmd.Parameters.AddWithValue(nameof(channel), channel);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
+    cmd.Parameters.Add(new NpgsqlParameter("wire_name", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)durableWireName ?? DBNull.Value });
+    _ = await cmd.ExecuteScalarAsync(ct);
   }
 
   private static async Task _publishBroadcastAsync(NpgsqlConnection conn, string wireName, CancellationToken ct) {
@@ -217,6 +253,21 @@ public sealed partial class PostgresSignalTransport(
     }
   }
 
+  private void _onBoundNotification(PgSignalWire.Binding binding, string payload) {
+    _busLiveness?.MarkWireSignalReceived(_time.GetUtcNow());
+    // The coordination subscriptions are made in StartAsync after the sink and the routing map are set, and released
+    // by Dispose, so a notification here always finds both.
+    var wireName = _typeToWireName!.GetValueOrDefault(binding.SignalType, binding.Channel);
+    try {
+      var pending = binding.Dispatch(_sink!, payload, CancellationToken.None);
+      if (!pending.IsCompletedSuccessfully) {
+        _ = _observeAsync(pending, wireName);
+      }
+    } catch (Exception ex) {
+      LogDispatchThrew(_logger, wireName, ex);
+    }
+  }
+
   private async Task _observeAsync(ValueTask pending, string wireName) {
     try {
       await pending.ConfigureAwait(false);
@@ -237,6 +288,114 @@ public sealed partial class PostgresSignalTransport(
     public void OnNotification(string payload) => owner._onNotification(payload);
   }
 
+  /// <summary>One coordination channel's LISTEN registration (#2046).</summary>
+  private sealed class BoundSubscription(PostgresSignalTransport owner, PgSignalWire.Binding binding) : INotifySubscription {
+    public string ChannelName => binding.Channel;
+    public void OnNotification(string payload) => owner._onBoundNotification(binding, payload);
+  }
+
+  // ============================================================
+  // Application topics (#2046): the bus's IAppSignalChannel hands each topic here.
+  // ============================================================
+
+  /// <inheritdoc />
+  public async Task PublishTopicAsync(string topic, string payload, CancellationToken cancellationToken = default) {
+    var channel = AppSignalTopicValidator.ToChannelName(topic);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
+      LogTopicPublishSkippedNoConnection(_logger, channel);
+      return;
+    }
+
+    await using var conn = await plan.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
+    cmd.Parameters.AddWithValue("channel", channel);
+    cmd.Parameters.AddWithValue(nameof(payload), payload ?? string.Empty);
+    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public IDisposable SubscribeTopic(string topic, Func<string, CancellationToken, Task> handler) {
+    ArgumentNullException.ThrowIfNull(handler);
+    _ = AppSignalTopicValidator.Validate(topic);
+    // One LISTEN per topic, however many handlers: the first handler creates it, and the payload fans out in memory.
+    var topicSub = _byTopic.GetOrAdd(topic, t => new TopicSubscription(this, t));
+    topicSub.AddHandler(handler);
+    return new TopicHandle(this, topic, handler);
+  }
+
+  private void _removeTopicHandler(string topic, Func<string, CancellationToken, Task> handler) {
+    // One condition rather than an early return: the "topic already gone" arm happens only when a concurrent removal
+    // dropped the entry between this handle being taken out and disposed. The last handler drops the LISTEN; the next
+    // subscribe to the topic creates a fresh one.
+    if (_byTopic.TryGetValue(topic, out var topicSub) &&
+        !topicSub.RemoveHandler(handler) &&
+        _byTopic.TryRemove(topic, out var removed)) {
+      removed.Dispose();
+    }
+  }
+
+  /// <summary>One topic's LISTEN on the shared connection, fanning each payload out to the topic's handlers.</summary>
+  private sealed class TopicSubscription : INotifySubscription, IDisposable {
+    private readonly PostgresSignalTransport _owner;
+    private readonly string _topic;
+    private readonly List<Func<string, CancellationToken, Task>> _handlers = [];
+    private readonly Lock _gate = new();
+    private IDisposable? _sharedSubscriptionHandle;
+
+    public TopicSubscription(PostgresSignalTransport owner, string topic) {
+      _owner = owner;
+      _topic = topic;
+      ChannelName = AppSignalTopicValidator.ToChannelName(topic);
+      _sharedSubscriptionHandle = owner._sharedConnection.Subscribe(this);
+    }
+
+    public string ChannelName { get; }
+
+    public void OnNotification(string payload) {
+      Func<string, CancellationToken, Task>[] snapshot;
+      lock (_gate) {
+        snapshot = [.. _handlers];
+      }
+      foreach (var h in snapshot) {
+        try {
+          _ = h(payload, CancellationToken.None);
+        } catch (Exception ex) {
+          LogTopicHandlerThrew(_owner._logger, _topic, ex);
+        }
+      }
+    }
+
+    public void AddHandler(Func<string, CancellationToken, Task> handler) {
+      lock (_gate) {
+        _handlers.Add(handler);
+      }
+    }
+
+    public bool RemoveHandler(Func<string, CancellationToken, Task> handler) {
+      lock (_gate) {
+        _handlers.Remove(handler);
+        return _handlers.Count > 0;
+      }
+    }
+
+    public void Dispose() {
+      _sharedSubscriptionHandle?.Dispose();
+      _sharedSubscriptionHandle = null;
+    }
+  }
+
+  private sealed class TopicHandle(PostgresSignalTransport parent, string topic, Func<string, CancellationToken, Task> handler) : IDisposable {
+    private int _disposed;
+
+    public void Dispose() {
+      if (Interlocked.Exchange(ref _disposed, 1) == 0) {
+        parent._removeTopicHandler(topic, handler);
+      }
+    }
+  }
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
     Message = "PostgresSignalTransport.PublishAsync skipped: no connection string resolved (wireName={WireName})")]
   static partial void LogPublishSkippedNoConnection(ILogger logger, string wireName);
@@ -254,9 +413,21 @@ public sealed partial class PostgresSignalTransport(
               "The signal bus is hosted by SignalBusHostedService (AddWhizbangSignalBus); if this repeats after startup, the bus was never started")]
   static partial void LogPublishBeforeStart(ILogger logger, string signalType);
 
-  /// <summary>Releases the broadcast and per-instance LISTEN registrations on the shared connection.</summary>
+  [LoggerMessage(EventId = 5, Level = LogLevel.Debug,
+    Message = "PostgresSignalTransport.PublishTopicAsync skipped: no connection string resolved (channel={Channel})")]
+  static partial void LogTopicPublishSkippedNoConnection(ILogger logger, string channel);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+    Message = "PostgresSignalTransport: a handler for application topic {Topic} threw; other handlers continue")]
+  static partial void LogTopicHandlerThrew(ILogger logger, string topic, Exception ex);
+
+  /// <summary>Releases the broadcast, per-instance and coordination-channel LISTEN registrations on the shared connection.</summary>
   public void Dispose() {
     _broadcastSubscription?.Dispose();
     _instanceSubscription?.Dispose();
+    foreach (var bound in _boundSubscriptions) {
+      bound.Dispose();
+    }
+    _boundSubscriptions = [];
   }
 }

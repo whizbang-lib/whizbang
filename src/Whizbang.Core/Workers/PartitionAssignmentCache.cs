@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging;
-using Whizbang.Core.Notifications;
 
 namespace Whizbang.Core.Workers;
 
@@ -15,7 +14,8 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// The claim path pays nothing for the assignment while the copy is current: <see cref="ForClaimAsync"/> answers from
 /// memory, and the claim checks the version it is handed with one read of a one-row table that replaces its own ranking.
-/// A refresh happens only after a publish (the NOTIFY), after a claim found the copy superseded, or the first time.
+/// A refresh happens only after a publish (announced on the signal bus, #2046), after a claim found the copy superseded,
+/// or the first time.
 /// </para>
 /// <para>
 /// The lease is kept as the time left on it by the database's clock, added to this process's clock at the moment of
@@ -26,10 +26,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:ForClaim_TheFirstTime_ReadsOnceAndPresentsTheVersionAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:ForClaim_AfterTheLeaseRunsOut_PresentsNothingAsync</tests>
-public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSource, INotifySubscription {
-  /// <summary>The channel the assigner announces a publish on, with payload <c>epoch:revision</c>.</summary>
-  public const string CHANNEL = "wh_partition_assignment";
-
+public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSource {
   private readonly IPartitionAssignmentStore _store;
   private readonly TimeProvider _time;
   private readonly ILogger<PartitionAssignmentCache> _logger;
@@ -74,21 +71,25 @@ public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSourc
   /// copy is marked stale, so a claim made by a caller woken by it reads the new version. The signal that this
   /// instance heard a publish. Must not block.
   /// </summary>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnPublished_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnPublished_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync</tests>
   public event Action<string>? OnPublishAnnounced;
 
-  /// <inheritdoc />
-  public string ChannelName => CHANNEL;
-
-  /// <inheritdoc />
-  /// <remarks>A publish marks the copy stale unless it already is this version; the read happens on the next claim.</remarks>
-  public void OnNotification(string payload) {
+  /// <summary>
+  /// The assigner published <paramref name="version"/> (<c>epoch:revision</c>), as announced on the signal bus
+  /// (<see cref="Whizbang.Core.Signals.PartitionAssignmentPublishedSignal"/>, #2046). Marks the copy stale unless it
+  /// already is this version; the read happens on the next claim. Hearing the same publish twice (the notification,
+  /// then the durable log's replay) reads nothing more.
+  /// </summary>
+  /// <param name="version">The published version.</param>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnPublished_ForADifferentVersion_MarksTheCopyStaleAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnPublished_ForTheVersionAlreadyHeld_ReadsNothingAsync</tests>
+  public void OnPublished(string version) {
     var current = Current;
-    if (current is null || !string.Equals(payload, PayloadOf(current.Version), StringComparison.Ordinal)) {
+    if (current is null || !string.Equals(version, PayloadOf(current.Version), StringComparison.Ordinal)) {
       MarkStale();
     }
-    OnPublishAnnounced?.Invoke(payload);
+    OnPublishAnnounced?.Invoke(version);
   }
 
   /// <inheritdoc />

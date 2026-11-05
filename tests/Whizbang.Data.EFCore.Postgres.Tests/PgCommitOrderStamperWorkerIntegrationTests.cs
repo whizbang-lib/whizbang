@@ -61,22 +61,14 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       DisableStamper = disable,
     };
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    // Slice 33.5 — use a real PgSharedNotifyConnection for the wh_committed LISTEN. Tests
-    // that exercise the NOTIFY-fired wake path also need to start the shared conn so its
-    // dispatch loop is running.
-    var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
-    var shared = new PgSharedNotifyConnection(
-      Options.Create(notificationOptions),
-      config,
-      instanceProvider,
-      NullLogger<PgSharedNotifyConnection>.Instance,
-      connectionStringFallback: null,
-      timeProvider: null);
+    // #2046: the wh_committed doorbell reaches the stamper through its signal bus. These tests drive the stamper by
+    // its poll; the bus is not started, so no wake arrives from the wire.
+    var bus = new Whizbang.Core.Signals.SignalBus([], []);
     return new PgCommitOrderStamperWorker(
       Options.Create(notificationOptions),
       Options.Create(stamperOptions),
       config,
-      shared,
+      bus,
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
       dutyElector: elector ?? new GrantingDutyElector(),
       notifySignalingGate: gate,

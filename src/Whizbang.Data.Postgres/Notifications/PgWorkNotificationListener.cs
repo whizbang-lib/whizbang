@@ -5,68 +5,54 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Notifications;
-using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
-/// Listens for Postgres LISTEN/NOTIFY work signals via the per-pod shared connection
-/// (<see cref="ISharedNotifyConnection"/>). Slice 33.4 — collapsed from a full
-/// <c>BackgroundService</c> + own <see cref="Npgsql.NpgsqlConnection"/> + own reconnect loop
-/// into a thin <see cref="INotifySubscription"/> that just parses payloads and surfaces
-/// them as <see cref="OnSignal"/> events.
+/// Surfaces the work doorbells as <see cref="IWorkNotificationListener.OnSignal"/> events. A subscriber of the signal
+/// bus (#2046): the outbox, inbox and perspective doorbells, the reap's orphan wake and the dead-letter doorbell arrive
+/// as signals on the instance's channel, and each becomes its <see cref="WorkSignalCategory"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Pre-slice-33 design: every per-pod listener inherited <c>BackgroundService</c> and owned
-/// its own direct connection. With three listener types (work, commit-order, app-signal)
-/// times N pods times M services times E environments, that's a lot of direct connections
-/// against the Postgres <c>max_connections</c> budget. Slice 33 collapses them to a single
-/// shared direct connection per pod via the <see cref="PgSharedNotifyConnection"/>
-/// multiplexer. The killswitch + functionality probe live there too.
+/// The listener owns no channel and no connection. The bus's Postgres transport LISTENs on the instance's channel through
+/// the one shared connection, and the bus hands each signal here; a signal a poll source raised arrives the same way,
+/// which only wakes a worker that would have found the work on its next poll.
 /// </para>
 /// <para>
-/// <strong>What stayed the same:</strong> the public surface — <see cref="IsHealthy"/>,
-/// <see cref="LastSignalAt"/>, <see cref="OnSignal"/>, <see cref="OnHealthChanged"/> — so
-/// existing consumers (notably <c>ClaimWorker._onSignal</c>) don't have to change.
-/// <see cref="IsHealthy"/> now delegates to <see cref="INotifySignalingGate.IsAvailable"/>;
-/// <see cref="OnHealthChanged"/> mirrors the gate's <see cref="INotifySignalingGate.OnAvailabilityChanged"/>.
+/// <see cref="IsHealthy"/> delegates to <see cref="INotifySignalingGate.IsAvailable"/>; <see cref="OnHealthChanged"/>
+/// mirrors the gate's <see cref="INotifySignalingGate.OnAvailabilityChanged"/>.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
-public sealed partial class PgWorkNotificationListener : IWorkNotificationListener, INotifySubscription, IHostedService, IDisposable {
-  private readonly ISharedNotifyConnection _sharedConnection;
+/// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgWorkNotificationListenerTests.cs</tests>
+public sealed partial class PgWorkNotificationListener : IWorkNotificationListener, IHostedService, IDisposable {
+  private readonly ISignalBus _signalBus;
   private readonly INotifySignalingGate _gate;
-  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILogger<PgWorkNotificationListener> _logger;
-  private IDisposable? _subscription;
+  private readonly TimeProvider _time;
+  private ISignalSubscription[] _subscriptions = [];
   private DateTimeOffset? _lastSignalAt;
 
   /// <summary>Constructor used by DI.</summary>
+  /// <param name="signalBus">The bus the work doorbells arrive on.</param>
+  /// <param name="gate">The notification gate whose availability is this listener's health.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="timeProvider">Optional clock for <see cref="LastSignalAt"/>.</param>
   public PgWorkNotificationListener(
-    ISharedNotifyConnection sharedConnection,
+    ISignalBus signalBus,
     INotifySignalingGate gate,
-    IServiceInstanceProvider instanceProvider,
-    ILogger<PgWorkNotificationListener>? logger = null) {
-    ArgumentNullException.ThrowIfNull(sharedConnection);
-    _sharedConnection = sharedConnection;
+    ILogger<PgWorkNotificationListener>? logger = null,
+    TimeProvider? timeProvider = null) {
+    ArgumentNullException.ThrowIfNull(signalBus);
+    _signalBus = signalBus;
     ArgumentNullException.ThrowIfNull(gate);
     _gate = gate;
-    ArgumentNullException.ThrowIfNull(instanceProvider);
-    _instanceProvider = instanceProvider;
     _logger = logger ?? NullLogger<PgWorkNotificationListener>.Instance;
+    _time = timeProvider ?? TimeProvider.System;
     _gate.OnAvailabilityChanged += _forwardAvailability;
   }
-
-  /// <summary>
-  /// Instance-routed channel. Producer-side <c>notify_instance_owners</c> emits on this
-  /// per-instance channel so only the owning instance wakes — non-owners never receive
-  /// the notification.
-  /// </summary>
-  public string ChannelName => $"wh_work_i_{_instanceProvider.InstanceId:D}";
-
-  /// <inheritdoc cref="INotifySubscription.ChannelName" />
-  string INotifySubscription.ChannelName => ChannelName;
 
   /// <inheritdoc />
   public bool IsHealthy => _gate.IsAvailable;
@@ -77,53 +63,46 @@ public sealed partial class PgWorkNotificationListener : IWorkNotificationListen
   /// <inheritdoc />
   public event Action<bool>? OnHealthChanged;
 
-  void INotifySubscription.OnNotification(string payload) {
-    _lastSignalAt = DateTimeOffset.UtcNow;
-    var category = payload switch {
-      "outbox" => (WorkSignalCategory?)WorkSignalCategory.Outbox,
-      "inbox" => WorkSignalCategory.Inbox,
-      "perspective" => WorkSignalCategory.Perspective,
-      // v0.502 slice B.3 — emitted by cleanup_stale_instances after releasing leases
-      // owned by a dead pod. Live pods react by running claim_orphaned_*.
-      "orphan" => WorkSignalCategory.OrphanRedistribute,
-      // v0.681 slice 7c — emitted by the AFTER INSERT trigger on wh_dead_letters.
-      // DeadLetterRecoveryWorker wakes to scan for rows whose recovery policy elapsed.
-      "deadletter" => WorkSignalCategory.DeadLetterReady,
-      _ => null,
-    };
-    if (category is { } cat) {
-      OnSignal?.Invoke(cat);
-    } else {
-      LogUnknownPayload(_logger, payload);
-    }
+  private ValueTask _raise(WorkSignalCategory category) {
+    _lastSignalAt = _time.GetUtcNow();
+    OnSignal?.Invoke(category);
+    return ValueTask.CompletedTask;
   }
 
   Task IHostedService.StartAsync(CancellationToken cancellationToken) {
-    _subscription = _sharedConnection.Subscribe(this);
-    LogSubscribed(_logger, ChannelName);
+    _subscriptions = [
+      _signalBus.Subscribe<WorkOutboxAvailableSignal>(_ => _raise(WorkSignalCategory.Outbox)),
+      _signalBus.Subscribe<WorkInboxAvailableSignal>(_ => _raise(WorkSignalCategory.Inbox)),
+      _signalBus.Subscribe<WorkPerspectiveAvailableSignal>(_ => _raise(WorkSignalCategory.Perspective)),
+      // The reap's wake after it released a dead instance's leases (cleanup_stale_instances).
+      _signalBus.Subscribe<WorkOrphanedSignal>(_ => _raise(WorkSignalCategory.OrphanRedistribute)),
+      // The dead-letter table's insert trigger.
+      _signalBus.Subscribe<DeadLetterReadySignal>(_ => _raise(WorkSignalCategory.DeadLetterReady)),
+    ];
+    LogSubscribed(_logger);
     return Task.CompletedTask;
   }
 
   Task IHostedService.StopAsync(CancellationToken cancellationToken) {
-    _subscription?.Dispose();
-    _subscription = null;
+    _unsubscribe();
     return Task.CompletedTask;
   }
 
   /// <inheritdoc />
   public void Dispose() {
     _gate.OnAvailabilityChanged -= _forwardAvailability;
-    _subscription?.Dispose();
-    _subscription = null;
+    _unsubscribe();
+  }
+
+  private void _unsubscribe() {
+    foreach (var subscription in Interlocked.Exchange(ref _subscriptions, [])) {
+      subscription.Dispose();
+    }
   }
 
   private void _forwardAvailability(bool available) => OnHealthChanged?.Invoke(available);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
-    Message = "PgWorkNotificationListener subscribed to channel {Channel}")]
-  static partial void LogSubscribed(ILogger logger, string channel);
-
-  [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
-    Message = "PgWorkNotificationListener received unknown payload '{Payload}' — ignored")]
-  static partial void LogUnknownPayload(ILogger logger, string payload);
+    Message = "PgWorkNotificationListener subscribed to the work doorbells on the signal bus")]
+  static partial void LogSubscribed(ILogger logger);
 }

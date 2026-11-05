@@ -78,7 +78,7 @@ public class MaintenanceWorkerMaintainerDutyTests {
   private static DutyHolderWorker _holder(bool grants, string role) =>
     new(new Elector(grants), new NoOwedWork(), [new Handler(role)], [],
       Options.Create(new RoleAssignmentOptions { Roles = { StartupDuties.MIGRATOR } }),
-      NullLogger<DutyHolderWorker>.Instance, notify: null);
+      NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private sealed class SweepCountingCoordinator : IWorkCoordinator {
     public int SweepCount { get; private set; }

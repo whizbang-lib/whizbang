@@ -21,9 +21,6 @@ namespace Whizbang.Data.Postgres.MultiStream;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:ClaimAsync_UnderAPublishedAssignment_EachInstanceClaimsOnlyItsPartitionShareAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_TheLastStream_CompletesTheRunOnceAsync</tests>
 public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
-  /// <summary>The channel a newly recorded run is announced on; the payload is the run id.</summary>
-  public const string CHANNEL = MultiStreamCommandWorker.CHANNEL;
-
   private readonly WhizbangNotificationOptions _options;
   private readonly IConfiguration _configuration;
   private readonly int _partitionCount;

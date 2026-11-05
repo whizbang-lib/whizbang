@@ -78,7 +78,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
   public async Task RecordRunAsync_ANewRun_WakesEveryInstanceAsync() {
     var store = _store();
     await using var listener = await _openAsync();
-    await _execAsync(listener, $"LISTEN \"{PgMultiStreamCommandStore.CHANNEL}\"");
+    await _execAsync(listener, $"LISTEN \"{Whizbang.Data.Postgres.Notifications.PgSignalWire.MULTI_STREAM_WORK_CHANNEL}\"");
     string? payload = null;
     listener.Notification += (_, e) => payload = e.Payload;
     var run = _run(Guid.CreateVersion7());

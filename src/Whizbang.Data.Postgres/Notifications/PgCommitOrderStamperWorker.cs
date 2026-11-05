@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 
 namespace Whizbang.Data.Postgres.Notifications;
@@ -21,10 +22,9 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Wake sources:
 /// </para>
 /// <list type="bullet">
-/// <item><description><strong>Shared-conn LISTEN <c>wh_committed</c></strong> — sub-ms wake from
-/// <c>_emit_event_store_chain</c> at commit time. Routed through
-/// <see cref="ISharedNotifyConnection"/> (slice 33.5) instead of a dedicated direct connection
-/// so all per-pod LISTEN traffic multiplexes onto one direct Postgres connection.</description></item>
+/// <item><description><strong>The commit doorbell on the signal bus</strong> (<see cref="RowsCommittedSignal"/>, #2046):
+/// sub-ms wake from <c>_emit_event_store_chain</c> after commit. The bus's transport LISTENs on the one shared
+/// connection; the stamper subscribes to the signal and owns no channel.</description></item>
 /// <item><description><strong>Polling tick</strong> — <see cref="CommitOrderStamperOptions.PollingInterval"/>.
 /// Correctness floor; runs unconditionally on the role holder, so the system stamps
 /// even when LISTEN is unavailable (gate reports IsAvailable=false → wake won't fire from
@@ -37,7 +37,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// schema, won by a vote, kept by the stamping loop itself (each iteration verifies the grant, which
 /// renews the lease, and the loop never sleeps longer than one renew interval), and every stamp is
 /// fenced by the holder's epoch in the same transaction, so a stamper that lost the role cannot
-/// stamp. A non-holder waits for the retry interval or for the role's release to be announced. A
+/// stamp. A non-holder waits for the retry interval or for the role's release to be announced on the bus
+/// (<see cref="RoleReleasedSignal"/>). A
 /// newer-version instance asking for the role gets it after the stamp in progress. A holder that
 /// dies stops renewing, and the role goes to the next vote once its lease lapses or the one
 /// liveness rule has the instance reaped. With no elector registered, the stamper says so and
@@ -55,7 +56,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
   IOptions<CommitOrderStamperOptions> stamperOptions,
   IConfiguration configuration,
-  ISharedNotifyConnection sharedConnection,
+  ISignalBus signalBus,
   ILogger<PgCommitOrderStamperWorker> logger,
   IDutyElector? dutyElector = null,
   INotificationConnectionStringFallback? connectionStringFallback = null,
@@ -66,7 +67,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-  private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
+  private readonly ISignalBus _signalBus = signalBus ?? throw new ArgumentNullException(nameof(signalBus));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
@@ -84,7 +85,6 @@ public sealed partial class PgCommitOrderStamperWorker(
   // exhaust its small connection pool.
   private readonly NpgsqlDataSource? _dataSource = notificationDataSource?.DataSource;
 
-  private const string CHANNEL_NAME = "wh_committed";
   private const string FENCE_SQLSTATE = "WHF01";
   private readonly IDutyElector? _elector = dutyElector;
   private readonly PgRoleElector? _roleElector = dutyElector as PgRoleElector;
@@ -187,13 +187,10 @@ public sealed partial class PgCommitOrderStamperWorker(
     var (HasUsername, HasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
     LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, HasUsername, HasSecret);
 
-    // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
-    // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
-    // the wake semaphore saturates at maxCount of 1 and the stamping loop never starts,
-    // so this becomes a no-op. When this pod is the leader, the wake fires sub-millisecond
-    // on each committed event.
-    var subscription = new CommitNotificationSubscription(this);
-    using var subscriptionHandle = _sharedConnection.Subscribe(subscription);
+    // #2046: hear commits and the role's release on the signal bus for the entire worker lifetime. Even when this pod
+    // is not the leader, the commit wake is harmless: the wake semaphore saturates at maxCount of 1 and the stamping
+    // loop never starts. When this pod is the leader, the wake fires sub-millisecond on each committed event.
+    using var wakes = ListenForWakes();
 
     // Snap-to-floor on gate-flip: when the gate transitions to false, the relaxed
     // cadence is no longer safe (NOTIFY may not arrive), so wake immediately and
@@ -319,7 +316,6 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// </summary>
   private async Task _runAsRoleHolderAsync(
       IDutyElector elector, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
-    using var releases = _sharedConnection.Subscribe(new RoleReleaseSubscription(this));
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var attempt = await elector.TryAcquireAsync(CommitOrderStamperOptions.ROLE, stoppingToken);
@@ -358,16 +354,42 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
   }
 
-  /// <summary>A release of the stamper's role wakes a waiting non-holder at once.</summary>
-  private sealed class RoleReleaseSubscription(PgCommitOrderStamperWorker owner) : INotifySubscription {
-    public string ChannelName => DutyHolderWorker.RELEASE_CHANNEL;
+  /// <summary>
+  /// Subscribes the stamper's two wakes on the signal bus (#2046): a commit wakes the stamping loop, and a release of the
+  /// stamper's role (and only that role) frees a waiting non-holder to vote at once. Dispose to stop listening.
+  /// </summary>
+  /// <returns>The subscriptions, released together.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgCommitOrderStamperWorkerCoverageTests.cs:TheBus_WakesTheStamperOnACommit_AndAWaiterOnItsRolesReleaseAsync</tests>
+  internal IDisposable ListenForWakes() => new Wakes(
+    _signalBus.Subscribe<RowsCommittedSignal>(_ => {
+      Wake();
+      return ValueTask.CompletedTask;
+    }),
+    _signalBus.Subscribe<RoleReleasedSignal>(_onRoleReleased));
 
-    // Notifications are dispatched one at a time and the waiter only ever lowers the count, so a
-    // count of zero here means a release cannot overflow the semaphore.
-    public void OnNotification(string payload) {
-      if (string.Equals(payload, CommitOrderStamperOptions.ROLE, StringComparison.Ordinal) && owner._vacancy.CurrentCount == 0) {
-        _ = owner._vacancy.Release();
+  private ValueTask _onRoleReleased(RoleReleasedSignal released) {
+    // A release can be heard twice (the notification, then the durable log's replay) and from two threads (the
+    // notify loop and the tail), so a vacancy already pending absorbs it rather than overflowing the semaphore.
+    if (string.Equals(released.Role, CommitOrderStamperOptions.ROLE, StringComparison.Ordinal)) {
+      try {
+        _ = _vacancy.Release();
+      } catch (SemaphoreFullException) {
+        // A vacancy is already pending; the waiter votes once for both.
       }
+    }
+    return ValueTask.CompletedTask;
+  }
+
+  /// <summary>The wake semaphore, for tests that observe what a signal woke.</summary>
+  internal SemaphoreSlim PendingWakes => _wake;
+
+  /// <summary>The vacancy semaphore a non-holder waits on, for tests that observe what a release freed.</summary>
+  internal SemaphoreSlim Vacancies => _vacancy;
+
+  private sealed class Wakes(ISignalSubscription commits, ISignalSubscription releases) : IDisposable {
+    public void Dispose() {
+      commits.Dispose();
+      releases.Dispose();
     }
   }
 
@@ -408,7 +430,7 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   /// <summary>
   /// Fires the wake semaphore from the shared-conn dispatch path. Called by
-  /// <see cref="CommitNotificationSubscription.OnNotification"/> on every wh_committed
+  /// the bus's <see cref="RowsCommittedSignal"/> on every committed
   /// notification. Idempotent saturation — overlapping NOTIFYs collapse to a single
   /// pending wake.
   /// </summary>
@@ -466,11 +488,6 @@ public sealed partial class PgCommitOrderStamperWorker(
       LogReleasedLeader(_logger);
       OnStoppedLeading?.Invoke();
     }
-  }
-
-  private sealed class CommitNotificationSubscription(PgCommitOrderStamperWorker owner) : INotifySubscription {
-    public string ChannelName => CHANNEL_NAME;
-    public void OnNotification(string payload) => owner.Wake();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker disabled by DisableStamper=true")]

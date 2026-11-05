@@ -53,12 +53,18 @@ internal sealed class PartitionAssignerRoleOptions(IOptions<PartitionAssignerOpt
   }
 }
 
-/// <summary>Subscribes the claimers' cached assignment to the assigner's announcements for the host's lifetime.</summary>
-internal sealed class PartitionAssignmentSubscriber(ISharedNotifyConnection connection, PartitionAssignmentCache cache) : IHostedService {
+/// <summary>
+/// Subscribes the claimers' cached assignment to the assigner's announcements on the signal bus for the host's lifetime
+/// (#2046).
+/// </summary>
+internal sealed class PartitionAssignmentSubscriber(Whizbang.Core.Signals.ISignalBus bus, PartitionAssignmentCache cache) : IHostedService {
   private IDisposable? _subscription;
 
   public Task StartAsync(CancellationToken cancellationToken) {
-    _subscription = connection.Subscribe(cache);
+    _subscription = bus.Subscribe<Whizbang.Core.Signals.PartitionAssignmentPublishedSignal>(published => {
+      cache.OnPublished(published.Version);
+      return ValueTask.CompletedTask;
+    });
     return Task.CompletedTask;
   }
 

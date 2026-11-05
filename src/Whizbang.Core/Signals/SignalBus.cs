@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using Whizbang.Core.Notifications.AppSignals;
 
 namespace Whizbang.Core.Signals;
 
@@ -13,13 +14,20 @@ namespace Whizbang.Core.Signals;
 /// in-memory) and pull sources (polling) — the bus starts every registered source uniformly, and
 /// subscribers cannot tell which source raised a signal.
 /// </summary>
+/// <remarks>
+/// The bus is also the application's <see cref="IAppSignalChannel"/> (#2046): a topic is handed to every transport that
+/// carries topics (<see cref="ISignalTopicTransport"/>), so application signals travel the same wire, on the same
+/// connection, as the framework's own.
+/// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-public sealed class SignalBus : ISignalBus, ISignalSink {
+/// <docs>fundamentals/work-coordinator/app-signals</docs>
+public sealed class SignalBus : ISignalBus, ISignalSink, IAppSignalChannel {
   // Keyed by signal type -> SignalHandlerList<TSignal>. No reflection: entries are created and
   // retrieved via the generic type argument, so this stays AOT-safe.
   private readonly ConcurrentDictionary<Type, object> _handlers = new();
   private readonly ISignalTransport[] _transports;
   private readonly ISignalSource[] _pullSources;
+  private readonly ISignalTopicTransport[] _topicTransports;
 
   /// <summary>Create a bus over the given push transports and pull sources.</summary>
   public SignalBus(
@@ -28,6 +36,7 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
     ArgumentNullException.ThrowIfNull(transports);
     _transports = [.. transports];
     _pullSources = [.. pullSources];
+    _topicTransports = [.. _transports.OfType<ISignalTopicTransport>()];
   }
 
   /// <summary>
@@ -87,5 +96,31 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
       return list.InvokeAsync(signal, cancellationToken);
     }
     return ValueTask.CompletedTask;
+  }
+
+  /// <inheritdoc />
+  async Task IAppSignalChannel.PublishAsync(string topic, string payload, CancellationToken cancellationToken) {
+    _ = AppSignalTopicValidator.Validate(topic);
+    foreach (var transport in _topicTransports) {
+      await transport.PublishTopicAsync(topic, payload, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <inheritdoc />
+  IDisposable IAppSignalChannel.Subscribe(string topic, Func<string, CancellationToken, Task> handler) {
+    ArgumentNullException.ThrowIfNull(handler);
+    _ = AppSignalTopicValidator.Validate(topic);
+    return new TopicSubscriptions([.. _topicTransports.Select(transport => transport.SubscribeTopic(topic, handler))]);
+  }
+
+  /// <summary>One topic's subscriptions on every topic transport; disposing releases each once.</summary>
+  private sealed class TopicSubscriptions(IDisposable[] subscriptions) : IDisposable {
+    private IDisposable[]? _subscriptions = subscriptions;
+
+    public void Dispose() {
+      foreach (var subscription in Interlocked.Exchange(ref _subscriptions, null) ?? []) {
+        subscription.Dispose();
+      }
+    }
   }
 }

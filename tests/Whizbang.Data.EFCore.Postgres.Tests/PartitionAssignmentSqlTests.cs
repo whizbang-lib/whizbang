@@ -35,7 +35,7 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     var epoch = await _electAsync(conn, assigner);
     await using var listener = await _openAsync();
-    await _execAsync(listener, $"LISTEN \"{PartitionAssignmentCache.CHANNEL}\"");
+    await _execAsync(listener, $"LISTEN \"{PgSignalWire.PARTITION_ASSIGNMENT_CHANNEL}\"");
     string? payload = null;
     listener.Notification += (_, e) => payload = e.Payload;
 
@@ -47,6 +47,11 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
 
     await Assert.That(revision).IsEqualTo(1);
     await Assert.That(payload).IsEqualTo($"{epoch}:1");
+    // #2046: a published assignment is a decision, recorded durably with its version for the signal bus's tail.
+    await using (var durable = conn.CreateCommand()) {
+      durable.CommandText = "SELECT payload FROM wh_signals WHERE wire_name = 'partition-assignment-published' ORDER BY id DESC LIMIT 1";
+      await Assert.That(await durable.ExecuteScalarAsync()).IsEqualTo($"{epoch}:1");
+    }
     var read = await _readAsync();
     await Assert.That(read!.Assignment.Epoch).IsEqualTo(epoch);
     await Assert.That(read.Assignment.AssignerInstanceId).IsEqualTo(assigner);

@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres.Notifications;
@@ -70,11 +71,8 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version), timeProvider: time);
   }
 
-  private PgSharedNotifyConnection _sharedFor(Pod pod) =>
-    new(Options.Create(_notification()), _config(), pod, NullLogger<PgSharedNotifyConnection>.Instance);
-
   private PgCommitOrderStamperWorker _workerFor(
-      Pod pod, IDutyElector elector, ISharedNotifyConnection? shared = null, ILogger<PgCommitOrderStamperWorker>? logger = null,
+      IDutyElector elector, ISignalBus? bus = null, ILogger<PgCommitOrderStamperWorker>? logger = null,
       TimeSpan? polling = null, TimeSpan? retry = null, INotificationDataSource? dataSource = null) => new(
     Options.Create(_notification()),
     Options.Create(new CommitOrderStamperOptions {
@@ -83,7 +81,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
       BatchSize = 100,
     }),
     _config(),
-    shared ?? _sharedFor(pod),
+    bus ?? NullSignalBus.Instance,
     logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
     elector,
     notificationDataSource: dataSource);
@@ -139,8 +137,8 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
     await using var dataSource = new NotificationDataSource(new NpgsqlDataSourceBuilder(ConnectionString).Build());
-    var leaderA = _workerFor(a, _electorFor(a), dataSource: dataSource);
-    var follower = _workerFor(b, _electorFor(b));
+    var leaderA = _workerFor(_electorFor(a), dataSource: dataSource);
+    var follower = _workerFor(_electorFor(b));
     var led = _when(h => leaderA.OnBecameLeader += h);
     var stamped = _when(h => leaderA.OnStampCompleted += n => { if (n > 0) { h(); } });
 
@@ -165,7 +163,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
     var fenced = new SignalingLogger(eventId: 17);
-    var stale = _workerFor(a, _electorFor(a, time: new FakeTimeProvider()), logger: fenced);
+    var stale = _workerFor(_electorFor(a, time: new FakeTimeProvider()), logger: fenced);
     var led = _when(h => stale.OnBecameLeader += h);
     var stopped = _when(h => stale.OnStoppedLeading += h);
     await stale.StartAsync(cancellationToken);
@@ -191,7 +189,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     var time = new FakeTimeProvider();
     var lost = new SignalingLogger(eventId: 15);
-    var leader = _workerFor(a, _electorFor(a, time: time), logger: lost, polling: TimeSpan.FromMinutes(1));
+    var leader = _workerFor(_electorFor(a, time: time), logger: lost, polling: TimeSpan.FromMinutes(1));
     var led = _when(h => leader.OnBecameLeader += h);
     await leader.StartAsync(cancellationToken);
     await led.Task.WaitAsync(cancellationToken);
@@ -216,7 +214,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var newer = await _joinAsync(cancellationToken);
     var time = new FakeTimeProvider();
     var drained = new SignalingLogger(eventId: 16);
-    var leader = _workerFor(older, _electorFor(older, "0.2606.0", time), logger: drained, polling: TimeSpan.FromMinutes(1));
+    var leader = _workerFor(_electorFor(older, "0.2606.0", time), logger: drained, polling: TimeSpan.FromMinutes(1));
     var led = _when(h => leader.OnBecameLeader += h);
     var stopped = _when(h => leader.OnStoppedLeading += h);
     await leader.StartAsync(cancellationToken);
@@ -241,16 +239,18 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
   public async Task AWaitingNonHolder_IsWokenByTheRolesRelease_NotItsRetryIntervalAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
-    var leader = _workerFor(a, _electorFor(a));
+    var leader = _workerFor(_electorFor(a));
     var led = _when(h => leader.OnBecameLeader += h);
     await leader.StartAsync(cancellationToken);
     await led.Task.WaitAsync(cancellationToken);
-    var shared = _sharedFor(b);
-    await shared.StartAsync(cancellationToken);
-    var waiter = _workerFor(b, _electorFor(b), shared, retry: TimeSpan.FromHours(1));
+    // #2046: the waiter hears the release on its signal bus.
+    await using var stack = PgSignalBusStack.Create(ConnectionString, b);
+    await stack.StartAsync(cancellationToken);
+    var waiter = _workerFor(_electorFor(b), stack.Bus, retry: TimeSpan.FromHours(1));
     var waiterLed = _when(h => waiter.OnBecameLeader += h);
     await waiter.StartAsync(cancellationToken);
-    await shared.WaitForChannelListenedAsync(DutyHolderWorker.RELEASE_CHANNEL, cancellationToken);
+    await stack.ListenedAsync(PgSignalWire.ROLE_RELEASED_CHANNEL, cancellationToken);
+    // A release of another role, as an older release's SQL announces it on the same channel, does not wake the waiter.
     _ = await _scalarAsync("SELECT pg_notify('wh_role_released', 'maintainer')", cancellationToken);
 
     await leader.StopAsync(CancellationToken.None);
@@ -259,7 +259,6 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     await Assert.That(await _holderAsync(cancellationToken)).IsEqualTo(b.InstanceId)
       .Because("the release was announced, so the waiter voted at once instead of after its hour-long retry");
     await waiter.StopAsync(CancellationToken.None);
-    await shared.StopAsync(CancellationToken.None);
   }
 
   [Test]
@@ -268,7 +267,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var failed = new SignalingLogger(eventId: 6);
     var unreachable = new NpgsqlConnectionStringBuilder(ConnectionString) { Port = 1, Timeout = 1 }.ConnectionString;
-    var worker = _workerFor(a, _electorFor(a, connectionString: unreachable), logger: failed);
+    var worker = _workerFor(_electorFor(a, connectionString: unreachable), logger: failed);
 
     await worker.StartAsync(cancellationToken);
     await failed.Logged.Task.WaitAsync(cancellationToken);

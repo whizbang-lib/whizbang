@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Startup;
@@ -28,8 +27,8 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// <para>
 /// A pass runs once per <see cref="RoleAssignmentOptions.RenewInterval"/>, and at once when a
-/// release is announced on <see cref="RELEASE_CHANNEL"/>, so a graceful hand-off does not wait for
-/// the next pass. On stop, held roles are released.
+/// release is announced on the signal bus (<see cref="Whizbang.Core.Signals.RoleReleasedSignal"/>, #2046), so a
+/// graceful hand-off does not wait for the next pass. On stop, held roles are released.
 /// </para>
 /// <para>
 /// Which instance runs work is the vote's call, not this loop's: work owed during a rolling deploy
@@ -50,11 +49,6 @@ namespace Whizbang.Core.Startup;
 /// <docs>operations/startup/capabilities-and-duties#the-holder-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs</tests>
 public sealed partial class DutyHolderWorker : BackgroundService {
-#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
-  /// <summary>The channel a role release is announced on; the payload is the role.</summary>
-  public const string RELEASE_CHANNEL = "wh_role_released";
-#pragma warning restore CA1707
-
   private readonly IDutyElector _elector;
   private readonly IPendingDutyWorkStore _store;
   private readonly Dictionary<(string Role, string Key), IDutyWorkHandler> _handlers;
@@ -62,7 +56,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   private readonly IReadOnlyList<string> _roles;
   private readonly RoleAssignmentOptions _options;
   private readonly ILogger<DutyHolderWorker> _logger;
-  private readonly ISharedNotifyConnection? _notify;
+  private readonly Whizbang.Core.Signals.ISignalBus? _signalBus;
   private readonly RoleAssignmentMetrics? _metrics;
   private readonly TimeProvider _time;
   private readonly Dictionary<string, IDutyGrant> _held = new(StringComparer.Ordinal);
@@ -76,7 +70,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <param name="acquisitionHandlers">What runs when this instance wins a role (#1351).</param>
   /// <param name="options">Role-assignment tuning; only roles it manages are held here.</param>
   /// <param name="logger">Logger.</param>
-  /// <param name="notify">The shared notify connection, for release announcements. Required, and
+  /// <param name="signalBus">The signal bus, for release announcements (#2046). Required, and
   /// null only by an explicit choice: without it a hand-off waits for the next pass instead of
   /// waking one.</param>
   /// <param name="metrics">Optional meters.</param>
@@ -89,7 +83,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       IEnumerable<IDutyAcquisitionHandler> acquisitionHandlers,
       IOptions<RoleAssignmentOptions> options,
       ILogger<DutyHolderWorker> logger,
-      ISharedNotifyConnection? notify,
+      Whizbang.Core.Signals.ISignalBus? signalBus,
       RoleAssignmentMetrics? metrics = null,
       TimeProvider? timeProvider = null) {
 #pragma warning restore S107
@@ -103,7 +97,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     _store = store;
     _options = options.Value;
     _logger = logger;
-    _notify = notify;
+    _signalBus = signalBus;
     _metrics = metrics;
     _time = timeProvider ?? TimeProvider.System;
     // First registration of a (role, key) wins, so a host can override a framework handler by
@@ -198,7 +192,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    using var subscription = _notify?.Subscribe(new ReleaseSubscription(this));
+    using var subscription = _signalBus?.Subscribe<Whizbang.Core.Signals.RoleReleasedSignal>(_onReleased);
     while (!stoppingToken.IsCancellationRequested) {
       // Both armed before the pass: a release announced during the pass wakes the next one, and
       // the cadence is measured from the start of this pass.
@@ -394,16 +388,13 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     return true;
   }
 
-  private sealed class ReleaseSubscription(DutyHolderWorker worker) : INotifySubscription {
-    public string ChannelName => RELEASE_CHANNEL;
-
-    public void OnNotification(string payload) {
-      // Every role this worker holds or votes for, including one held only for its acquisition
-      // work (#1711): a hand-off of such a role must not wait for the next interval either.
-      if (worker._roles.Contains(payload, StringComparer.Ordinal)) {
-        worker.Wake();
-      }
+  private ValueTask _onReleased(Whizbang.Core.Signals.RoleReleasedSignal released) {
+    // Every role this worker holds or votes for, including one held only for its acquisition
+    // work (#1711): a hand-off of such a role must not wait for the next interval either.
+    if (_roles.Contains(released.Role, StringComparer.Ordinal)) {
+      Wake();
     }
+    return ValueTask.CompletedTask;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,

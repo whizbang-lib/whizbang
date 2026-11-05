@@ -102,9 +102,12 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null,
       timeProvider: null);
-    var listener = new PgWorkNotificationListener(
-      sharedConn, sharedConn, listenerInstanceProvider,
-      NullLogger<PgWorkNotificationListener>.Instance);
+    // #2046: the listener hears the work doorbells on the instance's signal bus.
+    using var transport = new PostgresSignalTransport(
+      Options.Create(listenerOptions), listenerConfig, sharedConn, listenerInstanceProvider,
+      NullLogger<PostgresSignalTransport>.Instance);
+    var listenerBus = new SignalBus([transport], []);
+    var listener = new PgWorkNotificationListener(listenerBus, sharedConn, NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -131,6 +134,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);
+    await listenerBus.StartAsync(cts.Token);
     // Wait for the shared conn's startup probe to succeed before subscribing the listener.
     var probeDeadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!sharedConn.IsAvailable && DateTimeOffset.UtcNow < probeDeadline) { await Task.Delay(50); }
@@ -248,9 +252,12 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null,
       timeProvider: null);
-    var listener = new PgWorkNotificationListener(
-      sharedConn, sharedConn, listenerInstanceProvider,
-      NullLogger<PgWorkNotificationListener>.Instance);
+    // #2046: the listener hears the work doorbells on the instance's signal bus.
+    using var transport = new PostgresSignalTransport(
+      Options.Create(listenerOptions), listenerConfig, sharedConn, listenerInstanceProvider,
+      NullLogger<PostgresSignalTransport>.Instance);
+    var listenerBus = new SignalBus([transport], []);
+    var listener = new PgWorkNotificationListener(listenerBus, sharedConn, NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -277,6 +284,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);
+    await listenerBus.StartAsync(cts.Token);
     var probeDeadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!sharedConn.IsAvailable && DateTimeOffset.UtcNow < probeDeadline) { await Task.Delay(50); }
     await ((IHostedService)listener).StartAsync(cts.Token);

@@ -61,7 +61,8 @@ public class ClaimWorkerBusWakeTests {
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private static (ClaimWorker Worker, CountingCoordinator Coord, SignalBus Bus, CancellationTokenSource Cts) _create() {
+  private static (ClaimWorker Worker, CountingCoordinator Coord, SignalBus Bus, CancellationTokenSource Cts) _create(
+      int pollingMaxIntervalMilliseconds = 300_000) {
     var coord = new CountingCoordinator();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -78,7 +79,7 @@ public class ClaimWorkerBusWakeTests {
       // long before the adaptive-poll timer fires again.
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 300_000,
-        PollingMaxIntervalMilliseconds = 300_000
+        PollingMaxIntervalMilliseconds = pollingMaxIntervalMilliseconds
       }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -91,6 +92,31 @@ public class ClaimWorkerBusWakeTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: bus);
     return (worker, coord, bus, new CancellationTokenSource(TimeSpan.FromSeconds(15)));
+  }
+
+  /// <summary>
+  /// #2046: the orphan wake is best-effort because the claim has a poll behind it. With the bus wired and no signal at
+  /// all (the reap's orphan doorbell lost), the claim still runs again on the backstop interval, and claim_work takes
+  /// the released rows there (claim_orphaned_*).
+  /// </summary>
+  [Test]
+  public async Task WithEveryDoorbellLost_TheBackstopPollStillClaimsAgainAsync() {
+    // The backstop interval is the only wake source here, so the second claim is the transition it causes.
+    var (worker, coord, bus, cts) = _create(pollingMaxIntervalMilliseconds: 50);
+    try {
+      await bus.StartAsync(cts.Token);
+      await worker.StartAsync(cts.Token);
+
+      await coord.FirstCall.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
+      await coord.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+      await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(2)
+        .Because("no doorbell was published; the backstop poll alone ran the claim that finds orphaned work");
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+      cts.Dispose();
+    }
   }
 
   [Test]

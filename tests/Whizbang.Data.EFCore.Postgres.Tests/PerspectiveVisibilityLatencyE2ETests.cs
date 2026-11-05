@@ -87,6 +87,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     public required ServiceProvider Services { get; init; }
     public required ServiceInstanceProvider InstanceProvider { get; init; }
     public required PgSharedNotifyConnection SharedConnection { get; init; }
+    public required SignalBus Bus { get; init; }
     public required PgWorkNotificationListener Listener { get; init; }
     public required PgCommitOrderStamperWorker Stamper { get; init; }
     public required ClaimWorker ClaimWorker { get; init; }
@@ -141,9 +142,12 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null,
       timeProvider: null);
-    var listener = new PgWorkNotificationListener(
-      sharedConnection, sharedConnection, instanceProvider,
-      NullLogger<PgWorkNotificationListener>.Instance);
+    // #2046: the work listener and the stamper hear their doorbells on the instance's signal bus.
+    var transport = new PostgresSignalTransport(
+      Options.Create(notificationOptions), config, sharedConnection, instanceProvider,
+      NullLogger<PostgresSignalTransport>.Instance);
+    var bus = new SignalBus([transport], []);
+    var listener = new PgWorkNotificationListener(bus, sharedConnection, NullLogger<PgWorkNotificationListener>.Instance);
 
     // Production defaults on purpose (PollingInterval 250 ms, FencedRetryInterval 250 ms,
     // LeaderElectionRetry 1.5 s) — this test locks latency under real cadences; do not neuter.
@@ -151,7 +155,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       Options.Create(notificationOptions),
       Options.Create(new CommitOrderStamperOptions()),
       config,
-      sharedConnection,
+      bus,
       NullLogger<PgCommitOrderStamperWorker>.Instance,
       dutyElector: new Whizbang.Data.EFCore.Postgres.Tests.TestSupport.GrantingDutyElector());
     var leaderTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -222,6 +226,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       Services = provider,
       InstanceProvider = instanceProvider,
       SharedConnection = sharedConnection,
+      Bus = bus,
       Listener = listener,
       Stamper = stamper,
       ClaimWorker = claimWorker,
@@ -238,6 +243,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
   /// </summary>
   private static async Task _startAndAwaitReadyAsync(RealPipeline pipeline, CancellationToken ct) {
     await ((IHostedService)pipeline.SharedConnection).StartAsync(ct);
+    await pipeline.Bus.StartAsync(ct);
     var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
     while (!pipeline.SharedConnection.IsAvailable && DateTimeOffset.UtcNow < deadline) { await Task.Delay(50, ct); }
     await ((IHostedService)pipeline.Listener).StartAsync(ct);

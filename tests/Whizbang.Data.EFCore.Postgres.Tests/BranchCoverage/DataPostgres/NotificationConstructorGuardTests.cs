@@ -25,7 +25,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.DataPostgres;
 /// dependencies are the other half: leaving them out must construct a working instance.
 /// </summary>
 /// <remarks>No database: every case fails or completes before a connection is resolved.</remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgAppSignalChannel.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgCommitOrderStamperWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDurableSignalRetentionWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgDurableSignalTailWorker.cs</code-under-test>
@@ -47,42 +46,12 @@ public class NotificationConstructorGuardTests {
   private static readonly IOptions<TemporalOptions> _temporalOptions = Options.Create(new TemporalOptions());
   private static readonly IOptions<CommitOrderStamperOptions> _stamperOptions = Options.Create(new CommitOrderStamperOptions());
 
-  // ---- PgAppSignalChannel ----
-
-  [Test]
-  public async Task PgAppSignalChannel_NullOptions_NamesOptionsAsync() {
-    var ex = await Assert.That(() => new PgAppSignalChannel(null!, _configuration, new NoopSharedConnection(), NullLogger<PgAppSignalChannel>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("options");
-  }
-
-  [Test]
-  public async Task PgAppSignalChannel_NullConfiguration_NamesConfigurationAsync() {
-    var ex = await Assert.That(() => new PgAppSignalChannel(_options, null!, new NoopSharedConnection(), NullLogger<PgAppSignalChannel>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("configuration");
-  }
-
-  [Test]
-  public async Task PgAppSignalChannel_NullSharedConnection_NamesSharedConnectionAsync() {
-    var ex = await Assert.That(() => new PgAppSignalChannel(_options, _configuration, null!, NullLogger<PgAppSignalChannel>.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("sharedConnection");
-  }
-
-  [Test]
-  public async Task PgAppSignalChannel_NullLogger_NamesLoggerAsync() {
-    var ex = await Assert.That(() => new PgAppSignalChannel(_options, _configuration, new NoopSharedConnection(), null!))
-      .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("logger");
-  }
-
   // ---- PgCommitOrderStamperWorker ----
 
   [Test]
   public async Task PgCommitOrderStamperWorker_NullNotificationOptions_NamesThemAsync() {
     var ex = await Assert.That(() => new PgCommitOrderStamperWorker(
-        null!, _stamperOptions, _configuration, new NoopSharedConnection(), NullLogger<PgCommitOrderStamperWorker>.Instance))
+        null!, _stamperOptions, _configuration, NullSignalBus.Instance, NullLogger<PgCommitOrderStamperWorker>.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("notificationOptions");
   }
@@ -90,7 +59,7 @@ public class NotificationConstructorGuardTests {
   [Test]
   public async Task PgCommitOrderStamperWorker_NullStamperOptions_NamesThemAsync() {
     var ex = await Assert.That(() => new PgCommitOrderStamperWorker(
-        _options, null!, _configuration, new NoopSharedConnection(), NullLogger<PgCommitOrderStamperWorker>.Instance))
+        _options, null!, _configuration, NullSignalBus.Instance, NullLogger<PgCommitOrderStamperWorker>.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("stamperOptions");
   }
@@ -98,23 +67,23 @@ public class NotificationConstructorGuardTests {
   [Test]
   public async Task PgCommitOrderStamperWorker_NullConfiguration_NamesConfigurationAsync() {
     var ex = await Assert.That(() => new PgCommitOrderStamperWorker(
-        _options, _stamperOptions, null!, new NoopSharedConnection(), NullLogger<PgCommitOrderStamperWorker>.Instance))
+        _options, _stamperOptions, null!, NullSignalBus.Instance, NullLogger<PgCommitOrderStamperWorker>.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("configuration");
   }
 
   [Test]
-  public async Task PgCommitOrderStamperWorker_NullSharedConnection_NamesSharedConnectionAsync() {
+  public async Task PgCommitOrderStamperWorker_NullSignalBus_NamesSignalBusAsync() {
     var ex = await Assert.That(() => new PgCommitOrderStamperWorker(
         _options, _stamperOptions, _configuration, null!, NullLogger<PgCommitOrderStamperWorker>.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(ex!.ParamName).IsEqualTo("sharedConnection");
+    await Assert.That(ex!.ParamName).IsEqualTo("signalBus");
   }
 
   [Test]
   public async Task PgCommitOrderStamperWorker_NullLogger_NamesLoggerAsync() {
     var ex = await Assert.That(() => new PgCommitOrderStamperWorker(
-        _options, _stamperOptions, _configuration, new NoopSharedConnection(), null!))
+        _options, _stamperOptions, _configuration, NullSignalBus.Instance, null!))
       .Throws<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("logger");
   }

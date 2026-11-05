@@ -22,15 +22,15 @@ namespace Whizbang.Core.Tests.Startup;
 /// </para>
 /// <para>
 /// The allowlists only shrink: an entry that no longer matches fails <c>EveryAllowlistEntry_StillMatchesAsync</c>.
-/// Entries marked <c>PENDING</c> are what slice 1 of #2022 has not folded in yet (the raw channels); each names the part
-/// of #2027 that removes it. No duty is held by an advisory lock (#2044): what remains allowlisted is mutual exclusion
-/// around one statement or one DDL pass, never a duty.
+/// No duty is held by an advisory lock (#2044): what remains allowlisted is mutual exclusion around one statement or one
+/// DDL pass, never a duty. No raw channel is left outside the signal bus (#2046): NOTIFY, LISTEN and a subscription to
+/// the shared connection appear only in the bus's own files and its two SQL functions, and a coordination channel is
+/// named only by the bus's wire.
 /// </para>
 /// </remarks>
 /// <docs>contributors/gravity</docs>
 [Category("Startup")]
 public partial class CoordinationSourceGuardTests {
-  private const string PENDING_CHANNELS = "PENDING #2027 part 4: a raw notification channel, to move onto the signal bus";
   private const string EXCLUSION = "a transaction-scoped advisory lock: mutual exclusion for one statement or DDL pass, released at commit; not a duty";
   private const string CONCURRENT_DROP = "the schema lock held at session level for the three statements of one DROP INDEX CONCURRENTLY, which "
     + "cannot run in a transaction, and only on a connection that reaches one backend: mutual exclusion with the schema "
@@ -41,8 +41,28 @@ public partial class CoordinationSourceGuardTests {
   /// <summary>C# files that may name a notification channel.</summary>
   private static readonly Dictionary<string, string> _notifyAllowlist = new(StringComparer.Ordinal) {
     ["src/Whizbang.Data.Postgres/Notifications/PgSharedNotifyConnection.cs"] = "the one LISTEN connection per instance: the signal bus's transport underneath",
-    ["src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs"] = "the signal bus's Postgres transport",
-    ["src/Whizbang.Data.Postgres/Notifications/PgAppSignalChannel.cs"] = PENDING_CHANNELS,
+    ["src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs"] = "the signal bus's Postgres transport: its own "
+      + "channels, the coordination channels and the application topics (#2046)",
+  };
+
+  /// <summary>
+  /// C# files that may subscribe to the shared notify connection or implement a raw channel subscription (#2046):
+  /// everything else subscribes to a typed signal on the bus.
+  /// </summary>
+  private static readonly Dictionary<string, string> _rawSubscriptionAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Notifications/INotifySubscription.cs"] = "declares the shared connection's subscription contract",
+    ["src/Whizbang.Core/Notifications/NotifySubscriptionRegistry.cs"] = "the shared connection's registry of its subscriptions",
+    ["src/Whizbang.Data.Postgres/Notifications/PgSharedNotifyConnection.cs"] = "the one LISTEN connection per instance",
+    ["src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs"] = "the signal bus's Postgres transport, the "
+      + "connection's only subscriber",
+    ["src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs"] = "registers the one "
+      + "connection the transport subscribes to",
+  };
+
+  /// <summary>C# files that may name a coordination channel (#2046): the bus's Postgres wire, and nothing else.</summary>
+  private static readonly Dictionary<string, string> _coordinationChannelAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Data.Postgres/Notifications/PgSignalWire.cs"] = "the signal bus's Postgres wire: which channel each "
+      + "coordination signal travels on, by the name an older release uses",
   };
 
   /// <summary>C# files that may take or release an advisory lock.</summary>
@@ -87,11 +107,9 @@ public partial class CoordinationSourceGuardTests {
 
   /// <summary>SQL functions (by their last definition) that may notify a channel.</summary>
   private static readonly Dictionary<string, string> _sqlNotifyAllowlist = new(StringComparer.Ordinal) {
-    ["ring_doorbells"] = "the doorbell ring: the work-available wake the claim depends on; " + PENDING_CHANNELS,
-    ["cleanup_stale_instances"] = PENDING_CHANNELS + " (the orphan wake after a reap)",
-    ["wh_publish_partition_assignment"] = PENDING_CHANNELS + " (the partition assignment)",
-    ["wh_record_multi_stream_run"] = PENDING_CHANNELS + " (multi-stream commands)",
-    ["wh_release_role"] = PENDING_CHANNELS + " (a released role)",
+    ["ring_doorbells"] = "the signal bus's after-commit doorbell ringer: a hot transaction queues its doorbell "
+      + "(_queue_doorbell) and this rings it, coalesced, once the transaction has committed",
+    ["wh_publish_signal"] = "the signal bus's SQL publish: notifies at commit, and records a decision in the durable log (#2046)",
   };
 
   private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
@@ -200,6 +218,12 @@ public partial class CoordinationSourceGuardTests {
   [GeneratedRegex(@"(?:^|[""\s;(])(?:UN)?LISTEN\s+[\\""{]|\bNOTIFY\s+[\\""{]|pg_notify\s*\(")]
   private static partial Regex _notify();
 
+  [GeneratedRegex(@"\bINotifySubscription\b|\bISharedNotifyConnection\b")]
+  private static partial Regex _rawSubscription();
+
+  [GeneratedRegex(@"""wh_(?:committed|role_released|partition_assignment|multi_stream_work)""")]
+  private static partial Regex _coordinationChannel();
+
   [GeneratedRegex(@"pg_(?:try_)?advisory_(?:xact_)?lock(?:_shared)?\s*\(|pg_advisory_unlock(?:_all)?\s*\(")]
   private static partial Regex _advisory();
 
@@ -224,6 +248,27 @@ public partial class CoordinationSourceGuardTests {
   [Test]
   public async Task NotifyAndListen_AppearOnlyInTheCoordinationFilesAsync() =>
     await _assertOnlyAllowedAsync(_notify(), _notifyAllowlist, "a raw notification channel; publish on the signal bus instead");
+
+  [Test]
+  public async Task RawChannelSubscriptions_AppearOnlyInTheSignalBusFilesAsync() =>
+    // #2046: a coordination signal, a work doorbell or an application topic is heard by subscribing to the bus; a
+    // subscription of its own to the shared connection is a raw channel the bus does not own.
+    await _assertOnlyAllowedAsync(_rawSubscription(), _rawSubscriptionAllowlist,
+      "a raw channel subscription; subscribe to a signal on the bus (ISignalBus.Subscribe) instead");
+
+  [Test]
+  public async Task CoordinationChannels_AreNamedOnlyByTheBussWireAsync() =>
+    await _assertOnlyAllowedAsync(_coordinationChannel(), _coordinationChannelAllowlist,
+      "a coordination channel named outside the signal bus's wire; publish or subscribe the typed signal instead");
+
+  [Test]
+  public async Task NoAllowlistEntry_IsLeftPendingAsync() {
+    // #2046 resolved every raw channel the guard was waiting on; an allowlist is a list of reasons, never of debts.
+    var reasons = _notifyAllowlist.Values.Concat(_sqlNotifyAllowlist.Values).Concat(_advisoryAllowlist.Values)
+      .Concat(_livenessAllowlist.Values).Concat(_sqlLivenessAllowlist.Values).Concat(_sqlSessionLockAllowlist.Values)
+      .Concat(_rawSubscriptionAllowlist.Values).Concat(_coordinationChannelAllowlist.Values);
+    await Assert.That(reasons.Where(r => r.Contains("PENDING", StringComparison.Ordinal))).IsEmpty();
+  }
 
   [Test]
   public async Task AdvisoryLocks_AppearOnlyInTheAllowlistedFilesAsync() =>
@@ -251,7 +296,9 @@ public partial class CoordinationSourceGuardTests {
     var csharp = _csharpSources();
     var sql = _latestSqlFunctions();
     var stale = new List<string>();
-    foreach (var (allowlist, pattern) in new[] { (_notifyAllowlist, _notify()), (_advisoryAllowlist, _advisory()), (_livenessAllowlist, _liveness()) }) {
+    foreach (var (allowlist, pattern) in new[] {
+        (_notifyAllowlist, _notify()), (_advisoryAllowlist, _advisory()), (_livenessAllowlist, _liveness()),
+        (_rawSubscriptionAllowlist, _rawSubscription()), (_coordinationChannelAllowlist, _coordinationChannel()) }) {
       stale.AddRange(allowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !pattern.IsMatch(code)));
     }
     foreach (var (allowlist, pattern) in new[] { (_sqlLivenessAllowlist, _liveness()), (_sqlSessionLockAllowlist, _sessionAdvisory()), (_sqlNotifyAllowlist, _notify()) }) {
@@ -291,6 +338,12 @@ public partial class CoordinationSourceGuardTests {
     var sql = _latestSqlFunctions();
 
     await Assert.That(_notify().IsMatch(csharp["src/Whizbang.Data.Postgres/Notifications/PgSharedNotifyConnection.cs"])).IsTrue();
+    await Assert.That(_notify().IsMatch(sql["wh_publish_signal"])).IsTrue();
+    await Assert.That(_notify().IsMatch("PERFORM pg_notify('wh_role_released', p_role);")).IsTrue();
+    await Assert.That(_rawSubscription().IsMatch(csharp["src/Whizbang.Data.Postgres/Notifications/PostgresSignalTransport.cs"])).IsTrue();
+    await Assert.That(_rawSubscription().IsMatch("internal sealed class X(ISharedNotifyConnection connection) { }")).IsTrue();
+    await Assert.That(_coordinationChannel().IsMatch(csharp["src/Whizbang.Data.Postgres/Notifications/PgSignalWire.cs"])).IsTrue();
+    await Assert.That(_coordinationChannel().IsMatch("public const string CHANNEL = \"wh_role_released\";")).IsTrue();
     await Assert.That(_advisory().IsMatch(csharp["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"])).IsTrue();
     await Assert.That(_liveness().IsMatch(sql["wh_instance_liveness"])).IsTrue();
     await Assert.That(_liveness().IsMatch("SELECT 1 FROM t WHERE last_heartbeat_at > now() - interval '1 minute'")).IsTrue();
