@@ -61,12 +61,15 @@ public class AddWhizbangPostgresNotificationsTests {
 
   [Test]
   public async Task AddWhizbangPostgresNotifications_RegistersAppSignalChannelAsync() {
-    // #2046: application topics ride the signal bus: the channel is the bus itself, whose Postgres transport
-    // carries each topic.
+    // #2046: application topics ride the signal bus, whose Postgres transport carries each topic. #2076: the channel is
+    // resolved per scope over that bus, so a publish inside the scope's transaction is sent inside it.
     var sp = _build();
-    var channel = sp.GetService<IAppSignalChannel>();
-    await Assert.That(channel).IsNotNull();
-    await Assert.That(channel).IsSameReferenceAs(sp.GetRequiredService<Whizbang.Core.Signals.SignalBus>());
+    var root = sp.GetService<IAppSignalChannel>();
+    using var scope = sp.CreateScope();
+    var scoped = scope.ServiceProvider.GetService<IAppSignalChannel>();
+    await Assert.That(root).IsTypeOf<Whizbang.Core.Signals.ScopeBoundAppSignalChannel>();
+    await Assert.That(((Whizbang.Core.Signals.ScopeBoundAppSignalChannel)root!).IsScopeBound).IsFalse();
+    await Assert.That(((Whizbang.Core.Signals.ScopeBoundAppSignalChannel)scoped!).IsScopeBound).IsTrue();
   }
 
   [Test]
