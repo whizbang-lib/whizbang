@@ -719,6 +719,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the base, and says to declare `[GenerateStreamId]` on the derived type or move the base into the same assembly.
   A base in the same assembly, a derived type that declares `[GenerateStreamId]`, one with no `[StreamId]` of its own
   and a base that does not generate are not reported (Fixes #1904)
+- **Strong ids can accept any Guid version (#2071).** `[WhizbangId(AcceptAnyVersion = true)]` generates an id whose
+  `From(Guid)`, `From(TrackedGuid)`, `Parse`, explicit cast and JSON reader (transport and persistence profiles) take
+  any non-empty Guid, so name-derived (v5, v8), hash-derived and externally issued (v4) identities can be strong ids.
+  The public constructor and the `Value` initializer apply the same rule, so every way in agrees; `Guid.Empty` throws
+  `ArgumentException` on all of them. `New()` still produces UUIDv7. Without the option nothing changes: `From`,
+  `Parse`, the cast and the JSON reader take UUIDv7 only, and the constructor and `Value` stay unchecked
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
   `UpdateStreamScopeCommand`, `[RequirePermission]` + claim aggregation, and scope JSONB column
   population with read-path hydration.

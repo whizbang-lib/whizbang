@@ -16,3 +16,7 @@ public readonly partial struct TestOrderId;
 
 [WhizbangId]
 public readonly partial struct TestPerspectiveId;
+
+/// <summary>An id that takes any non-empty Guid version, for the persistence-profile round trip.</summary>
+[WhizbangId(AcceptAnyVersion = true)]
+public readonly partial struct TestAnyVersionId;
