@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// 20,000 or more.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/328_DigestWindowsReadOnlyTheirWindow.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/332_DigestWindowsReadOnlyTheirWindow.sql</code-under-test>
 /// <docs>resilience/stream-integrity#windowed-manifests</docs>
 [Category("Integration")]
 [Category("Shard5")]

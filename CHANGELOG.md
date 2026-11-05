@@ -1467,6 +1467,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
   to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
   topic keeps receiving its traffic there until it upgrades.
+- **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
+  the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
+  (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.
+  No index can serve a range on a `CASE`, so every call read the whole lane and the cost grew with the store rather
+  than the window. Both queries now read the lane as two branches, each with the window as a direct range on its own
+  indexed column (`idx_event_store_commit_sequence`, `idx_event_store_origin_lane`), so a call reads only the rows in
+  its window (migration 332). No new index.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

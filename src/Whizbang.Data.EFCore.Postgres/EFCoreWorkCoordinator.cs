@@ -4256,17 +4256,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
   internal static string WindowedStreamDigestSql(string schema) => $"""
         WITH lane AS (
-          SELECT es.*,
-                 CASE WHEN (@p_origin::uuid) IS NULL THEN es.commit_sequence
-                      ELSE es.origin_commit_sequence END AS lane_seq
+          -- #2080: one branch per lane, each with the window as a direct range on its own indexed column, so the read
+          -- is the window's rows rather than the whole lane filtered through a CASE no index can serve.
+          SELECT es.*, es.commit_sequence AS lane_seq
           FROM {schema}.wh_event_store es
-          WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-                 OR es.origin_service_id = @p_origin)
+          WHERE (@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+            AND es.commit_sequence >= @p_since AND es.commit_sequence < @p_until
+          UNION ALL
+          SELECT es.*, es.origin_commit_sequence AS lane_seq
+          FROM {schema}.wh_event_store es
+          WHERE (@p_origin::uuid) IS NOT NULL AND es.origin_service_id = @p_origin
+            AND es.origin_commit_sequence >= @p_since AND es.origin_commit_sequence < @p_until
         ),
         win AS (
           SELECT l.* FROM lane l
-          WHERE l.lane_seq IS NOT NULL AND l.lane_seq >= @p_since AND l.lane_seq < @p_until
-            AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
+          WHERE ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
             AND COALESCE(l.flags, 0) & 8 = 0
             AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
             AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
