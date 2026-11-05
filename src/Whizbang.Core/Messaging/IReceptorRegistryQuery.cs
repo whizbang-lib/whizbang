@@ -44,7 +44,7 @@ public interface IReceptorRegistryQuery : IConsumerRegistry {
   /// </remarks>
   /// <returns>The handled-message enumeration, or an empty list for implementations
   /// that predate the enumeration surface.</returns>
-  /// <docs>internals/receptor-registry-query</docs>
+  /// <docs>extending/internals/receptor-registry-query</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:CustomPredicatesOnlyImplementation_GetHandledMessages_DefaultsToEmptyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetHandledMessages_DelegatesToGeneratedStaticAsync</tests>
   IReadOnlyList<HandledMessageInfo> GetHandledMessages() => [];

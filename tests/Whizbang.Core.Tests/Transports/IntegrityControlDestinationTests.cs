@@ -92,7 +92,7 @@ public class IntegrityControlDestinationTests {
     MessageId = MessageId.New(),
     Payload = JsonElement.Parse("{}"),
     Hops = [],
-    DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = Whizbang.Core.Dispatch.MessageSource.Outbox },
+    DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Outbox },
   };
 
   private sealed class Received {

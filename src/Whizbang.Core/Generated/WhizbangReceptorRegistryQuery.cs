@@ -34,7 +34,7 @@ namespace Whizbang.Core.Generated;
 /// </para>
 /// <para>Slice 1 of plans/pump-then-process.md (revised 2026-05-06).</para>
 /// </remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 public static class WhizbangReceptorRegistryQuery {
   // Cached aggregated views live in ONE immutable snapshot published through a single
   // reference. AssemblyRegistry<T> doesn't notify on register, so the snapshot records the
@@ -70,7 +70,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// </summary>
   /// <returns>The merged handled-message enumeration; empty when no contribution
   /// carries handled-message metadata.</returns>
-  /// <docs>internals/receptor-registry-query</docs>
+  /// <docs>extending/internals/receptor-registry-query</docs>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:TwoContributions_GetHandledMessages_UnionsAndDeduplicatesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:GetHandledMessages_DeterministicOrder_SortedByTypeNameAsync</tests>
   public static IReadOnlyList<HandledMessageInfo> GetHandledMessages() {
@@ -82,7 +82,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// wire form: the list form of <see cref="HasAnyConsumer"/>.
   /// </summary>
   /// <returns>The consumed message types, deduplicated by type name and in ordinal order.</returns>
-  /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+  /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs</tests>
   public static IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => _currentSnapshot().ConsumedMessages;
 

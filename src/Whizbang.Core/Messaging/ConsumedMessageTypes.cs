@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// <item><see cref="IMessageTypeCatalog"/>: every message type the application declares, consumed or not.</item>
 /// </list>
 /// </remarks>
-/// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+/// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
 public static class ConsumedMessageTypes {
   /// <summary>

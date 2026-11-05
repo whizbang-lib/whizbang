@@ -44,6 +44,7 @@ public sealed class HandledReceptorTypeSnapshot {
 /// host startup, deleting <c>wh_inbox</c> rows whose <c>message_type</c> is not handled by
 /// any local receptor or perspective. Companion to slice 2's receive-time filter.
 /// </summary>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates",
   Justification = "Startup-once path with infrequent log calls; LoggerMessage overhead not justified.")]
 [SuppressMessage("Usage", "CA1873:Evaluation may be expensive",

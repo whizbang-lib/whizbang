@@ -40,7 +40,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// </summary>
   /// <code-under-test>src/Whizbang.Core/Workers/ReceivedInboxMessageBuilder.cs</code-under-test>
   /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
-  /// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+  /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
   [Category("Integration")]
   [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]

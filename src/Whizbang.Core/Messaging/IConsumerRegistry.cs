@@ -33,7 +33,7 @@ namespace Whizbang.Core.Messaging;
 /// stored, only the children it fans out into, so stream integrity never audits it.
 /// </para>
 /// </remarks>
-/// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+/// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
 public interface IConsumerRegistry {
   /// <summary>True when ANY consumer (handler / lifecycle receptor / perspective /

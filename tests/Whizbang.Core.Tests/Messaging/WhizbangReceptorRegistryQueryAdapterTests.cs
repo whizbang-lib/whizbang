@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// tests registered. No mutation of the static state, no flake.
 /// </para>
 /// </summary>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 public class WhizbangReceptorRegistryQueryAdapterTests {
 
   // A type name no source generator will ever produce — unique per this file.

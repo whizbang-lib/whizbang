@@ -8,7 +8,7 @@ namespace Whizbang.Data.Postgres;
 /// rows <c>purge_orphan_inbox</c> may delete, with the same predicate (#2066). The orphan-inbox janitor asks the receive
 /// boundary's keep decision about each, so a type kept with no consumer (an absorbed namespace) is never purged.
 /// </summary>
-/// <docs>messaging/resilience/orphan-inbox</docs>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorWithDataTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingRowsAsync</tests>
 public static class PendingInboxTypesSql {

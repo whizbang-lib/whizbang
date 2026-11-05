@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>Registered as a singleton by
 /// <c>WorkerPipelineExtensions.AddWhizbangWorkers</c>.</remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 /// <param name="runtimeRegistry">The runtime receptor registry; when supplied, runtime-registered
 /// receptors (the control-plane surface) count as consumers at the discard gates.</param>
 public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runtimeRegistry) : IReceptorRegistryQuery {

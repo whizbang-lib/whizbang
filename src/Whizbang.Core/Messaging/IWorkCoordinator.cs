@@ -2907,7 +2907,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The distinct message type names.</returns>
-  /// <docs>messaging/resilience/orphan-inbox</docs>
+  /// <docs>operations/workers/orphan-inbox-janitor</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync</tests>
   Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<string>>([]);

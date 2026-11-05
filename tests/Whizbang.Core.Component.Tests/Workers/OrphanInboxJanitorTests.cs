@@ -33,7 +33,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// unmigrated schema). Tests drive <c>StartAsync</c> then await the exposed
 /// <c>BackgroundService.ExecuteTask</c> for determinism.</para>
 /// </summary>
-/// <docs>messaging/resilience/orphan-inbox</docs>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 public class OrphanInboxJanitorTests {
 
   private sealed record SnapshotMsg : IMessage;

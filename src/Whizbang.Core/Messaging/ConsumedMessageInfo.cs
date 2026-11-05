@@ -13,6 +13,6 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="TypeNameFormatter.Format(System.Type)"/> writes and the event store's <c>event_type</c> column holds.</param>
 /// <param name="IsEvent">True when the type is an <see cref="IEvent"/>: the types an origin stores and stream integrity
 /// audits.</param>
-/// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+/// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs</tests>
 public sealed record ConsumedMessageInfo(string TypeName, bool IsEvent);

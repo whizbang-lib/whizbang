@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// an event in an absorbed namespace has no consumer here and arrives as JSON, so neither the registry nor the payload's
 /// own marker can say it is an event, but the catalog the generator emits for its contracts assembly can.
 /// </summary>
-/// <docs>internals/receptor-registry-query#what-a-service-consumes</docs>
+/// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
 internal sealed class CatalogMessageKinds {
   private const string EVENT_KIND = "event";
