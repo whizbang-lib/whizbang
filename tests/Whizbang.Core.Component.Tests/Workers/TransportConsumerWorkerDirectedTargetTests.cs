@@ -108,6 +108,89 @@ public class TransportConsumerWorkerDirectedTargetTests {
                "idempotent downstream; a wrong discard could starve the legitimate target.");
   }
 
+  /// <summary>Wire envelope type of a framework minted message (#2091): the redelivery bundle that was retried and
+  /// dead-lettered at services it was never addressed to.</summary>
+  private static readonly string _frameworkCompositeType =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core";
+
+  /// <summary>Wire envelope type of a framework control command (#2091).</summary>
+  private static readonly string _frameworkControlType =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RequestRedeliveryCommand, Whizbang.Core]], Whizbang.Core";
+
+  [Test]
+  public async Task ForeignTarget_FrameworkMintedMessage_IsDiscardedWithoutARowAsync() {
+    using var worker = _createWorker(serviceName: THIS_SERVICE);
+    await worker.StartAsync();
+
+    var envelope = _createEnvelope();
+    envelope.Target = OTHER_SERVICE;
+
+    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
+      .Because("#2091: framework control or minted traffic addressed to another service is discarded on receipt with no "
+               + "inbox row and no other work, whatever entity it arrived on; it must never cost a retry or database time.");
+  }
+
+  [Test]
+  public async Task MatchingTarget_FrameworkMintedMessage_IsStoredAsync() {
+    using var worker = _createWorker(serviceName: THIS_SERVICE);
+    await worker.StartAsync();
+
+    var envelope = _createEnvelope();
+    envelope.Target = THIS_SERVICE;
+
+    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
+      .Because("a bundle addressed to this service is its own repair answer and must flow through the inbox.");
+  }
+
+  [Test]
+  public async Task ForeignTarget_FrameworkMessage_WithoutServiceIdentity_IsStoredFailOpenAsync() {
+    using var worker = _createWorker(serviceName: null);
+    await worker.StartAsync();
+
+    var envelope = _createEnvelope();
+    envelope.Target = OTHER_SERVICE;
+
+    await worker.SimulateMessageAsync(envelope, _frameworkCompositeType);
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
+      .Because("without a known identity the gate fails open, for framework traffic as for any other.");
+  }
+
+  [Test]
+  public async Task UnconsumedFrameworkControlMessage_IsDiscardedWithoutARowAsync() {
+    using var worker = _createWorker(serviceName: THIS_SERVICE, registry: new ConsumesNothing());
+    await worker.StartAsync();
+
+    var envelope = _createEnvelope();
+
+    await worker.SimulateMessageAsync(envelope, _frameworkControlType);
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
+      .Because("#2091: a framework control message nothing here consumes is discarded on receipt, not stored, "
+               + "claimed or retried.");
+  }
+
+  [Test]
+  public async Task UnconsumedDomainMessage_IsStillStoredSettledAsync() {
+    using var worker = _createWorker(serviceName: THIS_SERVICE, registry: new ConsumesNothing());
+    await worker.StartAsync();
+
+    await worker.SimulateMessageAsync(_createEnvelope(), _eventType);
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
+      .Because("domain traffic keeps #1720's durable settled row; only framework control traffic is re-derived "
+               + "and so discarded without one.");
+  }
+
   [Test]
   public async Task EnvelopeTarget_RoundTripsAsTgtAndOmitsWhenNullAsync() {
     var targeted = _createEnvelope();
@@ -128,7 +211,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
   // Test Infrastructure (mirrors TransportConsumerWorkerOwnedEventDiscardTests)
   // ========================================
 
-  private static TestWorkerWrapper _createWorker(string? serviceName) {
+  private static TestWorkerWrapper _createWorker(string? serviceName, IReceptorRegistryQuery? registry = null) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
     var noOpCoordinator = new NoOpWorkCoordinator();
@@ -157,13 +240,20 @@ public class TransportConsumerWorkerDirectedTargetTests {
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
       controlClass: Options.Create(new ControlClassOptions()));
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
+  }
+
+  /// <summary>A registry with no consumer for anything.</summary>
+  private sealed class ConsumesNothing : IReceptorRegistryQuery {
+    public bool HasAnyConsumer(string messageType) => false;
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
   }
 
   /// <summary>Wire-realistic envelope: transports deliver <c>JsonElement</c> payloads, which the
