@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [Category("Storage")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class VersionedApplyTargetTests : EFCoreTestBase {
   // Test model lives in sibling VersionedItemPerspective.cs so the source generator

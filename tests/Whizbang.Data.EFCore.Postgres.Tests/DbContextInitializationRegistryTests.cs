@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for DbContextInitializationRegistry static registry.
 /// Each test resets static state via reflection to ensure isolation.
 /// </summary>
-[NotInParallel(["DbContextInitializationRegistry", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard3")]
 public class DbContextInitializationRegistryTests {
   private IDisposable? _restore;

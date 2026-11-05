@@ -68,7 +68,7 @@ local run reproduces it.
 
 | Workflow | Selection | Build slice |
 |----------|-----------|-------------|
-| `reusable-test-unit.yml` | `-Mode Unit` | full build |
+| `reusable-test-unit.yml` | `-Mode Unit` | every Unit project |
 | `reusable-test-component.yml` | `-Mode Component` | every Component project |
 | `reusable-test-postgres.yml` | `-Mode Integration -Tag Postgres` (sharded) | Postgres projects |
 | `reusable-test-inmemory.yml` | `-Mode Integration -Tag InMemory` | InMemory projects |

@@ -34,7 +34,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// persistence layer correctly stores and retrieves ScopeDelta.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
 

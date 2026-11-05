@@ -46,7 +46,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Health/WhizbangHealthAggregator.cs</code-under-test>
 /// <docs>resilience/managed-resource-health</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public sealed class StartupHealthWhileMigratingTests {
   private static readonly long _schemaLock = SchemaInitializationLockKey.Compute("public");

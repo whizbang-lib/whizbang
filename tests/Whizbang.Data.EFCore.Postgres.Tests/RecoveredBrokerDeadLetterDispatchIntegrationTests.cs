@@ -52,7 +52,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Routing/MessageDiscardPolicy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/WhizbangReceptorRegistryQueryAdapter.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase {
 

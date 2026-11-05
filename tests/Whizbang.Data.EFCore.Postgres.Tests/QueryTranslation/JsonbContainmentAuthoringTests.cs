@@ -34,11 +34,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
-public class JsonbContainmentAuthoringTests {
+public sealed class JsonbContainmentAuthoringTests : IDisposable {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=authoring;Username=u;Password=p";
 
   public enum Priority { Low, High }
@@ -89,14 +88,18 @@ public class JsonbContainmentAuthoringTests {
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
 
-  private static readonly AuthoringDbContext _db = new(_options);
+  // One context per test: a DbContext is not thread-safe, and the tests of this class run in parallel (#2069).
+  private readonly AuthoringDbContext _db = new(_options);
+
+  /// <summary>Releases this test's context.</summary>
+  public void Dispose() => _db.Dispose();
 
   /// <summary>
   /// Runs the rewriter over a real query carrying the predicate, and reports whether it produced a
   /// containment call. The predicate is wrapped in <c>Where</c> rather than visited bare, because a
   /// bare lambda is not what the interceptor ever sees and the rewrite is scoped to filter position.
   /// </summary>
-  private static bool _rewrites(Expression<Func<PerspectiveRow<OrderModel>, bool>> predicate) {
+  private bool _rewrites(Expression<Func<PerspectiveRow<OrderModel>, bool>> predicate) {
     var query = _db.Set<PerspectiveRow<OrderModel>>().Where(predicate).Expression;
     var rewritten = new JsonbContainmentRewriter(_db.Model).Visit(query);
     var finder = new MarkerFinder();

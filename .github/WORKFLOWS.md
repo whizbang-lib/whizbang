@@ -22,6 +22,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | OSSF Scorecard | `security-scorecard.yml` | schedule, dispatch | Repository security posture |
 | Mutation Testing | `mutation.yml` | dispatch | Stryker mutation runs (see `ai-docs/mutation-testing.md`) |
 | Analyzer Sweep | `analyzer-sweep.yml` | dispatch | Runs every analyzer across the solution |
+| Build Cost Timing | `build-cost-timing.yml` | PRs and `develop` pushes that change a generator project, the repository's analyzers or the benchmark; schedule (weekly); dispatch | Advisory: times every generator and analyzer over a large generated consumer against `build-cost-thresholds.json` (#1651). Not required and not read by `Gate · CI result`; moved out of CI so it no longer runs on every event (#2068) |
 | Test Shard Report | `test-shard-report.yml` | schedule (monthly), dispatch | Measures every test suite and the EFCore shards, and posts the report on the tracking issue (`ai-docs/test-sharding.md`) |
 | Cache Cleanup | `cache-cleanup-scheduled.yml` | schedule, dispatch | Prunes stale Actions caches |
 | Mirror CI images | `mirror-ci-images.yml` | dispatch, schedule (weekly), `develop` pushes and PRs that change `.github/ci-images.txt` | Copies the Docker Hub images CI pulls to `ghcr.io/whizbang-lib/ci-mirror` (`ai-docs/ci-image-mirror.md`) |
@@ -33,7 +34,8 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 |---|---|---|
 | `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build, instrument the test-side copies for coverage while it uploads |
 | `reusable-test-*.yml` | CI | One suite each: unit, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob |
-| `reusable-quality.yml` | CI | Sonar analysis and the coverage gates, on this run's or a covering run's coverage |
+| `reusable-quality-build.yml` | CI | Quality's first half, where the scanner runs (a PR, or main): SonarScanner begin and the analysis build, beside the suites; hands its analysis state to the second half |
+| `reusable-quality.yml` | CI | Quality's second half, once every suite has finished: the coverage merge and gates, SonarScanner end and the PR comment, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
 | `reusable-version.yml` | CI | Resolve the version (release PR title, release branch name, or GitVersion) |
 | `reusable-mutation.yml` | Mutation Testing | One mutation run |
@@ -139,9 +141,9 @@ a table saying which tier each class got and why every higher tier was skipped.
 | Class | Pool labels | Jobs | Notes |
 |---|---|---|---|
 | `any-os` | `self-hosted`, `whizbang` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Any OS and architecture. The suites run the build with `dotnet test --test-modules` on the framework-dependent `.dll` (no RID, nothing native beyond what NuGet ships per RID), so the Linux build runs on Windows X64 and ARM64 and on macOS. Every step is pwsh or an action |
-| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is compared byte for byte with the GitHub-hosted verify-rebuild, and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
+| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile, Build · Analyzers | Build · Analyzers builds the same solution with the analyzers on (Compile turns them off, #2068) and follows Compile's placement. Compile's determinism manifest is what verify-rebuild compares with the tested run's (same SDK, same assembly set), and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
 | `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
-| `analyze` | none: never the pool | Analyze · Quality | Waits up to hours for the suites' coverage; on a pool machine it would hold the machine the suites need |
+| `analyze` | none: never the pool | Analyze · Quality build, Analyze · Quality | The two halves of Quality (#2068) must check out at the same path, since the scan's state names files absolutely, which GitHub-hosted runners guarantee; and on a release PR the second half still waits up to an hour for its release-branch run's coverage, holding whatever machine it is on |
 | `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |
 
 **Coverage from another checkout.** The build's coverage source-root mappings name the build machine's
@@ -151,7 +153,7 @@ test passes; `.github/scripts/Test-CoverageCollected.ps1` fails such a suite. Re
 Windows paths; the quality gate's merge normalizes them to repository-relative paths.
 
 Not routed, always `ubuntu-latest`: the planning and gate jobs (small, and the gate must not depend on a
-machine), `Build · Generator and analyzer timing` (its thresholds were measured on GitHub-hosted runners),
+machine), `Build · Generator and analyzer timing` (`build-cost-timing.yml`; its thresholds were measured on GitHub-hosted runners),
 `Build · Verify rebuild matches the tested build`, `Build · Pack` and every publish, release, signing and
 attestation job (what reaches nuget.org is built and attested on GitHub-hosted runners), and the report
 and notification jobs.

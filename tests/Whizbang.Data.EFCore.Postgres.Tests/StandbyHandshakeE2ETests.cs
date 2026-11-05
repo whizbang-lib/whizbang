@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Startup/StandbyHandshake.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/110_StandbyHandshake.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class StandbyHandshakeE2ETests : EFCoreTestBase {
 

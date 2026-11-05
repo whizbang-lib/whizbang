@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/184_RoleAssignmentResilience.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/326_EveryDutyIsARoleAssignment.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
   private const string ROLE = "maintainer";

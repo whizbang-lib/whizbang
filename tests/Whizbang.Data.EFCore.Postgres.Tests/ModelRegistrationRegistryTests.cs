@@ -21,7 +21,7 @@ public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> optio
 /// Verifies AOT-compatible model registration callback mechanism.
 /// Target: 100% branch coverage.
 /// </summary>
-[NotInParallel(["ModelRegistrationRegistry tests share static state", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard2")]
 public class ModelRegistrationRegistryTests {
   private IDisposable? _restore;

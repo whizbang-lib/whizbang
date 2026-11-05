@@ -32,7 +32,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingPass.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/DeclaredKeyShapes.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class DeclaredNameSpellingIntegrationTests {
   private const string PICTURE = "wh_per_declared_picture";

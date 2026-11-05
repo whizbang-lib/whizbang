@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>lenses/lens-query-factory</docs>
 [Category("Integration")]
 [Category("Concurrency")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class DbContextConcurrencyTests : EFCoreTestBase {
   private const int ParallelQueryCount = 10;

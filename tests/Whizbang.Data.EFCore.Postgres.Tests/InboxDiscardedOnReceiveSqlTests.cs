@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class InboxDiscardedOnReceiveSqlTests : EFCoreTestBase {
   private const int STORED_AND_PUBLISHED = 1 | 4;

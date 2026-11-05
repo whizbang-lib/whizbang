@@ -38,7 +38,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Shard2")]
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   private const int ROWS_PER_TABLE = 20_000;
   /// <summary>

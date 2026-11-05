@@ -919,12 +919,15 @@ Describe 'Which class each ci.yml job takes' {
     $script:CiJobs = Get-WorkflowJobText (Join-Path $Root '.github' 'workflows' 'ci.yml')
     $script:Expected = [ordered]@{
       'build'                  = 'compile'
+      'analyzers'              = 'compile'
       'format'                 = 'any-os'
       'noop-rebuild'           = 'any-os'
       'unit-tests'             = 'any-os'
       'component-tests'        = 'any-os'
       'script-tests'           = 'any-os'
+      'quality-build'          = 'analyze'
       'quality'                = 'analyze'
+      'queue-quality'          = 'analyze'
       'postgres-integration'   = 'linux-docker'
       'inmemory-integration'   = 'linux-docker'
       'rabbitmq-integration'   = 'linux-docker'
@@ -936,12 +939,15 @@ Describe 'Which class each ci.yml job takes' {
 
   It 'routes <Job> through the <Class> class' -ForEach @(
     @{ Job = 'build'; Class = 'compile' }
+    @{ Job = 'analyzers'; Class = 'compile' }
     @{ Job = 'format'; Class = 'any-os' }
     @{ Job = 'noop-rebuild'; Class = 'any-os' }
     @{ Job = 'unit-tests'; Class = 'any-os' }
     @{ Job = 'component-tests'; Class = 'any-os' }
     @{ Job = 'script-tests'; Class = 'any-os' }
+    @{ Job = 'quality-build'; Class = 'analyze' }
     @{ Job = 'quality'; Class = 'analyze' }
+    @{ Job = 'queue-quality'; Class = 'analyze' }
     @{ Job = 'postgres-integration'; Class = 'linux-docker' }
     @{ Job = 'inmemory-integration'; Class = 'linux-docker' }
     @{ Job = 'rabbitmq-integration'; Class = 'linux-docker' }

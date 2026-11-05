@@ -71,7 +71,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>operations/infrastructure/migrations</docs>
 /// <docs>fundamentals/perspectives/stored-form-migrations#recovery</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);

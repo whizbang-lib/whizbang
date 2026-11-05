@@ -38,7 +38,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/storage-maintenance#brin-indexes</docs>
 [Category("Shard5")]
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 public class BrinIndexCandidatesTests : EFCoreTestBase {
   /// <summary>The correlation at or above which a column's order is near enough to 1 for a BRIN index.</summary>
   private const double NEAR_ONE = 0.9;

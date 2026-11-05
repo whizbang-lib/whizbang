@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
 [Category("Shard4")]
-[NotInParallel("EFCorePostgresTests")]
 public class ArchivedCollectiveStreamsQueryPlanTests : EFCoreTestBase {
   private const string INDEX = "idx_stream_lifecycle_archived_type";
   private const string TENANT = "tenant-07";

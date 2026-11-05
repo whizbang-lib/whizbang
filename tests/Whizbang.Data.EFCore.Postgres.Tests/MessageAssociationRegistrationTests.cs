@@ -19,7 +19,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Uses ActionTestPerspective which implements both interface types.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
 [Category("Shard2")]
 public class MessageAssociationRegistrationTests : EFCoreTestBase {

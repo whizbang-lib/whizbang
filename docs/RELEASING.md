@@ -112,6 +112,7 @@ job fails it on every path. The rules are `.github/scripts/Test-CiResult.ps1`, t
 | fast-forward | a queue run over a tree its PR run covered (`ff-validated`) | `ff-validated` succeeded (it already required the PR run green, Quality included) |
 | reused | a develop push or release cut (`queue-validated`) | `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` green, plus `Build · Compile` unless the change detector found no code (a docs-only merge builds nothing) |
 | docs-only | a push or PR whose change detector found only inert paths | `Plan · Detect changes` succeeded and said so |
+| pr-fast | a pull request into `develop` (#2070) | `Build · Compile`, `Build · Analyzers`, `Test · Unit` and `Test · Component` green; the integration suites, Quality and pack run in the merge queue and may be skipped here |
 
 **A release-branch push always builds and packs** (#1208). Its run is the one the stable publish
 promotes packages from and the release PR takes coverage from, so `Plan · Detect changes` treats every
@@ -120,7 +121,27 @@ promotes packages from and the release PR takes coverage from, so `Plan · Detec
 nothing (a second PR for the same fix) took the docs-only shape: the run reused the tested results,
 built and packed nothing, and left the release PR's Quality with no coverage and the publish with no
 packages.
-| tested here | everything else | build, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
+| tested here | everything else | build, `Build · Analyzers`, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR). In the merge queue, Quality is `Analyze · Quality (queue)`, one leg per pull request in the group |
+
+**Each change is tested once** (#2070). A pull request into `develop` runs the fast gates: formatting,
+`Build · Compile`, `Build · Analyzers`, the unit and component suites, and the review and pull-request
+gates. The integration suites, Quality (coverage and Sonar), pack and the no-op rebuild check run once,
+in the merge queue, which builds groups of queued pull requests together. `Plan · Pull requests in this
+queue group` lists the group (the queue's merge commits on its base), the linked-issue, pipeline-owner
+and pull-request-type gates check each of them, and `Analyze · Quality (queue)` runs one leg per pull
+request: the group is built and scanned once, and each leg reports the scan to SonarCloud under its own
+pull request's key, posts the PR quality gate comment on its pull request with the findings in the files
+that pull request changed (plus the library-wide gap), and fails on them, which fails the run and drops
+the group from the queue. The develop push then reuses the queue's results (`queue-validated`). A pull
+request into `main` or a release branch has no queue and keeps the full matrix, so the release paths and
+`require-pr-gate` are unchanged. Escape hatch: `PR_RUN_FULL_MATRIX=true` runs the full matrix on pull
+requests into `develop` too.
+
+**Analyzers run once, beside the suites** (#2068). `Build · Compile` builds with the analyzers off, so
+the suites start as soon as the code compiles, and `Build · Analyzers` builds the same solution with
+every analyzer on and warnings as errors, wherever Compile runs, Dependabot pull requests included.
+The one place it does not run is a push that reuses an already-tested run: that run's gate, which
+required this job, went green on the same tree and SDK. Both publishes require it.
 
 Chaining is safe because each link is a gate: a release PR's gate reads the release-branch run's
 gate, which itself required verified reuse or its own suites. Before this, the gate accepted any
@@ -467,6 +488,11 @@ quality in the queue run:
 
 Escape hatch: repo variable `QUEUE_RUN_FULL_MATRIX=true` forces the full queue matrix.
 
+Since #2070 a pull request into `develop` runs neither Quality nor the integration suites, so its run
+never satisfies "fully green including Quality" and the queue always runs the full matrix: the queue
+is where each change is tested, once. The fast-forward skip still applies when a pull request ran the
+full matrix itself (`PR_RUN_FULL_MATRIX=true`).
+
 ### queue-validated — skip the redundant *push* and *release cut* matrices
 
 Two pushes carry a tree another run already tested:
@@ -489,16 +515,20 @@ Two pushes carry a tree another run already tested:
   determinism manifest (the queue run, or on a fast-forward the PR run, after proving the trees are
   identical). `validated` is true only if **both** are still live; otherwise the full matrix runs.
   Found ⇒ the six suites and quality skip in the push run.
-- **verify-rebuild** replaces them on the publish path. It reads the determinism manifest of the run
-  that built this tree (the queue run, or on a fast-forward the PR run), requires that run's exact SDK
-  and rebuilds at the queue's placeholder version, then confirms the built **assembly set**
-  matches the queue run's determinism manifest (`reusable-build.yml` uploads one on every run).
-  Same commit SHA + same SDK + same assembly set is the safety argument — identical source on an
-  identical toolchain behaves like what the suites tested. Byte-for-byte hash identity is
-  reported for monitoring but is **not** a gate: source generators emit nondeterministically for
-  an unpredictable subset of assemblies (`[LoggerMessage]` partial-class ordering, ILRepack
-  MVIDs), so a hash comparison flakes and a name allowlist can never be complete. Tamper-evidence
-  for the published bits is the SLSA provenance attestation, not this rebuild.
+- **verify-rebuild** replaces them on the publish path. It compares two determinism manifests
+  (`reusable-build.yml` uploads one on every run): the one of the run that built this tree (the
+  queue run, or on a fast-forward the PR run) and the one this run's own `Build · Compile` wrote,
+  which describes the very bits pack ships. It requires the **same SDK** and the **same assembly
+  set**. Same commit SHA + same SDK + same assembly set is the safety argument: identical source on
+  an identical toolchain behaves like what the suites tested. It builds nothing: until #2068 it
+  rebuilt the whole solution at the queue's placeholder version (15 to 26 minutes per develop push)
+  to enforce exactly these two facts. Byte-for-byte hash identity is **not** a gate and is no
+  longer reported: the two builds stamp different versions into every assembly, and source
+  generators emit nondeterministically for an unpredictable subset of assemblies
+  (`[LoggerMessage]` partial-class ordering, ILRepack MVIDs), so a hash comparison flakes and a name
+  allowlist can never be complete. Tamper-evidence for the published bits is the SLSA provenance
+  attestation. A docs-only merge builds nothing, so there is nothing to compare and the job passes.
+- **Compile uploads no per-suite build slices** on this path: no suite runs, so nothing would read them.
 - **reupload-reports** republishes the tested run's coverage and TRX into the push run, both to
   Codecov and as its own `coverage-republished` artifact, so the Codecov baseline, Test Analytics,
   the docs test status and, on a release cut, the release PR's and the main push's Quality (which
@@ -530,13 +560,17 @@ build and the six suites** (and so pack) to that run:
 - **The main push.** Merging the release PR pushes `main`, whose tree is byte-identical to the
   release-branch tree that just went green (`start-release` merges main in first). The push to main
   yields to that release-branch run: about 46 minutes per release. It fails safe: a non-merge push,
-  a merge that changed the tree, or no green release-branch run keeps the full matrix.
+  a merge that changed the tree, or no green release-branch run keeps the full matrix. The check reads
+  the merge's second parent and both trees from the commits API: until #2068 it ran `git fetch` in a
+  job with no checkout, which always failed, so every main push silently ran the full matrix.
 
 **Quality never yields.** SonarScanner runs only on a pull request or on `main`, so the release PR's
 Quality and the main push's Quality are the only analyses those trees get (the release-branch push
-run's Quality builds and checks coverage but does not scan). Each one takes its **coverage from the
-run it yielded to** (`coverage-run-id`), waiting for that run's suites, because its own run
-produces none.
+run's Quality checks coverage but does not scan, and has no `Analyze · Quality build`). Each one takes
+its **coverage from the run it yielded to** (`coverage-run-id`), waiting for that run's suites,
+because its own run produces none. That is the only Quality that still waits: everywhere else
+`Analyze · Quality` needs every suite and starts once they have finished, while the Sonar-wrapped
+build runs beside them as `Analyze · Quality build` (#2068).
 
 Each release-PR yield posts one **sticky PR comment** naming the push run. If that run is later
 canceled or fails, the PR's gate fails and names it: **re-run the push run**
@@ -691,7 +725,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 |---|---|---|
 | Release PR's `Gate · CI result` failed: "the suites ran in run N, whose gate ended ..." | the release-branch push run it yielded to was canceled or failed | Re-run that run: `gh run rerun <id> --failed` (the sticky PR comment names it), then re-run the PR's failed jobs. Or set `RELEASE_PR_FULL_MATRIX=true` and re-run the PR's CI, then unset it |
 | `Gate · CI result` failed: "X is skipped, but nothing proves this tree was tested anywhere else" | a suite was skipped by a condition that is not one of the gate's proven paths | A workflow bug: find why the job's `if` skipped it. Never re-run to get past it |
-| `Analyze · Quality` canceled at its time limit | runners queued the suites for hours | Re-run the failed jobs; the suites' coverage is still there |
+| `Analyze · Quality` canceled at its time limit | on a release PR, the release-branch run it reads coverage from was queued for hours (any other run starts Quality only after its suites finish) | Re-run the failed jobs; the suites' coverage and the analysis state are still there |
+| `Analyze · Quality` failed at `Download the analysis state` or `Restore the analysis state` | `Analyze · Quality build` did not finish, or the two halves ran at different checkout paths (a runner-class change) | Re-run the failed jobs; for a path mismatch, keep both halves on the `analyze` class (`.github/WORKFLOWS.md`) |
 | `Plan · Locate the tested packages` failed: "No CI push run for ... was found" | the run search kept missing the run (#926), or no push run exists for that commit | `gh run list --workflow ci.yml --branch release/vX.Y.Z --event push`. A green run for the commit listed: the search missed it, so re-run this release's failed jobs (`gh run rerun <release run> --failed`); never re-run the release-branch CI for this. None listed: nothing tested those bytes, so do not publish; find out why the push run never ran |
 | `Plan · Locate the tested packages` failed: "ended '...', not success" or "still ..." | the release-branch run went red, was canceled, or had not finished | Fix or re-run it (`gh run rerun <id> --failed`), wait for green, then re-run this release's failed jobs (or `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false`) |
 | `Plan · Locate the tested packages` failed: "have expired" or "has no nuget-packages-... artifact" | the release PR sat open past 7 days, or the packages were never uploaded | Re-run **all** jobs of the release-branch run (`gh run rerun <id>`), which rebuilds and re-tests them under the same artifact name, wait for green, then re-run this release's failed jobs (or dispatch as above). This works after the release PR has merged too: `Plan · Route the hotfix by line` sees the branch is already in main and stands aside instead of trying to open a second release PR (#1209) |
@@ -700,8 +735,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Release Prerelease refused: "gate did not pass" / "PR's head is not this commit" | the release PR's Quality or SonarCloud check failed, or is still running, on the branch head | Fix it in the release branch through a PR until the release PR is green on its head, then retry |
 | Older-line hotfix refused: "pushed directly" | the fix was pushed to the hotfix branch instead of merged through a PR | Put the fix on `fix/<name>`, PR it into the hotfix branch, merge when green |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
-| Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
-| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
+| Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run's Compile, a different assembly set, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
+| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, a different assembly set, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
 | `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the job cannot read the `release-app` environment's secrets. Until #1796 the merge-back ran inside a reusable workflow whose callers passed no secrets, and GitHub delivers an environment secret to a reusable workflow's job only when the caller passes it, so it read an empty string on every stable release from 2026-10-19 (the `workflow_call.secrets` declaration of #1477 did not change that). Since #1796 the job mints the token itself, so this now means the environment secrets are missing or the job lost its `environment: release-app` | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'` (for an older-line hotfix, `origin/develop...<the hotfix commit>`). Empty means nothing was lost. Otherwise fix the cause by PR. Re-running the failed job re-runs the workflow file of the original commit, so a run from before the fix fails again, as does an older-line hotfix branch cut before it (it runs its own copy of `ci.yml`): open the sync PR by hand instead, from a branch of the source with develop's `Directory.Build.props` restored, published through `Publish-SignedCommit.ps1` (see [Sync Main → Develop](#sync-main--develop)) |
 | `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z`. That tag is not signed by the workflow, so it fails SECURITY.md's verification: say so in the release notes |
@@ -817,10 +852,14 @@ success. CI always starts clean.
   through the same script, `.github/scripts/Test-InertDiff.ps1`. Add a path only if nothing reads it
   during build, test, analysis or versioning; `.editorconfig`, `BannedSymbols*.txt`, the signing key,
   the coverage and Sonar config and `GitVersion.yml` are code.
-- **Quality derives its coverage count.** It waits for one `coverage-*` artifact per suite leg,
+- **Quality derives its coverage count.** It expects one `coverage-*` artifact per suite leg,
   counting legs from the jobs list once Build succeeds. Suite legs must stay named
-  `<suite> / <...> Tests`; a finished-green set with a missing artifact fails loudly. Its job budget
-  (180 minutes) is sized for runner queueing, because it starts with the run and waits.
+  `Test · <suite> / Run suite`; a finished-green set with a missing artifact fails loudly. It is split
+  in two (#2068): `Analyze · Quality build` begins the scan and builds beside the suites (only where
+  the scanner runs: a PR or main), and `Analyze · Quality` needs every suite, so in its own run it
+  finds them finished and never waits. Its 180-minute budget is for a release PR, whose coverage comes
+  from the release-branch run and may still be on its way. A new suite job must be in Quality's
+  `needs` too (`Test-WhizbangTestType.ps1` checks it).
 - **A `pull_request` trigger filters on the BASE branch only.** There is no head-branch filter, so a
   release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
   prevented, which is why a release PR still shows a row per yielded job.

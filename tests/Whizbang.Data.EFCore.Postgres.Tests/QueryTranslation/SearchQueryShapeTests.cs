@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// would not match a straight-quote term. The SQL is asserted here; that it returns the right rows and uses
 /// the index against a real database is proven in SearchQueryIntegrationTests.
 /// </remarks>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SearchQueryShapeTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=shape;Username=u;Password=p";

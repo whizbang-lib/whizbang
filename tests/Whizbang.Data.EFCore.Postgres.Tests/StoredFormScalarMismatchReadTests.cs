@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
 [Category("Shard1")]
-[NotInParallel("EFCorePostgresTests")]
 public class StoredFormScalarMismatchReadTests : EFCoreTestBase {
 
   [Test]

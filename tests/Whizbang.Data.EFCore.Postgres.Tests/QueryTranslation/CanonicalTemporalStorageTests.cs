@@ -35,8 +35,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class CanonicalTemporalStorageTests : IAsyncDisposable {
   private const string TABLE = "wh_per_canonical_temporal";
 
@@ -107,12 +107,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"canonical_temporal_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("canonical_temp")).Name;
 
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -174,15 +169,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     }
 
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand(
-          $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container is torn down with the run; a database left behind costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
     GC.SuppressFinalize(this);

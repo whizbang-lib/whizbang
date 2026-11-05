@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/320_RepairWaitsForItsAnswer.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-[NotInParallel("EFCorePostgresTests")]
 [InheritsTests]
 public sealed class DurableIntegrityRepairLedgerContractTests : IntegrityRepairLedgerContractTests, IAsyncDisposable {
   private readonly Database _database = new();

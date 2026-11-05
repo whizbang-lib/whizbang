@@ -40,7 +40,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <docs>resilience/stream-integrity#repair-caps</docs>
-[NotInParallel("IntegrityManifestGates")]
+[NotInParallel("IntegrityManifestGates")] // the receptors' per-process gates are shared state
 [Category("Shard3")]
 public class IntegrityManifestDrainAdmissionTests {
 

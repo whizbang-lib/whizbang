@@ -69,16 +69,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       _consumerDataSource = null;
     }
     if (_consumerDbName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await admin.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_consumerDbName}' AND pid <> pg_backend_pid()");
-        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_consumerDbName} WITH (FORCE)");
-      } catch {
-        // container teardown collects strays
-      }
+      await PerTestDatabaseFactory.DropAsync(_consumerDbName);
       _consumerDbName = null;
     }
   }
@@ -86,11 +77,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   /// <summary>Provisions the SECOND store (the consumer's) beside the base class's origin store —
   /// two databases, two local service ids, exactly like two services sharing nothing but the wire.</summary>
   private async Task<DbContextOptions<WorkCoordinationDbContext>> _provisionConsumerDbAsync() {
-    _consumerDbName = $"test_consumer_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"CREATE DATABASE {_consumerDbName}");
-    }
+    _consumerDbName = (await PerTestDatabaseFactory.CreateAsync("consumer")).Name;
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _consumerDbName,
       Timezone = "UTC",

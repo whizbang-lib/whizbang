@@ -158,7 +158,7 @@ human review.
 | `test` | Met | More than 26,000 automated tests (TUnit) across unit, generator, integration and transport suites, published in the repository. <https://github.com/whizbang-lib/whizbang/tree/develop/tests> |
 | `test_invocation` | Met | Tests run with the standard `dotnet test` (or `dotnet run` per project); `scripts/Run-Tests.ps1` wraps the common modes. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
 | `test_most` | Met | Line coverage is 100% on SonarCloud, and the pull request gate requires every added library line to be executed by a test. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
-| `test_continuous_integration` | Met | The full test matrix (unit, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob, in-memory) runs on every pull request and again in the merge queue before anything reaches `develop`. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `test_continuous_integration` | Met | The full test matrix (unit, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob, in-memory) runs in the merge queue before anything reaches `develop`, after each pull request has passed the build, the analyzers and the unit and component suites. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 
 ### New functionality testing
 
@@ -310,7 +310,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `dependency_monitoring` | Met | Dependabot and a weekly OSV scan check dependencies for known vulnerabilities. <https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml> |
 | `updateable_reused_components` | Met | All third-party code comes in as NuGet packages managed centrally, so updating one is a one-line change; nothing is vendored. |
 | `interfaces_current` | Met | Obsolete-API warnings are build errors (`TreatWarningsAsErrors`), so deprecated APIs cannot be introduced. |
-| `automated_integration_testing` | Met | The full test matrix runs on every pull request and in the merge queue, and reports success or failure per suite. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `automated_integration_testing` | Met | The full test matrix runs in the merge queue on every change before it reaches `develop` (and on every pull request into `main` or a release branch), and reports success or failure per suite; a pull request into `develop` runs the build, the analyzers and the unit and component suites first. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 | `regression_tests_added50` | Met | 114 of the 137 bug-fix merges in the six months to 2026-10-04 added or changed tests (83%); the TDD policy requires a failing test before a fix. |
 | `test_statement_coverage80` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
 | `test_policy_mandated` | Met | The written policy is strict TDD: tests first, and every added library line covered. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/tdd-strict.md> |
@@ -388,7 +388,7 @@ project has today (see below).
 | `two_person_review` | Unmet | There is one active maintainer, and a pull request author cannot approve their own pull request; changes are gated by automated checks, which do not count as review by another person. |
 | `build_reproducible` | Met | Builds are deterministic, and the release path rebuilds the tested commit and fails unless the binaries' hashes match the tested build. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 | `test_invocation` | Met | Tests run with the standard `dotnet test`. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
-| `test_continuous_integration` | Met | Every pull request is built and tested by the full matrix, and the merge queue re-tests each change on the latest `develop` before it lands. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `test_continuous_integration` | Met | Every pull request is built and runs the unit and component suites, and the merge queue runs the full matrix on each change, on the latest `develop`, before it lands. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 | `test_statement_coverage90` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
 | `test_branch_coverage80` | Met | Branch coverage is 93.3% on SonarCloud, collected on every pull request; the merge gate also fails any pull request that adds an untested hand-written decision. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=branch_coverage> |
 

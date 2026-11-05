@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Use List&lt;AttributeEntry&gt; or List&lt;KeyValuePair&lt;string, string&gt;&gt; for key-value metadata instead.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -172,11 +171,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _testDatabaseName = $"complex_types_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("complex_types")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -211,20 +206,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     }
 
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Ignore cleanup errors
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
 
       _testDatabaseName = null;
     }

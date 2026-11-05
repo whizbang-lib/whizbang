@@ -45,7 +45,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   static CollectiveDispatcherEFCoreIntegrationTests() {
@@ -382,11 +381,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _testDatabaseName = $"test_collective_{Guid.NewGuid():N}";
-
-    await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await admin.OpenAsync();
-    await admin.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("collective")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -416,17 +411,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       _dataSource = null;
     }
     if (_testDatabaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await admin.ExecuteAsync($"""
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid();
-          """);
-        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // best-effort cleanup
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
   }
@@ -1467,7 +1452,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
       .Because("the apply still runs; only the wait is unbounded");
   }
-
 
   // ── §7: index creation is a STARTUP concern, never in the apply hot path ──────────────────────────
 

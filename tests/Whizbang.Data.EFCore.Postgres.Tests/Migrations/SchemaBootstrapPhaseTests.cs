@@ -44,7 +44,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SchemaBootstrapPhaseTests {
   private const long LOCK_ID = 573948201;

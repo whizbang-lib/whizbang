@@ -18,6 +18,28 @@ on:
         required: false
         type: string
         default: ''
+      run-analyzers:
+        description: >-
+          Run the Roslyn analyzers during the build. CI turns them off here and enforces them in its separate
+          Build · Analyzers job, off the suites' critical path (#2068). Source generators run either way: the
+          compiler's /skipanalyzers skips diagnostic analyzers only.
+        required: false
+        type: boolean
+        default: true
+      integration-slices:
+        description: >-
+          Upload the integration suites' slices. False on a pull request into develop, which runs only the unit
+          and component suites (the integration suites run in the merge queue).
+        required: false
+        type: boolean
+        default: true
+      upload-slices:
+        description: >-
+          Upload the per-suite build slices. False when no suite will run in this run (a push that reuses an
+          already-tested run's results), so nothing would download them.
+        required: false
+        type: boolean
+        default: true
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -33,8 +55,8 @@ jobs:
   build:
     name: Compile and hash
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
-    # The analyzers run in every project now, which roughly doubles the solution build on a
-    # hosted runner (16 minutes observed); the artifact upload follows it.
+    # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
+    # runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 35
 
     steps:
@@ -64,9 +86,12 @@ jobs:
           # Env-var indirection (githubactions:S7630): never interpolate workflow inputs
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
+          RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
           BUILD_ARGS=(--no-restore --configuration Release)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
+          # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
+          if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
           dotnet build "${BUILD_ARGS[@]}"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
@@ -147,15 +172,18 @@ jobs:
       # Per-suite slices. Every test job downloaded the whole build above (about 2.4 GB) though an
       # integration suite runs one or two projects, and the download took anywhere from 40 seconds
       # to over 5 minutes. A test project's bin/Release holds its whole dependency closure, so each
-      # integration suite gets only its projects' output; the unit suite, which runs most projects,
-      # keeps the full build. The slices are derived from the projects' tags, the same way
-      # Run-Tests.ps1 selects them, and a slice missing a selected project fails that suite.
+      # suite gets only its projects' output; the unit suite too, since #2068 (it spent 4.2 minutes
+      # downloading for 1.5 minutes of tests). The full build above is what pack reads. The slices are
+      # derived from the projects' types and tags, the same way Run-Tests.ps1 selects them, and a
+      # slice missing a selected project fails that suite.
       - name: Define per-suite build slices
+        if: inputs.upload-slices
         id: slices
         shell: pwsh
         run: pwsh -NoProfile -File .github/scripts/Get-TestSlice.ps1 -GitHubOutput
 
       - name: Upload build slice (postgres)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-postgres-${{ github.run_id }}
@@ -166,6 +194,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (inmemory)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-inmemory-${{ github.run_id }}
@@ -176,6 +205,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (rabbitmq)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-rabbitmq-${{ github.run_id }}
@@ -186,6 +216,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (servicebus)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-servicebus-${{ github.run_id }}
@@ -196,6 +227,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (integration)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-integration-${{ github.run_id }}
@@ -206,6 +238,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (component)
+        if: inputs.upload-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-component-${{ github.run_id }}
@@ -215,7 +248,19 @@ jobs:
           compression-level: 1
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
+      - name: Upload build slice (unit)
+        if: inputs.upload-slices
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-unit-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.unit }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
       - name: Upload build slice (azureblob)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-azureblob-${{ github.run_id }}

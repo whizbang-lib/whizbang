@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigratorWatch.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class MigratorWatchTests : EFCoreTestBase {
   private async Task<NpgsqlConnection> _openAsync(CancellationToken ct) {

@@ -35,7 +35,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
   static PhysicalColumnBackfillIntegrationTests() {
@@ -104,10 +103,7 @@ public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _testDatabaseName = $"test_{Guid.NewGuid():N}";
-    await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await admin.OpenAsync();
-    await admin.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("phys_backfill")).Name;
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
       Timezone = "UTC",
@@ -120,9 +116,7 @@ public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
   [After(Test)]
   public async Task TeardownAsync() {
     if (!string.IsNullOrEmpty(_testDatabaseName)) {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
     }
   }
 

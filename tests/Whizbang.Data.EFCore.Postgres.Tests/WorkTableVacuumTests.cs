@@ -19,7 +19,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class WorkTableVacuumTests : EFCoreTestBase {
   private static readonly string[] _workTables = ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication"];

@@ -60,7 +60,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/ReceptorInvoker.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class OutboxStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.OutboxStageSends.Owned";

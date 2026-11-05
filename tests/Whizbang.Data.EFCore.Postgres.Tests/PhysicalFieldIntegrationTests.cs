@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <tests>No tests found</tests>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalFieldIntegrationTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -108,12 +107,9 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
     await SharedPostgresContainer.InitializeAsync();
 
     // Create unique database for THIS test
-    _testDatabaseName = $"test_{Guid.NewGuid():N}";
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("phys_field")).Name;
 
     // Connect to main database to create the test database
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
 
     // Build connection string for the test database
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
@@ -152,21 +148,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Drop the test database
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        // Terminate connections
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Ignore cleanup errors
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
 
       _testDatabaseName = null;
     }

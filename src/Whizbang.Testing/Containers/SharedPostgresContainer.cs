@@ -204,6 +204,7 @@ public static class SharedPostgresContainer {
           }
         }
 
+        await _stopWaitingOnTheDiskAsync(ct);
         _initialized = true;
       } catch (Exception ex) {
         // Mark initialization as failed
@@ -233,6 +234,40 @@ public static class SharedPostgresContainer {
   }
 
   /// <summary>
+  /// The settings that make the server wait on its disk, each turned off: a test database is thrown away with its
+  /// container, so durability buys nothing, and it costs every test time.
+  /// </summary>
+  internal static readonly string[] DurabilitySettings = ["fsync", "synchronous_commit", "full_page_writes"];
+
+  /// <summary>
+  /// Turns off the server's durability (<see cref="DurabilitySettings"/>) and reloads its configuration.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Tests run in parallel and each creates and drops a database. Since PostgreSQL 15 a <c>DROP DATABASE</c> forces an
+  /// immediate checkpoint and waits for it, so a parallel shard asks for one every second or so; with durability on,
+  /// each flushes and syncs what every other test has written, and on a build server whose disk is a shared volume
+  /// those took up to 36 seconds and ran tests out of time (#2069).
+  /// </para>
+  /// <para>
+  /// Applied by every process that initializes the container rather than only when it is created, so a container made
+  /// before this rule, and kept between runs, gets it too. Each setting is its own statement because
+  /// <c>ALTER SYSTEM</c> cannot run inside a transaction, which a multi-statement command is.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TestIsolation/SharedContainerDurabilityTests.cs</tests>
+  private static async Task _stopWaitingOnTheDiskAsync(CancellationToken ct) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(ct);
+    foreach (var setting in DurabilitySettings) {
+      await using var alter = new NpgsqlCommand($"ALTER SYSTEM SET {setting} = off", connection);
+      await alter.ExecuteNonQueryAsync(ct);
+    }
+    await using var reload = new NpgsqlCommand("SELECT pg_reload_conf()", connection);
+    await reload.ExecuteScalarAsync(ct);
+  }
+
+  /// <summary>
   /// Creates the container using raw Docker CLI command (not Testcontainers library).
   /// This ensures the container persists across test processes.
   /// </summary>
@@ -248,6 +283,9 @@ public static class SharedPostgresContainer {
                   "--restart no " +
                   $"{CiImages.Resolve(IMAGE_NAME)} " +
                   "-c max_connections=500 " +
+                  // Durability off from the start; see _stopWaitingOnTheDiskAsync, which also turns it off on a
+                  // container made before this rule.
+                  "-c fsync=off -c synchronous_commit=off -c full_page_writes=off " +
                   // Loaded at start because that is the only time it can be. It costs a small
                   // fixed allocation and tracks nothing until a database creates the extension,
                   // and it is what lets the statement-statistics reader be tested at all.

@@ -33,11 +33,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>contributors/perspective-query-pipeline</docs>
 [Category("Shard1")]
-// Serialized against every other class that touches the containment switch, which is process
-// static. The matrix selects a mechanism per case, so a class running beside it would have the
-// mode changed underneath it and would assert the other mechanism's output. One key for all of
-// them rather than a key per concern, because a second key is exactly how this went wrong.
-[NotInParallel("EFCorePostgresTests")]
+// Runs alone, like every other class that touches the containment switch, which is process static.
+// The matrix selects a mechanism per case, so a class running beside it would have the mode changed
+// underneath it and would assert the other mechanism's output. A key would not do: every perspective
+// query reads the mode, so only running alone keeps it from changing under another test (#2069).
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class ContainmentSqlRewriterTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=reshape;Username=u;Password=p";
 
