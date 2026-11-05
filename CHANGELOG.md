@@ -1429,7 +1429,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default from the interface and fails for one Dapper serves at the default without an allow-list entry and its reason,
   so a new operation cannot be left unimplemented unnoticed. Stream integrity (checkpoints, gap detection, the digest
   audit and epochs, the repair drain, subscription-growth backfill, auto-repair and redelivery) stays EF Core only
-  until its rework lands, and is allow-listed. **Upgrade note:** on a Dapper host every `Whizbang:StreamIntegrity`
+  and is allow-listed. **Upgrade note:** on a Dapper host every `Whizbang:StreamIntegrity`
   switch (`CheckpointsEnabled`, `GapDetectionEnabled`, `AuditEnabled`, `EpochClosureEnabled`, `RepairDrainEnabled`,
   `BackfillOnSubscriptionGrowth`) now defaults to off, and a host whose configuration sets one to `true`, or
   `RepairMode` to `AutoRepairCapped`, fails at start with an error naming the feature, the key and the reason. These

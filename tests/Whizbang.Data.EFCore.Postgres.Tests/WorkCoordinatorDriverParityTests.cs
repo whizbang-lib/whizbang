@@ -44,6 +44,10 @@ public class WorkCoordinatorDriverParityTests {
   /// </summary>
   internal static readonly IReadOnlyDictionary<string, string> DapperAllowList = new Dictionary<string, string>(StringComparer.Ordinal) {
     [nameof(IWorkCoordinator.AdoptRedeliveredOriginAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.GetIntegrityDomainClaimsAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.GetOriginReattributionWindowAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.ReattributeOriginsAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.RecordIntegrityDomainClaimsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.AdvanceIntegrityCheckpointAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.AdvanceIntegritySealAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.CloseDigestEpochsAsync)] = INTEGRITY,
@@ -92,7 +96,7 @@ public class WorkCoordinatorDriverParityTests {
   /// Stream integrity (digests, checkpoints, seals, repair, redelivery, the audit and subscription-growth backfill) is
   /// being reworked; the Dapper driver refuses every integrity switch at startup instead (DapperStreamIntegrityRefusal).
   /// </summary>
-  private const string INTEGRITY = "integrity is EF Core only until the integrity rework lands (#2052)";
+  private const string INTEGRITY = "stream integrity runs on EF Core only; a Dapper host that turns it on is refused at startup";
 
   /// <summary>
   /// Convenience overloads whose default body forwards to another overload of the same name (the one taking
