@@ -60,6 +60,26 @@ public sealed class NamespaceInboxStrategy(
   /// </summary>
   public static string OwnedCommandInboxMetadataKey => OWNED_COMMAND_INBOX_METADATA_KEY;
 
+  /// <summary>Backing constant for <see cref="ServiceControlInboxMetadataKey"/>.</summary>
+  private const string SERVICE_CONTROL_INBOX_METADATA_KEY = "ServiceControlInbox";
+
+  /// <summary>Backing constant for the routing-pattern metadata key the transports read.</summary>
+  private const string ROUTING_PATTERNS_METADATA_KEY = "RoutingPatterns";
+
+  /// <summary>
+  /// Metadata key marking a subscription as this service's OWN control inbox (#2090,
+  /// <see cref="CommandInboxNaming.ServiceControlTopicFor"/>): the address directed integrity traffic to this service
+  /// is sent to, which <c>RepairTopicResolver</c> advertises.
+  /// </summary>
+  public static string ServiceControlInboxMetadataKey => SERVICE_CONTROL_INBOX_METADATA_KEY;
+
+  /// <summary>True when <paramref name="metadata"/> carries the service-control-inbox marker set to true.</summary>
+  /// <param name="metadata">A subscription's metadata.</param>
+  /// <returns>True for this service's own control inbox.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:IsServiceControlInbox_NoMetadataOrNoMarker_IsFalseAsync</tests>
+  public static bool IsServiceControlInbox(IReadOnlyDictionary<string, object>? metadata) =>
+    metadata?.TryGetValue(SERVICE_CONTROL_INBOX_METADATA_KEY, out var marker) == true && marker is true;
+
   /// <summary>Gets the system broadcast inbox topic (<c>inbox.whizbang</c>). Naming shared
   /// with the publish side through <see cref="CommandInboxNaming"/> (phase 6).</summary>
   public static string SystemBroadcastInboxTopic => CommandInboxNaming.SystemBroadcastTopic;
@@ -155,23 +175,45 @@ public sealed class NamespaceInboxStrategy(
 
     var subscriptions = new List<InboxSubscription>();
 
-    // Part 1 (permanent) — one inbox per DISTINCT handled COMMAND contract namespace.
-    // Sorted for deterministic manifests; framework-reserved namespaces ride part 2 instead.
-    var commandNamespaces = new SortedSet<string>(StringComparer.Ordinal);
-    commandNamespaces.UnionWith(context.HandledMessages
-      .Where(handled => handled.Kind == MessageKind.Command && !string.IsNullOrWhiteSpace(handled.ContractNamespace))
-      .Select(handled => handled.ContractNamespace.ToLowerInvariant())
-      .Where(contractNamespace => !CommandInboxNaming.IsFrameworkReserved(contractNamespace)));
+    // Part 1 (permanent) — one inbox per DISTINCT handled COMMAND contract namespace, filtered to the command TYPES
+    // this service handles (#2089). The entity is not exclusive: every service handling a command of the namespace
+    // subscribes to it, so a namespace-wide (1=1) filter handed each of them all of its traffic. Sorted for
+    // deterministic manifests; framework-reserved namespaces ride part 2 instead.
+    var commandPatterns = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+    foreach (var handled in context.HandledMessages) {
+      if (handled.Kind != MessageKind.Command || string.IsNullOrWhiteSpace(handled.ContractNamespace)) {
+        continue;
+      }
+      var contractNamespace = handled.ContractNamespace.ToLowerInvariant();
+      if (CommandInboxNaming.IsFrameworkReserved(contractNamespace)) {
+        continue;
+      }
+      if (!commandPatterns.TryGetValue(contractNamespace, out var patterns)) {
+        commandPatterns[contractNamespace] = patterns = new SortedSet<string>(StringComparer.Ordinal);
+      }
+      patterns.UnionWith(CommandSubjectPatterns(handled.MessageTypeName, contractNamespace));
+    }
 
-    foreach (var contractNamespace in commandNamespaces) {
+    foreach (var (contractNamespace, patterns) in commandPatterns) {
+      List<string> routingPatterns = [.. patterns];
       subscriptions.Add(new InboxSubscription(
         Topic: CommandInboxNaming.TopicFor(contractNamespace),
-        FilterExpression: null, // the topic IS the filter — the entity carries one namespace
+        FilterExpression: string.Join(",", routingPatterns),
         Metadata: new Dictionary<string, object> {
           [OWNED_COMMAND_INBOX_METADATA_KEY] = true,
-          ["ContractNamespace"] = contractNamespace
+          ["ContractNamespace"] = contractNamespace,
+          [ROUTING_PATTERNS_METADATA_KEY] = routingPatterns
         }));
     }
+
+    // Part 1b (permanent, #2090) — this service's OWN control inbox. Directed integrity traffic is addressed here and
+    // nowhere else: only this service subscribes to the entity, so the topic IS the filter.
+    subscriptions.Add(new InboxSubscription(
+      Topic: CommandInboxNaming.ServiceControlTopicFor(context.ServiceName),
+      FilterExpression: null,
+      Metadata: new Dictionary<string, object> {
+        [SERVICE_CONTROL_INBOX_METADATA_KEY] = true
+      }));
 
     // Part 2 (permanent) — the system broadcast inbox. Patterns come from the SAME builder the
     // shared strategy uses today (with no owned domains), so it carries exactly the
@@ -197,7 +239,7 @@ public sealed class NamespaceInboxStrategy(
         Topic: CommandInboxNaming.ControlBroadcastTopic,
         FilterExpression: string.Join(",", controlPatterns),
         Metadata: new Dictionary<string, object> {
-          ["RoutingPatterns"] = controlPatterns,
+          [ROUTING_PATTERNS_METADATA_KEY] = controlPatterns,
           [CONTROL_CLASS_METADATA_KEY] = true
         }));
     }
@@ -206,7 +248,7 @@ public sealed class NamespaceInboxStrategy(
       Topic: CommandInboxNaming.SystemBroadcastTopic,
       FilterExpression: string.Join(",", systemPatterns),
       Metadata: new Dictionary<string, object> {
-        ["RoutingPatterns"] = systemPatterns
+        [ROUTING_PATTERNS_METADATA_KEY] = systemPatterns
       }));
 
     // Part 3 (transitional) — today's shared-inbox subscription UNCHANGED, so the set is a
@@ -220,6 +262,30 @@ public sealed class NamespaceInboxStrategy(
     }
 
     return subscriptions;
+  }
+
+  /// <summary>
+  /// The wire subjects a handled command can arrive with (#2089): <c>{namespace}.{typename}</c>, lowercase, as the
+  /// publisher stamps it. A nested type has two spellings (the outbox's CLR simple name <c>Outer+Inner</c> and a direct
+  /// send's <c>Inner</c>), so both match; a type name outside its contract namespace matches by its simple name.
+  /// </summary>
+  /// <param name="messageTypeName">The handled type's dotted full name.</param>
+  /// <param name="contractNamespace">Its lowercase contract namespace.</param>
+  /// <returns>One or two exact routing patterns.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_NestedCommandType_MatchesBothWireSpellingsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_TypeNameOutsideItsNamespace_UsesTheSimpleNameAsync</tests>
+  internal static IEnumerable<string> CommandSubjectPatterns(string messageTypeName, string contractNamespace) {
+    var lowered = messageTypeName.ToLowerInvariant();
+    var prefix = contractNamespace + ".";
+    var lastDot = lowered.LastIndexOf('.');
+    var simple = lowered[(lastDot + 1)..];
+    if (!lowered.StartsWith(prefix, StringComparison.Ordinal)) {
+      return [prefix + simple];
+    }
+    var relative = lowered[prefix.Length..];
+    return relative.Contains('.', StringComparison.Ordinal)
+      ? [prefix + relative.Replace('.', '+'), prefix + simple]
+      : [prefix + relative];
   }
 
   /// <summary>

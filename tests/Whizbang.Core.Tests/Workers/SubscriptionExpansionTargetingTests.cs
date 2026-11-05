@@ -157,21 +157,23 @@ public class SubscriptionExpansionTargetingTests {
   }
 
   /// <summary>
-  /// #2078: with its own command inbox and the shared topic both consumed, the service names its own inbox as the reply
-  /// address, and a broadcast for a type with no known owner still goes to the shared topic every service reads.
+  /// #2090: with a command inbox, its own control inbox and the shared topic consumed, the service names its own control
+  /// inbox as the reply address, and a broadcast for a type with no known owner still goes to the shared topic every
+  /// service reads.
   /// </summary>
   [Test]
-  public async Task Backfill_RepliesToItsOwnInbox_AndBroadcastsOnTheSharedTopicAsync() {
+  public async Task Backfill_RepliesToItsOwnControlInbox_AndBroadcastsOnTheSharedTopicAsync() {
     var coordinator = new ExpandingCoordinator();
     var transport = new CaptureTransport();
 
-    await _buildWorker(coordinator, transport, ownInbox: "inbox.expanding").RunOnceAsync(CancellationToken.None);
+    await _buildWorker(coordinator, transport, ownInbox: "inbox.app.orders", controlInbox: "inbox.expanding")
+      .RunOnceAsync(CancellationToken.None);
 
     var (envelope, destination, _) = transport.Published.Single();
     await Assert.That(destination.Address).IsEqualTo("inbox")
       .Because("a broadcast must reach every service, which only the shared topic does");
     await Assert.That(_command(envelope).Topic).IsEqualTo("inbox.expanding")
-      .Because("the answers come back to this service's own command inbox, which no other service reads");
+      .Because("the answers come back to this service's own control inbox, which no other service reads");
   }
 
   private static IntegrityDomainClaim _claim(string domain, Guid owner, string name, string? requestTopic) =>
@@ -183,7 +185,7 @@ public class SubscriptionExpansionTargetingTests {
       JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
 
   private static SubscriptionExpansionWorker _buildWorker(
-      ExpandingCoordinator coordinator, CaptureTransport transport, string? ownInbox = null) {
+      ExpandingCoordinator coordinator, CaptureTransport transport, string? ownInbox = null, string? controlInbox = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IConsumerRegistry>(new ConsumesBoth());
@@ -194,6 +196,11 @@ public class SubscriptionExpansionTargetingTests {
     if (ownInbox is not null) {
       consumerOptions.Destinations.Add(new TransportDestination(ownInbox, Metadata: new Dictionary<string, JsonElement> {
         [Whizbang.Core.Routing.NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = JsonElement.Parse("true"),
+      }));
+    }
+    if (controlInbox is not null) {
+      consumerOptions.Destinations.Add(new TransportDestination(controlInbox, Metadata: new Dictionary<string, JsonElement> {
+        [Whizbang.Core.Routing.NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = JsonElement.Parse("true"),
       }));
     }
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));

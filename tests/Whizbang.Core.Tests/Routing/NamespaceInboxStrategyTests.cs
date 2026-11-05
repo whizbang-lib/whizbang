@@ -257,13 +257,14 @@ public class NamespaceInboxStrategyTests {
   [Test]
   public async Task GetSubscriptions_EmptyRegistry_SystemInboxAndTransitionalSharedOnlyAsync() {
     // A service with no receptors (pure event consumer / BFF) still subscribes to the system
-    // broadcast inbox and — transitionally — the shared inbox. Nothing else.
+    // broadcast inbox, its own control inbox (#2090) and — transitionally — the shared inbox. Nothing else.
     var strategy = new NamespaceInboxStrategy();
     var context = _context();
 
     var subscriptions = strategy.GetSubscriptions(context);
 
-    await Assert.That(subscriptions.Count).IsEqualTo(2);
+    await Assert.That(subscriptions.Count).IsEqualTo(3);
+    await Assert.That(subscriptions.Select(s => s.Topic)).Contains(CommandInboxNaming.ServiceControlTopicFor("OrderService"));
     await Assert.That(subscriptions.Select(s => s.Topic))
       .Contains(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
     await Assert.That(subscriptions.Select(s => s.Topic)).Contains("inbox");
@@ -418,8 +419,8 @@ public class NamespaceInboxStrategyTests {
   [Test]
   public async Task GetSubscriptions_UnderRetirement_ExactlyPerNamespaceInboxesPlusBroadcastAsync() {
     // THE RETIREMENT SHAPE: the transitional shared-inbox subscription is DROPPED — the set
-    // is exactly one inbox per handled command namespace + the system broadcast inbox.
-    // No catch-all remnant.
+    // is exactly one inbox per handled command namespace + the service's own control inbox (#2090)
+    // + the system broadcast inbox. No catch-all remnant.
     var strategy = new NamespaceInboxStrategy(_retiredOptions());
     var context = _context(handled: [
       _command("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands"),
@@ -429,7 +430,8 @@ public class NamespaceInboxStrategyTests {
     var subscriptions = strategy.GetSubscriptions(context);
 
     var topics = subscriptions.Select(s => s.Topic).ToList();
-    await Assert.That(topics.Count).IsEqualTo(3);
+    await Assert.That(topics.Count).IsEqualTo(4);
+    await Assert.That(topics).Contains(CommandInboxNaming.ServiceControlTopicFor("OrderService"));
     await Assert.That(topics).Contains("inbox.myapp.orders.commands");
     await Assert.That(topics).Contains("inbox.myapp.billing.commands");
     await Assert.That(topics).Contains(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
@@ -439,14 +441,14 @@ public class NamespaceInboxStrategyTests {
 
   [Test]
   public async Task GetSubscriptions_UnderRetirement_NoReceptors_BroadcastInboxOnlyAsync() {
-    // A pure event consumer under retirement holds exactly ONE inbox subscription: the
-    // system broadcast inbox (the sole carve-out).
+    // A pure event consumer under retirement holds exactly TWO inbox subscriptions: its own
+    // control inbox (#2090) and the system broadcast inbox (the sole shared carve-out).
     var strategy = new NamespaceInboxStrategy(_retiredOptions());
 
     var subscriptions = strategy.GetSubscriptions(_context());
 
-    await Assert.That(subscriptions.Count).IsEqualTo(1);
-    await Assert.That(subscriptions[0].Topic).IsEqualTo(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
+    await Assert.That(subscriptions.Select(s => s.Topic)).IsEquivalentTo(
+      [CommandInboxNaming.ServiceControlTopicFor("OrderService"), NamespaceInboxStrategy.SystemBroadcastInboxTopic]);
   }
 
   [Test]
