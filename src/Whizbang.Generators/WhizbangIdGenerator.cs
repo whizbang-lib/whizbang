@@ -793,12 +793,13 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Replace header
     template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
 
-    // Generate factory registrations
+    // Generate factory registrations. The registration sits under the first id's namespace only, so every id and
+    // provider is named from global:: and resolves wherever its id is declared (#2072).
     var factoryRegistrations = new StringBuilder();
     foreach (var id in ids) {
       factoryRegistrations.AppendLine(
-        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterFactory<{id.FullyQualifiedName}>(" +
-        $"baseProvider => new {id.TypeName}Provider(baseProvider));"
+        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterFactory<global::{id.FullyQualifiedName}>(" +
+        $"baseProvider => new global::{id.FullyQualifiedName}Provider(baseProvider));"
       );
     }
     template = TemplateUtilities.ReplaceRegion(
@@ -811,8 +812,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var diRegistrations = new StringBuilder();
     foreach (var id in ids) {
       diRegistrations.AppendLine(
-        $"    services.AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<{id.FullyQualifiedName}>>(" +
-        $"sp => new {id.TypeName}Provider(sp.GetRequiredService<global::Whizbang.Core.IWhizbangIdProvider>()));"
+        $"    services.AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<global::{id.FullyQualifiedName}>>(" +
+        $"sp => new global::{id.FullyQualifiedName}Provider(sp.GetRequiredService<global::Whizbang.Core.IWhizbangIdProvider>()));"
       );
     }
     template = TemplateUtilities.ReplaceRegion(
