@@ -645,7 +645,7 @@ public class AzureServiceBusProvisioningPathTests {
 
     await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
 
-    var expressions = adminClient.CreatedRules.Select(r => ((SqlRuleFilter)r.Options.Filter).SqlExpression).ToList();
+    var expressions = adminClient.CreatedRules.ConvertAll(r => ((SqlRuleFilter)r.Options.Filter).SqlExpression);
     await Assert.That(adminClient.CreatedRules.Count).IsGreaterThan(1);
     await Assert.That(expressions.All(e => e.Length <= 1024)).IsTrue()
       .Because("the broker rejects a SQL filter longer than 1,024 characters, which would leave the subscription filterless");

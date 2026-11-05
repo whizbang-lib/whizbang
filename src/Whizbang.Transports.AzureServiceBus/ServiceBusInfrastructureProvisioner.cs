@@ -172,15 +172,18 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
             _logger.LogDebug(ex, "Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
           }
         }
+      }
 
-        // Same-as-subscribe-time filter shape: a freshly created subscription with routing
-        // patterns must not sit filterless until first subscribe (an unfiltered shared-inbox
-        // subscription would buffer EVERY command in the window).
-        var routingPatterns = _routingPatternsOf(subscription);
-        if (routingPatterns.Count > 0) {
-          await ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
-            _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
-        }
+      // Same-as-subscribe-time filter shape: a freshly created subscription with routing
+      // patterns must not sit filterless until first subscribe (an unfiltered shared-inbox
+      // subscription would buffer EVERY command in the window). An EXISTING subscription is
+      // converged too (#2089): a command inbox provisioned before its type filter carried the
+      // match-all rule, and a host that does not auto-provision at subscribe time would keep it.
+      // Converging is idempotent: an already-correct rule set is left untouched.
+      var routingPatterns = _routingPatternsOf(subscription);
+      if (routingPatterns.Count > 0) {
+        await ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
+          _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
       }
 
       _knownSubscriptions[(topicName, subscriptionName)] = true;
