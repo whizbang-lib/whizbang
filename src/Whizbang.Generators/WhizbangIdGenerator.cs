@@ -872,6 +872,21 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       diRegistrations.ToString()
     );
 
+    // Each id's From(Guid), so an integration that binds ids by type (a GraphQL server) can convert a Guid to the
+    // id without reflection and with the id's own version rule (#2073).
+    var guidConversions = new StringBuilder();
+    foreach (var id in ids) {
+      guidConversions.AppendLine(
+        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::{id.FullyQualifiedName}>(" +
+        $"global::{id.FullyQualifiedName}.From);"
+      );
+    }
+    template = TemplateUtilities.ReplaceRegion(
+      template,
+      "GUID_CONVERSION_REGISTRATIONS",
+      guidConversions.ToString()
+    );
+
     context.AddSource("WhizbangIdProviderRegistration.g.cs", template);
   }
 

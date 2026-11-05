@@ -20,6 +20,7 @@ public static class WhizbangIdProviderRegistration {
   /// This method:
   /// <list type="bullet">
   /// <item>Registers factory functions for creating typed providers</item>
+  /// <item>Registers each id's Guid conversion, for integrations that bind ids by type</item>
   /// <item>Registers DI callback for AddWhizbangIdProviders() integration</item>
   /// </list>
   /// </remarks>
@@ -27,6 +28,10 @@ public static class WhizbangIdProviderRegistration {
   public static void Initialize() {
     #region FACTORY_REGISTRATIONS
     // This region gets replaced with RegisterFactory calls for each WhizbangId type
+    #endregion
+
+    #region GUID_CONVERSION_REGISTRATIONS
+    // This region gets replaced with RegisterGuidConversion calls for each WhizbangId type
     #endregion
 
     // Register DI callback
