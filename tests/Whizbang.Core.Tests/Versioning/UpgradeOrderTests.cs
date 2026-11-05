@@ -160,6 +160,18 @@ public class UpgradeOrderTests {
   }
 
   [Test]
+  public async Task ALaterApplicationFinding_NeverDisplacesALibraryOne_AndTheLedgerNeverDisplacesAnEqualOnlineOneAsync() {
+    var found = UpgradeOrder.FindNewer(_own(), [
+      new VersionSighting("1.2.0", "1.0.0", _peer),     // library, online
+      new VersionSighting("1.2.0", "1.0.0", null),      // the same library version, in the ledger
+      new VersionSighting("1.0.0", "9.0.0", _otherPeer), // application only
+    ]);
+
+    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Library);
+    await Assert.That(found.InstanceId).IsEqualTo(_peer);
+  }
+
+  [Test]
   public async Task OfTwoInstancesOnlineAtTheSameNewerVersion_TheLowerIdIsReported_WhicheverIsSeenFirstAsync() {
     var first = UpgradeOrder.FindNewer(_own(), [new VersionSighting("2.0.0", null, _otherPeer), new VersionSighting("2.0.0", null, _peer)]);
     var second = UpgradeOrder.FindNewer(_own(), [new VersionSighting("2.0.0", null, _peer), new VersionSighting("2.0.0", null, _otherPeer)]);

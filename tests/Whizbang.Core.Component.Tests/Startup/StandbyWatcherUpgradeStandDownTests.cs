@@ -495,4 +495,23 @@ public class StandbyWatcherUpgradeStandDownTests {
     await _tickAsync(newerLibrary);
     await Assert.That(newerLibrary.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)]);
   }
+
+  [Test]
+  public async Task WithTheBusButNoFleetReader_NothingIsAnnounced_AndTheSignalsStillPromptTheQuestionAsync() {
+    using var h = _harness(new ScriptedAssessor(StartupVerdict.Current, StartupVerdict.StandDown));
+    var watcher = new StandbyWatcher(
+      h.Provider.GetRequiredService<IServiceScopeFactory>(), h.RunControl, new Host(), new Instance(), new Library("1.0.0"),
+      h.Assessor, h.Logger, new FakeTimeProvider(_now), options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) }) {
+      Signals = h.Bus,
+      Lifecycle = h.Lifecycle,
+    };
+    using var _ = watcher;
+
+    await watcher.TickForTestsAsync(CancellationToken.None);
+    await h.Bus.DeliverAsync<NewerVersionOnlineSignal>();
+    await watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Bus.Published).IsEmpty();
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
+  }
 }
