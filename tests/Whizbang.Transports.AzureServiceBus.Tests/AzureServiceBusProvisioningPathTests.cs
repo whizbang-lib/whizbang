@@ -625,6 +625,65 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
   }
 
+  /// <summary>
+  /// #2089: a command inbox filters to every command type the service handles, which can be many exact subjects. A
+  /// Service Bus SQL filter is limited to 1,024 characters, so the patterns are split across as many rules as they need
+  /// (the broker delivers a message once when any rule matches), each within the limit, and every pattern is kept.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_RoutingPatternsBeyondOneFilterLimit_SplitAcrossRulesWithinTheLimitAsync() {
+    var adminClient = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+      ExistingRules = { ServiceBusModelFactory.RuleProperties("$Default", new TrueRuleFilter()) }
+    };
+    var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient, _nonSessionOptions());
+    var patterns = Enumerable.Range(0, 60).Select(i => $"myapp.orders.commands.performorderaction{i:D2}").ToList();
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = JsonSerializer.SerializeToElement(patterns)
+    };
+
+    await transport.SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    var expressions = adminClient.CreatedRules.Select(r => ((SqlRuleFilter)r.Options.Filter).SqlExpression).ToList();
+    await Assert.That(adminClient.CreatedRules.Count).IsGreaterThan(1);
+    await Assert.That(expressions.All(e => e.Length <= 1024)).IsTrue()
+      .Because("the broker rejects a SQL filter longer than 1,024 characters, which would leave the subscription filterless");
+    await Assert.That(adminClient.CreatedRules[0].Options.Name).IsEqualTo("RoutingPatternFilter");
+    await Assert.That(adminClient.CreatedRules[1].Options.Name).IsEqualTo("RoutingPatternFilter-2");
+    foreach (var pattern in patterns) {
+      await Assert.That(expressions.Count(e => e.Contains($"'{pattern}'", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+  }
+
+  /// <summary>Split rules that already match are left untouched, like a single correct rule.</summary>
+  [Test]
+  public async Task SubscribeAsync_SplitRoutingPatternRules_AlreadyCorrect_SkipsRuleChurnAsync() {
+    var patterns = Enumerable.Range(0, 60).Select(i => $"myapp.orders.commands.performorderaction{i:D2}").ToList();
+    var first = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+    };
+    var metadata = new Dictionary<string, JsonElement> {
+      ["RoutingPatterns"] = JsonSerializer.SerializeToElement(patterns)
+    };
+    await _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), first, _nonSessionOptions())
+      .SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+    var converged = new RecordingAdminClient {
+      ExistingTopics = { "orders-topic" },
+      ExistingSubscriptions = { ("orders-topic", "unit-sub") },
+    };
+    foreach (var (_, _, options) in first.CreatedRules) {
+      converged.ExistingRules.Add(ServiceBusModelFactory.RuleProperties(options.Name, options.Filter));
+    }
+
+    await _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), converged, _nonSessionOptions())
+      .SubscribeAsync(_noopHandler, _destination("orders-topic", metadata));
+
+    await Assert.That(converged.DeletedRules).IsEmpty();
+    await Assert.That(converged.CreatedRules).IsEmpty();
+  }
+
   /// <summary>A drifted RoutingPatternFilter (same name, different expression) is replaced.</summary>
   [Test]
   public async Task SubscribeAsync_RoutingPatterns_RuleDrifted_ReplacesRuleAsync() {

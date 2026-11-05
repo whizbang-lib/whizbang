@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Azure;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -264,6 +265,26 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
     await Assert.That(systemRule.Count).IsEqualTo(1)
       .Because("the system broadcast inbox subscription carries routing patterns — the filter "
              + "must be applied at provision time, same as subscribe time");
+  }
+
+  [Test]
+  public async Task ProvisionManifest_ExistingCommandInboxSubscription_ConvergesToTheTypeFilterAsync() {
+    // #2089: a command inbox subscription provisioned before the type filter carried the match-all rule and received
+    // every command of the namespace. Provisioning converges it even when the subscription already exists, so a host
+    // that does not auto-provision at subscribe time stops receiving commands it does not handle.
+    var ownName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(SERVICE_NAME, "inbox.myapp.orders.commands");
+    var adminClient = new RecordingProvisioningAdminClient {
+      ExistingTopics = { "inbox.myapp.orders.commands" },
+      ExistingSubscriptions = { ("inbox.myapp.orders.commands", ownName) }
+    };
+    var provisioner = _provisioner(adminClient);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    var commandRules = adminClient.CreatedRules.Where(r => r.Topic == "inbox.myapp.orders.commands").ToList();
+    await Assert.That(commandRules.Count).IsEqualTo(1);
+    await Assert.That(((SqlRuleFilter)commandRules[0].Options.Filter).SqlExpression)
+      .IsEqualTo("sys.Label LIKE 'myapp.orders.commands.createorder'");
   }
 
   [Test]
