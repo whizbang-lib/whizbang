@@ -186,9 +186,14 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ? await coordinator.ComputeTypeDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false)
           : await coordinator.ComputeStreamDigestsAsync(null, message.EventTypes, settle, cancellationToken).ConfigureAwait(false);
       }
+      // #2008: only owned types are this origin's emissions; the rest of the local lane was received from its authors.
+      digests = _ownedOnly(services, digests);
       if (digests.Count == 0) {
         return;   // nothing this origin emitted for those types — silence, not an empty manifest.
       }
+    } else {
+      // A windowed answer still publishes when the filter leaves nothing: only an answer carries the watermark.
+      digests = _ownedOnly(services, digests);
     }
 
     var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
@@ -246,6 +251,13 @@ public sealed partial class IntegrityManifestRequestReceptor(
       new KeyValuePair<string, object?>("windowed", answeredWindowed),
       new KeyValuePair<string, object?>("recompute", recomputed));
     LogManifestSent(logger, digests.Count, chunks, message.RequesterService);
+  }
+
+  private static IReadOnlyList<StreamDigest> _ownedOnly(IServiceProvider services, IReadOnlyList<StreamDigest> digests) {
+    var owned = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains;
+    return owned is not { Count: > 0 }
+      ? digests
+      : [.. digests.Where(d => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(d.EventType, owned))];
   }
 
   [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
@@ -350,6 +362,19 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, carriedGeneration, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
+        return;
+      }
+    }
+
+    // #2032: an older origin may still advertise types another service owns; it is not authoritative for them, and
+    // repair is asked of the owner, so those digests are not compared here.
+    var ownership = new IntegrityDomainOwnership(
+      await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
+    if (message.Digests.Any(d => ownership.IsOwnedByAnother(d.EventType, message.OriginServiceId))) {
+      message = message with {
+        Digests = [.. message.Digests.Where(d => !ownership.IsOwnedByAnother(d.EventType, message.OriginServiceId))],
+      };
+      if (message.Digests.Count == 0) {
         return;
       }
     }

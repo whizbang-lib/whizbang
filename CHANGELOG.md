@@ -830,6 +830,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
+  (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
+  claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,
+  default 20 seconds), release unstarted work, release roles, then write Paused, StandingBy or Stopped. The
+  killswitch (pause, resume, stop), the standby watcher, the startup stand-down and host shutdown all call it; a stop
+  is final. Every claiming worker, the transport consumer, the host-registered `ServiceBusConsumerWorker`, the
+  maintenance workers and the role elector (new refusal `DutyRefusal.Halted`) obey the permit, and a test fails when
+  a hosted service does not. A pause now stops claiming in the process, not only in the claim SQL. On host shutdown
+  Stopped is written once held work and roles are released, before the workers stop; revival writes Resuming before
+  Running, and a stand-down writes Pausing before StandingBy. The transport consumer's public pause and resume are
+  now internal (pause through the killswitch). Removed: `RunPermitControl`, `DutyShutdownReleaseService`, and
+  `IReleasesDutiesOnShutdown` (replaced by `IReleasesHeldRoles`).
 - **Every duty is held in the role table; no duty is held by an advisory lock (#2044).** The session-lock duty
   elector, the legacy-lock bridge in the role elector, the commit-order stamper's own lock and the migrator watch's
   lock probe are gone: every duty, a host's own included, is a role assignment with a lease and epoch fencing, and a
@@ -1341,6 +1353,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
+  origin, so a store that received other services' events before origins were recorded advertised them as its own,
+  counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
+  type's namespace is not in `RoutingOptions.OwnedDomains` is now never local: checkpoints count only owned types,
+  manifest answers advertise only owned types, and redelivery ships only owned types. A service with no owned domains
+  registered keeps the earlier behavior exactly. The namespace rule is `OwnedNamespaceMatcher` (new `IsLocalEventType`
+  and `NormalizeDomain`), which the dispatcher, the receptor invoker and the transport consumer now share instead of
+  each keeping a copy.
+- **Pre-origin history is re-attributed to the service that wrote it (#2008).** A new maintainer worker
+  (`OriginReattributionWorker`) walks the store in commit-sequence batches under the housekeeping idle gate (forced
+  through after `Whizbang:Housekeeping:MaxDeferral`), only when owned domains are registered. An event with no origin
+  whose type another service owns takes that owner as origin, its digest moves from the local lane to the owner's,
+  sealed local epochs are refolded (advancing the origin generation) and the owner's repair-ledger buckets it lands in
+  have their unhealable and exhausted marks cleared and their attempts and pending answer reset. Ownership is primary:
+  an event whose first hop names a third service is logged and left. A non-owned type with no known owner is counted as
+  unattributed and left (out of the local lane logically). The walk's cursor is durable and restarts when the ownership
+  map changes (migration 325: `wh_integrity_reattribution`, `wh_integrity_reattribution_window`,
+  `wh_integrity_reattribute_origins`). New keys `Whizbang:StreamIntegrity:ReattributionEnabled` (default true),
+  `ReattributionIntervalSeconds` (60), `ReattributionBatchSize` (5000) and `MaxReattributionBatchesPerPass` (20); new
+  counters `origins_reattributed`, `origins_unattributed` and `reattribution_hop_disagreements`.
+- **Owners are exchanged on the integrity checkpoint (#2008).** `IntegrityCheckpoint` gains an additive `OwnedDomains`
+  list (an older origin reads as announcing none). Consumers persist each origin's claims (`wh_integrity_domain_claims`,
+  migration 325): an announcement replaces the origin's claim set and keeps its known request address. A domain two
+  services claim is warned once per pair, counted on `whizbang.stream_integrity.ownership_conflicts`, and used for
+  neither. A consumer neither verifies nor repairs a checkpoint bucket or manifest digest against an origin when another
+  service owns the type.
+- **One checkpoint copy per consumer (#2031).** With owned domains registered the checkpoint rides only the topics of the
+  catalog event types the service owns, instead of every topic of the window's types and of the store's digest lane, so
+  a consumer subscribed to other services' topics no longer receives one copy per topic. With no owned domains the topic
+  set is unchanged.
+- **Redelivery ships only what the origin wrote, and the backfill asks the owner (#2032).** The redelivery selection takes
+  `RedeliveryRequest.AuthoredBy`: only events with no origin and a first hop naming the answering service (or no service)
+  are selected. An origin ignores a redelivery request it made itself (counted on
+  `whizbang.stream_integrity.redelivery_requests_ignored`, reason `own_request`). The subscription-growth backfill
+  directs a request at each known domain owner on its request topic; only types with no usable owner fall back to the
+  broadcast.
+- **The stale-definition line names only a file it re-runs (#1636).** The EF Core schema pass compares each framework
+  function in the database with its last-word migration and re-runs a file whose function is missing or older. It
+  logged `Migration <file>: re-running because the database's definition of <functions> (missing) does not match this
+  file` for every file whose functions did not exist yet, so a fresh database logged one such line for nearly every
+  migration, and a pass that failed and retried logged one for every file after the failure, each blaming a replay
+  that never happened. The line is now written only for a file the comparison adds to the run; a file already in it
+  (new, changed, or not yet reached) is not named. Which files run is unchanged.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

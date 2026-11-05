@@ -338,7 +338,7 @@ public static class WorkerPipelineExtensions {
     // instance is alive and not yet eligible for work.
     services.AddWhizbangWorkerAtSchemaReady(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<IWhizbangRunController>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
@@ -377,6 +377,8 @@ public static class WorkerPipelineExtensions {
     // directly still starts — it simply keeps the ungated behavior it has today.
     AddHousekeepingCoordinatorCore(services);
     services.TryAddSingleton<ClaimWorker>();
+    // #2045: the run-control path releases the claim worker's leased, unstarted streams once nothing is in hand.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IReleasesHeldWork, ClaimWorker>(sp => sp.GetRequiredService<ClaimWorker>()));
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
     // sides dedupe: TryAddSingleton by service type, AddHostedService by implementation type
@@ -402,7 +404,8 @@ public static class WorkerPipelineExtensions {
       logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       compositeFactory: sp.GetRequiredService<Whizbang.Core.Minting.ICompositeFactory>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      timeProvider: sp.GetService<TimeProvider>()));
+      timeProvider: sp.GetService<TimeProvider>(),
+      runPermit: sp.GetRequiredService<WhizbangRunPermit>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
@@ -412,6 +415,9 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<RepairDrainWorker>();
+    // #2008: re-attributes pre-origin history to its owners, on the maintainer under the idle gate.
+    services.TryAddSingleton<OriginReattributionWorker>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityOwnershipConflicts>();
     // #2001: integrity deliveries recorded on every instance are drained on the maintainer. The registry's
     // presence is what tells the deferring integrity receptors that something drains what they record.
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityDeliveryRegistry>();
@@ -618,6 +624,7 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<RepairDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OriginReattributionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityDeliveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDispatchWorker>());

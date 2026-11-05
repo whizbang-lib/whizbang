@@ -17,6 +17,11 @@ namespace Whizbang.Core.Startup;
 /// as before: there is no holder to defer to, and a gate that waited for one would disable the work it gates.
 /// </para>
 /// <para>
+/// No instance has a turn while its run permit is closed (#2045): a paused, stood-down or stopping instance does no
+/// fleet-wide work, even in the moment between the run-control path releasing the maintainer role and the duty loop
+/// learning of it. Every maintenance worker and step asks this question, so the permit is obeyed here once for all.
+/// </para>
+/// <para>
 /// One helper, so every caller asks the same question the same way. The rule used to be written out in each caller,
 /// and four copies of a three-clause condition are four chances for one to drift.
 /// </para>
@@ -25,7 +30,8 @@ namespace Whizbang.Core.Startup;
 /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs</tests>
 public static class MaintainerDuty {
   /// <summary>
-  /// True when this instance holds the maintainer duty, or when role assignment does not manage that duty.
+  /// True when this instance's run permit is open and it holds the maintainer duty, or role assignment does not manage
+  /// that duty.
   /// </summary>
   /// <param name="services">The provider the duty loop (<see cref="DutyHolderWorker"/>) is registered in, if any.</param>
   /// <returns>Whether this instance should do the maintainer's work now.</returns>
@@ -33,8 +39,12 @@ public static class MaintainerDuty {
   /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithTheMaintainerDutyAssigned_OnlyItsHolderHasATurnAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithoutRoleAssignment_EveryInstanceHasATurnAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithADutyLoopThatDoesNotManageTheMaintainerDuty_EveryInstanceHasATurnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WhileTheRunPermitIsClosed_NoInstanceHasATurnAsync</tests>
   public static bool IsThisInstancesTurn(IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
+    if (services.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>() is { IsRunning: false }) {
+      return false;
+    }
     return services.GetService<DutyHolderWorker>() is not { } holder
       || !holder.Roles.Contains(StartupDuties.MAINTAINER, StringComparer.Ordinal)
       || holder.Holds(StartupDuties.MAINTAINER);

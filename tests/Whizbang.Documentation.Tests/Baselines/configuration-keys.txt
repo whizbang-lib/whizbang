@@ -143,6 +143,7 @@ Whizbang:Housekeeping:MaxConsecutiveDeferrals
 Whizbang:Housekeeping:MaxDeferral
 Whizbang:Housekeeping:SettledCooldown
 Whizbang:Lifecycle:FaultRecordWindow
+Whizbang:Lifecycle:HeldWorkTimeout
 Whizbang:Lifecycle:TransitionAckTimeout
 Whizbang:MessageSecurity:AllowAnonymous
 Whizbang:MessageSecurity:EnableAuditLogging
@@ -304,9 +305,13 @@ Whizbang:StreamIntegrity:MaxGapReportsPerCheckpoint
 Whizbang:StreamIntegrity:MaxIntegrityDeliveriesPerPass
 Whizbang:StreamIntegrity:MaxIntegrityDeliveryAttempts
 Whizbang:StreamIntegrity:MaxManifestPagesPerAudit
+Whizbang:StreamIntegrity:MaxReattributionBatchesPerPass
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
 Whizbang:StreamIntegrity:MaxRepairDrainBacklog
 Whizbang:StreamIntegrity:PublishReportEvents
+Whizbang:StreamIntegrity:ReattributionBatchSize
+Whizbang:StreamIntegrity:ReattributionEnabled
+Whizbang:StreamIntegrity:ReattributionIntervalSeconds
 Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes
 Whizbang:StreamIntegrity:RepairDrainBatchSize
 Whizbang:StreamIntegrity:RepairDrainEnabled

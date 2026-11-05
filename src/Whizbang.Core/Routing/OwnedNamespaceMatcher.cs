@@ -68,4 +68,37 @@ public static class OwnedNamespaceMatcher {
 
     return null;
   }
+  /// <summary>
+  /// Returns <c>true</c> when a stored event type belongs to this service's stream-integrity local lane: the service
+  /// registered no owned domains (every event it holds without an origin is its own, the behavior before ownership was
+  /// consulted), or the type's namespace is owned. An event of a type whose namespace is not owned was authored by
+  /// another service, whatever its origin column says, so it is never advertised, redelivered or counted as this
+  /// service's own.
+  /// </summary>
+  /// <param name="storedEventType">The stored type name (<c>wh_event_store.event_type</c>, the wire form).</param>
+  /// <param name="ownedDomains">The declared owned domains (see <see cref="RoutingOptions.OwnedDomains"/>).</param>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownedDomains"/> is null.</exception>
+  /// <docs>resilience/stream-integrity#the-local-lane-follows-ownership</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs</tests>
+  public static bool IsLocalEventType(string? storedEventType, IReadOnlyCollection<string> ownedDomains) {
+    ArgumentNullException.ThrowIfNull(ownedDomains);
+    if (ownedDomains.Count == 0) {
+      return true;
+    }
+    return !string.IsNullOrEmpty(storedEventType)
+      && IsOwned(TypeNameFormatter.GetNamespace(storedEventType), ownedDomains);
+  }
+
+  /// <summary>
+  /// The form a declared domain is exchanged in: trimmed, without a trailing dot. <c>"app.orders."</c> and
+  /// <c>"app.orders"</c> declare the same domain; case is left as declared and compared without it.
+  /// </summary>
+  /// <param name="domain">A declared owned domain.</param>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="domain"/> is null.</exception>
+  /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs:NormalizeDomain_TrimsWhitespaceAndATrailingDotAsync</tests>
+  public static string NormalizeDomain(string domain) {
+    ArgumentNullException.ThrowIfNull(domain);
+    return domain.Trim().TrimEnd('.');
+  }
 }

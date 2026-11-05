@@ -28,6 +28,25 @@ public class IntegrityDeliveryCoordinatorDefaultsTests {
     await Assert.That(leased).IsEmpty();
   }
 
+  [Test]
+  public async Task ACoordinatorWithoutOwnershipOrReattribution_KeepsNoClaims_AndCannotWalkAsync() {
+    IWorkCoordinator coordinator = new BareCoordinator();
+
+    var conflicts = await coordinator.RecordIntegrityDomainClaimsAsync(
+      Guid.Parse("0a000000-0000-0000-0000-000000000001"), "orders-svc", null, ["app.orders"]);
+    var claims = await coordinator.GetIntegrityDomainClaimsAsync();
+    var window = await coordinator.GetOriginReattributionWindowAsync("fingerprint", 100);
+    var result = await coordinator.ReattributeOriginsAsync(new OriginReattributionBatch {
+      AfterCommitSequence = 0,
+      ThroughCommitSequence = 1,
+    });
+
+    await Assert.That(conflicts).IsEmpty();
+    await Assert.That(claims).IsEmpty().Because("a store that keeps no claims knows no owner, so every type is taken at its origin's word");
+    await Assert.That(window).IsNull().Because("null tells the re-attribution worker the store cannot walk, so it stops");
+    await Assert.That(result).IsNull();
+  }
+
   private sealed class BareCoordinator : IWorkCoordinator {
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;

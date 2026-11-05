@@ -31,10 +31,10 @@ public sealed class StandbyWatcherOptions {
 
 /// <summary>
 /// The peer side of the standby handshake, and the runtime keeper of the <c>Assess</c> verdict.
-/// Watches for an active standby request from a NEWER version: on seeing one, drains and holds by
-/// advancing the lifecycle to <see cref="LifecyclePhase.StandingBy"/> — which pauses every
-/// run-control participant and, through the instance-state participant, posts <c>StandingBy</c>
-/// on this instance's row for the migrator to observe. Then watches the outcome:
+/// Watches for an active standby request from a NEWER version: on seeing one, stands down through the one run-control
+/// path (#2045), the same path as a pause or a stop: the run permit closes, the work in hand finishes, held work and
+/// roles are released, and <c>StandingBy</c> is posted on this instance's row for the migrator to observe. Then watches
+/// the outcome:
 /// </summary>
 /// <remarks>
 /// <para>
@@ -58,7 +58,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILibraryVersionProvider _versionProvider;
-  private readonly IWhizbangLifecycleState _lifecycle;
+  private readonly IWhizbangRunController _runControl;
   private readonly IStartupAssessor _assessor;
   private readonly IHostApplicationLifetime _hostLifetime;
   private readonly StartupPipelineRunner? _pipelineRunner;
@@ -72,7 +72,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
   /// <summary>Creates the watcher. Inert without an instance identity or a coordinator.</summary>
   /// <param name="scopeFactory">Scopes the work coordinator the standby ledger is read through.</param>
-  /// <param name="lifecycle">The lifecycle advanced to standby and back.</param>
+  /// <param name="runControl">The run-control path that stands the instance down and resumes it.</param>
   /// <param name="hostLifetime">Stopped when a migration commits beneath this instance.</param>
   /// <param name="instanceProvider">This instance's identity; the watcher is inert without it.</param>
   /// <param name="versionProvider">This binary's version, ranked against a requester's.</param>
@@ -85,7 +85,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public StandbyWatcher(
       IServiceScopeFactory scopeFactory,
-      IWhizbangLifecycleState lifecycle,
+      IWhizbangRunController runControl,
       IHostApplicationLifetime hostLifetime,
       IServiceInstanceProvider instanceProvider,
       ILibraryVersionProvider versionProvider,
@@ -95,11 +95,11 @@ public sealed partial class StandbyWatcher : BackgroundService {
       StartupPipelineRunner? pipelineRunner = null,
       StandbyWatcherOptions? options = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
-    ArgumentNullException.ThrowIfNull(lifecycle);
+    ArgumentNullException.ThrowIfNull(runControl);
     ArgumentNullException.ThrowIfNull(hostLifetime);
     ArgumentNullException.ThrowIfNull(timeProvider);
     _scopeFactory = scopeFactory;
-    _lifecycle = lifecycle;
+    _runControl = runControl;
     _hostLifetime = hostLifetime;
     _instanceProvider = instanceProvider;
     _versionProvider = versionProvider;
@@ -157,7 +157,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
     if (request is not null && _isBindingOnUs(request)) {
       LogEnteringStandby(_logger, request.RequestedBy, request.RequestedVersion);
-      await _lifecycle.AdvanceToAsync(LifecyclePhase.StandingBy, cancellationToken).ConfigureAwait(false);
+      await _runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
       _standingByForHandshake = true;
       return;
     }
@@ -169,7 +169,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
       var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
       if (assessment.Verdict == StartupVerdict.StandDown) {
         LogStandingDownAsObsolete(_logger, assessment.Reason);
-        await _lifecycle.AdvanceToAsync(LifecyclePhase.StandingBy, cancellationToken).ConfigureAwait(false);
+        await _runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
         _standingDownAsObsolete = true;
       }
     }
@@ -225,15 +225,14 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
     // Rolled back, or the migrator died before changing anything: revival is not a second
     // pipeline — re-enter at Assess by re-running the re-entrant runner, then resume.
-    // Straight to Running, not through AcceptingCommands: that rung exists for the window
-    // where the read models are still being repaired, and this instance already crossed both
-    // barriers before standing by — the schema and read-model gates are sticky-open, StandingBy
-    // paused the phase without closing them, so both sides are serviceable the moment we resume.
+    // The path's resume (Resuming, then Running), not through AcceptingCommands: that rung exists for the window where
+    // the read models are still being repaired, and this instance already crossed both barriers before standing by. The
+    // schema and read-model gates are sticky-open; the stand-down closed only the run permit, which the resume reopens.
     LogReviving(_logger, reason);
     if (_pipelineRunner is not null) {
       _ = await _pipelineRunner.RunAsync(cancellationToken).ConfigureAwait(false);
     }
-    await _lifecycle.AdvanceToAsync(LifecyclePhase.Running, cancellationToken).ConfigureAwait(false);
+    await _runControl.ResumeAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
     _standingByForHandshake = false;
   }
 

@@ -56,6 +56,22 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
 
   /// <summary>Per-(tenant, type) emission counts inside the window. Empty = quiet window.</summary>
   public List<CheckpointBucket> Buckets { get; init; } = [];
+
+  /// <summary>
+  /// The domains the origin owns (<c>RoutingOptions.OwnedDomains</c>), trimmed and without a trailing dot. Consumers
+  /// persist them as a domain to owner map, used to re-attribute pre-origin history to its author, to direct repair and
+  /// backfill at the owner, and to ignore an origin's counts for types another service owns (#2008, #2032). Additive:
+  /// an origin built before this field announces none, and an empty list gives up every earlier claim.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_FromAnOlderOriginWithoutOwnedDomains_ReadsAsEmptyAsync</tests>
+  public List<string> OwnedDomains {
+    get => _ownedDomains;
+    // A payload from an older origin has no such field, and the generated reader then hands null: read it as none.
+    init => _ownedDomains = value ?? [];
+  }
+
+  private readonly List<string> _ownedDomains = [];
 }
 
 /// <summary>One (tenant, event type) emission count inside a checkpoint window.</summary>
@@ -636,5 +652,26 @@ public sealed class StreamIntegrityOptions {
   /// </para>
   /// </remarks>
   public bool PublishReportEvents { get; set; }
+
+  /// <summary>
+  /// Re-attribute this store's pre-origin history to the services that wrote it (default true; #2008). Runs on the
+  /// maintainer under the housekeeping idle gate, and only when owned domains are registered: events of a type another
+  /// service owns take that owner as origin and leave the local lane.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public bool ReattributionEnabled { get; set; } = true;
+
+  /// <summary>Seconds between re-attribution passes (default 60). At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int ReattributionIntervalSeconds { get; set; } = 60;
+
+  /// <summary>Rows one re-attribution batch scans, by commit sequence (default 5000). At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int ReattributionBatchSize { get; set; } = 5000;
+
+  /// <summary>The most re-attribution batches one pass runs (default 20), so a pass admitted by the idle gate, or forced
+  /// through, is bounded. At least 1.</summary>
+  /// <docs>resilience/stream-integrity#re-attribution</docs>
+  public int MaxReattributionBatchesPerPass { get; set; } = 20;
 
 }

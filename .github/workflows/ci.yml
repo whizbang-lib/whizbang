@@ -2180,20 +2180,38 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name "whizbang-ci"
-          git config user.email "ci@whizba.ng"
           git add src/assets/data/test-status
           if git diff --cached --quiet; then
             echo "Test status unchanged — nothing to publish"
             exit 0
           fi
           BRANCH="test-status/${{ github.run_id }}"
-          git checkout -b "$BRANCH"
-          # -s: the DCO sign-off check (Gate · DCO sign-off) requires it on every pull request commit,
-          # and this identity is not a GitHub bot account, so it is not exempt.
-          git commit -s -m "chore(test-status): whizbang run ${{ github.run_id }} (${GITHUB_SHA:0:8})"
-          # Force: a re-run shares the run_id, so a prior attempt's branch is overwritten, not collided with.
-          git push --force origin "$BRANCH"
+          DOCS=whizbang-lib/whizbang-lib.github.io
+          # The commit is made through the API with the release app's token, not with git (#2061): GitHub
+          # signs it and attributes it to the app, and the docs develop ruleset requires signed commits, so
+          # an unsigned commit could only ever merge by bypassing it (and auto-merge never would).
+          BASE=$(git rev-parse HEAD)
+          ENTRIES=$(mktemp)
+          echo '[]' > "$ENTRIES"
+          while IFS=$'\t' read -r st file; do
+            if [ "$st" = D ]; then
+              jq --arg p "$file" '. + [{path: $p, mode: "100644", type: "blob", sha: null}]' "$ENTRIES" > "$ENTRIES.next"
+            else
+              BLOB=$(base64 -w0 "$file" | jq -Rs '{content: ., encoding: "base64"}' \
+                | gh api "repos/$DOCS/git/blobs" --input - --jq .sha)
+              jq --arg p "$file" --arg s "$BLOB" '. + [{path: $p, mode: "100644", type: "blob", sha: $s}]' "$ENTRIES" > "$ENTRIES.next"
+            fi
+            mv "$ENTRIES.next" "$ENTRIES"
+          done < <(git diff --cached --name-status --no-renames)
+          TREE=$(jq --arg b "$(git rev-parse HEAD^{tree})" '{base_tree: $b, tree: .}' "$ENTRIES" \
+            | gh api "repos/$DOCS/git/trees" --input - --jq .sha)
+          MESSAGE=$(printf 'chore(test-status): whizbang run %s (%s)\n\nSigned-off-by: whizbang-release-bot[bot] <340982866+whizbang-release-bot[bot]@users.noreply.github.com>' \
+            "${{ github.run_id }}" "${GITHUB_SHA:0:8}")
+          COMMIT=$(jq -n --arg m "$MESSAGE" --arg t "$TREE" --arg p "$BASE" '{message: $m, tree: $t, parents: [$p]}' \
+            | gh api "repos/$DOCS/git/commits" --input - --jq .sha)
+          # A re-run shares the run_id, so a prior attempt's branch is moved to this commit, not collided with.
+          gh api "repos/$DOCS/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$COMMIT" --silent \
+            || gh api -X PATCH "repos/$DOCS/git/refs/heads/$BRANCH" -f sha="$COMMIT" -F force=true --silent
           gh pr create --base develop --head "$BRANCH" \
             --title "chore(test-status): run ${{ github.run_id }}" \
             --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})." \

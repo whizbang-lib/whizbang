@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,12 +27,46 @@ public class WhizbangKillswitchTests {
   }
 
   private static (WhizbangKillswitch killswitch, IWhizbangLifecycleState lifecycle, FakeParticipant workers, FakeParticipant transport) _build() {
+    var (killswitch, lifecycle, workers, transport, _) = _buildWithPermit();
+    return (killswitch, lifecycle, workers, transport);
+  }
+
+  private static (WhizbangKillswitch killswitch, IWhizbangLifecycleState lifecycle, FakeParticipant workers, FakeParticipant transport,
+      WhizbangRunPermit permit) _buildWithPermit() {
     var workers = new FakeParticipant("workers");
     var transport = new FakeParticipant("transport");
     var options = new WhizbangLifecycleOptions();
     var coordinator = new WhizbangLifecycleCoordinator([workers, transport], options);
     var lifecycle = new WhizbangLifecycleState(coordinator, options);
-    return (new WhizbangKillswitch(lifecycle, coordinator), lifecycle, workers, transport);
+    var permit = new WhizbangRunPermit();
+    var controller = new WhizbangRunController(
+      permit, lifecycle, [], [], options, null, NullLogger<WhizbangRunController>.Instance);
+    return (new WhizbangKillswitch(controller, lifecycle, coordinator), lifecycle, workers, transport, permit);
+  }
+
+  [Test]
+  public async Task PauseAsync_TakesTheRunControlPath_ClosingThePermitUntilResumedAsync() {
+    // #2045: the operator's pause is the same path as a stand-down and a stop, not a phase broadcast of its own.
+    var (killswitch, lifecycle, _, _, permit) = _buildWithPermit();
+    await lifecycle.AdvanceToAsync(LifecyclePhase.Running, CancellationToken.None);
+
+    await killswitch.PauseAsync();
+    await Assert.That(permit.State).IsEqualTo(RunState.Paused);
+
+    await killswitch.ResumeAsync();
+    await Assert.That(permit.State).IsEqualTo(RunState.Running);
+  }
+
+  [Test]
+  public async Task StopAsync_ClosesThePermitForGood_AndAResumeIsRefusedAsync() {
+    var (killswitch, lifecycle, _, _, permit) = _buildWithPermit();
+    await lifecycle.AdvanceToAsync(LifecyclePhase.Running, CancellationToken.None);
+
+    await killswitch.StopAsync();
+
+    await Assert.That(permit.State).IsEqualTo(RunState.Stopped);
+    await Assert.That(async () => await killswitch.ResumeAsync()).Throws<InvalidOperationException>();
+    await Assert.That(lifecycle.Phase).IsEqualTo(LifecyclePhase.Stopped);
   }
 
   [Test]

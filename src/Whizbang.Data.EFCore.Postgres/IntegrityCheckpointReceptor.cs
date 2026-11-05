@@ -66,6 +66,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow, message.RequestTopic);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+    // #2008: the origin's announced domains replace its claims; the map built from every claim decides which buckets
+    // this origin is authoritative for (#2032).
+    var ownership = await _recordOwnershipAsync(services, coordinator, metrics, message, cancellationToken).ConfigureAwait(false);
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
     // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
@@ -109,6 +112,9 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
+      if (ownership.IsOwnedByAnother(pending.EventType, pending.OriginServiceId)) {
+        continue;   // #2032: another service owns the type; this origin's count is not authoritative for it.
+      }
       // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
       // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
       // Inside the cooldown the gap stays known and reported from its last confirmation; only the
@@ -259,6 +265,9 @@ public sealed partial class IntegrityCheckpointReceptor(
       if (!subscribed.Contains(bucket.EventType)) {
         continue;   // not consumed here — the origin's count is someone else's contract
       }
+      if (ownership.IsOwnedByAnother(bucket.EventType, message.OriginServiceId)) {
+        continue;   // #2032: an older origin still counting a type another service owns; asked of the owner instead.
+      }
       var actual = _bucketCount(actualBuckets, bucket.TenantScope, bucket.EventType);
       if (actual < bucket.Count) {
         tracker.AddPending(new IntegrityGapTracker.PendingGap {
@@ -334,6 +343,29 @@ public sealed partial class IntegrityCheckpointReceptor(
       TimeSpan.FromMinutes(options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// Records the origin's announced domains as its claim set, warns and counts each newly seen contested domain once
+  /// per pair, and returns the map built from every claim on record.
+  /// </summary>
+  private async Task<IntegrityDomainOwnership> _recordOwnershipAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, Whizbang.Core.Observability.StreamIntegrityMetrics? metrics,
+      IntegrityCheckpoint message, CancellationToken cancellationToken) {
+    var conflicts = await coordinator.RecordIntegrityDomainClaimsAsync(
+      message.OriginServiceId, message.OriginServiceName, message.RequestTopic, message.OwnedDomains, cancellationToken)
+      .ConfigureAwait(false);
+    var seen = services.GetService<IntegrityOwnershipConflicts>() ?? _processConflicts;
+    foreach (var conflict in conflicts.Where(c => seen.FirstSighting(c.Domain, message.OriginServiceId, c.OwnerServiceId))) {
+      metrics?.OwnershipConflicts.Add(1, new KeyValuePair<string, object?>("domain", conflict.Domain));
+      LogOwnershipConflict(logger, conflict.Domain, message.OriginServiceName, message.OriginServiceId,
+        conflict.OwnerServiceName, conflict.OwnerServiceId);
+    }
+    return new IntegrityDomainOwnership(
+      await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
+  }
+
+  // Per-process warn-once memory for hosts that did not register one; static so it survives across checkpoints.
+  private static readonly IntegrityOwnershipConflicts _processConflicts = new();
+
   private static int _bucketCount(IReadOnlyList<CheckpointBucket> buckets, string? tenantScope, string eventType) =>
     buckets.Where(b => b.EventType == eventType && b.TenantScope == tenantScope).Sum(b => b.Count);
 
@@ -398,6 +430,13 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);
+
+  [LoggerMessage(EventId = 65, Level = LogLevel.Warning,
+    Message = "Domain '{Domain}' is claimed by two services, '{OriginServiceName}' ({OriginServiceId}) and " +
+              "'{RivalServiceName}' ({RivalServiceId}); neither is used as its owner until one gives it up. Check both " +
+              "services' owned-domain registrations")]
+  static partial void LogOwnershipConflict(ILogger logger, string domain, string originServiceName, Guid originServiceId,
+    string rivalServiceName, Guid rivalServiceId);
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
     Message = "Recount cooldown armed for {EventType} (tenant {TenantScope}) from origin {OriginServiceName}: the count has not moved ({Actual}/{Expected}) across the configured threshold. The gap stays reported; one recount runs per cooldown period, and any improvement lifts it immediately")]
