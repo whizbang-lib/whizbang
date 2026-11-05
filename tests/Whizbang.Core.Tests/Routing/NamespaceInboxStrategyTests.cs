@@ -257,7 +257,7 @@ public class NamespaceInboxStrategyTests {
   [Test]
   public async Task GetSubscriptions_EmptyRegistry_SystemInboxAndTransitionalSharedOnlyAsync() {
     // A service with no receptors (pure event consumer / BFF) still subscribes to the system
-    // broadcast inbox, its own control inbox (#2090) and — transitionally — the shared inbox. Nothing else.
+    // broadcast inbox, its own control inbox (#2090) and (transitionally) the shared inbox. Nothing else.
     var strategy = new NamespaceInboxStrategy();
     var context = _context();
 

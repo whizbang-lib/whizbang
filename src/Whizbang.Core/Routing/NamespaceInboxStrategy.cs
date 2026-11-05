@@ -175,7 +175,7 @@ public sealed class NamespaceInboxStrategy(
 
     var subscriptions = new List<InboxSubscription>();
 
-    // Part 1 (permanent) — one inbox per DISTINCT handled COMMAND contract namespace, filtered to the command TYPES
+    // Part 1 (permanent): one inbox per DISTINCT handled COMMAND contract namespace, filtered to the command TYPES
     // this service handles (#2089). The entity is not exclusive: every service handling a command of the namespace
     // subscribes to it, so a namespace-wide (1=1) filter handed each of them all of its traffic. Sorted for
     // deterministic manifests; framework-reserved namespaces ride part 2 instead.
@@ -206,7 +206,7 @@ public sealed class NamespaceInboxStrategy(
         }));
     }
 
-    // Part 1b (permanent, #2090) — this service's OWN control inbox. Directed integrity traffic is addressed here and
+    // Part 1b (permanent, #2090): this service's OWN control inbox. Directed integrity traffic is addressed here and
     // nowhere else: only this service subscribes to the entity, so the topic IS the filter.
     subscriptions.Add(new InboxSubscription(
       Topic: CommandInboxNaming.ServiceControlTopicFor(context.ServiceName),
