@@ -33,39 +33,10 @@ public partial class ScratchDatabaseLifecycleGuardTests {
   /// Fixtures that still issue their own <c>CREATE DATABASE</c>, relative to the project and in ordinal order.
   /// </summary>
   private static readonly string[] _notYetThroughTheFactory = [
-    "AtomicUpsertPhysicalFieldsIntegrationTests.cs",
-    "BranchCoverage/SecondPass/CollectiveAdapterNullAndSchemaTests.cs",
-    "ColdBootJourneyE2ETests.cs",
-    "Collective/CollectiveDispatcherEFCoreIntegrationTests.cs",
-    "Collective/CollectiveOrderingIntegrationTests.cs",
-    "Collective/CollectivePhysicalColumnIntegrationTests.cs",
-    "ComplexTypeJsonMappingTests.cs",
     // Creates a database under a name the factory would not give, so the sweep has something to find.
     "Containers/PerTestDatabaseSweepTests.cs",
-    "DbContextWithoutPerspectivesTests.cs",
-    "EFCoreTestBase.cs",
-    "FullLinqSupportTests.cs",
-    "Migrations/CanonicalTemporalFunctionTests.cs",
-    "Migrations/FleetVersionsTests.cs",
-    "MultiPerspectivePostgresUpsertSymmetryTests.cs",
-    "OpaqueDocumentRoundTripTests.cs",
-    "OrderSchemaEvolutionComplexTypeTests.cs",
-    "PerspectiveModelComplexTypesTests.cs",
-    "Perspectives/CanonicalTemporalRewriteIntegrationTests.cs",
-    "Perspectives/LengthConstraintDdlTests.cs",
-    "Perspectives/SplitModeIntegrationTests.cs",
-    "Perspectives/SplitModeProductionTests.cs",
-    "Perspectives/TableStatisticsProviderTests.cs",
-    "PhysicalColumnBackfillIntegrationTests.cs",
-    "PhysicalFieldIntegrationTests.cs",
-    "QueryTranslation/CanonicalTemporalStorageTests.cs",
-    "QueryTranslation/ContainmentTypeEligibilityProbeTests.cs",
-    "QueryTranslation/JsonIndexUsageTests.cs",
-    "QueryTranslation/PerspectiveDateFormatLockTests.cs",
-    "ReconcileConvergenceE2ETests.cs",
+    // Re-creates a database the factory made and dropped, so a host can watch it come up late.
     "StartupParity/StartupParityTests.cs",
-    "UnifiedQuerySyntaxTests.cs",
-    "VectorSearchIntegrationTests.cs",
   ];
 
   /// <summary>A <c>CREATE DATABASE</c> the fixture runs itself: an interpolated statement naming the database.</summary>
@@ -101,8 +72,8 @@ public partial class ScratchDatabaseLifecycleGuardTests {
   public async Task EveryFixtureCreatesItsScratchDatabaseThroughTheFactoryAsync() {
     var found = _fixturesThatCreateTheirOwnDatabase();
 
-    await Assert.That(found).Contains("EFCoreTestBase.cs")
-      .Because("the scan must find the statement the base fixture issues, or an empty answer proves nothing");
+    await Assert.That(found).Contains("Containers/PerTestDatabaseSweepTests.cs")
+      .Because("the scan must find the statement the sweep fixture issues on purpose, or an empty answer proves nothing");
 
     var offenders = found.Except(_notYetThroughTheFactory, StringComparer.Ordinal).ToList();
     await Assert.That(offenders).IsEmpty()

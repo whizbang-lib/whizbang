@@ -49,7 +49,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Signals/SignalBusServiceCollectionExtensions.cs</code-under-test>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public sealed partial class StartupPreflightHostTests {
   private static readonly TimeSpan _deadline = TimeSpan.FromSeconds(180);

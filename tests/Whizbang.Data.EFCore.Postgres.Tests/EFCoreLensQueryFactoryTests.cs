@@ -17,7 +17,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>lenses/lens-query-factory</docs>
 [Category("Unit")]
 [Category("Lenses")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
 public class EFCoreLensQueryFactoryTests : EFCoreTestBase {

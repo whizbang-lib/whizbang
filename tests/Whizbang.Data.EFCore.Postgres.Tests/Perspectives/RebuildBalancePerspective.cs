@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -23,16 +24,15 @@ public class RebuildBalancePerspective :
 
   public RebuildBalancePerspective() { }
 
-  private static int _creditsApplied;
+  // Counted per stream rather than in one process-wide total: the tests run in parallel, and another test folding a
+  // credit into its own stream must not move the count a test reads for its stream (#2069).
+  private static readonly ConcurrentDictionary<Guid, int> _creditsApplied = new();
 
-  /// <summary>How many credits were folded since <see cref="ResetCreditsApplied"/>: the evidence a replay was skipped.</summary>
-  public static int CreditsApplied => Volatile.Read(ref _creditsApplied);
-
-  /// <summary>Starts a count of folded credits.</summary>
-  public static void ResetCreditsApplied() => Interlocked.Exchange(ref _creditsApplied, 0);
+  /// <summary>How many credits were folded into <paramref name="streamId"/>: the evidence a replay was skipped.</summary>
+  public static int CreditsAppliedTo(Guid streamId) => _creditsApplied.GetValueOrDefault(streamId);
 
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildCreditedEvent @event) {
-    Interlocked.Increment(ref _creditsApplied);
+    _creditsApplied.AddOrUpdate(@event.StreamId, 1, static (_, count) => count + 1);
     return new RebuildBalanceModel {
       Id = @event.StreamId,
       Balance = currentData.Balance + @event.Amount

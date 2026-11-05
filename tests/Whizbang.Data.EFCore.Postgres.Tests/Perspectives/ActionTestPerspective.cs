@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -25,13 +26,12 @@ public class ActionTestPerspective :
   /// </summary>
   public ActionTestPerspective() { }
 
-  private static int _updatesApplied;
+  // Counted per stream rather than in one process-wide total: the tests run in parallel, and another test folding an
+  // update into its own stream must not move the count a test reads for its stream (#2069).
+  private static readonly ConcurrentDictionary<Guid, int> _updatesApplied = new();
 
-  /// <summary>How many updates were folded since <see cref="ResetUpdatesApplied"/>: the evidence a replay was skipped.</summary>
-  public static int UpdatesApplied => Volatile.Read(ref _updatesApplied);
-
-  /// <summary>Starts a count of folded updates.</summary>
-  public static void ResetUpdatesApplied() => Interlocked.Exchange(ref _updatesApplied, 0);
+  /// <summary>How many updates were folded into <paramref name="streamId"/>: the evidence a replay was skipped.</summary>
+  public static int UpdatesAppliedTo(Guid streamId) => _updatesApplied.GetValueOrDefault(streamId);
 
   public ActionTestModel Apply(ActionTestModel currentData, ActionTestCreatedEvent @event) {
     return new ActionTestModel {
@@ -43,7 +43,7 @@ public class ActionTestPerspective :
   }
 
   public ActionTestModel Apply(ActionTestModel currentData, ActionTestUpdatedEvent @event) {
-    Interlocked.Increment(ref _updatesApplied);
+    _updatesApplied.AddOrUpdate(@event.StreamId, 1, static (_, count) => count + 1);
     return new ActionTestModel {
       Id = currentData.Id,
       Name = currentData.Name,

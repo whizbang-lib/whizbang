@@ -32,7 +32,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Integration")]
 [Category("Shard3")]
-[NotInParallel("EFCorePostgresTests")]
 public class OutboxAcquisitionWindowSqlTests : EFCoreTestBase {
   private const string POLLER = "aaaaaaaa-0000-0000-0000-000000000001";
   private const string PEER = "bbbbbbbb-0000-0000-0000-000000000002";

@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <tests>src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs</tests>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
   private const string TABLE = "wh_per_ranked";
@@ -133,11 +132,7 @@ public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"test_collective_ordering_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"CREATE DATABASE {_databaseName}");
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("coll_ordering")).Name;
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
       Timezone = "UTC",
@@ -167,9 +162,7 @@ public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
       _dataSource = null;
     }
     if (_databaseName is not null) {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
   }

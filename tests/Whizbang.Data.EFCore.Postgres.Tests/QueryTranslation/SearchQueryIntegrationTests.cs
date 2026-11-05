@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// Entity Framework produced, so a query whose expression drifted from the index's would show a scan here.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SearchQueryIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_search_it";

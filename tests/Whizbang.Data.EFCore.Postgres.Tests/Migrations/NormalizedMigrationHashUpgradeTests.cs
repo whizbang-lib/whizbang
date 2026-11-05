@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationHashUpgrade.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#what-counts-as-a-change</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class NormalizedMigrationHashUpgradeTests : EFCoreTestBase {
   private const string REWRITE_MESSAGE = "normalized form";

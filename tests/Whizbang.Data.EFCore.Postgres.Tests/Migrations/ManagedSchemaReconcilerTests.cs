@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Schema/ManagedSchemaReconciler.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class ManagedSchemaReconcilerTests {
   private const string SCHEMA = "public";

@@ -22,7 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/StoredFormSettlement.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class StartupAssessorTests : EFCoreTestBase {
 

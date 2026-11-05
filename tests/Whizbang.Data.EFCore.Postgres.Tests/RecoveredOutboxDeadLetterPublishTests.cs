@@ -50,7 +50,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreDeadLetterRecoveryService.cs</code-under-test>
   /// <code-under-test>src/Whizbang.Core/Workers/DeadLetterRecoveryWorker.cs</code-under-test>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]
   public class RecoveredOutboxDeadLetterPublishTests : EFCoreTestBase {
     private const string TENANT = "tenant-recovered-outbox";

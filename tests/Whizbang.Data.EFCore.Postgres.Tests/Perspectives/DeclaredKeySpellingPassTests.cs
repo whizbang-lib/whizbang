@@ -25,7 +25,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingPass.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/DeclaredKeySpellingSql.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class DeclaredKeySpellingPassTests {
   private const int TIMEOUT_SECONDS = 30;

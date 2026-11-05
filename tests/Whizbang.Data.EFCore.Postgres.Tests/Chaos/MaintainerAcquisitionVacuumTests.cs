@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Chaos;
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 [Category("Integration")]
 [Category("Chaos")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
   private const string ROLE = StartupDuties.MAINTAINER;

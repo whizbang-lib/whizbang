@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PerspectiveIndexSetupTests : IAsyncDisposable {
   private const string TABLE = "wh_per_index_setup";

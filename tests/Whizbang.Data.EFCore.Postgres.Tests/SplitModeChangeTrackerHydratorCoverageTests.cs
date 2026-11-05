@@ -22,15 +22,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// <c>_hydrators</c> is process-global and NOT scoped by any per-class constraint key of its own
 /// — the same hazard already recorded for <c>IntegrityManifestReceptors._pagesFollowed</c> in
-/// <c>scratchpad/residue.md</c>. Tagged with the shared <c>"EFCorePostgresTests"</c>
-/// <see cref="NotInParallelAttribute"/> key (the same one every <c>EFCoreTestBase</c> test and
-/// <c>SplitModeProductionTests</c> already carry) so <c>Clear()</c> can never run concurrently
-/// with another test's own <c>Register</c> call — without it, wiping the registry mid-run would
-/// corrupt whichever other Split-mode test happened to be mid-hydration at that moment.
+/// <c>scratchpad/residue.md</c>. The class runs alone (<see cref="NotInParallelAttribute"/> with no key)
+/// so <c>Clear()</c> can never run concurrently with another test's own <c>Register</c> call. Without it,
+/// wiping the registry mid-run would corrupt whichever other Split-mode test happened to be mid-hydration
+/// at that moment.
 /// </para>
 /// </summary>
 [Category("Shard1")]
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 public class SplitModeChangeTrackerHydratorCoverageTests {
 
   private sealed class CoverageProbeModel;

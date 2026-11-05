@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
   /// <docs>extending/extensibility/custom-health-checks#whizbang-extension-point-itransportreadinesscheck</docs>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard4")]
   public class OutboxContractsIntegrationTests : EFCoreTestBase {
     private const string TENANT = "tenant-outbox-contracts";

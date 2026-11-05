@@ -56,7 +56,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Diagnostics;
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDrainWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class MessageParseCountFlowTests {
   private const string SHARED_TOPIC = "inbox";

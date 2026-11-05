@@ -30,6 +30,34 @@ Describe 'Get-ClassCost' {
     $cost['B'] | Should -Be 1
   }
 
+  It 'shares the time between the tests that run at once, so a parallel shard is charged by occupancy' {
+    # A runs the whole four seconds; B and then C run beside it. Charging start-to-next-start would give A
+    # nothing at all, because B starts with it.
+    $cost = Get-ClassCost @(ConvertTo-Result -Entries @(@('A', 0, 4), @('B', 0, 2), @('C', 2, 4)))
+    $cost['A'] | Should -Be 2
+    $cost['B'] | Should -Be 1
+    $cost['C'] | Should -Be 1
+    ($cost.Values | Measure-Object -Sum).Sum | Should -Be 4
+  }
+
+  It 'charges a moment when nothing runs to the test that started last before it' {
+    # The gap between B's end and C's start is setup work queued behind B, as in a serial run.
+    $cost = Get-ClassCost @(ConvertTo-Result -Entries @(@('A', 0, 1), @('B', 0.5, 1.5), @('C', 3, 4)))
+    $cost['A'] | Should -Be 0.75
+    $cost['B'] | Should -Be 2.25
+    $cost['C'] | Should -Be 1
+  }
+
+  It 'leaves out a result the runner never timed, as it reports a test that timed out' {
+    # TUnit writes 0001-01-01 for both times of a test that hit its timeout; taken at face value it opens the
+    # shard's window two thousand years early.
+    $untimed = [pscustomobject]@{ Class = 'Hung'; Start = [datetime]::MinValue; End = [datetime]::MinValue }
+    $cost = Get-ClassCost (@(ConvertTo-Result -Entries @(@('A', 0, 2), @('B', 2, 3))) + $untimed)
+    $cost['A'] | Should -Be 2
+    $cost['B'] | Should -Be 1
+    $cost.ContainsKey('Hung') | Should -BeFalse
+  }
+
   It 'never charges a negative gap for overlapping tests' {
     $cost = Get-ClassCost @(ConvertTo-Result -Entries @(@('A', 0, 5), @('B', 0, 5)))
     $cost['A'] | Should -BeGreaterOrEqual 0

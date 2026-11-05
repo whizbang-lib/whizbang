@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// static state, hence the second constraint key.
 /// </remarks>
 [Category("Shard2")]
-[NotInParallel(["EFCorePostgresTests", "ModelRegistrationRegistry tests share static state"])]
 public class InitOnlyPhysicalFieldHydrationTests : EFCoreTestBase {
   private const string SPLIT_TABLE = "wh_per_init_only_split";
   private const string EXTRACTED_TABLE = "wh_per_init_only_extracted";

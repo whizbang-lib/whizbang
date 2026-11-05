@@ -10,10 +10,11 @@ single job**, not the total. Before sharding, PostgreSQL was that job at 23m34s 
 the next — and inside it one project (`Whizbang.Data.EFCore.Postgres.Tests`, ~2,300 tests) was
 ~87% of the time.
 
-Integration projects also run *sequentially* inside a job because they share containers, and most
-of their tests are serialized further by `[NotInParallel]` constraint keys guarding one database
-server. Sharding across runners is how parallelism is recovered safely: each runner is its own
-process with its own containers, so a constraint key only serializes within a shard.
+Integration projects also run *sequentially* inside a job because they share containers. Inside a shard, the EF
+Core project's tests run in parallel under a limit sized to the container's connections (#2069,
+[efcore-test-parallelism.md](efcore-test-parallelism.md)); before that, one constraint key serialized every class.
+Sharding across runners adds parallelism on top: each runner is its own process with its own containers, so a
+constraint key only serializes within a shard.
 
 ## Two levels
 
@@ -198,9 +199,11 @@ only 17-47% of the window. Each test that needs a database creates one by copyin
 serializes those copies on the template's lock, and each shard's container therefore takes roughly
 one such test per second while its CPU sits mostly idle.
 
-So the script charges each test the gap from its start to the next test's start. Those gaps sum
-exactly to the shard's test window, and a class's cost is the median of its sums over the last ten
-runs. Five proved too few: two 5-run samples taken hours apart put one shard at 5.9 and 8.8 minutes and
+So the script charges each class the time its tests occupied the shard: every moment between two test
+boundaries is shared equally among the tests running then (in a serial shard that is each test's whole
+duration; since #2069 the shards run in parallel), and a moment when nothing runs goes to the test that
+started last before it. Those charges sum exactly to the shard's test window, and a class's cost is the
+median of its sums over the last ten runs. Five proved too few: two 5-run samples taken hours apart put one shard at 5.9 and 8.8 minutes and
 proposed different moves. Rebalancing starts from the current assignment and moves the class that best closes the gap
 between the heaviest and lightest shard, never one larger than half of it, so each rebalance is a
 small diff of `[Category("ShardN")]` changes rather than a reshuffle.

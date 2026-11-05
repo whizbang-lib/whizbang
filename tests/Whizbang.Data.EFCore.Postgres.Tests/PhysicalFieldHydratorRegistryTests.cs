@@ -20,13 +20,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// rather than as a wiring gap.
 /// </para>
 /// <para>
-/// The registry is process-wide static, so these tests clear it around themselves and serialize
-/// against each other: a registration left behind would change what an unrelated test's
-/// materialization produces.
+/// The registry is process-wide static, so these tests clear it around themselves and run alone: a
+/// registration left behind would change what an unrelated test's materialization produces.
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PhysicalFieldHydratorRegistry.cs</code-under-test>
-[NotInParallel(["PhysicalFieldHydratorRegistry", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard4")]
 public class PhysicalFieldHydratorRegistryTests {
 

@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgWorkAvailablePollSourceBase.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public sealed class PgWorkAvailablePollSourceSchemaGateTests {
   private PerTestDatabase _database;

@@ -49,7 +49,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_StartupStageRecord.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/277_PreflightInstanceAndRoleColumns.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public sealed partial class StartupStageHostTests {
   /// <summary>Bounds each signal wait, so a stage never reached fails as that rather than as the test's timeout.</summary>

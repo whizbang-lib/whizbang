@@ -28,16 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
 
-  /// <summary>Reserves a currently-free loopback port without listening on it -- a "closed port"
-  /// (connecting fails immediately with no listener, unlike a filtered port that would hang).</summary>
-  private static int _reserveClosedPort() {
-    var probe = new TcpListener(IPAddress.Loopback, 0);
-    probe.Start();
-    var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-    probe.Stop();
-    return port;
-  }
-
   /// <summary>Builds a connection string that targets <paramref name="relay"/>'s loopback port
   /// instead of the real fixture host/port, with pooling off so each test's physical connection is
   /// unambiguously torn down when the relay is disposed.</summary>
@@ -80,7 +70,11 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
   /// protocol exchange looks like (auth, SSL negotiation, etc.).
   /// </summary>
   private sealed class FlakyRelay : IDisposable {
-    private readonly TcpListener _listener;
+    // Bound from creation and only listening once started: a bound socket that is not listening refuses a
+    // connection at once, like a closed port, and holds the port meanwhile. Probing a free port and releasing it
+    // left the port to whoever bound it next (another listener, a container's published port), and the first
+    // attempt then reached that instead of failing, so the test hung until its timeout (#2069).
+    private readonly Socket _listener;
     private readonly string _targetHost;
     private readonly int _targetPort;
     private readonly List<TcpClient> _clients = [];
@@ -88,9 +82,10 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     private bool _started;
     private bool _disposed;
 
-    private FlakyRelay(int port, string targetHost, int targetPort) {
-      Port = port;
-      _listener = new TcpListener(IPAddress.Loopback, port);
+    private FlakyRelay(string targetHost, int targetPort) {
+      _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+      _listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+      Port = ((IPEndPoint)_listener.LocalEndPoint!).Port;
       _targetHost = targetHost;
       _targetPort = targetPort;
     }
@@ -99,7 +94,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
 
     public static FlakyRelay Create(string targetConnectionString) {
       var target = new NpgsqlConnectionStringBuilder(targetConnectionString);
-      return new FlakyRelay(_reserveClosedPort(), target.Host!, target.Port);
+      return new FlakyRelay(target.Host!, target.Port);
     }
 
     public void Start() {
@@ -107,14 +102,14 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
         return;
       }
       _started = true;
-      _listener.Start();
+      _listener.Listen();
       _ = _acceptLoopAsync();
     }
 
     private async Task _acceptLoopAsync() {
       try {
         while (true) {
-          var inbound = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
+          var inbound = new TcpClient { Client = await _listener.AcceptAsync().ConfigureAwait(false) };
           lock (_gate) { _clients.Add(inbound); }
           _ = _relayAsync(inbound);
         }
@@ -142,9 +137,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
         return;
       }
       _disposed = true;
-      if (_started) {
-        _listener.Stop();
-      }
+      _listener.Dispose();
       lock (_gate) {
         foreach (var client in _clients) {
           try {
@@ -255,7 +248,10 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
       },
     };
 
-    var closedPort = _reserveClosedPort();
+    // Bound and never listening, held for the whole test: every attempt is refused, and nothing else can take the port.
+    using var closed = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    closed.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+    var closedPort = ((IPEndPoint)closed.LocalEndPoint!).Port;
     var badConnectionString =
       $"Host=127.0.0.1;Port={closedPort};Username=nobody;Password=nobody;Database=nothing;Timeout=1";
 

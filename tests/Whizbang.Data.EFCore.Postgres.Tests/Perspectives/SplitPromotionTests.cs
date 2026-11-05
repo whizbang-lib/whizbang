@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#storage-moves</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SplitPromotionTests {
   private const string TABLE = PhysicalMoves.TABLE;

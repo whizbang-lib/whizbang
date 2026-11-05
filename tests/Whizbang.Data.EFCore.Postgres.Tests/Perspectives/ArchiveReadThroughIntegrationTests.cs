@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Archival/ArchiveAwareEventStoreDecorator.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard1")]
-[NotInParallel("NpgsqlActivityListener")]
+[NotInParallel("NpgsqlActivityListener")] // listens to the process-wide Npgsql activity source
 public class ArchiveReadThroughIntegrationTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
   private static readonly IReadOnlyList<Type> _types = [

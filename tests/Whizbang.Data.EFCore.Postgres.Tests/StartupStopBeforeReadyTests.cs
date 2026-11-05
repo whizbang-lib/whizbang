@@ -31,7 +31,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Generators/PerspectiveRunnerRegistryGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/SchemaReadyGatedService.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public sealed class StartupStopBeforeReadyTests {
   /// <summary>The schema lock for the default schema: the advisory key the bootstrap and the pass take.</summary>

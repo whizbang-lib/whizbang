@@ -44,7 +44,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Core/Workers/ReceiveConsumerGate.cs</code-under-test>
   /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]
   public class AbsorbedEventReachesEventStoreTests : EFCoreTestBase {
     private const string SERVICE = "absorb-svc";

@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class JsonbColumnStorageIntegrationTests {
   private const string TABLE = "wh_per_jsonb_extracted_item";

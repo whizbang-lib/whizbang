@@ -29,7 +29,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Startup/DutyHolderWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/173_RoleAssignments.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class PendingDutyWorkE2ETests : EFCoreTestBase {
   private const string ROLE = StartupDuties.MAINTAINER;

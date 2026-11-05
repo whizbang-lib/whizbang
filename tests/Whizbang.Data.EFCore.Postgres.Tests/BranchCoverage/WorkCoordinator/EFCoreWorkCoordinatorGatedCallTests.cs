@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[Category("Shard4")]
+[Category("Shard1")]
 public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
   // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
   private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);

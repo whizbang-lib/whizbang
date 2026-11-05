@@ -119,12 +119,7 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
     OpaqueDocumentFixture.EnsureRegistered();
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"opaque_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("opaque")).Name;
 
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -155,14 +150,7 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
       await _dataSource.DisposeAsync();
     }
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container is torn down with the run; a database left behind costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
     GC.SuppressFinalize(this);
   }

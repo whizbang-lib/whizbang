@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Chaos;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/184_RoleAssignmentResilience.sql</code-under-test>
 [Category("Integration")]
 [Category("Chaos")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RoleAssignmentChaosTests : EFCoreTestBase {
   internal const string ROLE = StartupDuties.MAINTAINER;

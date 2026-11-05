@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class NamedSchemaMigrationReplayTests {
   private const string SCHEMA = NamedSchemaDbContext.SCHEMA;

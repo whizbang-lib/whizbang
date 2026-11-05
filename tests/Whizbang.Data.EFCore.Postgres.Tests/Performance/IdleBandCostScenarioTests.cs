@@ -40,6 +40,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/167_IdleBandIsWithheldWhileBusy.sql</code-under-test>
 /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class IdleBandCostScenarioTests : EFCoreTestBase {
   /// <summary>The withheld backlog. Large enough that touching it would show plainly.</summary>
