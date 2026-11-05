@@ -42,7 +42,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
   /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]
   public class ConsumedEventReachesEventStoreTests : EFCoreTestBase {
     private const string SERVICE = "consumed-svc";

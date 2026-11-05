@@ -16,6 +16,8 @@ public static class PendingInboxTypesSql {
   /// <param name="schemaPrefix">Schema prefix including the trailing dot, or empty.</param>
   /// <returns>The ready-to-execute query; one <c>message_type</c> column.</returns>
   public static string Query(string schemaPrefix) =>
-    "SELECT DISTINCT i.message_type::TEXT FROM " + schemaPrefix + "wh_inbox i JOIN " + schemaPrefix
-    + "wh_inbox_state ist ON ist.message_id = i.message_id WHERE ist.processed_at IS NULL AND ist.instance_id IS NULL";
+    // The pending state lives on wh_inbox_state (the cutover split); the join names both tables on one line.
+    "SELECT DISTINCT i.message_type::TEXT"
+    + " FROM " + schemaPrefix + "wh_inbox i JOIN " + schemaPrefix + "wh_inbox_state ist"
+    + " ON ist.message_id = i.message_id WHERE ist.processed_at IS NULL AND ist.instance_id IS NULL";
 }

@@ -668,9 +668,17 @@ public class SchemaBootstrapPhaseTests {
   /// The control for the two tests above: it shows the harness observes the stale answer at all, so their passing
   /// means the bootstrap avoids it rather than that nothing produced it. If a server release ever refreshes the cache
   /// here, this fails and says the workaround's reason is gone.
+  /// <para>
+  /// It runs alone. The stale answer holds only while the reading session processes no shared invalidation messages, and
+  /// that queue is shared by every database on the server: when parallel tests' DDL (database creation, migrations)
+  /// puts the session far enough behind, the server sends it a catch-up signal, which it handles while idle in the
+  /// transaction, refreshing the cache, and <c>to_regclass</c> then sees the table. Alone, nothing else generates enough
+  /// invalidation traffic to signal it, so the answer depends on the server's rule rather than on its neighbors.
+  /// </para>
   /// </remarks>
   [Test]
   [Timeout(120000)]
+  [NotInParallel] // Asserts a catalog cache stays stale: other tests' DDL fills the server-wide invalidation queue, whose catch-up refreshes it, so it runs alone.
   public async Task InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync(
       CancellationToken cancellationToken) {
     await using var reader = _connect();
