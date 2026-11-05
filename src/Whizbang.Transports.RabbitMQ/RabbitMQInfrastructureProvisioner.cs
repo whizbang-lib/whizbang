@@ -132,7 +132,7 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   /// service's own declares on each owned command inbox.
   /// </remarks>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroDeclaresAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedInboxExchangeExistsWithoutOurQueue_RecordsDriftAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_CommandInboxExchangeExistsWithoutOurQueue_IsNotDriftAsync</tests>
   public async Task ProvisionManifestAsync(
       TopologyManifest manifest,
       CancellationToken cancellationToken = default) {
