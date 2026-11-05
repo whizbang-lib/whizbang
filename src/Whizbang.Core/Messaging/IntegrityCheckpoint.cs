@@ -308,9 +308,18 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Storm cap: at most this many auto-repair requests per received checkpoint (default 10).</summary>
   public int MaxAutoRepairRequestsPerCheckpoint { get; set; } = 10;
 
-  /// <summary>Wire topic repair requests publish to AND bundles return on. Null (default) = the
-  /// consumer's first subscribed destination.</summary>
+  /// <summary>Wire topic repair requests publish to AND bundles return on. Null (default) = this service's own command
+  /// inbox (#2078), or, for a service that consumes none, the first destination it consumes.</summary>
   public string? RepairTopic { get; set; }
+
+  /// <summary>
+  /// How long a directed integrity control message (a manifest request or answer, a redelivery request or answer, a
+  /// drill-down or page follow) lives at the broker, in minutes (default 60, #2078). They are regenerated every
+  /// integrity cycle, so a stale one is dropped by the broker rather than accumulated on a stopped service's
+  /// subscription.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#directed-integrity-traffic</docs>
+  public int ControlMessageTimeToLiveMinutes { get; set; } = 60;
 
   /// <summary>
   /// Phase S: when the consumed-type set GROWS (a later boot adds event types), broadcast a

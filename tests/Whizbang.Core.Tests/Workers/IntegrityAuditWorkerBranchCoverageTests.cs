@@ -245,6 +245,19 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       .Because("rows removed from the ledger change the unhealed gauge, so the audit says why it moved");
   }
 
+  [Test]
+  public async Task RunAuditOnce_TheManifestRequest_ExpiresWithTheIntegrityTimeToLiveAsync() {
+    var transport = new CaptureTransport();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null, consumed: [_event(TYPE_A)]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var destination = transport.Published.Single().Destination;
+    await Assert.That(destination.Address).IsEqualTo("origin-a.requests");
+    await Assert.That(Whizbang.Core.Transports.ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a manifest request is regenerated every cycle, so a stale one must expire at the broker");
+  }
+
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static double _sum(MetricAssertionHelper helper, string instrument, string? kind = null) =>

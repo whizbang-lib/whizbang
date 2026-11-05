@@ -160,6 +160,8 @@ public class IntegrityCheckpointReceptorTests {
     var (envelope, destination, _) = fx.Transport.Published.Single();
     await Assert.That(destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never to the requester's own topic.");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a directed integrity request expires at the broker instead of piling up");
     await Assert.That(envelope.Target).IsEqualTo("origin-svc")
       .Because("the request is DIRECTED at the origin — only it should run the selection.");
     var options = JsonContextRegistry.CreateCombinedOptions();

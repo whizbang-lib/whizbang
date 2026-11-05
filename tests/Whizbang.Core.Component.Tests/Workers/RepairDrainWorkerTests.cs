@@ -66,6 +66,9 @@ public class RepairDrainWorkerTests {
 
     await Assert.That(transport.Published.Count).IsEqualTo(3)
       .Because("four rows in three (origin, tenant, type, window) groups → three directed requests");
+    await Assert.That(transport.Published.All(p =>
+        Whizbang.Core.Transports.ControlMessageTtl.FromMetadata(p.Destination.Metadata) == TimeSpan.FromMinutes(60))).IsTrue()
+      .Because("#2078: a paced repair request expires at the broker");
     var typeA = transport.Published
       .Select(p => _deserializeRedelivery(p.Envelope))
       .Where(r => r.EventTypes!.Contains("Contracts.TypeA"))

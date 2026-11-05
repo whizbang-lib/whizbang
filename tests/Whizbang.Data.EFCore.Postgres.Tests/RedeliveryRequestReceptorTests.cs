@@ -76,6 +76,8 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var (envelope, destination, _) = transport.Published[0];
     await Assert.That(destination.Address).IsEqualTo("events-topic");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a redelivery answer is an integrity control message, so it expires at the broker");
     await Assert.That(envelope.Target).IsEqualTo("damaged-svc")
       .Because("re-delivery bundles are DIRECTED at the requester — every other consumer discards them.");
     var composite = serializer.Captured[0].Payload;

@@ -16,7 +16,7 @@ namespace Whizbang.Core.Workers;
 /// on. Every integrity worker resolves it the same way, so the rule lives here once.
 /// </remarks>
 /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs</tests>
-internal static class RepairTopicResolver {
+public static class RepairTopicResolver {
   /// <summary>
   /// The configured repair topic, or the first destination this service consumes, or null when
   /// neither exists.
@@ -28,6 +28,16 @@ internal static class RepairTopicResolver {
   /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_FirstDestinationAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoDestinations_NullAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoConsumer_NullAsync</tests>
-  internal static string? Resolve(string? configured, IServiceProvider services) =>
+  public static string? Resolve(string? configured, IServiceProvider services) =>
     configured ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+
+  /// <summary>
+  /// The shared topic a broadcast integrity request goes to when no addressee is known (#2078): the topic every service
+  /// reads, never this service's own command inbox.
+  /// </summary>
+  /// <param name="configured">The configured <see cref="StreamIntegrityOptions.RepairTopic"/>, if any.</param>
+  /// <param name="services">The scope's services, read for <see cref="TransportConsumerOptions"/>.</param>
+  /// <returns>The shared topic, or null when the service consumes none.</returns>
+  public static string? ResolveBroadcast(string? configured, IServiceProvider services) => Resolve(configured, services);
+
 }

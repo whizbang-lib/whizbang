@@ -62,6 +62,9 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(transport.Published.Count).IsEqualTo(2)
       .Because("three digests at a chunk bound of two → manifests of 2 + 1.");
+    await Assert.That(transport.Published.All(p =>
+        ControlMessageTtl.FromMetadata(p.Destination.Metadata) == TimeSpan.FromMinutes(60))).IsTrue()
+      .Because("#2078: every manifest chunk is an integrity control message, so it expires at the broker");
     await Assert.That(transport.Published.All(p => p.Envelope.Target == "auditor-svc")).IsTrue()
       .Because("manifests are DIRECTED at the requester — nobody else audits with them.");
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -258,6 +261,8 @@ public class IntegrityManifestReceptorTests {
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
     await Assert.That(command.StreamIds).IsEquivalentTo([mismatched])
       .Because("audit repair is STREAM-scoped — exactly the divergent bucket, nothing broader.");
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a stream repair request expires at the broker");
     await Assert.That(command.EventTypes).IsEquivalentTo(["Contracts.TypeX"]);
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(command.StateOnly).IsFalse()
@@ -665,6 +670,8 @@ public class IntegrityManifestReceptorTests {
       .Because("The drill-down asks for stream granularity of the mismatched types only.");
     await Assert.That(request.EventTypes!.Count).IsEqualTo(1);
     await Assert.That(request.UseRecompute).IsFalse().Because("Table-driven cycles drill down table-driven.");
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a drill-down request expires at the broker");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(dispatcher.Published).IsEmpty().Because("Type-level mismatches escalate; they never report directly.");
   }
