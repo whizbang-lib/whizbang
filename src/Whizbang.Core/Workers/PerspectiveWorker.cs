@@ -2063,7 +2063,8 @@ public partial class PerspectiveWorker(
   /// <remarks>
   /// A row whose event type this service does not register is not failed: a rolling deploy can lease an event of a
   /// type only the newer version knows to an older instance, and counting it toward the bound there would dead-letter
-  /// an event an instance that can read it is about to apply. It stays leased as before and is picked up again.
+  /// an event an instance that can read it is about to apply. It stays leased as before and is picked up again. A
+  /// collective sink row of an unknown type is the exception: it is completed (<see cref="_completeUnhandledCollectiveSinkRows"/>).
   /// Before, an unreadable row recorded nothing: its lease lapsed, it was claimed again and failed to read again,
   /// forever, and a read that threw held back every other row fetched with it.
   /// </remarks>
@@ -2083,12 +2084,16 @@ public partial class PerspectiveWorker(
     Dictionary<string, Type>? typeMap = null;
     var failed = 0;
     StreamEventData? first = null;
+    List<Guid>? unhandledCollectives = null;
     foreach (var row in rows) {
       if (read.Contains(row.EventId)) {
         continue;
       }
       typeMap ??= EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
       if (!EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out _)) {
+        if (row.PerspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
+          (unhandledCollectives ??= []).Add(row.EventWorkId);
+        }
         continue;
       }
       first ??= row;
@@ -2101,7 +2106,33 @@ public partial class PerspectiveWorker(
     if (first is not null) {
       LogUnreadableDrainRowsFailed(_logger, rowErrors.GetValueOrDefault(first.EventId), failed, first.EventId, first.EventType);
     }
+    if (unhandledCollectives is not null) {
+      _completeUnhandledCollectiveSinkRows(unhandledCollectives);
+    }
   }
+
+  /// <summary>
+  /// Completes collective sink rows whose event type this service does not register. A service registers a collective
+  /// event type only when it has a collective handler for it, so no handler here can apply these rows; the sink would
+  /// complete them unapplied, as it does a row with no collective to dispatch. Left leased, they would be offered again
+  /// on every claim and hold their place at the head of the queue, in front of the work behind them, forever.
+  /// </summary>
+  /// <remarks>
+  /// Unlike a perspective row of an unknown type, this is not left for a newer instance: a service stores every
+  /// collective it receives, including the many it never handles, so waiting for one that can read it would wait
+  /// forever in the common case. Counted as skipped, like the sink's other unapplied completions.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnhandledCollective.cs:DrainMode_CollectiveSinkRowOfATypeThisServiceDoesNotKnow_IsCompletedAsync</tests>
+  private void _completeUnhandledCollectiveSinkRows(List<Guid> sinkWorkIds) {
+    _compositeMetrics?.CollectivesSkipped.Add(sinkWorkIds.Count);
+    _completeCollectiveSinkWorkRows([.. sinkWorkIds]);
+    LogUnhandledCollectiveSinkRowsCompleted(_logger, sinkWorkIds.Count);
+  }
+
+  [LoggerMessage(EventId = 80, Level = LogLevel.Debug,
+    Message = "Drain mode: completed {Count} collective sink row(s) of a type no collective handler in this service applies")]
+  static partial void LogUnhandledCollectiveSinkRowsCompleted(ILogger logger, int count);
 
   [LoggerMessage(EventId = 79, Level = LogLevel.Debug,
     Message = "Drain mode: reading {Count} fetched row(s) threw; reading them one at a time to find the rows that cannot be read")]
