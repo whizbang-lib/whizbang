@@ -1330,6 +1330,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     var busyId = Guid.CreateVersion7();
     var dispatcher = new FlipDispatcher(expected: 2) { BusyOnceOn = "b" };
     var receptorInvoker = new CapturingReceptorInvoker();
+    var dedups = new RowDedupSignal();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
@@ -1342,7 +1343,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       },
       registry: new Registry([typeof(FlipCollectiveEvent)]),
       dispatcher: dispatcher,
-      receptorInvoker: receptorInvoker);
+      receptorInvoker: receptorInvoker,
+      processedEventCacheObserver: dedups);
     coordinator.SinkQueue = [
       new CollectiveSinkQueueEntry(applied.WorkId, appliedId, CommitSequence: 1),
       new CollectiveSinkQueueEntry(busy.WorkId, busyId, CommitSequence: 2),
@@ -1358,9 +1360,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     lock (receptorInvoker.Invocations) {
       postApplyBeforeTheRetry = [.. receptorInvoker.Invocations.Where(i => i.Stage == LifecycleStage.PostAllPerspectivesDetached).Select(i => i.EventId)];
     }
-    // The retry: the busy collective's row is leased again; the applied one's row is complete and is not.
-    coordinator.OfferWork([busy]);
-    await dispatcher.AllDispatched.WaitAsync(cancellationToken);
+    // The retry: the busy collective's row is leased again; the applied one's row is complete and is not. The run that
+    // found the lock busy may still have the row reserved, so it is offered until a run takes it (#2086).
+    await ReofferUntilTakenAsync(coordinator, dedups, busy, dispatcher.AllDispatched, t => t.WaitAsync(cancellationToken));
     await harness.CompletionCapture.EventWorkIdsCaptured(busy.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
@@ -1803,6 +1805,23 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     public void OnRetentionActivated(int count) { }
     public void OnEvicted(int count) { }
     public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
+  }
+
+  /// <summary>
+  /// Offers <paramref name="row"/> again until a run takes it, which <paramref name="taken"/> reports (#2086). The real
+  /// claim never serves a row a run still has reserved; this fake serves it whenever asked, and the worker drops such an
+  /// offer against the reservation. Each dropped offer is answered with another, so the row reaches a run once the one
+  /// holding it has released it, however late that is, and no offer is left outstanding when this returns.
+  /// </summary>
+  /// <param name="waitFor">How the test waits: on a fake clock, the wait that also fires the worker's idle polls.</param>
+  private protected static async Task ReofferUntilTakenAsync(
+      FakeCoordinator coordinator, RowDedupSignal dedups, PerspectiveWork row, Task taken, Func<Task, Task> waitFor) {
+    while (!taken.IsCompleted) {
+      var dropped = dedups.NextDedupOf(row.WorkId);
+      coordinator.OfferWork([row]);
+      await waitFor(Task.WhenAny(taken, dropped));
+    }
+    await taken;
   }
 
   /// <summary>Signals when the sink dedups a re-offered, already-completed work row.</summary>

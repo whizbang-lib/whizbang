@@ -293,7 +293,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     coordinator.OfferWork([waiting]);
     await droppedWhileReserved.WaitAsync(cancellationToken);
     clock.ReleaseArm();
-    await clock.PollUntilAsync(clock.HoldArmed(2), cancellationToken);
+    await ReofferUntilTakenAsync(coordinator, dedups, waiting, clock.HoldArmed(2), t => clock.PollUntilAsync(t, cancellationToken));
     var secondWait = clock.ArmedFor[1];
     clock.Advance(TimeSpan.FromSeconds(20));
     await clock.PollUntilAsync(dispatcher.AllDispatched, cancellationToken);
@@ -320,6 +320,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   [Timeout(30000)]
   public async Task CollectiveSink_Predecessor_WakeFiringBeforeTheRunReleasesTheRow_StillAppliesItAsync(CancellationToken cancellationToken) {
     var clock = new HoldClock { HoldWorkerAtArm = 2, HoldBound = cancellationToken };
+    var dedups = new RowDedupSignal();
     var streamId = TrackedGuid.New().Value;
     var waiting = _sinkWork(streamId);
     var waitingId = Guid.CreateVersion7();
@@ -332,6 +333,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       eventStore: new EventStore { Deserialized = [_flip(waitingId, "b", predecessorId, _flipType)] },
       registry: new Registry([typeof(FlipCollectiveEvent)]),
       dispatcher: dispatcher,
+      processedEventCacheObserver: dedups,
       timeProvider: clock,
       predecessorWaitSeconds: 30);
     coordinator.SinkQueue = [new CollectiveSinkQueueEntry(waiting.WorkId, waitingId, CommitSequence: 1)];
@@ -341,8 +343,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await clock.HoldArmed(1).WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(10));
-    coordinator.OfferWork([waiting]);
-    await clock.PollUntilAsync(clock.HoldArmed(2), cancellationToken);
+    // The first run may still have the row reserved, so an offer can be dropped; it is offered until a run takes it.
+    await ReofferUntilTakenAsync(coordinator, dedups, waiting, clock.HoldArmed(2), t => clock.PollUntilAsync(t, cancellationToken));
     // The second run is held inside its arming, with the row still reserved, when the wake fires.
     clock.Advance(TimeSpan.FromSeconds(20));
     clock.ReleaseArm();
