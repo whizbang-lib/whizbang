@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// The queue tables whose indexes the maintenance cycle rebuilds, and the catalog reads behind the rebuild (#1746).
@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#reindex-which-tables</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs</tests>
 internal static class QueueIndexSql {
   /// <summary>The queue tables, unqualified.</summary>
   internal static readonly string[] TABLES =

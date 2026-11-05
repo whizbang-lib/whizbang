@@ -1474,6 +1474,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the window. Both queries now read the lane as two branches, each with the window as a direct range on its own
   indexed column (`idx_event_store_commit_sequence`, `idx_event_store_origin_lane`), so a call reads only the rows in
   its window (migration 332). No new index.
+- **The Dapper work coordinator no longer leaves coordinator operations silently unimplemented (#2051).** It served the
+  interface's inert default (an empty list, zero or `unsupported`) for dozens of operations, so on Dapper a retention
+  setting such as the pointer prune or the lifecycle-completion window was accepted and removed nothing, the
+  maintenance cycle found nothing to rewrite, vacuum or reindex, a stuck row was never reported, a released lease stayed
+  held until it expired, a broker dead letter was never taken into custody, a standby request went nowhere, the
+  type-definition reconciler saw an empty catalog, the startup lifecycle reconciliation replayed nothing, and a
+  coalesced message was parked and never shipped. `DapperWorkCoordinator` now implements the retention and storage
+  sweeps, table maintenance, recovery and fleet operations, the type registry, lifecycle and cursor reads, and
+  coalescing, each through one shared copy of the statement in `Whizbang.Data.Postgres` (`CoordinatorRetentionSql`,
+  `TableMaintenanceSql`, `QueueIndexSql`, `CoordinatorFleetSql`, `CoordinatorCatalogSql`, `OrphanedLifecycleEventsSql`,
+  `CoalesceSql`) that the EF Core coordinator calls too. `WorkCoordinatorDriverParityTests` reads every operation with a
+  default from the interface and fails for one Dapper serves at the default without an allow-list entry and its reason,
+  so a new operation cannot be left unimplemented unnoticed. Stream integrity (checkpoints, gap detection, the digest
+  audit and epochs, the repair drain, subscription-growth backfill, auto-repair and redelivery) stays EF Core only
+  and is allow-listed. **Upgrade note:** on a Dapper host every `Whizbang:StreamIntegrity`
+  switch (`CheckpointsEnabled`, `GapDetectionEnabled`, `AuditEnabled`, `EpochClosureEnabled`, `RepairDrainEnabled`,
+  `BackfillOnSubscriptionGrowth`) now defaults to off, and a host whose configuration sets one to `true`, or
+  `RepairMode` to `AutoRepairCapped`, fails at start with an error naming the feature, the key and the reason. These
+  features did nothing on Dapper before; remove the setting or use the EF Core driver.
 - **The prefix truncate runs on the Dapper driver (#2043).** A detail-discarding prefix truncate (and an archiving one
   with no archive store registered) consulted the destruction hook, the Pre stages and any compaction handler, then
   answered `unsupported` and removed nothing, so a hook was told data was about to be destroyed when nothing was. The

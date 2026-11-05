@@ -124,6 +124,9 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Core/Messaging/IWorkCoordinator.cs"] = "declares the claims",
     ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] = STORE,
     ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.RowRetention.cs"] = STORE,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.Coalesce.cs"] = STORE,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.FleetAndCatalog.cs"] = STORE,
+    ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.RetentionSweeps.cs"] = STORE,
     ["src/Whizbang.Data.Postgres/FleetClaim.cs"] = "the once-per-window claim helper the maintenance steps share",
     ["src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs"] = "the physical-column fill's window claim, "
       + "run by its maintenance step",

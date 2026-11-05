@@ -302,86 +302,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 162: every column the backlog query reads (processed_at, scheduled_for, instance_id,
-    // lease_expiry, received_at) is on wh_inbox_state, so it never touches the message row.
-    var inbox = BuildSchemaQualifiedName(schema, "wh_inbox_state");
-    var outbox = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
-    var perspectiveEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-
-    // BOUNDED counts, deliberately. The caller needs to know whether these are zero, not their
-    // exact size, and this runs on the checkpoint cadence against a table that can hold a million
-    // rows during a bulk operation. An unbounded count(*) there would make a gate meant to protect
-    // the store into a periodic full scan of it. The cap is high enough that the logged number is
-    // still useful ("at least N") and low enough to stay cheap.
-#pragma warning disable S2077
-    // The third column is the lag measure: age of the oldest unprocessed row. ORDER BY received_at
-    // LIMIT 1 walks idx_inbox_received_at and stops at the first unprocessed row; completed rows are
-    // deleted on the normal path, so the walk stays short even when the queue is large.
-    // Settledness must use the CLAIM's eligibility predicate: rows parked with a future
-    // scheduled_for (operator quarantine, tag-bound coalescing) are deliberately not claimable,
-    // and counting them reported an idle service as busy forever — housekeeping deferred on
-    // ServiceBusy for a day against ~10,000 parked rows while the true claimable backlog was zero.
-    // The leased count stays unfiltered: a valid lease is in-flight work regardless of schedule.
-    // The fourth and fifth columns are the other two work tables. A producer's load sits in its
-    // outbox and a draining consumer's in its perspective events, and a gate that read only the
-    // inbox took both for idle and swept at the peak of a bulk load.
-    // The idle band is counted APART from the three figures, never inside them (167). The band is
-    // drained when the service reads settled, so a band counted as backlog would hold closed the
-    // very gate that releases it and the work would never run at all. The lag measure skips it for
-    // the same reason: an idle row is old by design, and reporting its age as service lag would
-    // make every gate downstream read a service that is keeping up as one falling behind.
-    const int idleBandStart = WorkPriority.BACKGROUND_BAND_END;
-    cmd.CommandText = $@"
-      SELECT
-        (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now())
-           AND priority <= {idleBandStart} LIMIT 1000) a),
-        (SELECT count(*) FROM (SELECT 1 FROM {inbox}
-           WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
-        COALESCE(EXTRACT(EPOCH FROM (now() - (
-          SELECT received_at FROM {inbox} WHERE processed_at IS NULL
-            AND (scheduled_for IS NULL OR scheduled_for <= now())
-            AND priority <= {idleBandStart}
-          ORDER BY received_at LIMIT 1))), 0),
-        (SELECT count(*) FROM (SELECT 1 FROM {outbox} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now())
-           AND priority <= {idleBandStart} LIMIT 1000) c),
-        (SELECT count(*) FROM (SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now())
-           AND priority <= {idleBandStart} LIMIT 1000) d),
-        (SELECT count(*) FROM (
-           SELECT 1 FROM {inbox} WHERE processed_at IS NULL
-             AND (scheduled_for IS NULL OR scheduled_for <= now())
-             AND priority > {idleBandStart}
-           UNION ALL
-           SELECT 1 FROM {outbox} WHERE processed_at IS NULL
-             AND (scheduled_for IS NULL OR scheduled_for <= now())
-             AND priority > {idleBandStart}
-           UNION ALL
-           SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
-             AND (scheduled_for IS NULL OR scheduled_for <= now())
-             AND priority > {idleBandStart}
-           LIMIT 1000) e)";
-#pragma warning restore S2077
-
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    // No row means the query answered nothing, which is NOT the same as "the service is settled".
-    // Null keeps the caller's gate closed rather than licensing action off a measurement that was
-    // never taken.
-    return !await reader.ReadAsync(cancellationToken) ? null : new ServiceBacklog {
-      UnprocessedInboxRows = reader.GetInt64(0),
-      ActiveLeasedRows = reader.GetInt64(1),
-      // Clamped at zero: clock skew between writer and reader must not report negative lag.
-      OldestUnprocessedAge = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(2))),
-      PendingOutboxRows = reader.GetInt64(3),
-      PendingPerspectiveRows = reader.GetInt64(4),
-      PendingIdleRows = reader.GetInt64(5),
-    };
+    await using var cmd = scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    // 162: every inbox column the backlog reads is on wh_inbox_state, so it never touches the message row. No row
+    // means the query answered nothing, not that the service is settled: null keeps the caller's gate closed.
+    return await CoordinatorFleetSql.CountServiceBacklogAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -495,22 +421,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "reclassify_events_ephemeral");
-    var names = AsArray(eventTypeNames);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText = $"SELECT events_reclassified, streams_reclassified, streams_blocked FROM {functionName}(@p_names)";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      return EphemeralReclassificationResult.Empty;
-    }
-    return new EphemeralReclassificationResult(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.ReclassifyEventsEphemeralAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), eventTypeNames, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -523,45 +439,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var eventStore = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var normalizeFn = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
-    var names = AsArray(eventTypeNames);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText =
-      $"SELECT count(*) FROM {eventStore} es " +
-      "WHERE (es.flags & 8) = 0 " +
-      $"AND es.event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_names) AS t)";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
-    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.CountSourcedEventsForTypesAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), eventTypeNames, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var table = BuildSchemaQualifiedName(schema, "wh_type_definitions");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText =
-      $"SELECT definition_id, event_type, encode(settings_hash, 'hex'), encode(schema_hash, 'hex'), schema_version FROM {table}";
-#pragma warning restore S2077
-    var list = new List<TypeDefinitionInfo>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new TypeDefinitionInfo(
-        reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4)));
-    }
-    return list;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.TypeDefinitionsAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -571,24 +463,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(eventTypeName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "register_type_definition");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText = $"SELECT definition_id, is_new, previous_definition_id FROM {fn}(@t, @sh, @sch, @v)";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("t", NpgsqlTypes.NpgsqlDbType.Text) { Value = eventTypeName });
-    cmd.Parameters.Add(new NpgsqlParameter("sh", NpgsqlTypes.NpgsqlDbType.Bytea) { Value = Convert.FromHexString(settingsHashHex) });
-    cmd.Parameters.Add(new NpgsqlParameter("sch", NpgsqlTypes.NpgsqlDbType.Bytea) { Value = Convert.FromHexString(schemaHashHex) });
-    cmd.Parameters.Add(new NpgsqlParameter("v", NpgsqlTypes.NpgsqlDbType.Integer) { Value = schemaVersion });
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      return TypeDefinitionRegistration.None;
-    }
-    var prev = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? (int?)null : reader.GetInt32(2);
-    return new TypeDefinitionRegistration(reader.GetInt32(0), reader.GetBoolean(1), prev);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.RegisterTypeDefinitionAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), eventTypeName, settingsHashHex, schemaHashHex, schemaVersion, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -597,19 +476,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "record_definition_lineage");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText = $"SELECT {fn}(@from, @to, @rel, @ref)";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("from", NpgsqlTypes.NpgsqlDbType.Integer) { Value = fromDefinitionId });
-    cmd.Parameters.Add(new NpgsqlParameter("to", NpgsqlTypes.NpgsqlDbType.Integer) { Value = toDefinitionId });
-    cmd.Parameters.Add(new NpgsqlParameter("rel", NpgsqlTypes.NpgsqlDbType.Smallint) { Value = (short)relationship });
-    cmd.Parameters.Add(new NpgsqlParameter("ref", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)migrationRef ?? DBNull.Value });
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await CoordinatorCatalogSql.RecordDefinitionLineageAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), fromDefinitionId, toDefinitionId, relationship, migrationRef, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -648,21 +519,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(graceOverrides);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "sync_ephemeral_type_grace");
-    var names = new string[graceOverrides.Count];
-    var graces = new int[graceOverrides.Count];
-    for (var i = 0; i < graceOverrides.Count; i++) {
-      names[i] = graceOverrides[i].EventTypeName;
-      graces[i] = graceOverrides[i].GraceSeconds;
-    }
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = $"SELECT {fn}(@names, @graces)";
-    cmd.Parameters.Add(new NpgsqlParameter("names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = names });
-    cmd.Parameters.Add(new NpgsqlParameter("graces", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) { Value = graces });
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await CoordinatorRetentionSql.SyncEphemeralTypeGraceAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), graceOverrides, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -697,49 +558,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var body = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
-    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var grace = BuildSchemaQualifiedName(schema, "wh_ephemeral_type_grace");
-    var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
-    var cursors = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
-    var snaps = BuildSchemaQualifiedName(schema, "wh_perspective_snapshots");
-    var perspEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
-    var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    cmd.CommandText =
-      "SELECT DISTINCT es.stream_id, ma.target_name, c.last_event_id " +
-      $"FROM {body} eb " +
-      $"JOIN {store} es ON es.event_id = eb.event_id " +
-      $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
-      $"JOIN {assoc} ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
-      $"JOIN {cursors} c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
-      // #13b4 safety gate: scope to EPHEMERAL events explicitly — once sourced bodies live in
-      // wh_event_body (full split), consumed sourced events must not become snapshot targets.
-      "WHERE (es.flags & 8) = 8 " +
-      "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
-      $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
-      "  * INTERVAL '1 second') " +
-      "AND c.last_event_id IS NOT NULL " +
-      $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
-      // 209: coverage is read by version, the stream's own counter, not by commit sequence. Commit
-      // sequence is assignment order and inverts against the stream for retroactively stamped rows, so a
-      // snapshot EARLIER in the stream could read as covering and this query would skip driving the
-      // snapshot that actually covers the body. The "commit_sequence IS NOT NULL" guard went with it: it
-      // existed only to hold unstamped events away from the old anchor, and version is never null, so
-      // keeping it would leave an unstamped event reapable by the gate yet never driven a snapshot here.
-      $"AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
-      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version)";
-#pragma warning restore S2077
-    var list = new List<EphemeralSnapshotTarget>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new EphemeralSnapshotTarget(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2)));
-    }
-    return list;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.EphemeralPairsNeedingSnapshotAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1560,35 +1382,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_tables_needing_rewrite");
-    var measurements = BuildSchemaQualifiedName(schema, "wh_table_rewrite_measurements");
-    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    // The heap size is what an online rewrite copies; the per-cycle budget is spent by it. A queued table measured
-    // before it was queued (#1807) carries that measurement and its method, and the queue is taken largest ratio
-    // first by it; a queued table without one, and every table not queued, carries the estimate. The threshold is the
-    // one the scan compared the estimate with, so a measurement is held to the same line.
-    cmd.CommandText = "SELECT r.table_name, COALESCE(m.bloat_ratio, r.bloat_ratio), r.requested, "
-      + "COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0), m.method, "
-      + $"COALESCE((SELECT s.setting_value FROM {settings} s WHERE s.setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC "
-      + $"FROM {fn}() r LEFT JOIN {measurements} m ON r.requested AND m.table_name = r.table_name "
-      + "ORDER BY 2 DESC, 1";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("prefix", BuildSchemaQualifiedName(schema, ""));
-    var results = new List<TableRewriteCandidate>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      results.Add(new TableRewriteCandidate(reader.GetString(0), (double)reader.GetDecimal(1), reader.GetBoolean(2)) {
-        SizeBytes = reader.GetInt64(3),
-        Method = BloatMeasurementMethods.Parse(reader.IsDBNull(4) ? null : reader.GetString(4)),
-        RewriteThreshold = (double)reader.GetDecimal(5),
-      });
-    }
-    return results;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await TableMaintenanceSql.TablesNeedingRewriteAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1603,7 +1400,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteUnderDataOnlyRoleTests.cs</tests>
   public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
-    _requireFrameworkTable(tableName);
+    TableMaintenanceSql.RequireFrameworkTable(tableName);
 
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
@@ -1619,15 +1416,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (_schemaInitConnectionString() is { } initConnectionString) {
       await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
       await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      await _vacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
-    } else if (await _notOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+      await TableMaintenanceSql.VacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    } else if (await TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
       EFCoreWorkCoordinatorLog.TableNotRewritten(_log, tableName, notOwned);
       return null;
     } else {
-      await _vacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      await TableMaintenanceSql.VacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
 
-    return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1643,7 +1440,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<double?> RewriteTableWithAsync(
       string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(rewrite);
-    _requireFrameworkTable(tableName);
+    TableMaintenanceSql.RequireFrameworkTable(tableName);
 
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
@@ -1654,7 +1451,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var initConnectionString = _schemaInitConnectionString();
     if (initConnectionString is null
-        && await _notOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+        && await TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
       EFCoreWorkCoordinatorLog.TableNotRewritten(_log, tableName, notOwned);
       return null;
     }
@@ -1667,22 +1464,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (initConnectionString is not null) {
       await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
       await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      await _analyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+      await TableMaintenanceSql.AnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
     } else {
-      await _analyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      await TableMaintenanceSql.AnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
-    return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
   }
 
-  /// <summary>Refuses a name that is not one of the framework's own tables: it is interpolated into DDL.</summary>
-  private static void _requireFrameworkTable(string tableName) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
-    if (!_isFrameworkTableName(tableName)) {
-      throw new ArgumentException(
-        $"Refusing to rewrite '{tableName}': only framework tables matching wh_[a-z0-9_] may be rewritten.",
-        nameof(tableName));
-    }
-  }
 
   /// <summary>
   /// The connection string the context was configured with, which still carries its password (the live connection's
@@ -1702,7 +1490,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
   public async Task<double?> MeasureTableBloatAsync(
       string tableName, BloatMeasurementMethod method, CancellationToken cancellationToken = default) {
-    _requireFrameworkTable(tableName);
+    TableMaintenanceSql.RequireFrameworkTable(tableName);
     if (method is not (BloatMeasurementMethod.Estimate
         or BloatMeasurementMethod.Approx)) {
       throw new NotSupportedException(
@@ -1715,17 +1503,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     if (method == BloatMeasurementMethod.Estimate) {
-      return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+      return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
     }
 
-    var fn = BuildSchemaQualifiedName(schema, "wh_measure_table_bloat_approx");
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@t)";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("t", tableName);
-    var scalar = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return scalar is decimal ratio ? (double)ratio : null;
+    return await TableMaintenanceSql.MeasureApproxAsync(cmd, PgIdentifier.QualifyPrefix(schema), tableName, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1736,49 +1518,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_request_measured_table_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@t, @ratio::NUMERIC, @method, @estimate::NUMERIC)";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("t", tableName);
-    cmd.Parameters.AddWithValue("ratio", measurement.Ratio);
-    cmd.Parameters.AddWithValue("method", measurement.Method.ToValue());
-    cmd.Parameters.AddWithValue("estimate", estimatedRatio);
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await TableMaintenanceSql.RequestMeasuredRewriteAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), tableName, measurement, estimatedRatio, cancellationToken).ConfigureAwait(false);
   }
 
-  /// <summary>The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it.</summary>
-  private static async Task<double?> _measureRatioAsync(
-      Npgsql.NpgsqlConnection conn, string tableName, CancellationToken cancellationToken) {
-    await using var measure = conn.CreateCommand().WithCoordinatorTimeout();
-    // pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup: the stats collector is
-    // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
-    // effectiveness comparison then races the collector — a real rewrite read as
-    // "ineffective" under load. reltuples is written by VACUUM/ANALYZE transactionally in
-    // the catalog, so the re-measure sees exactly the rewrite it performed. Rounded exactly as
-    // wh_tables_needing_rewrite rounds the ratio it is compared with: unrounded, a rewrite that
-    // reclaimed nothing (7.6386 against 7.64) measured as an improvement and cleared its request.
-    measure.CommandText = """
-      SELECT round((pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1), 2)
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      JOIN LATERAL (
-        SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
-        FROM pg_stats s WHERE s.schemaname = n.nspname AND s.tablename = c.relname
-      ) w ON TRUE
-      WHERE n.nspname = current_schema() AND c.relname = @t
-      """;
-    var parameter = measure.CreateParameter();
-    parameter.ParameterName = "t";
-    parameter.Value = tableName;
-    measure.Parameters.Add(parameter);
-    var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return scalar is decimal d ? (double)d : null;
-  }
 
   /// <summary>
   /// Decides whether the prerequisites a squeeze needs are met (null) or names the first unmet one. Always
@@ -1797,7 +1543,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OnlineTableRewriteSqlTests.cs</tests>
   public async Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) {
-    _requireFrameworkTable(tableName);
+    TableMaintenanceSql.RequireFrameworkTable(tableName);
 
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), tableName);
@@ -1813,42 +1559,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } else {
       squeezed = await _squeezeAndAnalyzeAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false);
     }
-    return squeezed ? await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false) : null;
+    return squeezed ? await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false) : null;
   }
 
   /// <summary>Checks the prerequisites, then squeezes and analyzes the table; false (and logged) when one is unmet.</summary>
   private async Task<bool> _squeezeAndAnalyzeAsync(
       System.Data.Common.DbConnection conn, string qualified, string tableName, CancellationToken cancellationToken) {
-    var facts = await Whizbang.Data.Postgres.PgSqueezePrerequisites.ReadAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
-    if (SqueezePrerequisitesUnmet(facts, tableName) is { } unmet) {
+    if (await TableMaintenanceSql.SqueezeAndAnalyzeAsync(conn, qualified, tableName, SqueezePrerequisitesUnmet, cancellationToken)
+          .ConfigureAwait(false) is { } unmet) {
       EFCoreWorkCoordinatorLog.TableNotRewritten(_log, tableName, unmet);
       return false;
     }
-
-    await using (var squeeze = conn.CreateCommand()) {
-      squeeze.CommandText = """
-        SELECT squeeze.squeeze_table(n.nspname, c.relname, NULL, NULL, NULL)
-        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = to_regclass(@q)
-        """;
-      var parameter = squeeze.CreateParameter();
-      parameter.ParameterName = "q";
-      parameter.Value = qualified;
-      squeeze.Parameters.Add(parameter);
-      squeeze.CommandTimeout = 0;   // the worker copies the whole table; the budget bounds how much per cycle
-      await squeeze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    await using var analyze = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ by the caller; ANALYZE takes no parameters
-    analyze.CommandText = $"ANALYZE {qualified}";
-#pragma warning restore S2077
-    await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     return true;
   }
 
-  /// <summary>How long one work-table <c>VACUUM ANALYZE</c> may run before the vacuum gives up on it.</summary>
-  private const int WORK_TABLE_VACUUM_TIMEOUT_SECONDS = 120;
 
   /// <inheritdoc />
   /// <remarks>
@@ -1864,18 +1588,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, cancellationToken).ConfigureAwait(false);
     }
 
-    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
+    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
-    foreach (var table in VacuumedWorkTables.NAMES) {
+    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
       var qualified = BuildSchemaQualifiedName(schema, table);
-      if (await _notOwnedReasonAsync(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+      if (await TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } notOwned) {
         outcomes.Add(new WorkTableVacuum(table, false, notOwned));
         continue;
       }
-      await _vacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      await TableMaintenanceSql.VacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
       outcomes.Add(new WorkTableVacuum(table, true, null));
     }
     return outcomes;
@@ -1903,20 +1627,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = QueueIndexSql.SURVEY;
-    cmd.Parameters.AddWithValue("prefix", prefix);
-    cmd.Parameters.AddWithValue("tables", QueueIndexSql.TABLES);
-    var results = new List<QueueIndexBloat>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      results.Add(new QueueIndexBloat(
-          reader.GetString(0), reader.GetString(1), reader.GetInt64(2), reader.IsDBNull(3) ? null : reader.GetInt64(3)) {
-        Valid = reader.GetBoolean(4),
-        BuildInProgress = reader.GetBoolean(5),
-        Method = BloatMeasurementMethod.Estimate,
-      });
-    }
-    return results;
+    return await TableMaintenanceSql.QueueIndexSurveyAsync(cmd, prefix, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1930,15 +1641,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
     return await _onQueueIndexAsync(indexName, wantValid: false, QueueIndexSql.DROPPED, refused: false,
-      static async (conn, qualified, ct) => {
-        await using var drop = conn.CreateCommand();
-#pragma warning disable S2077 // Index name checked as a plain identifier and against the catalog; DROP INDEX takes no parameters
-        drop.CommandText = $"DROP INDEX CONCURRENTLY IF EXISTS {qualified}";
-#pragma warning restore S2077
-        drop.CommandTimeout = 0;   // waits for the transactions using the table to finish, as a concurrent drop must
-        await drop.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        return true;
-      }, cancellationToken).ConfigureAwait(false);
+      TableMaintenanceSql.DropIndexConcurrentlyAsync, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1951,23 +1654,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
   public async Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
-    return await _onQueueIndexAsync<long?>(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: null,
-      static async (conn, qualified, ct) => {
-        await using (var reindex = conn.CreateCommand()) {
-#pragma warning disable S2077 // Index name checked as a plain identifier and against the catalog; REINDEX takes no parameters
-          reindex.CommandText = $"REINDEX INDEX CONCURRENTLY {qualified}";
-#pragma warning restore S2077
-          reindex.CommandTimeout = 0;
-          await reindex.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-        await using var size = conn.CreateCommand().WithCoordinatorTimeout();
-        size.CommandText = "SELECT pg_relation_size(to_regclass(@q))";
-        var parameter = size.CreateParameter();
-        parameter.ParameterName = "q";
-        parameter.Value = qualified;
-        size.Parameters.Add(parameter);
-        return (long)(await size.ExecuteScalarAsync(ct).ConfigureAwait(false))!;
-      }, cancellationToken).ConfigureAwait(false);
+    return await _onQueueIndexAsync(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: null,
+      TableMaintenanceSql.ReindexConcurrentlyAsync, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>Runs <paramref name="work"/> on a connection of its own opened from the schema-initialization connection string.</summary>
@@ -1994,8 +1682,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
 
-    var (table, valid) = await _queueIndexAsync(conn, BuildSchemaQualifiedName(schema, ""), indexName, cancellationToken).ConfigureAwait(false);
-    if (_queueIndexRefusal(table, valid, wantValid) is { } refusal) {
+    var (table, valid) = await TableMaintenanceSql.QueueIndexLookupAsync(conn, BuildSchemaQualifiedName(schema, ""), indexName, cancellationToken).ConfigureAwait(false);
+    if (TableMaintenanceSql.QueueIndexRefusal(table, valid, wantValid) is { } refusal) {
       EFCoreWorkCoordinatorLog.QueueIndexNotTouched(_log, indexName, action, refusal);
       return refused;
     }
@@ -2004,57 +1692,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return await _onSchemaInitConnectionAsync(initConnectionString, qualified, work, cancellationToken).ConfigureAwait(false);
     }
     var tableQualified = BuildSchemaQualifiedName(schema, table!);
-    if (await _notOwnedReasonAsync(conn, tableQualified, table!, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+    if (await TableMaintenanceSql.NotOwnedReasonAsync(conn, tableQualified, table!, cancellationToken).ConfigureAwait(false) is { } notOwned) {
       EFCoreWorkCoordinatorLog.QueueIndexNotTouched(_log, indexName, action, notOwned);
       return refused;
     }
     return await work(conn, qualified, cancellationToken).ConfigureAwait(false);
   }
 
-  /// <summary>Why the index may not be touched, or null when it may: it must be on a queue table and of the validity wanted.</summary>
-  private static string? _queueIndexRefusal(string? table, bool valid, bool wantValid) => (table, valid, wantValid) switch {
-    (null, _, _) => "it is not an index on a queue table",
-    _ when valid == wantValid => null,
-    (_, _, true) => "it is invalid; it is dropped, not rebuilt",
-    _ => "it is valid; only an invalid leftover is dropped",
-  };
-
-  /// <summary>The queue table <paramref name="indexName"/> indexes and whether it is valid; a null table when it is not one.</summary>
-  private static async Task<(string? Table, bool Valid)> _queueIndexAsync(
-      Npgsql.NpgsqlConnection conn, string prefix, string indexName, CancellationToken cancellationToken) {
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = QueueIndexSql.LOOKUP;
-    cmd.Parameters.AddWithValue(nameof(prefix), prefix);
-    cmd.Parameters.AddWithValue("tables", QueueIndexSql.TABLES);
-    cmd.Parameters.AddWithValue("index", indexName);
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
-      ? (reader.GetString(0), reader.GetBoolean(1))
-      : (null, false);
-  }
 
   /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
   private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
       string initConnectionString, string schema, CancellationToken cancellationToken) {
-    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
+    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
     await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
     await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    foreach (var table in VacuumedWorkTables.NAMES) {
-      await _vacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
+    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
+      await TableMaintenanceSql.VacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
       outcomes.Add(new WorkTableVacuum(table, true, null));
     }
     return outcomes;
   }
 
-  private static async Task _vacuumAnalyzeAsync(
-      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var vacuum = conn.CreateCommand();
-#pragma warning disable S2077 // Qualified name built from a framework table constant and the validated schema; VACUUM takes no parameters
-    vacuum.CommandText = $"VACUUM ANALYZE {qualified}";
-#pragma warning restore S2077
-    vacuum.CommandTimeout = WORK_TABLE_VACUUM_TIMEOUT_SECONDS;
-    await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-  }
 
   /// <summary>
   /// The schema-initialization (<c>-init</c>) connection string configured for this context, or null. The
@@ -2068,91 +1726,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return applicationServices is null ? null : SchemaInitConnection.For(applicationServices, typeof(TDbContext));
   }
 
-  /// <summary>
-  /// Null when the connection's role owns <paramref name="qualified"/> (is a member of its owner, as
-  /// <c>VACUUM</c> requires); otherwise why the table cannot be vacuumed on it, naming the table and the role.
-  /// </summary>
-  private static async Task<string?> _notOwnedReasonAsync(
-      System.Data.Common.DbConnection conn, string qualified, string table, CancellationToken cancellationToken) {
-    await using var check = conn.CreateCommand().WithCoordinatorTimeout();
-    check.CommandText = """
-      SELECT current_user::TEXT, (SELECT pg_has_role(current_user, c.relowner, 'MEMBER') FROM pg_class c WHERE c.oid = to_regclass(@q))
-      """;
-    var parameter = check.CreateParameter();
-    parameter.ParameterName = "q";
-    parameter.Value = qualified;
-    check.Parameters.Add(parameter);
-    await using var reader = await check.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    var role = reader.GetString(0);
-    if (reader.IsDBNull(1)) {
-      return $"{table} does not exist";
-    }
-    return reader.GetBoolean(1)
-      ? null
-      : $"role '{role}' does not own {table} and no schema-initialization (-init) connection is configured; "
-        + "configure one so the table owner runs it";
-  }
 
-  // The rewrite itself, then ANALYZE so the caller's re-measure sees what the rewrite did rather than assuming it.
-  private static async Task _vacuumFullAndAnalyzeAsync(
-      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using (var vacuum = conn.CreateCommand().WithCoordinatorTimeout()) {
-#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ by the caller; VACUUM takes no parameters
-      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
-#pragma warning restore S2077
-      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
-      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
 
-    await _analyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
-  }
 
-  // ANALYZE, so a re-measure reads the row count the rewrite left rather than the one before it.
-  private static async Task _analyzeAsync(
-      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var analyze = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    analyze.CommandText = $"ANALYZE {qualified}";
-#pragma warning restore S2077
-    await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-  }
-
-  /// <inheritdoc />
-  /// <summary>
-  /// Whether a name is one of the framework's own tables, checked character by character rather
-  /// than by regex. VACUUM FULL cannot be parameterised, so this is the only thing standing
-  /// between a caller-supplied name and interpolated DDL — a plain scan has no backtracking
-  /// behaviour to reason about and no timeout to forget.
-  /// </summary>
-  private static bool _isFrameworkTableName(string name) {
-    if (name.Length <= 3 || name.Length > 63 || !name.StartsWith("wh_", StringComparison.Ordinal)) {
-      return false;
-    }
-    foreach (var c in name) {
-      var ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-      if (!ok) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   /// <inheritdoc />
   public async Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_request_table_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@t)";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("t", tableName);
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await TableMaintenanceSql.RequestRewriteAsync(cmd, PgIdentifier.QualifyPrefix(schema), tableName, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2214,28 +1800,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
-    var liveFn = BuildSchemaQualifiedName(schema, "wh_instance_is_live");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified names built from validated schema constant
-    cmd.CommandText = $@"
-      SELECT r.requested_by, r.requested_version, r.requested_at,
-             -- #2027: the one liveness rule (Preflight's, so present before migrations run); no row is not live.
-             {liveFn}(r.requested_by) AS is_live
-      FROM {requests} r";
-#pragma warning restore S2077
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      return null;
-    }
-    return new StandbyRequest(
-      reader.GetGuid(0),
-      reader.GetString(1),
-      await reader.GetFieldValueAsync<DateTime>(2, cancellationToken) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
-      reader.GetBoolean(3));
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorFleetSql.GetStandbyRequestAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
@@ -2244,18 +1812,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       string functionName, CancellationToken cancellationToken, params (string Name, object Value)[] args) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, functionName);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}({string.Join(", ", args.Select(a => "@" + a.Name))})";
-#pragma warning restore S2077
-    foreach (var (name, value) in args) {
-      cmd.Parameters.AddWithValue(name, value);
-    }
-    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    var result = await CoordinatorFleetSql.ScalarFunctionAsync(cmd, PgIdentifier.QualifyPrefix(schema), functionName, cancellationToken, args).ConfigureAwait(false);
     return result is T t ? t : default;
   }
 
@@ -2263,16 +1823,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "wh_clear_table_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {fn}(@t)";
-#pragma warning restore S2077
-    cmd.Parameters.AddWithValue("t", tableName);
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await TableMaintenanceSql.ClearRewriteRequestAsync(cmd, PgIdentifier.QualifyPrefix(schema), tableName, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2280,17 +1834,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "prune_ancient_ephemeral_pointers");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT rows_pruned, status FROM {fn}()";
-#pragma warning restore S2077
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new EphemeralPointerPruneResult(reader.GetInt64(0), reader.GetString(1));
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.PruneAncientEphemeralPointersAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -3212,19 +2760,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "release_unprocessed_inbox");
-
-    var idArray = AsArray(messageIds);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = $"SELECT {functionName}(@p_instance, @p_ids)";
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
-    cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
-    var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorFleetSql.ReleaseUnprocessedInboxAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), instanceId, messageIds, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -3246,25 +2786,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "release_unstarted_leases");
-
-    Guid[] inboxArray = AsArray(inboxStreamIds);
-    Guid[] perspectiveArray = AsArray(perspectiveStreamIds);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = $"SELECT inbox_released, perspective_released FROM {functionName}(@p_instance, @p_inbox, @p_persp)";
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_inbox", inboxArray));
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_persp", perspectiveArray));
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    // release_unstarted_leases RETURNS TABLE and always emits exactly one row (RETURN QUERY SELECT of
-    // two locals), so the read cannot come back empty; a missing row would be a broken function and
-    // surfaces as the read's own exception rather than as a silent zero.
-    _ = await reader.ReadAsync(cancellationToken);
-    return new UnstartedLeaseRelease(reader.GetInt32(0), reader.GetInt32(1));
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    // release_unstarted_leases RETURNS TABLE and always emits exactly one row, so a missing row would be a broken
+    // function and surfaces as the read's own exception rather than as a silent zero.
+    return await CoordinatorFleetSql.ReleaseUnstartedLeasesAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), instanceId, inboxStreamIds, perspectiveStreamIds, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -3379,48 +2907,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     TimeSpan claimWindow,
     CancellationToken cancellationToken = default) =>
     _tryClaimWatermarkAsync(
-      "type_definition_reconcile_last_run",
-      "Last claimed type-definition reconcile — first instance to CAS this watermark walks the catalog; siblings skip.",
-      claimWindow, cancellationToken);
+      CoordinatorCatalogSql.TYPE_DEFINITION_RECONCILE_KEY, CoordinatorCatalogSql.TYPE_DEFINITION_RECONCILE_DESCRIPTION, claimWindow, cancellationToken);
 
   /// <inheritdoc />
   public Task RecordOffloadClaimAsync(
       string storageKey, string providerName, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
-      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
-#pragma warning disable S2077 // identifier from BuildSchemaQualifiedName; all values are @parameters
-      cmd.CommandText =
-        $"INSERT INTO {ledger} (storage_key, provider_name) VALUES (@k, @p) " +
-        "ON CONFLICT (storage_key) DO NOTHING";
-#pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("k", storageKey));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p", providerName));
-      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      await CoordinatorRetentionSql.RecordOffloadClaimAsync(
+        cmd, PgIdentifier.QualifyPrefix(schema), storageKey, providerName, cancellationToken).ConfigureAwait(false);
       return true;
     }, cancellationToken);
 
   /// <inheritdoc />
   public Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
       TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) =>
-    _withCoordinatorCommandAsync<IReadOnlyList<OffloadClaimRecord>>(async (cmd, schema) => {
-      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
-#pragma warning disable S2077
-      // Age evaluated against the DB clock at query time — a changed window is retroactive over
-      // every existing blob; nothing is stamped per blob.
-      cmd.CommandText =
-        $"SELECT storage_key, provider_name FROM {ledger} " +
-        "WHERE uploaded_at < NOW() - make_interval(secs => @s) " +
-        "ORDER BY uploaded_at LIMIT @n";
-#pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("s", olderThan.TotalSeconds));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("n", batchSize));
-      var results = new List<OffloadClaimRecord>();
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        results.Add(new OffloadClaimRecord(reader.GetString(0), reader.GetString(1)));
-      }
-      return results;
-    }, cancellationToken);
+    _withCoordinatorCommandAsync((cmd, schema) => CoordinatorRetentionSql.ExpiredOffloadClaimsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), olderThan, batchSize, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
   public Task RemoveOffloadClaimsAsync(
@@ -3429,15 +2931,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return Task.CompletedTask;
     }
     return _withCoordinatorCommandAsync(async (cmd, schema) => {
-      var ledger = BuildSchemaQualifiedName(schema, "wh_offload_claims");
-#pragma warning disable S2077
-      cmd.CommandText = $"DELETE FROM {ledger} WHERE storage_key = ANY(@keys)";
-#pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("keys",
-        NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = storageKeys.ToArray()
-      });
-      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      await CoordinatorRetentionSql.RemoveOffloadClaimsAsync(
+        cmd, PgIdentifier.QualifyPrefix(schema), storageKeys, cancellationToken).ConfigureAwait(false);
       return true;
     }, cancellationToken);
   }
@@ -3447,9 +2942,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     TimeSpan claimWindow,
     CancellationToken cancellationToken = default) =>
     _tryClaimWatermarkAsync(
-      "offload_claim_sweep_last_run",
-      "Last claimed offload-claim sweep — first instance to CAS this watermark drains the expired ledger; siblings skip.",
-      claimWindow, cancellationToken);
+      CoordinatorRetentionSql.OFFLOAD_SWEEP_KEY, CoordinatorRetentionSql.OFFLOAD_SWEEP_DESCRIPTION, claimWindow, cancellationToken);
 
   /// <inheritdoc />
   public Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
@@ -3603,25 +3096,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task<int> FoldSettledApplyPathsAsync(
       TimeSpan idleWindow, int limit = 1000, CancellationToken cancellationToken = default) =>
-    _withCoordinatorCommandAsync(async (cmd, schema) => {
-      var fn = BuildSchemaQualifiedName(schema, "fold_settled_apply_paths");
-#pragma warning disable S2077
-      cmd.CommandText = $"SELECT {fn}(@idle, @lim)";
-#pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("idle", (long)idleWindow.TotalSeconds));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("lim", limit));
-      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return ScalarResult.IntOrZero(result);
-    }, cancellationToken);
+    _withCoordinatorCommandAsync((cmd, schema) => CoordinatorRetentionSql.FoldSettledApplyPathsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), idleWindow, limit, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
   public Task<bool> TryClaimSettledFoldSweepAsync(
     TimeSpan claimWindow,
     CancellationToken cancellationToken = default) =>
     _tryClaimWatermarkAsync(
-      "settled_fold_last_run",
-      "Last claimed settled apply-path fold — first instance to CAS this watermark folds idle streams; siblings skip.",
-      claimWindow, cancellationToken);
+      CoordinatorRetentionSql.SETTLED_FOLD_KEY, CoordinatorRetentionSql.SETTLED_FOLD_DESCRIPTION, claimWindow, cancellationToken);
 
   /// <inheritdoc />
   public Task<int> FoldStreamApplyPathsAsync(
@@ -4642,32 +4125,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<Whizbang.Core.Messaging.CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(
     CancellationToken cancellationToken = default) {
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-      (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    // Served by idx_outbox_coalesce_pending (coalesce_group, created_at) — only pending
-    // singles ever live in that partial index.
-    cmd.CommandText = $@"
-      SELECT coalesce_group, COUNT(*)::bigint, MIN(created_at), MAX(created_at)
-      FROM {tableName}
-      WHERE coalesce_group IS NOT NULL AND processed_at IS NULL
-      GROUP BY coalesce_group";
-#pragma warning restore S2077
-
-    var results = new List<Whizbang.Core.Messaging.CoalesceGroupStats>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new Whizbang.Core.Messaging.CoalesceGroupStats {
-        Group = reader.GetString(0),
-        PendingCount = reader.GetInt64(1),
-        OldestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken),
-        NewestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(3, cancellationToken),
-      });
-    }
-    return results;
+    return await CoalesceSql.PendingGroupStatsAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -4676,78 +4137,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     int limit,
     CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(group);
-
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
-      (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    // FOR UPDATE SKIP LOCKED: two shippers folding the same group at the same instant
-    // partition the rows instead of colliding (the residual fetch→complete race dedups at the
-    // consumer's inbox via identity-preserving composites).
-    // 300 (#1636): a caller whose own row says it may not claim (not eligible for work, and not draining) folds nothing,
-    // as the claims refuse it; one primary-key lookup of the caller's row. A coordinator with no instance identity (or a
-    // caller with no row) folds as before.
-    var callerMayClaim = _instanceProvider is null
-      ? string.Empty
-      : $@"
-        AND NOT EXISTS (
-          SELECT 1 FROM {BuildSchemaQualifiedName(schema, "wh_service_instances")} si
-          WHERE si.instance_id = @{PARAM_INSTANCE_ID} AND NOT {BuildSchemaQualifiedName(schema, "wh_instance_may_claim")}(si))";
-    cmd.CommandText = $@"
-      SELECT message_id, stream_id, destination, message_type, envelope_type,
-             event_data::text, metadata::text, is_event, scheduled_for, priority
-      FROM {tableName}
-      WHERE coalesce_group = @p_group AND processed_at IS NULL{callerMayClaim}
-      ORDER BY created_at
-      LIMIT @p_limit
-      FOR UPDATE SKIP LOCKED";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
-    cmd.Parameters.Add(new NpgsqlParameter(P_LIMIT, limit));
-    if (_instanceProvider is not null) {
-      cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
-    }
-
-    var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-
-    var results = new List<OutboxMessage>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      var messageId = reader.GetGuid(0);
-      var envelope = JsonSerializer.Deserialize(reader.GetString(5), envelopeTypeInfo) as IMessageEnvelope<JsonElement>
-        ?? throw new InvalidOperationException($"Failed to deserialize envelope for coalesce-pending message {messageId}.");
-      MessageParseDiagnostics.Record(messageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
-      EnvelopeMetadata metadata;
-      try {
-        metadata = JsonSerializer.Deserialize(reader.GetString(6), metadataTypeInfo) as EnvelopeMetadata
-          ?? new EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(messageId), Hops = [] };
-      } catch (JsonException) {
-        // Legacy/minimal metadata (e.g. '{}' without the required keys) — the fold only needs
-        // the envelope payload; synthesize the minimal metadata rather than stranding the row.
-        metadata = new EnvelopeMetadata { MessageId = new Whizbang.Core.ValueObjects.MessageId(messageId), Hops = [] };
-      }
-
-      results.Add(new OutboxMessage {
-        MessageId = messageId,
-        StreamId = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(1),
-        Destination = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
-        MessageType = reader.GetString(3),
-        EnvelopeType = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(4),
-        Envelope = envelope,
-        Metadata = metadata,
-        IsEvent = reader.GetBoolean(7),
-        ScheduledFor = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
-          ? null
-          : await reader.GetFieldValueAsync<DateTimeOffset>(8, cancellationToken),
-        Priority = reader.GetInt32(9),   // priority step 1: the ship worker folds the singles' numbers into the composite
-        CoalesceGroup = group,
-      });
-    }
-    return results;
+    // 300 (#1636): with an instance identity, a caller whose own row says it may not claim folds nothing.
+    return await CoalesceSql.FetchPendingAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), group, limit, _instanceProvider?.InstanceId, _jsonOptions, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -4765,14 +4161,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var json = _serializeNewOutboxMessages(compositeMessages);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
-    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
-
-#pragma warning disable S2077 // Schema-qualified names built from validated schema constant
-    var storeSql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
-    var completeSql = $"UPDATE {tableName} SET processed_at = NOW() WHERE message_id = ANY({{0}}) AND processed_at IS NULL";
-#pragma warning restore S2077
-
     var foldedIdArray = AsArray(foldedIds);
 
     // ONE transaction: the composite row(s) appear and the folded singles complete together —
@@ -4782,12 +4170,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var strategy = _dbContext.Database.CreateExecutionStrategy();
     await strategy.ExecuteAsync(async () => {
       await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-      var now = DateTime.UtcNow;
-      await _dbContext.Database.ExecuteSqlRawAsync(storeSql, [json, now, partitionCount], cancellationToken);
-      await _dbContext.Database.ExecuteSqlRawAsync(
-        completeSql,
-        [new NpgsqlParameter { Value = foldedIdArray, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid }],
-        cancellationToken);
+      await CoalesceSql.StoreCompositeAndCompleteSinglesAsync(
+        transaction.GetDbTransaction(), PgIdentifier.QualifyPrefix(schema), json,
+        DateTime.UtcNow, partitionCount, foldedIdArray, cancellationToken).ConfigureAwait(false);
       await transaction.CommitAsync(cancellationToken);
       // #720: ring the doorbells the fold queued, after the commit.
       await using var ringScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4801,19 +4186,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentException.ThrowIfNullOrWhiteSpace(group);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     // The deadline degrade: clearing group + floor moves the row into the eligible-scan index,
     // so the normal pump ships it individually. Explicit transition, never a query union.
-    var sql = $@"
-      UPDATE {tableName}
-      SET coalesce_group = NULL, scheduled_for = NULL
-      WHERE coalesce_group = {{0}} AND scheduled_for <= NOW() AND processed_at IS NULL";
-#pragma warning restore S2077
-
     var released = 0;
-    await PostgresDeadlockRetry.ExecuteAsync(async () => released = await _dbContext.Database.ExecuteSqlRawAsync(sql, [group], cancellationToken), logger: _logger, cancellationToken: cancellationToken);
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      released = await CoalesceSql.ReleaseMaturedAsync(cmd, PgIdentifier.QualifyPrefix(schema), group, cancellationToken).ConfigureAwait(false);
+    }, logger: _logger, cancellationToken: cancellationToken);
     return released;
   }
 
@@ -4822,14 +4204,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     int maxAttempts,
     int limit,
     CancellationToken cancellationToken = default)
-    => await _findStuckRowsAsync("find_stuck_outbox_rows", maxAttempts, limit, cancellationToken);
+    => await _findStuckRowsAsync(CoordinatorFleetSql.STUCK_OUTBOX, maxAttempts, limit, cancellationToken);
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> FindStuckInboxRowsAsync(
     int maxAttempts,
     int limit,
     CancellationToken cancellationToken = default)
-    => await _findStuckRowsAsync("find_stuck_inbox_rows", maxAttempts, limit, cancellationToken);
+    => await _findStuckRowsAsync(CoordinatorFleetSql.STUCK_INBOX, maxAttempts, limit, cancellationToken);
 
   // v0.657 slice 5c: shared shape for both sentinel methods — they only differ
   // in the SQL function name. Both use the partial indexes from migration 054
@@ -4838,28 +4220,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       string functionShortName, int maxAttempts, int limit, CancellationToken ct) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, functionShortName);
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
-    var conn = __scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = $"SELECT message_id, message_type, stream_id, attempts, claimed_since FROM {functionName}(@p_max, @p_limit)";
-    cmd.Parameters.Add(new NpgsqlParameter(P_MAX, NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxAttempts });
-    cmd.Parameters.Add(new NpgsqlParameter(P_LIMIT, NpgsqlTypes.NpgsqlDbType.Integer) { Value = limit });
-
-    var rows = new List<Whizbang.Core.Messaging.StuckRow>();
-    await using var reader = await cmd.ExecuteReaderAsync(ct);
-    while (await reader.ReadAsync(ct)) {
-      rows.Add(new Whizbang.Core.Messaging.StuckRow {
-        MessageId = reader.GetGuid(0),
-        MessageType = reader.GetString(1),
-        StreamId = await reader.IsDBNullAsync(2, ct) ? null : reader.GetGuid(2),
-        Attempts = reader.GetInt32(3),
-        ClaimedSince = reader.GetDateTime(4),
-      });
-    }
-    return rows;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorFleetSql.FindStuckRowsAsync(cmd, PgIdentifier.QualifyPrefix(schema), functionShortName, maxAttempts, limit, ct).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -5100,44 +4464,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var dbConnection = __scope.Connection;
-    var eventStoreTable = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-
-    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified table names built from validated schema constant
-    // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor prefetch can warm the
-    // commit_sequence half of PerspectiveCursorCache. Without it, the inversion detector
-    // falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
-    // generation-vs-commit-order false positives (a production run surfaced thousands of such logs).
-    cmd.CommandText =
-        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
-      + "c.rewind_trigger_event_id, e.commit_sequence "
-      + $"FROM {BuildSchemaQualifiedName(schema, RESUME_CURSORS_FUNCTION)}(@p_stream_ids, NULL) c "
-      + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id";
-#pragma warning restore S2077
-#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streamIds
-    });
-#pragma warning restore RCS1130
-
-    var results = new List<PerspectiveCursorInfo>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new PerspectiveCursorInfo {
-        StreamId = reader.GetGuid(0),
-        PerspectiveName = reader.GetString(1),
-        LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
-        Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
-        RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4),
-        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)
-      });
-    }
-
-    return results;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    // Slice 26.13: the commit sequence of each cursor's last event warms the cursor cache's inversion check.
+    return await CoordinatorCatalogSql.PerspectiveCursorsBatchAsync(cmd, PgIdentifier.QualifyPrefix(schema), streamIds, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc/>
@@ -5146,17 +4477,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
-
-    // Idempotent: ON CONFLICT DO NOTHING handles duplicate event IDs
-#pragma warning disable S2077
-    var sql = $"INSERT INTO {tableName} (event_id, instance_id) VALUES ({{0}}, {{1}}) ON CONFLICT DO NOTHING";
-#pragma warning restore S2077
-
-    await _dbContext.Database.ExecuteSqlRawAsync(
-      sql,
-      [eventId, _instanceId()],
-      cancellationToken);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    // Idempotent: ON CONFLICT DO NOTHING handles duplicate event IDs.
+    await OrphanedLifecycleEventsSql.RecordCompletionAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), eventId, _instanceId(), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc/>
@@ -5185,15 +4511,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // as parallel unnest arrays; an event qualifies when every expected perspective for its
     // type has a cursor at/past it, no completion marker exists, and it is inside the lookback
     // window. The batch is GLOBALLY capped (oldest first) — the caller loops bounded passes.
-    var pairTypes = new List<string>();
-    var pairNames = new List<string>();
-    foreach (var (eventTypeKey, expectedPerspectives) in perspectivesPerEventType) {
-      foreach (var perspectiveName in expectedPerspectives) {
-        pairTypes.Add(eventTypeKey);
-        pairNames.Add(perspectiveName);
-      }
-    }
-    if (pairTypes.Count == 0) {
+    var (pairTypes, pairNames) = OrphanedLifecycleEventsSql.Pairs(perspectivesPerEventType);
+    if (pairTypes.Length == 0) {
       return [];
     }
 
@@ -5207,7 +4526,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       List<OrphanedEventRow> rows;
       try {
         rows = await _dbContext.Database
-          .SqlQueryRaw<OrphanedEventRow>(sql, pairTypes.ToArray(), pairNames.ToArray(), cutoff, Math.Max(1, maxOrphans))
+          .SqlQueryRaw<OrphanedEventRow>(sql, pairTypes, pairNames, cutoff, Math.Max(1, maxOrphans))
           .ToListAsync(cancellationToken);
       } finally {
         _dbContext.Database.SetCommandTimeout(previousTimeout);
@@ -5238,24 +4557,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var sweepRelation = BuildSchemaQualifiedName(schema, "wh_partition_sweep_relation");
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
 
-    // The whole table, or only its default partition once the partition manager keeps it: expired partitions are then
-    // dropped whole, and the default holds the rows no partition covers (#1646). Nothing when there is no default.
-#pragma warning disable S2077
-    var relationSql = $"SELECT {sweepRelation}('wh_lifecycle_completions') AS \"Value\"";
-    var relations = await _dbContext.Database.SqlQueryRaw<string?>(relationSql).ToListAsync(cancellationToken);
-    if (relations[0] is not { } tableName) {
-      return 0;
-    }
-    var sql = $"DELETE FROM {tableName} WHERE completed_at < {{0}}";
-#pragma warning restore S2077
-
-    return await _dbContext.Database.ExecuteSqlRawAsync(
-      sql,
-      [cutoff],
-      cancellationToken);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    return await CoordinatorRetentionSql.CleanupLifecycleCompletionsAsync(
+      () => conn.CreateCommand().WithCoordinatorTimeout(), PgIdentifier.QualifyPrefix(schema), cutoff, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -5263,53 +4571,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Falls back to JsonElement.Parse when the type resolver returns incompatible type info.
   /// </summary>
   /// <docs>fundamentals/events/event-store-serialization</docs>
-  private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
-    // Deserialize event_data as JsonElement for AOT compatibility.
-    // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
-    JsonElement payload;
-    try {
-      // GetTypeInfo answers for exactly the type asked or throws (caught below), so this is the
-      // JsonElement contract, and a JsonElement cannot deserialize to null: JSON null is a Null element.
-      var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<JsonElement>)_jsonOptions.GetTypeInfo(typeof(JsonElement));
-      payload = System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo);
-    } catch (NotSupportedException) {
-      // Fallback: deserializing an interface/abstract type is not supported.
-      // The chained type resolver may return polymorphic IEvent type info.
-      payload = JsonElement.Parse(row.EventData);
-    } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
-      // Fallback: the type resolver returned a JsonTypeInfo for a different type
-      // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
-      payload = JsonElement.Parse(row.EventData);
-    }
-    MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
-
-    // Restore the stored scope from the scope column so the replayed lifecycle stages run under it.
-    var hops = _buildHopsFromScope(row.Scope);
-
-    return new MessageEnvelope<JsonElement> {
-      MessageId = new MessageId(row.EventId),
-      Payload = payload,
-      Hops = hops,
-      DispatchContext = new MessageDispatchContext {
-        Mode = DispatchModes.Local,
-        Source = MessageSource.Local
-      }
-    };
-  }
-
-  // The whole stored scope, as the event store restores it (#1855): a lifecycle receptor re-run here sees the
-  // extensions, allowed principals and markers the original dispatch carried, not the tenant and user alone.
-  private List<MessageHop> _buildHopsFromScope(string? scopeJson) {
-    var hops = new List<MessageHop>();
-    try {
-      StoredScope.RestoreInto(hops, StoredScope.Read(scopeJson, _jsonOptions));
-    } catch (Exception ex) {
-      // Scope parsing is best-effort for reconciliation, but a parse failure silently drops the
-      // stored scope so the replayed lifecycle event runs unscoped: always log it.
-      EFCoreWorkCoordinatorLog.ReconcileScopeParseFailed(_logger ?? NullLogger<EFCoreWorkCoordinator<TDbContext>>.Instance, ex);
-    }
-    return hops;
-  }
+  private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) =>
+    OrphanedLifecycleEventsSql.ToEnvelope(row.EventId, row.EventData, row.Scope, _jsonOptions,
+      ex => EFCoreWorkCoordinatorLog.ReconcileScopeParseFailed(_logger ?? NullLogger<EFCoreWorkCoordinator<TDbContext>>.Instance, ex));
 
   /// <summary>
   /// Broker DLQ import (migration 118): gives a broker-dead-lettered message durable custody as a
@@ -5334,49 +4598,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_import_dead_letter");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-      cmd.Parameters.AddWithValue("p_dead_letter_id", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New());
-      cmd.Parameters.AddWithValue("p_message_id", import.MessageId);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = (object?)import.StreamId ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_message_type", NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = import.MessageType is null
-          ? DBNull.Value
-          : Whizbang.Core.Messaging.EventTypeMatchingHelper.ExtractInnerPayloadTypeName(import.MessageType)
-      });
-      cmd.Parameters.AddWithValue("p_destination", import.Destination);
-      cmd.Parameters.AddWithValue("p_envelope_json", import.EnvelopeJson);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_broker_reason", NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = (object?)import.BrokerReason ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_broker_description", NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = (object?)import.BrokerDescription ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_enqueued_at", NpgsqlTypes.NpgsqlDbType.TimestampTz) {
-        Value = (object?)import.EnqueuedAt ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_delivery_count", NpgsqlTypes.NpgsqlDbType.Integer) {
-        Value = (object?)import.DeliveryCount ?? DBNull.Value
-      });
-      cmd.Parameters.AddWithValue(PARAM_INSTANCE_ID, _instanceId());
-      cmd.Parameters.AddWithValue("p_generation", new Whizbang.Core.Messaging.DefaultGenerationProvider().GetGeneration());
-#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT {qualified}(@p_dead_letter_id,@p_message_id,@p_stream_id,@p_message_type,@p_destination,@p_envelope_json,@p_broker_reason,@p_broker_description,@p_enqueued_at,@p_delivery_count,@p_instance_id,@p_generation)";
-#pragma warning restore S2077
-      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return ScalarResult.IsTrue(result);
+      return await CoordinatorFleetSql.ImportBrokerDeadLetterAsync(
+        cmd, PgIdentifier.QualifyPrefix(schema), import, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), _instanceId(),
+        new Whizbang.Core.Messaging.DefaultGenerationProvider().GetGeneration(), cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Throw, never return: FALSE means "duplicate — custody already exists, safe to settle at the
       // broker". A failed import must NOT look like a duplicate, or the drainer would complete the
-      // broker message and lose it. Throwing makes the drainer abandon, so the broker re-offers it —
-      // the drainer logs what it abandoned, with this context.
-      throw new InvalidOperationException(
-        $"ImportBrokerDeadLetterAsync failed for message {import.MessageId} from {import.Destination} — the message stays on the broker DLQ for the next drain pass",
-        ex);
+      // broker message and lose it. Throwing makes the drainer abandon, so the broker re-offers it.
+      throw CoordinatorFleetSql.ImportFailed(import, ex);
     }
   }
 
@@ -5394,31 +4626,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
       CancellationToken cancellationToken = default) {
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
-
-    var sql = $@"
-      SELECT stream_id, perspective_name, last_event_id, rewind_trigger_event_id
-      FROM {cursorsTable}
-      WHERE (status & 32) = 32
-      ORDER BY stream_id, perspective_name";
-
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var dbConnection = __scope.Connection;
-    var results = new List<RewindCursorInfo>();
-    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
-    cmd.CommandText = sql;
-
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new RewindCursorInfo(
-        reader.GetGuid(0),
-        reader.GetString(1),
-        await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
-        await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(3)));
-    }
-
-    return results;
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.CursorsRequiringRewindAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -5471,24 +4682,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "reap_exhausted_orphaned_perspective_rows");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var dbConnection = __scope.Connection;
-    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {functionName}(@p_instance_id, @p_stream_ids, @p_max_attempts)";
-#pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
-#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
-    cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = AsArray(streamIds)
-    });
-#pragma warning restore RCS1130
-    cmd.Parameters.Add(new NpgsqlParameter(P_MAX_ATTEMPTS, maxAttempts));
-    var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return ScalarResult.IntOrZero(result);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.ReapExhaustedOrphanedPerspectiveRowsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), instanceId, streamIds, maxAttempts, cancellationToken).ConfigureAwait(false);
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the event rows column by column, and each optional column is read through its own catch so a provider that omits it yields the default rather than failing the whole read.")]
@@ -5600,24 +4799,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <docs>messaging/work-coordinator#local-service-identity</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorServiceIdTests.cs</tests>
   public async Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) {
+    // Schema-qualified like every other query here (issue #630): wh_service_config is created in the DbContext's schema.
+    var schema = _resolveSchema(typeof(OutboxRecord));
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var dbConnection = __scope.Connection;
-    // Schema-qualified like every other query here (issue #630): wh_service_config is created in
-    // the DbContext's schema, and a bare name resolves through search_path — 42P01 on a non-public
-    // schema, or another schema's row when public happens to have one.
-    var schema = _resolveSchema(typeof(OutboxRecord));
-    var table = BuildSchemaQualifiedName(schema, "wh_service_config");
-    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as every neighbor
-    cmd.CommandText = $"SELECT service_id FROM {table} LIMIT 1";
-#pragma warning restore S2077
-    var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return result switch {
-      null or DBNull => Guid.Empty,
-      Guid g => g,
-      _ => Guid.Empty
-    };
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorCatalogSql.LocalServiceIdAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -6357,11 +5544,6 @@ internal static class OutboxClaimNotices {
   internal const string PARTITION_ASSIGNMENT_STALE = "whizbang.partition_assignment_stale=true";
 }
 
-/// <summary>The work tables vacuumed when an instance acquires the maintainer duty (#1351).</summary>
-internal static class VacuumedWorkTables {
-  /// <summary>Unqualified table names, in the order they are vacuumed.</summary>
-  internal static readonly string[] NAMES = ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication"];
-}
 
 internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(

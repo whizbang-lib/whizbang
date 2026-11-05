@@ -9,6 +9,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
@@ -100,6 +101,7 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
     // One day later: the retention delete takes the day that left the window, autovacuum frees its pages, and
     // the new day's rows are written into them.
     await _executeAsync(conn, $"DELETE FROM {table} WHERE {column} < @cutoff", ("cutoff", _start.AddDays(1)));
+    await _awaitNoOlderSnapshotAsync(conn);
     await _executeAsync(conn, $"VACUUM {table}");
     await _insertRetentionDayAsync(conn, table, retentionDays);
     var afterOnePass = await _correlationAsync(conn, table, column);
@@ -370,6 +372,31 @@ public class BrinIndexCandidatesTests : EFCoreTestBase {
       lines.Add(reader.GetString(0));
     }
     return string.Join("\n", lines);
+  }
+
+  /// <summary>
+  /// Waits until no other session in this test's database holds a snapshot or a transaction id, the condition under
+  /// which VACUUM can remove the rows the retention delete just removed. A pooled connection or a background worker of
+  /// the fixture holding an older snapshot keeps them, so the freed pages are never refilled and the order does not
+  /// rotate, which is not what the measurement is about. Bounded as a hang guard only: the wait ends on the condition.
+  /// </summary>
+  private static async Task _awaitNoOlderSnapshotAsync(NpgsqlConnection conn) {
+    const int HANG_GUARD_POLLS = 2_000;
+    for (var poll = 0; poll < HANG_GUARD_POLLS; poll++) {
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText =
+        "SELECT string_agg(pid || ' ' || coalesce(application_name, '') || ' ' || coalesce(state, ''), '; ') " +
+        "FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() " +
+        "AND (backend_xmin IS NOT NULL OR backend_xid IS NOT NULL)";
+      if (await cmd.ExecuteScalarAsync() is not string holders) {
+        return;
+      }
+      if (poll == 0) {
+        Console.WriteLine($"[#1745] waiting for sessions holding a snapshot before VACUUM: {holders}");
+      }
+      await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+    }
+    throw new InvalidOperationException("Another session in the test database kept a snapshot open; VACUUM could not reclaim.");
   }
 
   private static async Task _executeAsync(NpgsqlConnection conn, string sql, params (string Name, object Value)[] parameters) {
