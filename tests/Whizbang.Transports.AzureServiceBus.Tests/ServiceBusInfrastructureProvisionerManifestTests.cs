@@ -193,6 +193,72 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
   }
 
   [Test]
+  public async Task ProvisionManifest_CommandInbox_ForeignSubscriptionFilteredToExactTypes_IsNotDriftAsync() {
+    // #2089: a service handling some commands of another service's namespace subscribes to that namespace's inbox
+    // filtered to exactly the types it handles. That is the topology working, not drift: it receives only its commands.
+    const string foreign = "reporting-service-inbox.myapp.orders.commands";
+    var adminClient = new RecordingProvisioningAdminClient {
+      ExistingTopics = { "inbox.myapp.orders.commands" },
+      ExistingSubscriptions = { ("inbox.myapp.orders.commands", foreign) },
+      RulesBySubscription = {
+        [("inbox.myapp.orders.commands", foreign)] = [
+          ServiceBusModelFactory.RuleProperties("RoutingPatternFilter",
+            new SqlRuleFilter("sys.Label LIKE 'myapp.orders.commands.exportorders' OR sys.Label LIKE 'myapp.orders.commands.exportreturns'")),
+          ServiceBusModelFactory.RuleProperties("RoutingPatternFilter-2",
+            new SqlRuleFilter("sys.Label LIKE 'myapp.orders.commands.exportrefunds'")),
+        ]
+      }
+    };
+    var driftState = new TopologyDriftState();
+    var provisioner = _provisioner(adminClient, driftState: driftState);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    await Assert.That(driftState.HasDrift).IsFalse()
+      .Because("a second subscriber filtered to exact command types receives only the commands it handles");
+  }
+
+  [Test]
+  [Arguments("$Default", "1=1")]
+  [Arguments("RoutingPatternFilter", "sys.Label LIKE 'myapp.orders.commands.%'")]
+  [Arguments("RoutingPatternFilter", "sys.Label LIKE 'myapp.orders.commands.exportorders' OR 1=1")]
+  public async Task ProvisionManifest_CommandInbox_ForeignSubscriptionMatchingTheNamespace_IsDriftAsync(string rule, string expression) {
+    const string foreign = "reporting-service-inbox.myapp.orders.commands";
+    var adminClient = new RecordingProvisioningAdminClient {
+      ExistingTopics = { "inbox.myapp.orders.commands" },
+      ExistingSubscriptions = { ("inbox.myapp.orders.commands", foreign) },
+      RulesBySubscription = {
+        [("inbox.myapp.orders.commands", foreign)] = [ServiceBusModelFactory.RuleProperties(rule, new SqlRuleFilter(expression))]
+      }
+    };
+    var driftState = new TopologyDriftState();
+    var provisioner = _provisioner(adminClient, driftState: driftState);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    await Assert.That(driftState.HasDrift).IsTrue()
+      .Because("a second subscriber that matches more than exact types receives (and may double-handle) the owner's commands");
+  }
+
+  [Test]
+  public async Task ProvisionManifest_CommandInbox_ForeignSubscriptionWithTheMatchAllDefaultRule_IsDriftAsync() {
+    const string foreign = "reporting-service-inbox.myapp.orders.commands";
+    var adminClient = new RecordingProvisioningAdminClient {
+      ExistingTopics = { "inbox.myapp.orders.commands" },
+      ExistingSubscriptions = { ("inbox.myapp.orders.commands", foreign) },
+      RulesBySubscription = {
+        [("inbox.myapp.orders.commands", foreign)] = [ServiceBusModelFactory.RuleProperties("$Default", new TrueRuleFilter())]
+      }
+    };
+    var driftState = new TopologyDriftState();
+    var provisioner = _provisioner(adminClient, driftState: driftState);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    await Assert.That(driftState.HasDrift).IsTrue();
+  }
+
+  [Test]
   public async Task ProvisionManifest_OwnedCommandInbox_OwnSubscriptionOnly_NoDriftAsync() {
     // A previous boot of THIS service is not drift — only a foreign subscription is.
     var ownName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(
