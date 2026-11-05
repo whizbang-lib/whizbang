@@ -39,5 +39,5 @@ internal sealed record PolymorphicTypeInfo(
   /// "global::MyApp.Events.EventBase&lt;int&gt;" becomes "MyApp_Events_EventBase_int_" (#2072).
   /// </summary>
   public string UniqueIdentifier =>
-    new string([.. BaseTypeName.Replace("global::", "").Select(c => char.IsLetterOrDigit(c) ? c : '_')]);
+    new([.. BaseTypeName.Replace("global::", "").Select(c => char.IsLetterOrDigit(c) ? c : '_')]);
 }
