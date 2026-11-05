@@ -171,7 +171,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// Builds the extractor info for an event or composite from its chosen [StreamId].
   /// </summary>
   private static StreamIdInfo? _selectStreamId(INamedTypeSymbol typeSymbol) {
-    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+    if (_isOpenGeneric(typeSymbol) || _resolveStreamId(typeSymbol) is not { } resolved) {
       return null;
     }
     var (property, hasGenerate, onlyIfEmpty) = resolved;
@@ -271,7 +271,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
-    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+    if (_isOpenGeneric(typeSymbol) || _resolveStreamId(typeSymbol) is not { } resolved) {
       return null;
     }
     var (property, hasGenerate, onlyIfEmpty) = resolved;
@@ -288,6 +288,15 @@ public class StreamIdGenerator : IIncrementalGenerator {
         DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
     );
   }
+
+  /// <summary>
+  /// Whether <paramref name="typeSymbol"/> declares type parameters, such as a <c>BaseCommand&lt;TStreamId&gt;</c> whose
+  /// <c>[StreamId]</c> is a <c>TStreamId</c>. Generated code cannot name an open type, so it gets no extractor of its
+  /// own; each type that closes it (<c>CreateOrder : BaseCommand&lt;OrderId&gt;</c>) is discovered on its own and reads
+  /// the inherited property with its type argument substituted (#2072).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamIdGeneratorTests.cs:GenericBaseWithAStrongIdStreamId_TheGeneratedCodeCompilesAsync</tests>
+  private static bool _isOpenGeneric(INamedTypeSymbol typeSymbol) => typeSymbol.TypeParameters.Length > 0;
 
   /// <summary>
   /// Whether <paramref name="typeSymbol"/> declares its own <c>[StreamId]</c> (plain or <c>Override = true</c>) with
