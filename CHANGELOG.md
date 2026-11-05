@@ -1390,6 +1390,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Strong ids in more than one namespace of an assembly compile (#2072).** The provider registration is emitted once
   per assembly, under the first id's namespace, and named every other id's provider relative to it, so an id declared
   in a second namespace failed with CS0246. The registration now names every id and provider from `global::`.
+- **`[GenerateStreamId]` and `SetStreamId` write a strong-id stream id (#2072).** The generated `SetStreamId` wrote
+  only a `Guid` stream id. On a message whose `[StreamId]` is a `[WhizbangId]` strong id it had no case of its own,
+  so a base type's `Guid` `[StreamId]` case matched it and the minted id went to the inherited property, which routing
+  ignores. The setter now writes a strong-id stream id as `new TId(streamId)`, ahead of any base type's case (the
+  constructor rather than `From`, which accepts only a version 7 Guid, because the setter also writes a stream id
+  inherited from a source message), and WHIZ013 also reports `[GenerateStreamId]` on an init-only strong-id stream id. `StreamIdInfo` and
+  `CommandStreamIdInfo` gain an `IsPropertyStrongId` init property.
 - **Pre-origin history is re-attributed to the service that wrote it (#2008).** A new maintainer worker
   (`OriginReattributionWorker`) walks the store in commit-sequence batches under the housekeeping idle gate (forced
   through after `Whizbang:Housekeeping:MaxDeferral`), only when owned domains are registered. An event with no origin
