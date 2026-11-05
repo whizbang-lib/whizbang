@@ -77,8 +77,13 @@ public sealed class NamespaceInboxStrategy(
   /// <param name="metadata">A subscription's metadata.</param>
   /// <returns>True for this service's own control inbox.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:IsServiceControlInbox_NoMetadataOrNoMarker_IsFalseAsync</tests>
-  public static bool IsServiceControlInbox(IReadOnlyDictionary<string, object>? metadata) =>
-    metadata?.TryGetValue(SERVICE_CONTROL_INBOX_METADATA_KEY, out var marker) == true && marker is true;
+  public static bool IsServiceControlInbox(IReadOnlyDictionary<string, object>? metadata) {
+    if (metadata is null || !metadata.TryGetValue(SERVICE_CONTROL_INBOX_METADATA_KEY, out var marker)) {
+      return false;
+    }
+    // Only the boolean true marks the control inbox; any other value, of any type, does not.
+    return true.Equals(marker);
+  }
 
   /// <summary>Gets the system broadcast inbox topic (<c>inbox.whizbang</c>). Naming shared
   /// with the publish side through <see cref="CommandInboxNaming"/> (phase 6).</summary>
