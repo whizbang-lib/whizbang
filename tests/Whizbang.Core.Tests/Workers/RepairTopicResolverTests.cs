@@ -94,6 +94,46 @@ public class RepairTopicResolverTests {
       .Because("with nothing shared to broadcast on, the only topic the service has is the last resort");
   }
 
+  [Test]
+  public async Task Broadcast_NoConsumer_NullAsync() {
+    var services = new ServiceCollection().BuildServiceProvider();
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsNull()
+      .Because("a service with no consumer configuration has no topic to broadcast on");
+  }
+
+  [Test]
+  public async Task Broadcast_NoDestinations_NullAsync() {
+    var services = _destinations();
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsNull()
+      .Because("a consumer with no destinations has no topic to broadcast on");
+  }
+
+  [Test]
+  public async Task Broadcast_AMarkerThatIsNotTrue_IsASharedTopicAsync() {
+    var services = _destinations(
+      _ownInbox("inbox.app.orders"),
+      new TransportDestination("inbox.marked-false", Metadata: new Dictionary<string, JsonElement> {
+        [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = JsonElement.Parse("false"),
+      }));
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsEqualTo("inbox.marked-false")
+      .Because("only a marker that is true makes a destination this service's own inbox");
+  }
+
+  [Test]
+  public async Task Broadcast_MetadataWithoutTheMarker_IsASharedTopicAsync() {
+    var services = _destinations(
+      _ownInbox("inbox.app.orders"),
+      new TransportDestination("inbox.other-metadata", Metadata: new Dictionary<string, JsonElement> {
+        ["unrelated"] = JsonElement.Parse("true"),
+      }));
+
+    await Assert.That(RepairTopicResolver.ResolveBroadcast(null, services)).IsEqualTo("inbox.other-metadata")
+      .Because("metadata without the own-inbox marker leaves the destination shared");
+  }
+
   private static TransportDestination _shared(string topic) => new(topic);
 
   private static TransportDestination _ownInbox(string topic) => new(topic, Metadata: new Dictionary<string, JsonElement> {

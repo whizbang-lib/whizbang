@@ -46,6 +46,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
+  // Closes one emitted array property of the contribution initializer.
+  private const string CLOSE_ARRAY_PROPERTY = "      },";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
 
@@ -420,12 +422,12 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
       sb.AppendLine($"        \"{type}\",");
     }
-    sb.AppendLine("      },");
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     sb.AppendLine("      InboxHandlerTypes = new string[] {");
     foreach (var type in inboxHandlerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
       sb.AppendLine($"        \"{type}\",");
     }
-    sb.AppendLine("      },");
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     sb.AppendLine("      StageTypes = stageTypes,");
     // ConsumedMessages: the list form of AnyConsumerTypes, one entry per name, in the same order (#2058).
     sb.AppendLine("      ConsumedMessages = new global::Whizbang.Core.Messaging.ConsumedMessageInfo[] {");
@@ -433,14 +435,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       var entry = consumed[type];
       sb.AppendLine($"        new global::Whizbang.Core.Messaging.ConsumedMessageInfo(\"{entry.WireType}\", {(entry.IsEvent ? "true" : "false")}),");
     }
-    sb.AppendLine("      },");
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     // HandledMessages: fully-qualified type references so consumer types named
     // HandledMessageInfo / MessageKind can never collide with the emitted code.
     sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");
     foreach (var kvp in handledMessages) {
       sb.AppendLine($"        new global::Whizbang.Core.Messaging.HandledMessageInfo(\"{kvp.Key}\", \"{kvp.Value.ContractNamespace}\", global::Whizbang.Core.Routing.MessageKind.{kvp.Value.Kind}),");
     }
-    sb.AppendLine("      },");
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     sb.AppendLine("    };");
     sb.AppendLine();
     sb.AppendLine("    AssemblyRegistry<ReceptorRegistryContribution>.Register(contribution);");

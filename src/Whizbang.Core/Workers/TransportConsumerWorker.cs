@@ -1585,17 +1585,17 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Checks if an envelope type string represents a known event type.
   /// Uses <see cref="_knownEventTypeNames"/> (must be initialized first via
   /// <see cref="_ensureKnownEventTypesInitialized"/>).
-  /// Falls back to allowing through if the set is empty (no provider registered).
+  /// An empty set (nothing consumed or folded here) knows no event, so nothing is treated as one and the message falls
+  /// through to the hop check.
   /// </summary>
+  /// <remarks>
+  /// The batch builds the set before it checks any message for an echo, and this is reached only from that check, so
+  /// the set is never null here.
+  /// </remarks>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  private bool _isKnownEventType(string envelopeType) {
-    if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
-      return false;  // No provider → can't determine, treat as non-event (safe: falls through to hop check)
-    }
-    var normalized = EventTypeMatchingHelper.NormalizeTypeName(envelopeType);
-    return _knownEventTypeNames.Contains(normalized);
-  }
+  private bool _isKnownEventType(string envelopeType) =>
+    _knownEventTypeNames!.Contains(EventTypeMatchingHelper.NormalizeTypeName(envelopeType));
 
   // Namespace extraction moved to TypeNameFormatter.GetPayloadNamespace (testable utility)
 }

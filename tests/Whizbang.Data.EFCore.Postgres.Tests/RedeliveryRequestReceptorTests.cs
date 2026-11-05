@@ -368,6 +368,28 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(coordinator.Requests).IsEmpty();
   }
 
+  /// <summary>
+  /// An operator request is served even with no integrity options registered (#1028), and its answer still expires at
+  /// the broker, after the default integrity time to live (#2078).
+  /// </summary>
+  [Test]
+  public async Task Receptor_AnOperatorRequest_WithNoIntegrityOptions_AnswersWithTheDefaultTimeToLiveAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, repairMode: null);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId) with { OperatorRequested = true });
+
+    await Assert.That(transport.Published).Count().IsEqualTo(1);
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata))
+      .IsEqualTo(TimeSpan.FromMinutes(new StreamIntegrityOptions().ControlMessageTimeToLiveMinutes))
+      .Because("with no options registered the answer takes the default integrity time to live");
+  }
+
   private static ServiceProvider _buildProvider(
       SelectingCoordinator coordinator, CaptureTransport transport,
       CaptureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
