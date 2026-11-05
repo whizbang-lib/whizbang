@@ -17,6 +17,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// 100-event window, and counts the event-store rows the statement read in its own transaction
 /// (<c>pg_stat_xact_user_tables</c>): a statement that reads the window reads about 100, one that reads the lane reads
 /// 20,000 or more.
+/// <para>
+/// Each statement runs under <c>plan_cache_mode = force_generic_plan</c>, the plan a production caller gets: a function's
+/// queries and an auto-prepared statement switch to the generic plan after a few calls. A custom plan sees the lane
+/// parameter's value and folds the CASE down to one column, so it reads only the window even on the old shape, and a
+/// test that ran custom plans passed against the defect.
+/// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/332_DigestWindowsReadOnlyTheirWindow.sql</code-under-test>
@@ -98,13 +104,18 @@ public class WindowedDigestLaneReadTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Runs one statement in its own transaction and returns how many event-store rows it read: sequentially scanned
-  /// plus fetched through an index, from the transaction's own statistics.
+  /// Runs one statement in its own transaction, under the generic plan, and returns how many event-store rows it read:
+  /// sequentially scanned plus fetched through an index, from the transaction's own statistics.
   /// </summary>
   private async Task<long> _rowsReadAsync(Action<NpgsqlCommand> prepare) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     await using var transaction = await connection.BeginTransactionAsync();
+    await using (var generic = connection.CreateCommand()) {
+      generic.Transaction = transaction;
+      generic.CommandText = "SET LOCAL plan_cache_mode = force_generic_plan";
+      await generic.ExecuteNonQueryAsync();
+    }
     await using (var statement = connection.CreateCommand()) {
       statement.Transaction = transaction;
       prepare(statement);
