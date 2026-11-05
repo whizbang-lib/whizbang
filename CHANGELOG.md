@@ -473,6 +473,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
 
 #### Startup
+- **Older instances stand down cluster-wide when a newer version comes online (#2022).** A newer instance, once it
+  serves, publishes a durable `NewerVersionOnlineSignal` when an older instance is online; every older running instance
+  asks the one Assess verdict again (also on an instance that died or left, and on the standby watcher's slow cadence)
+  and stands down through the one run-control path, the same path as a pause and a stop: stop claiming, finish or
+  release held work, release roles, record `StandingBy`. The row's stage message says why (the newer version and the
+  instance it runs on), logged once (`StandbyWatcher` event 3). The maintenance role moves on the newer instance's
+  normal vote. Assess now reads the live, serving instances beside the migration ledger, in both drivers, so an
+  instance that starts while a newer one is online stands down at once.
+  - **Both versions:** an instance stands down when a strictly newer library (W!) version or application version is
+    recorded or online. One rule orders them (`UpgradeOrder`): the library first, by SemVer; the application version
+    only between equal library versions, like with like (SemVer, or a host deploy number); an unknown application
+    version and two of different schemes never order. Equal versions do nothing, and an older instance never stands a
+    newer one down. The coordination source guard fails any version comparison outside the rule.
+  - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
+    Assess) when the verdict no longer says stand down, for example when the newer instance died before migrating
+    anything; before, an instance stood down by the runtime re-assessment stayed down until replaced. A newer library
+    version the ledger records still keeps it down.
+  - `IOnlineVersionReader` (both Postgres drivers) reads the online instances' versions; `EFCorePostgresStartupAssessor`
+    takes the application version and the instance identity.
 - **Assess is the first stage of startup, and its one verdict binds everything after it (part of #1636).**
   `StartupAssessmentSource` reads the version record once per host; the `Assess` step, the schema initializer and each
   driver's schema pass read that verdict (`StartupVerdictBinding`) and nothing reads the schema again to decide. A

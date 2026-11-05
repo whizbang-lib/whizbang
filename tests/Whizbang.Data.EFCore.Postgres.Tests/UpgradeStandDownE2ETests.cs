@@ -80,7 +80,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   }
 
   /// <summary>Registers an instance through the database's own heartbeat, as a pooled instance with a 90 second window.</summary>
-  private async Task<Guid> _onlineAsync(CancellationToken ct, string library, string? application, string phase = "Running") {
+  private async Task<Guid> _onlineAsync(string library, string? application, string phase, CancellationToken ct) {
     var id = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync(ct);
     await using var cmd = conn.CreateCommand();
@@ -88,9 +88,9 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
       SELECT record_heartbeat(@id, 'upgrade-svc', 'upgrade-host', 1, '{}'::jsonb, @phase, @library, 90, 'pooled', @application)
       """;
     cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("phase", phase);
-    cmd.Parameters.AddWithValue("library", library);
-    cmd.Parameters.Add(new NpgsqlParameter("application", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)application ?? DBNull.Value });
+    cmd.Parameters.AddWithValue(nameof(phase), phase);
+    cmd.Parameters.AddWithValue(nameof(library), library);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(application), NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)application ?? DBNull.Value });
     await cmd.ExecuteScalarAsync(ct);
     return id;
   }
@@ -115,7 +115,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ANewerApplicationVersionOnline_StandsAnOlderInstanceDown_NamingTheNewerInstanceAsync(CancellationToken ct) {
-    var newer = await _onlineAsync(ct, "999.0.0", "2.0.0");
+    var newer = await _onlineAsync("999.0.0", "2.0.0", "Running", ct);
 
     var assessment = await _assessor(new Pod()).AssessAsync(ct);
 
@@ -126,7 +126,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ANewerLibraryVersionOnline_StandsAnOlderInstanceDownAsync(CancellationToken ct) {
-    var newer = await _onlineAsync(ct, "1000.0.0", "1.0.0");
+    var newer = await _onlineAsync("1000.0.0", "1.0.0", "Running", ct);
 
     var assessment = await _assessor(new Pod()).AssessAsync(ct);
 
@@ -140,7 +140,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Arguments("StandingBy")]
   [Arguments("Stopping")]
   public async Task ANewerInstanceThatIsNotServing_IsNotOnlineAsync(string phase, CancellationToken ct) {
-    await _onlineAsync(ct, "1000.0.0", "2.0.0", phase);
+    await _onlineAsync("1000.0.0", "2.0.0", phase, ct);
 
     var assessment = await _assessor(new Pod()).AssessAsync(ct);
 
@@ -151,9 +151,9 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ANewerInstanceTheRuleCallsDead_OrOneEvicted_IsNotOnlineAsync(CancellationToken ct) {
-    var dead = await _onlineAsync(ct, "1000.0.0", "2.0.0");
+    var dead = await _onlineAsync("1000.0.0", "2.0.0", "Running", ct);
     await _dieAsync(dead, ct);
-    var evicted = await _onlineAsync(ct, "1000.0.0", "2.0.0");
+    var evicted = await _onlineAsync("1000.0.0", "2.0.0", "Running", ct);
     await _execAsync("INSERT INTO wh_instance_evictions (instance_id, evicted_at, reason) VALUES (@id, NOW(), 'test')", ct, ("id", evicted));
 
     var assessment = await _assessor(new Pod()).AssessAsync(ct);
@@ -180,7 +180,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Arguments("1.0.0", null)]
   [Arguments("deploy:5", "2.0.0")]
   public async Task AnUnknownOrUnorderedApplicationVersion_StandsNothingDownAsync(string? mine, string? theirs, CancellationToken ct) {
-    await _onlineAsync(ct, "999.0.0", theirs);
+    await _onlineAsync("999.0.0", theirs, "Running", ct);
 
     var assessment = await _assessor(new Pod(), application: mine).AssessAsync(ct);
 
@@ -207,10 +207,22 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task ALedgerThatRecordsNoApplicationVersion_IsReadForItsLibraryVersionsAloneAsync(CancellationToken ct) {
+    // A ledger written before the application version was recorded: its rows know no application version, which stands
+    // nothing down, and the library versions it records still do.
+    await _execAsync("ALTER TABLE wh_schema_versions DROP COLUMN application_version CASCADE", ct);
+    var library = await _ledgerLibraryAsync(ct);
+
+    await Assert.That((await _assessor(new Pod(), library).AssessAsync(ct)).Verdict).IsNotEqualTo(StartupVerdict.StandDown);
+    await Assert.That((await _assessor(new Pod(), "0.0.0-0").AssessAsync(ct)).Verdict).IsEqualTo(StartupVerdict.StandDown);
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task OnADatabaseWithoutTheLivenessRule_OnlyTheLedgerIsReadAsync(CancellationToken ct) {
     // A schema older than the one liveness rule (316): no instance there records an application version, and the read
     // that would judge who is online cannot be made without the rule, so the ledger alone decides.
-    await _onlineAsync(ct, "1000.0.0", "2.0.0");
+    await _onlineAsync("1000.0.0", "2.0.0", "Running", ct);
     await _execAsync("DROP FUNCTION wh_live_instance_ids()", ct);
     var assessor = _assessor(new Pod());
 
@@ -223,10 +235,10 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ReadOnline_ReturnsEveryServingLiveInstance_WithBothVersionsAsync(CancellationToken ct) {
-    var running = await _onlineAsync(ct, "1.0.0", "2.0.0");
-    var accepting = await _onlineAsync(ct, "1.0.0", null, "AcceptingCommands");
-    await _onlineAsync(ct, "1.0.0", "2.0.0", "Migrating");
-    var dead = await _onlineAsync(ct, "1.0.0", "2.0.0");
+    var running = await _onlineAsync("1.0.0", "2.0.0", "Running", ct);
+    var accepting = await _onlineAsync("1.0.0", null, "AcceptingCommands", ct);
+    await _onlineAsync("1.0.0", "2.0.0", "Migrating", ct);
+    var dead = await _onlineAsync("1.0.0", "2.0.0", "Running", ct);
     await _dieAsync(dead, ct);
 
     var online = await _assessor(new Pod()).ReadOnlineAsync(ct);

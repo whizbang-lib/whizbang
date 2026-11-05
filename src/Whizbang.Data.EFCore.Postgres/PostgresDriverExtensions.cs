@@ -137,11 +137,10 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.
-        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
-            new EFCorePostgresStartupAssessor(
-                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-                dbContextType,
-                sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>()));
+        // #2022: with this instance's application version and id, so both versions are compared, and the online
+        // instances' versions from the same read, for a newer instance's announcement.
+        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, dbContextType));
+        selector.Services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, dbContextType));
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
@@ -541,4 +540,12 @@ public static class PostgresDriverExtensions {
     await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return true;
   }
+
+  /// <summary>The driver's assessor (#1992), comparing both versions and skipping the instance's own row (#2022).</summary>
+  private static EFCorePostgresStartupAssessor _assessor(IServiceProvider sp, Type dbContextType) => new(
+    sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+    dbContextType,
+    sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+    sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
+    sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>());
 }

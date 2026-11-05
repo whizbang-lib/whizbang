@@ -419,6 +419,16 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// The driver's assessor (#1992), with this instance's application version and id (#2022) so the one version rule
+  /// compares both versions and never counts the instance's own row.
+  /// </summary>
+  private static DapperPostgresStartupAssessor _assessor(
+      IServiceProvider sp, string connectionString, Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) =>
+    new(connectionString, () => createInitializer(sp),
+      sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()?.InstanceId);
+
+  /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the
   /// schema-ready gate. Nothing here touches the database. Without schema initialization the gate still opens, since a
   /// schema provisioned out of band has nothing to wait for. The instance identity is registered when the host has
@@ -437,8 +447,9 @@ public static class ServiceCollectionExtensions {
     services.AddWhizbangInstanceIdentity();
     // #1992: the Assess verdict, as the EF Core driver gives it, so a Dapper instance stands down rather than migrate a
     // newer schema, and skips the election and the migration on a current one.
-    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
-      new DapperPostgresStartupAssessor(connectionString, () => createInitializer(sp)));
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, connectionString, createInitializer));
+    // #2022: the online instances' versions, from the same read, for a newer instance's announcement.
+    services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, connectionString, createInitializer));
     if (initializeSchema) {
       services.AddSingleton<ISchemaInitializationRunner>(sp => new DapperSchemaInitializationRunner(
         connectionString,

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Versioning;
 using Whizbang.Core.Workers;
 
@@ -48,7 +49,23 @@ public sealed class StandbyWatcherOptions {
 /// Independently of any handshake, the watcher re-assesses this instance's own verdict on a slow
 /// cadence: an instance that was current when it booted becomes obsolete the moment a newer peer
 /// migrates underneath it. On StandDown it enters standby (alive, not ready, reapable) and stays
-/// there — replacement is the orchestrator's decision, prompted by the readiness it can see.
+/// there while the verdict says so.
+/// </para>
+/// <para>
+/// <b>A newer version online (#2022).</b> The re-assessment is the one Assess verdict, which reads the ledger AND the
+/// instances online, by both versions, through the one version rule. Besides the slow cadence, three signals make the
+/// next tick ask at once: <see cref="NewerVersionOnlineSignal"/> (a newer instance is serving), and
+/// <see cref="InstanceDiedSignal"/> and <see cref="InstanceLeavingSignal"/> (an instance went away). Standing down says
+/// why on the instance's row (the stage message names the newer version and where it was seen) before the run-control
+/// path writes StandingBy, and is logged once. A stood-down instance resumes when the verdict no longer says StandDown:
+/// the verdict a fresh start of this binary would get. A newer instance that died leaves nothing newer online, so the
+/// older instances serve again and vote for the roles normally; one that migrated the schema first leaves its newer
+/// library version in the ledger, which keeps them down.
+/// </para>
+/// <para>
+/// Once this instance serves (AcceptingCommands or Running), it announces itself once with a durable
+/// <see cref="NewerVersionOnlineSignal"/> when the one rule finds an older instance online, and again after each resume,
+/// so an older instance that resumed meanwhile hears it.
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
@@ -68,6 +85,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
   private bool _standingByForHandshake;
   private bool _standingDownAsObsolete;
+  private bool _announced;
+  private int _askNow;
+  private ISignalSubscription[]? _subscriptions;
   private DateTimeOffset _lastObsolescenceCheck = DateTimeOffset.MinValue;
 
   /// <summary>Creates the watcher. Inert without an instance identity or a coordinator.</summary>
@@ -110,6 +130,32 @@ public sealed partial class StandbyWatcher : BackgroundService {
     _time = timeProvider;
   }
 
+  /// <summary>
+  /// The signal bus (#2022): a newer version online, and an instance that died or left, make the next tick ask the verdict
+  /// again; this instance's own announcement is published on it. Null: only the slow cadence asks, and nothing is announced.
+  /// </summary>
+  public ISignalBus? Signals { get; init; }
+
+  /// <summary>Reads the versions of the instances online, for this instance's announcement (#2022); null announces nothing.</summary>
+  public IOnlineVersionReader? OnlineVersions { get; init; }
+
+  /// <summary>This instance's application version, compared with the library version when announcing (#2022).</summary>
+  public IApplicationVersionProvider? ApplicationVersion { get; init; }
+
+  /// <summary>This instance's phase: it announces itself only once it serves (#2022); null announces nothing.</summary>
+  public IWhizbangLifecycleState? Lifecycle { get; init; }
+
+  /// <summary>Records why the instance stood down or resumed on its row's stage message (#2022); null records nothing.</summary>
+  public IStartupStageReporter? Stages { get; init; }
+
+  /// <summary>Releases the signal subscriptions, then the loop.</summary>
+  public override void Dispose() {
+    foreach (var subscription in Interlocked.Exchange(ref _subscriptions, null) ?? []) {
+      subscription.Dispose();
+    }
+    base.Dispose();
+  }
+
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_instanceProvider is null) {
@@ -139,6 +185,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   /// <summary>Test hook: one watcher decision cycle without the loop — the loop is cadence,
   /// this is behaviour.</summary>
   public async Task TickForTestsAsync(CancellationToken cancellationToken) {
+    _subscribeOnce();
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
@@ -151,28 +198,88 @@ public sealed partial class StandbyWatcher : BackgroundService {
       await _watchOutcomeAsync(request, cancellationToken).ConfigureAwait(false);
       return;
     }
-    if (_standingDownAsObsolete) {
-      return;   // alive, not ready, reapable — replacement is the orchestrator's decision
-    }
 
-    if (request is not null && _isBindingOnUs(request)) {
+    if (!_standingDownAsObsolete && request is not null && _isBindingOnUs(request)) {
       LogEnteringStandby(_logger, request.RequestedBy, request.RequestedVersion);
       await _runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
       _standingByForHandshake = true;
       return;
     }
 
-    // The verdict is not a startup-only fact — re-assess on the slow cadence.
-    if (_assessor.IsConfigured
-        && _time.GetUtcNow() - _lastObsolescenceCheck >= _options.ObsolescenceInterval) {
-      _lastObsolescenceCheck = _time.GetUtcNow();
-      var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
-      if (assessment.Verdict == StartupVerdict.StandDown) {
-        LogStandingDownAsObsolete(_logger, assessment.Reason);
-        await _runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
-        _standingDownAsObsolete = true;
-      }
+    await _announceOnceServingAsync(cancellationToken).ConfigureAwait(false);
+    await _keepTheVerdictAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>Asks the next tick to read the verdict again, whatever the slow cadence says (#2022).</summary>
+  private ValueTask _askOnTheNextTick() {
+    Volatile.Write(ref _askNow, 1);
+    return ValueTask.CompletedTask;
+  }
+
+  private void _subscribeOnce() {
+    if (Signals is not { } bus || _subscriptions is not null) {
+      return;
     }
+    _subscriptions = [
+      bus.Subscribe<NewerVersionOnlineSignal>(_ => _askOnTheNextTick()),
+      bus.Subscribe<InstanceDiedSignal>(_ => _askOnTheNextTick()),
+      bus.Subscribe<InstanceLeavingSignal>(_ => _askOnTheNextTick()),
+    ];
+  }
+
+  /// <summary>
+  /// The verdict is not a startup-only fact: re-assess on the slow cadence, or at once when a signal asked. Stands down
+  /// on StandDown and, once stood down for it, resumes when the verdict no longer says so (#2022).
+  /// </summary>
+  private async Task _keepTheVerdictAsync(CancellationToken cancellationToken) {
+    var asked = Interlocked.Exchange(ref _askNow, 0) == 1;
+    if (!_assessor.IsConfigured || (!asked && _time.GetUtcNow() - _lastObsolescenceCheck < _options.ObsolescenceInterval)) {
+      return;
+    }
+    _lastObsolescenceCheck = _time.GetUtcNow();
+    var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
+    var standDown = assessment.Verdict == StartupVerdict.StandDown;
+    if (standDown == _standingDownAsObsolete) {
+      return;   // nothing changed: no churn, and each transition is logged once
+    }
+    if (standDown) {
+      LogStandingDownAsObsolete(_logger, assessment.Reason);
+      // Said on the row before the phase: the stage message names the newer version and where it was seen.
+      await _sayAsync("standing down: " + assessment.Reason, cancellationToken).ConfigureAwait(false);
+      await _runControl.HaltAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
+      _standingDownAsObsolete = true;
+      return;
+    }
+    LogResumingAfterStandDown(_logger, assessment.Reason);
+    await _reviveAsync(cancellationToken).ConfigureAwait(false);
+    await _sayAsync("resumed: " + assessment.Reason, cancellationToken).ConfigureAwait(false);
+    _standingDownAsObsolete = false;
+    _announced = false;   // serving again: an older instance that resumed meanwhile must hear about this one
+  }
+
+  private async Task _sayAsync(string message, CancellationToken cancellationToken) {
+    if (Stages?.Current is { } current) {
+      await Stages.EnterAsync(current.Stage, message, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Once serving, announces this instance when the one version rule finds an older instance online (#2022). Asked once
+  /// per time the instance comes to serve; a failed read or publish throws, and the next tick tries again.
+  /// </summary>
+  private async Task _announceOnceServingAsync(CancellationToken cancellationToken) {
+    if (_announced || _standingDownAsObsolete || Signals is not { } bus || OnlineVersions is not { } fleet
+        || Lifecycle?.Phase is not (LifecyclePhase.AcceptingCommands or LifecyclePhase.Running)) {
+      return;
+    }
+    var own = new VersionSighting(_versionProvider.LibraryVersion, ApplicationVersion?.ApplicationVersion.Recorded,
+      _instanceProvider.InstanceId);
+    var older = UpgradeOrder.OlderThan(own, await fleet.ReadOnlineAsync(cancellationToken).ConfigureAwait(false));
+    if (older.Count > 0) {
+      await bus.PublishAsync(new NewerVersionOnlineSignal(), SignalTarget.Broadcast, cancellationToken).ConfigureAwait(false);
+      LogAnnouncedNewerVersion(_logger, own.LibraryVersion, own.ApplicationVersion, older.Count);
+    }
+    _announced = true;
   }
 
   private bool _isBindingOnUs(StandbyRequest request) {
@@ -186,13 +293,11 @@ public sealed partial class StandbyWatcher : BackgroundService {
     // standing to drain us, and an unparseable comparison refuses to bind (never stand down on
     // a guess). Without a version of our own we cannot rank ourselves; the conservative reading
     // is to comply.
-    if (!SemanticVersion.TryParse(request.RequestedVersion, out var requested)) {
+    // #2022: ordered by the one version rule.
+    if (!UpgradeOrder.IsReadable(request.RequestedVersion)) {
       return false;
     }
-    if (!SemanticVersion.TryParse(_versionProvider.LibraryVersion, out var mine)) {
-      return true;
-    }
-    return requested.CompareTo(mine) > 0;
+    return UpgradeOrder.CompareLibrary(request.RequestedVersion, _versionProvider.LibraryVersion) is not <= 0;
   }
 
   // #2027: the database's one liveness rule decides (it counts a requester holding its alive-lock between slow beats);
@@ -229,11 +334,16 @@ public sealed partial class StandbyWatcher : BackgroundService {
     // the read models are still being repaired, and this instance already crossed both barriers before standing by. The
     // schema and read-model gates are sticky-open; the stand-down closed only the run permit, which the resume reopens.
     LogReviving(_logger, reason);
+    await _reviveAsync(cancellationToken).ConfigureAwait(false);
+    _standingByForHandshake = false;
+  }
+
+  /// <summary>Re-enters the startup pipeline at Assess, then lifts the stand-down through the one run-control path.</summary>
+  private async Task _reviveAsync(CancellationToken cancellationToken) {
     if (_pipelineRunner is not null) {
       _ = await _pipelineRunner.RunAsync(cancellationToken).ConfigureAwait(false);
     }
     await _runControl.ResumeAsync(RunHaltReason.StandDown, cancellationToken).ConfigureAwait(false);
-    _standingByForHandshake = false;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
@@ -255,4 +365,13 @@ public sealed partial class StandbyWatcher : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Standby outcome: reviving — re-entering the pipeline at Assess ({Reason})")]
   static partial void LogReviving(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Information,
+    Message = "Resuming after standing down: nothing newer is recorded or online any more ({Reason})")]
+  static partial void LogResumingAfterStandDown(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "Newer version online: this instance (library {LibraryVersion}, application {ApplicationVersion}) is newer "
+      + "than {Older} online instance(s); announcing it, and they stand down")]
+  static partial void LogAnnouncedNewerVersion(ILogger logger, string? libraryVersion, string? applicationVersion, int older);
 }

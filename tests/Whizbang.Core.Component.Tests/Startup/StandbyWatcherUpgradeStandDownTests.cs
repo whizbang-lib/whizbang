@@ -100,7 +100,7 @@ public class StandbyWatcherUpgradeStandDownTests {
   /// <summary>A bus that records publishes and hands each subscribed signal over when a test delivers it.</summary>
   private sealed class RecordingBus : ISignalBus {
     private readonly List<(Type Type, Delegate Handler)> _handlers = [];
-    public List<Type> Published { get; } = [];
+    public List<string> Published { get; } = [];
     public bool FailNextPublish { get; set; }
     public int ActiveSubscriptions => _handlers.Count;
 
@@ -110,7 +110,7 @@ public class StandbyWatcherUpgradeStandDownTests {
         FailNextPublish = false;
         throw new InvalidOperationException("the bus could not reach the database");
       }
-      Published.Add(typeof(TSignal));
+      Published.Add(typeof(TSignal).Name);
       return ValueTask.CompletedTask;
     }
 
@@ -175,7 +175,7 @@ public class StandbyWatcherUpgradeStandDownTests {
 
   private static Harness _harness(
       ScriptedAssessor? assessor = null, OnlineVersions? online = null, Stages? stages = null,
-      TimeSpan? obsolescenceInterval = null, bool wired = true) {
+      TimeSpan? obsolescenceInterval = null, bool wired = true, bool withLifecycle = true, bool withApplicationVersion = true) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => new NoRequests());
     var provider = services.BuildServiceProvider();
@@ -193,8 +193,10 @@ public class StandbyWatcherUpgradeStandDownTests {
       options: new StandbyWatcherOptions { ObsolescenceInterval = obsolescenceInterval ?? TimeSpan.FromHours(1) }) {
       Signals = wired ? bus : null,
       OnlineVersions = wired ? online : null,
-      ApplicationVersion = new ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Resolve(null, null, "1.0.0")),
-      Lifecycle = wired ? lifecycle : null,
+      ApplicationVersion = withApplicationVersion
+        ? new ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Resolve(null, null, "1.0.0"))
+        : null,
+      Lifecycle = wired && withLifecycle ? lifecycle : null,
       Stages = stages,
     };
     return new Harness(watcher, runControl, lifecycle, bus, online, stages, logger, assessor, provider);
@@ -298,7 +300,7 @@ public class StandbyWatcherUpgradeStandDownTests {
     await Assert.That(h.RunControl.HaltedFor).IsNull().Because("the permit reopens; the roles are voted for normally again");
     await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo(
       [LifecyclePhase.Pausing, LifecyclePhase.StandingBy, LifecyclePhase.Resuming, LifecyclePhase.Running]);
-    await Assert.That(h.Stages.Entered.Last()).IsEqualTo((StartupStage.Running, "resumed: nothing newer recorded or online"));
+    await Assert.That(h.Stages.Entered[^1]).IsEqualTo((StartupStage.Running, "resumed: nothing newer recorded or online"));
     await Assert.That(h.ResumesLogged).IsEqualTo(1);
     await Assert.That(h.Logger.Collector.GetSnapshot().Single(r => r.Id.Id == 6).Level).IsEqualTo(LogLevel.Information);
   }
@@ -385,7 +387,7 @@ public class StandbyWatcherUpgradeStandDownTests {
     await _tickAsync(h);
     await _tickAsync(h);
 
-    await Assert.That(h.Bus.Published).IsEquivalentTo([typeof(NewerVersionOnlineSignal)])
+    await Assert.That(h.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)])
       .Because("a decision, published once: the durable log replays it to an older instance that missed it");
     await Assert.That(h.Online.Reads).IsEqualTo(1);
     await Assert.That(h.AnnouncementsLogged).IsEqualTo(1);
@@ -417,7 +419,7 @@ public class StandbyWatcherUpgradeStandDownTests {
 
     h.Lifecycle.Phase = LifecyclePhase.AcceptingCommands;
     await _tickAsync(h);
-    await Assert.That(h.Bus.Published).IsEquivalentTo([typeof(NewerVersionOnlineSignal)]);
+    await Assert.That(h.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)]);
   }
 
   [Test]
@@ -431,7 +433,7 @@ public class StandbyWatcherUpgradeStandDownTests {
     await Assert.That(async () => await _tickAsync(h)).Throws<InvalidOperationException>();
     await _tickAsync(h);
 
-    await Assert.That(h.Bus.Published).IsEquivalentTo([typeof(NewerVersionOnlineSignal)]);
+    await Assert.That(h.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)]);
   }
 
   [Test]
@@ -447,7 +449,7 @@ public class StandbyWatcherUpgradeStandDownTests {
     await _tickAsync(h);
     await _tickAsync(h);
 
-    await Assert.That(h.Bus.Published).IsEquivalentTo([typeof(NewerVersionOnlineSignal)]);
+    await Assert.That(h.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)]);
   }
 
   [Test]
@@ -471,5 +473,26 @@ public class StandbyWatcherUpgradeStandDownTests {
     h.Watcher.Dispose();
 
     await Assert.That(h.Bus.ActiveSubscriptions).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task WithoutALifecycleToTellWhenItServes_NothingIsAnnouncedAsync() {
+    using var h = _harness(online: _fleet(_olderPeer()), withLifecycle: false);
+
+    await _tickAsync(h);
+
+    await Assert.That(h.Online.Reads).IsEqualTo(0).Because("an instance that cannot tell it serves never announces itself");
+  }
+
+  [Test]
+  public async Task WithoutAnApplicationVersion_OnlyTheLibraryVersionCanMakeItNewerAsync() {
+    // An unknown application version never stands another instance down: only a newer library version announces.
+    using var h = _harness(online: _fleet(_olderPeer()), withApplicationVersion: false);
+    await _tickAsync(h);
+    await Assert.That(h.Bus.Published).IsEmpty();
+
+    using var newerLibrary = _harness(online: _fleet(new VersionSighting("0.9.0", "0.9.0", _older)), withApplicationVersion: false);
+    await _tickAsync(newerLibrary);
+    await Assert.That(newerLibrary.Bus.Published).IsEquivalentTo([nameof(NewerVersionOnlineSignal)]);
   }
 }
