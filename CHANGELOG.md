@@ -1372,6 +1372,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A service receives only the commands it handles on a per-namespace command inbox (#2089).** A service that handled
+  any command of a namespace subscribed to that namespace's command inbox with a match-all filter, so handling one command
+  of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.
+  Each command inbox subscription now filters by subject to the command types the service handles. On Azure Service Bus
+  the filter is split across as many rules as the 1,024-character SQL filter limit needs, and the provisioner converges an
+  existing subscription's rules as well as a new one's.
+- **Directed integrity traffic reaches only its addressee (#2090).** Repair and redelivery requests, manifests and the
+  bundles that answer them were addressed to the service's first command inbox, which other services also read. Each
+  service now has its own control inbox, `inbox.whizbang.service.<service>`, that only it subscribes to, and advertises it
+  as its request and reply address. Senders keep answering on whatever address a receiver advertised, so a service on an
+  earlier version keeps receiving where it did.
+- **Framework control traffic a service cannot use is discarded on receipt (#2091).** A control or minted message
+  addressed to another service, or consumed by nothing on the receiving service, is now discarded at the receive
+  boundary on any entity with no inbox row, no comparison and no fan-out, and counted under its reason. Such a message
+  could previously reach dispatch, run database work and be retried until dead-lettered.
+- **Recording a redelivery bundle answer costs in proportion to the bundle (#2093).** The answer scanned the whole
+  integrity ledger under a generic plan, rewrote already-answered rows and could deadlock with a concurrent bundle.
+  Migration 333 finds the covered rows by primary key, leaves answered rows alone and locks in key order.
+- **The shared control topic no longer carries directed integrity traffic (#2094).** A service with no command inbox
+  advertised the system broadcast inbox as its request and reply address, so every request to it and every answer it
+  asked for was delivered to every service. Directed traffic now uses the addressee's own control inbox (#2090); only
+  system commands and the backfill broadcast for types with no known owner remain on the broadcast inbox.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
