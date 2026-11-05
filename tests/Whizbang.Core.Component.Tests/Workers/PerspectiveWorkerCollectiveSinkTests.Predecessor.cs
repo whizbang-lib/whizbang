@@ -260,7 +260,10 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   [Arguments(true)]
   [Arguments(false)]
   public async Task CollectiveSink_Predecessor_NeverArrives_AppliesWhenTheWaitRunsOutAsync(bool withMetrics, CancellationToken cancellationToken) {
-    var clock = new HoldClock();
+    // The first run is held inside its arming, so the row offered again below always lands while that run still has it
+    // reserved and is dropped against the reservation (#2086): the interleaving a loaded runner produced by chance.
+    var clock = new HoldClock { HoldWorkerAtArm = 1, HoldBound = cancellationToken };
+    var dedups = new RowDedupSignal();
     var streamId = TrackedGuid.New().Value;
     var waiting = _sinkWork(streamId);
     var waitingId = Guid.CreateVersion7();
@@ -275,6 +278,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       eventStore: new EventStore { Deserialized = [_flip(waitingId, "b", predecessorId, _flipType)] },
       registry: new Registry([typeof(FlipCollectiveEvent)]),
       dispatcher: dispatcher,
+      processedEventCacheObserver: dedups,
       compositeMetrics: metrics,
       timeProvider: clock,
       predecessorWaitSeconds: 30);
@@ -285,7 +289,10 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await clock.HoldArmed(1).WaitAsync(cancellationToken);
     clock.Advance(TimeSpan.FromSeconds(10));
+    var droppedWhileReserved = dedups.NextDedupOf(waiting.WorkId);
     coordinator.OfferWork([waiting]);
+    await droppedWhileReserved.WaitAsync(cancellationToken);
+    clock.ReleaseArm();
     await clock.PollUntilAsync(clock.HoldArmed(2), cancellationToken);
     var secondWait = clock.ArmedFor[1];
     clock.Advance(TimeSpan.FromSeconds(20));

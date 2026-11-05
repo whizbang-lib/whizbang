@@ -1771,6 +1771,40 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
+  /// <summary>
+  /// Signals each time the worker dedups one particular work row (#2086). A row offered again while the run that held
+  /// it still has it reserved is dropped against that reservation, and nothing in the test's fake time offers it again.
+  /// </summary>
+  private protected sealed class RowDedupSignal : IProcessedEventCacheObserver {
+    private readonly Lock _lock = new();
+    private readonly List<(Guid WorkId, TaskCompletionSource Signal)> _waiters = [];
+
+    /// <summary>Completes the next time <paramref name="workId"/> is deduped, counting only dedups after this call.</summary>
+    public Task NextDedupOf(Guid workId) {
+      var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_lock) {
+        _waiters.Add((workId, signal));
+      }
+      return signal.Task;
+    }
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
+      List<TaskCompletionSource> fired;
+      lock (_lock) {
+        fired = [.. _waiters.Where(w => dedupedEventIds.Contains(w.WorkId)).Select(w => w.Signal)];
+        _waiters.RemoveAll(w => dedupedEventIds.Contains(w.WorkId));
+      }
+      foreach (var signal in fired) {
+        signal.TrySetResult();
+      }
+    }
+
+    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) { }
+    public void OnRetentionActivated(int count) { }
+    public void OnEvicted(int count) { }
+    public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
+  }
+
   /// <summary>Signals when the sink dedups a re-offered, already-completed work row.</summary>
   private sealed class SinkDedupObserver : IProcessedEventCacheObserver {
     private readonly TaskCompletionSource _firstSink = new(TaskCreationOptions.RunContinuationsAsynchronously);
