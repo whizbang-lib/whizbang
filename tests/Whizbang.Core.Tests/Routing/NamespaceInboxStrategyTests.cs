@@ -120,6 +120,9 @@ public class NamespaceInboxStrategyTests {
     await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(new Dictionary<string, object>())).IsFalse();
     await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(
       new Dictionary<string, object> { [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = false })).IsFalse();
+    // Only the boolean true marks the control inbox: a marker of another type (a string that reads "true") does not.
+    await Assert.That(NamespaceInboxStrategy.IsServiceControlInbox(
+      new Dictionary<string, object> { [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = "true" })).IsFalse();
   }
 
   [Test]
