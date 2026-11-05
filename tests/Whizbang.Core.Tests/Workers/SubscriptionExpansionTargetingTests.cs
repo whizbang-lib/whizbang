@@ -56,6 +56,9 @@ public class SubscriptionExpansionTargetingTests {
     await Assert.That(sent[1].Address).IsEqualTo("orders.requests")
       .Because("the owner's own request address, the one its checkpoint announced");
     await Assert.That(sent[1].Command.EventTypes).IsEquivalentTo([_placedWire]);
+    await Assert.That(transport.Published.All(p =>
+        ControlMessageTtl.FromMetadata(p.Destination.Metadata) == TimeSpan.FromMinutes(60))).IsTrue()
+      .Because("#2078: a directed backfill request expires at the broker");
     await Assert.That(sent.All(s => s.Command.StateOnly && s.Command.Topic == "inbox" && s.Command.RequesterService == "expanding-svc"))
       .IsTrue().Because("the answer still comes back state-only to this service's reply topic");
     await Assert.That(coordinator.Registry.Where(kv => kv.Key != "Contracts.PriorType").All(kv => kv.Value == ConsumedTypeBackfillStatus.Requested))
@@ -77,6 +80,8 @@ public class SubscriptionExpansionTargetingTests {
     var (envelope, destination, _) = transport.Published.Single();
     await Assert.That(envelope.Target).IsNull();
     await Assert.That(destination.Address).IsEqualTo("inbox");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: the broadcast fallback expires at the broker too");
     await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire])
       .Because("with no owner to ask, the legacy broadcast stands, and the answering side now ships only what it authored");
   }
@@ -128,6 +133,47 @@ public class SubscriptionExpansionTargetingTests {
       .Because("one owner's types share one request");
   }
 
+  /// <summary>
+  /// The first pass after the upgrade to the consumer registry (#2064): the perspective's event was baselined before,
+  /// and the event only a receptor consumes is new to the registry, so it is an expansion. Its history was never stored
+  /// here, and its owner is known, so it is asked of that owner alone: a directed request, never a broadcast.
+  /// </summary>
+  [Test]
+  public async Task Backfill_FirstPassAfterUpgrade_AsksTheReceptorOnlyEventOfItsOwner_NeverBroadcastsAsync() {
+    var coordinator = new ExpandingCoordinator {
+      Claims = [_claim("whizbang.core.tests.workers.backfillprobes.billing", _billingOwner, "billing-svc", "billing.requests")],
+    };
+    coordinator.Registry[TypeNameFormatter.FormatClrTypeName(typeof(PlacedEvent))] = ConsumedTypeBackfillStatus.Baseline;
+    var transport = new CaptureTransport();
+
+    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+
+    var (envelope, destination, _) = transport.Published.Single();
+    await Assert.That(envelope.Target).IsEqualTo("billing-svc")
+      .Because("the owner is known, so the post-upgrade backfill is directed at it, not broadcast to every holder");
+    await Assert.That(destination.Address).IsEqualTo("billing.requests");
+    await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_billedWire])
+      .Because("only the newly consumed type is an expansion; the baselined perspective type is not asked again");
+  }
+
+  /// <summary>
+  /// #2078: with its own command inbox and the shared topic both consumed, the service names its own inbox as the reply
+  /// address, and a broadcast for a type with no known owner still goes to the shared topic every service reads.
+  /// </summary>
+  [Test]
+  public async Task Backfill_RepliesToItsOwnInbox_AndBroadcastsOnTheSharedTopicAsync() {
+    var coordinator = new ExpandingCoordinator();
+    var transport = new CaptureTransport();
+
+    await _buildWorker(coordinator, transport, ownInbox: "inbox.expanding").RunOnceAsync(CancellationToken.None);
+
+    var (envelope, destination, _) = transport.Published.Single();
+    await Assert.That(destination.Address).IsEqualTo("inbox")
+      .Because("a broadcast must reach every service, which only the shared topic does");
+    await Assert.That(_command(envelope).Topic).IsEqualTo("inbox.expanding")
+      .Because("the answers come back to this service's own command inbox, which no other service reads");
+  }
+
   private static IntegrityDomainClaim _claim(string domain, Guid owner, string name, string? requestTopic) =>
     new() { Domain = domain, OwnerServiceId = owner, OwnerServiceName = name, RequestTopic = requestTopic };
 
@@ -136,14 +182,20 @@ public class SubscriptionExpansionTargetingTests {
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
 
-  private static SubscriptionExpansionWorker _buildWorker(ExpandingCoordinator coordinator, CaptureTransport transport) {
+  private static SubscriptionExpansionWorker _buildWorker(
+      ExpandingCoordinator coordinator, CaptureTransport transport, string? ownInbox = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new ConsumesBoth());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanding-svc"));
     var consumerOptions = new TransportConsumerOptions();
+    if (ownInbox is not null) {
+      consumerOptions.Destinations.Add(new TransportDestination(ownInbox, Metadata: new Dictionary<string, JsonElement> {
+        [Whizbang.Core.Routing.NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = JsonElement.Parse("true"),
+      }));
+    }
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
@@ -153,8 +205,11 @@ public class SubscriptionExpansionTargetingTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(PlacedEvent), typeof(BilledEvent)];
+  /// <summary>The consumer registry (#2058): this service consumes both probe events.</summary>
+  private sealed class ConsumesBoth : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => messageType == _placedWire || messageType == _billedWire;
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [new ConsumedMessageInfo(_placedWire, IsEvent: true), new ConsumedMessageInfo(_billedWire, IsEvent: true)];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {

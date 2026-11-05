@@ -26,7 +26,8 @@ namespace Whizbang.Core.Workers;
 /// <see cref="RebuildPerspectiveCommand"/> per gap.</item>
 /// <item><b>Cross-service (A)</b> — for every origin this consumer knows (the checkpoint
 /// tracker's origin set), a DIRECTED <see cref="RequestIntegrityManifest"/> asking for its
-/// identity digests of this consumer's subscribed types. The manifests come back targeted;
+/// identity digests of the event types this consumer consumes (#2058: its consumer registry, plus the
+/// namespaces it absorbs; never every type it knows). The manifests come back targeted;
 /// comparison happens in the manifest receptor.</item>
 /// </list>
 /// Runs on the instance holding the maintainer duty, and only once the housekeeping idle gate admits integrity work
@@ -229,12 +230,27 @@ public sealed partial class IntegrityAuditWorker(
       LogCoverageGap(_logger, gap.PerspectiveName, gap.StreamId, gap.EventCount, autoRebuild);
     }
 
+    // ── the integrity surface: what this service consumes (#2058) ────────
+    // The events something here consumes, plus the namespaces it absorbs (stored though nothing consumes them): the
+    // receive boundary's keep decision. A type outside it is never stored here, so every bucket of it reads as a deficit
+    // whose redelivery the receive boundary discards; it is neither audited nor kept on the repair ledger.
+    var consumed = ConsumedMessageTypes.EventTypeNames(services);
+    var absorbed = ConsumedMessageTypes.AbsorbedNamespaces(services);
+    var forgotten = await coordinator.IntegrityForgetUnconsumedEventTypesAsync(consumed, absorbed, cancellationToken)
+      .ConfigureAwait(false);
+    if (forgotten > 0) {
+      LogForgotUnconsumedLedgerRows(_logger, forgotten);
+    }
+    if (consumed.Count == 0 && absorbed.Count == 0) {
+      LogNothingConsumed(_logger);
+      return false;   // nothing to audit across services: a configuration, not a cold fleet.
+    }
+
     // ── A: cross-service manifest requests ───────────────────────────────
     var tracker = services.GetService<IntegrityGapTracker>();
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
-    var typeProvider = services.GetService<IEventTypeProvider>();
     var requester = instanceProvider?.ServiceName;
     var topic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (tracker is null || transport is null || serializer is null
@@ -244,11 +260,8 @@ public sealed partial class IntegrityAuditWorker(
 
     // The assembly-qualified WIRE form ("Type, Assembly") — the origin matches these against its
     // event_type/digest columns, which store that form; a CLR-FullName-only list silently
-    // matches nothing and every origin answers with silence.
-    var subscribed = (typeProvider is { IsAvailable: true } ? typeProvider.GetEventTypes() : null)?
-      .Select(TypeNameFormatter.Format)
-      .Distinct(StringComparer.Ordinal)
-      .ToList();
+    // matches nothing and every origin answers with silence. Never null: null asks for every type.
+    var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
       if (string.IsNullOrEmpty(originRequestTopic)) {
@@ -270,7 +283,8 @@ public sealed partial class IntegrityAuditWorker(
         Payload = new RequestIntegrityManifest {
           RequesterService = requester,
           Topic = topic,
-          EventTypes = subscribed,
+          EventTypes = consumed,
+          EventNamespaces = eventNamespaces,
           Level = ManifestLevel.Types,
           UseRecompute = sweep,
           Windowed = !sweep,
@@ -287,7 +301,7 @@ public sealed partial class IntegrityAuditWorker(
       // consumes) — never to the requester's own topics (observed live: requests published
       // there were never received by any origin, only fanned out as noise).
       await transport.PublishAsync(serialized.JsonEnvelope,
-        ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
+        IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), _options), serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),
@@ -305,6 +319,15 @@ public sealed partial class IntegrityAuditWorker(
     }
     return false;
   }
+
+  [LoggerMessage(EventId = 97, Level = LogLevel.Information,
+    Message = "Integrity audit forgot {RowCount} repair-ledger row(s) of event types this service does not consume: "
+            + "they can never heal, because their redelivery is discarded on receive.")]
+  static partial void LogForgotUnconsumedLedgerRows(ILogger logger, int rowCount);
+
+  [LoggerMessage(EventId = 98, Level = LogLevel.Debug,
+    Message = "Integrity audit asked no origin: this service consumes no events and absorbs no namespace.")]
+  static partial void LogNothingConsumed(ILogger logger);
 
   [LoggerMessage(EventId = 96, Level = LogLevel.Information,
     Message = "Integrity audit reached no origins — none have checkpointed yet. Retrying on the "

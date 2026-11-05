@@ -51,6 +51,8 @@ public class StreamRedeliveryRequesterTests {
     var command = _command(envelope);
     await Assert.That(envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(destination.Address).IsEqualTo("origin.requests");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: an operator's redelivery request expires at the broker like every other integrity request");
     await Assert.That(command.StreamIds).Count().IsEqualTo(StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST);
     await Assert.That(command.OperatorRequested).IsTrue();
     await Assert.That(command.RequesterService).IsEqualTo("receiver-svc");

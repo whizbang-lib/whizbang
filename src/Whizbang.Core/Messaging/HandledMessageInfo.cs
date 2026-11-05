@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// priority rules (attribute, framework system namespace, interface, namespace
 /// convention, type-name suffix).
 /// </param>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:InboxSubscriptionContext_CarriesAllComponentsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorRegistryQueryGeneratorTests.cs:Generator_WithCommandReceptor_EmitsHandledMessageWithCommandKindAsync</tests>
 public sealed record HandledMessageInfo(

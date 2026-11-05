@@ -283,6 +283,7 @@ Whizbang:StreamIntegrity:BackfillOnSubscriptionGrowth
 Whizbang:StreamIntegrity:BulkBackfillThresholdEvents
 Whizbang:StreamIntegrity:CheckpointIntervalSeconds
 Whizbang:StreamIntegrity:CheckpointsEnabled
+Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes
 Whizbang:StreamIntegrity:DivergenceReportCooldownMinutes
 Whizbang:StreamIntegrity:EpochClosureEnabled
 Whizbang:StreamIntegrity:FullSweepCron

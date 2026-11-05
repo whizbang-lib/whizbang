@@ -1415,6 +1415,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration, and a pass that failed and retried logged one for every file after the failure, each blaming a replay
   that never happened. The line is now written only for a file the comparison adds to the run; a file already in it
   (new, changed, or not yet reached) is not named. Which files run is unchanged.
+- **Stream integrity audits what the service consumes, not every type it knows (#2058).** The audit request, the
+  checkpoint verification and the manifest comparison took their types from the perspective event-type provider. A
+  consumer with no perspectives asked every origin for every type (the request's type list was null), and a consumer
+  with perspectives never audited the events only a receptor handles. A type nothing here consumes is never stored
+  here, so each of its buckets read as a deficit whose redelivery the receive boundary discarded: its repair-ledger
+  rows never healed, held `whizbang.stream_integrity.unhealed_buckets` up and kept the repair budget cycling. The
+  integrity surface is now the consumer registry (`IConsumerRegistry`, the predicate the receive boundary keeps or
+  discards by, with its new list form `GetConsumedMessages` / `GetConsumedEventTypes`, generated from the same data)
+  plus the namespaces the service absorbs (`RoutingOptions.AbsorbNamespaces`), which the request carries as the new
+  `RequestIntegrityManifest.EventNamespaces` (an origin that predates it answers the type list alone). A service that
+  consumes nothing requests nothing, never every type. Each audit cycle forgets the ledger rows of types outside that
+  surface (`wh_integrity_forget_unconsumed`, migration 331), so an existing ledger heals itself. The
+  subscription-expansion backfill and the orphan-inbox janitor read the same registry: a service with no perspectives
+  now baselines and backfills the events its receptors consume, and the janitor no longer counts on the perspective
+  list for what is handled.
+- **A consumed event reaches the event store whether or not a perspective folds it (#2064).** The receive path
+  classified an event by the perspective event list, so a receptor-only event in a service with perspectives, and every
+  event in a service with none (a transport payload arrives as JSON, so its own marker cannot say), was stored as a
+  non-event and never copied into the event store. The consumer registry's event flag now decides for a type the
+  service consumes (`IConsumerRegistry.FindConsumedMessage`); the perspective list and the payload's marker decide only
+  for a type it does not. The transport consumer's known-event filter counts the consumed events too, and keeps an
+  event the discard policy keeps with no consumer (an absorbed namespace). On the first start after upgrading, the
+  subscription-expansion pass treats those newly stored types as expansions and backfills them under the existing caps,
+  asking each type's known owner directly (#2032) and broadcasting only for a type with no known owner;
+  `whizbang.stream_integrity.backfills_requested` counts them.
+- **Every consumed event's namespace is subscribed (#2065).** The event-namespace registry that decides the transport
+  subscriptions discovered perspectives and `IReceptor<TEvent>` only, so an event consumed by a synchronous receptor, a
+  notification tag or the collective sink had no subscription for its namespace and was never delivered. A service
+  consuming such an event may create one more subscription on its next start.
+- **The orphan-inbox janitor keeps absorbed events (#2066).** It purged every pending inbox row whose type had no
+  consumer, including events in an absorbed namespace, which are stored on purpose so a later perspective can rebuild
+  from them. The janitor now asks the receive boundary's keep decision about each pending type
+  (`IWorkCoordinator.GetPendingInboxMessageTypesAsync`).
+- **An absorbed event received as JSON reaches the event store (#2074).** A type the consumer registry does not know,
+  such as an event in an absorbed namespace (stored on purpose with no consumer), was classified by the perspective
+  list and then by the payload's own marker. A transport payload arrives as JSON, so the marker could not say, and the
+  absorbed event was stored as a non-event and never copied into the event store. The message type catalog's declared
+  kind now decides for a type the application declares (by its current or a former name), before the payload marker.
+  The catalog gives a plain message (neither command nor event) its own kind, `"message"`, instead of `"event"`, so it
+  is never classified as an event or stored; it still publishes where it did, so topology and provisioning are unchanged.
+- **Directed integrity traffic goes to the addressee's own inbox and expires (#2078).** A service's integrity request
+  address defaulted to the first destination it consumes, in practice the shared framework inbox every service reads,
+  so every directed integrity message (manifest and redelivery requests and answers, drill-downs, page follows) was
+  copied to every service, and none expired: a stopped service's subscription grew until the shared topic reached its
+  size cap. The default request address is now the service's own command inbox (the destination the namespace inbox
+  strategy provisions for a command namespace it handles, which only it subscribes to), advertised on the checkpoint
+  as before, so requests and answers reach exactly one service. A broadcast backfill for a type with no known owner
+  still rides the shared topic. An explicit `Whizbang:StreamIntegrity:RepairTopic` still wins; a service with no
+  command inbox of its own keeps the shared fallback and logs once that it does. Every directed integrity message now
+  carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
+  to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
+  topic keeps receiving its traffic there until it upgrades.
+- **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
+  the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
+  (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.
+  No index can serve a range on a `CASE`, so every call read the whole lane and the cost grew with the store rather
+  than the window. Both queries now read the lane as two branches, each with the window as a direct range on its own
+  indexed column (`idx_event_store_commit_sequence`, `idx_event_store_origin_lane`), so a call reads only the rows in
+  its window (migration 332). No new index.
 - **The Dapper work coordinator no longer leaves coordinator operations silently unimplemented (#2051).** It served the
   interface's inert default (an empty list, zero or `unsupported`) for dozens of operations, so on Dapper a retention
   setting such as the pointer prune or the lifecycle-completion window was accepted and removed nothing, the

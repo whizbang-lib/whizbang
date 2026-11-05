@@ -2158,6 +2158,25 @@ public interface IWorkCoordinator {
     Guid deliveryId, string failure, TimeSpan backoff, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// Forgets the repair-ledger rows of event types this service does not consume (#2058): a type nothing here consumes
+  /// is never stored here, so every bucket of it reads as a deficit no repair can heal (the redelivery is discarded at
+  /// the receive boundary). Run by the integrity audit each cycle with the consumed set, so a ledger recorded before the
+  /// audit was narrowed, or before a consumer was removed, heals itself. A null list forgets nothing. Defaults to
+  /// nothing forgotten for engines with no ledger.
+  /// </summary>
+  /// <param name="consumedEventTypes">The event types this service consumes, in the assembly-qualified wire form.</param>
+  /// <param name="absorbedNamespaces">The event namespaces this service absorbs (lowercase): their types are stored
+  /// here whether or not anything consumes them, so their rows are kept.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows forgotten.</returns>
+  /// <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetUnconsumedSqlTests.cs</tests>
+  Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+    IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>
@@ -2879,6 +2898,19 @@ public interface IWorkCoordinator {
     IReadOnlyList<string> handledTypeNames,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
+
+  /// <summary>
+  /// The distinct message types of the pending, unleased <c>wh_inbox</c> rows: the rows
+  /// <see cref="PurgeOrphanInboxAsync"/> may delete. The orphan-inbox janitor asks the receive boundary's keep decision
+  /// about each (#2066), so a type it keeps without a consumer (an absorbed namespace) is never purged. Default: none,
+  /// which leaves the janitor's purge list as it was.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The distinct message type names.</returns>
+  /// <docs>operations/workers/orphan-inbox-janitor</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync</tests>
+  Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<string>>([]);
 
   /// <summary>
   /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of

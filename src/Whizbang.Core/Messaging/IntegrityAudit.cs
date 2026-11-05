@@ -45,6 +45,15 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>Types to manifest (the requester's subscribed set); null = all.</summary>
   public IReadOnlyList<string>? EventTypes { get; init; }
 
+  /// <summary>
+  /// Event namespaces the requester absorbs (#2058): it stores every event in them whether or not anything there
+  /// consumes it, so their types are audited too. The origin adds its own audited event types in these namespaces to
+  /// <see cref="EventTypes"/>. Null or empty adds nothing; an origin that predates the field ignores it and answers
+  /// <see cref="EventTypes"/> alone.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
+  public IReadOnlyList<string>? EventNamespaces { get; init; }
+
   /// <summary>Requested granularity (default <see cref="ManifestLevel.Streams"/> — wire-compatible
   /// with pre-A1c requests).</summary>
   public ManifestLevel Level { get; init; }

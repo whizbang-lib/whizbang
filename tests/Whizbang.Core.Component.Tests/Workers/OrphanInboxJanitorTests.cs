@@ -33,7 +33,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// unmigrated schema). Tests drive <c>StartAsync</c> then await the exposed
 /// <c>BackgroundService.ExecuteTask</c> for determinism.</para>
 /// </summary>
-/// <docs>messaging/resilience/orphan-inbox</docs>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 public class OrphanInboxJanitorTests {
 
   private sealed record SnapshotMsg : IMessage;
@@ -188,16 +188,17 @@ public class OrphanInboxJanitorTests {
   }
 
   /// <summary>
-  /// Perspective + raw-receptor registries union into the handled-type-names
-  /// list passed to the coordinator. Asserts both contributors land in the
-  /// argument.
+  /// Consumer-registry + raw-receptor registries union into the handled-type-names list passed to the coordinator,
+  /// alongside the receptor snapshot. The perspective list is not a source of its own (#2058): the consumer registry
+  /// already lists every type a perspective folds, so a perspective registry adds nothing.
   /// </summary>
   [Test]
-  public async Task StartAsync_UnionsPerspectiveAndRawRegistries_IntoHandledNamesAsync() {
+  public async Task StartAsync_UnionsConsumerAndRawRegistries_IntoHandledNamesAsync() {
     var coordinator = new RecordingCoordinator();
     var perspectives = new StaticPerspectiveRegistry([typeof(int)]);
     var raw = new StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
-    await using var sp = _buildProviderWith(coordinator, perspectives, raw);
+    await using var sp = _buildProviderWith(coordinator, perspectives, raw,
+      new ConsumedRegistry(new ConsumedMessageInfo("Contracts.Folded, Contracts", IsEvent: true)));
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -206,10 +207,65 @@ public class OrphanInboxJanitorTests {
 
     await _runToCompletionAsync(janitor);
 
-    await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(4);
+    await Assert.That(coordinator.LastHandledTypeNames!.Count).IsEqualTo(4)
+      .Because("the snapshot's type, the consumer registry's and the two raw types; the perspective list adds none");
+    await Assert.That(coordinator.LastHandledTypeNames).Contains("Contracts.Folded, Contracts");
   }
 
   /// <summary>
+  /// #2058: the handled names include everything the consumer registry says this service consumes, so a type that
+  /// only a perspective, a tag or the collective sink consumes is never purged as an orphan.
+  /// </summary>
+  [Test]
+  public async Task StartAsync_HandledNames_IncludeEveryTypeTheConsumerRegistryEnumeratesAsync() {
+    var coordinator = new RecordingCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(
+      new ConsumedMessageInfo("Contracts.TaggedNotice, Contracts", IsEvent: false),
+      new ConsumedMessageInfo("Contracts.FoldedEvent, Contracts", IsEvent: true)));
+    await using var sp = services.BuildServiceProvider();
+    var janitor = new OrphanInboxJanitor(sp, new HandledReceptorTypeSnapshot([]), NullLogger<OrphanInboxJanitor>.Instance);
+
+    await _runToCompletionAsync(janitor);
+
+    await Assert.That(coordinator.LastHandledTypeNames).IsEquivalentTo(
+      ["Contracts.TaggedNotice, Contracts", "Contracts.FoldedEvent, Contracts"])
+      .Because("what the service consumes comes from the one consumer registry, not from the perspective list");
+  }
+
+  /// <summary>
+  /// #2066: a pending type the receive boundary keeps without a consumer (an absorbed namespace: stored so a later
+  /// perspective can rebuild from it) is handed to the purge as handled, so its rows survive; a pending type nothing keeps
+  /// is still purged.
+  /// </summary>
+  [Test]
+  public async Task StartAsync_APendingTypeInAnAbsorbedNamespace_IsKeptAsync() {
+    var coordinator = new RecordingCoordinator {
+      PendingTypes = ["Contracts.Jobs.JobStarted, Contracts", "Other.Gone, Other"],
+    };
+    var consumers = new ConsumedRegistry(new ConsumedMessageInfo("Contracts.Folded, Contracts", IsEvent: true));
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(consumers);
+    services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
+      consumers, NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
+      new System.Diagnostics.Metrics.Meter("orphan-inbox-absorbed-test"),
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces("contracts.jobs")),
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+    await using var sp = services.BuildServiceProvider();
+    var janitor = new OrphanInboxJanitor(sp, new HandledReceptorTypeSnapshot([]), NullLogger<OrphanInboxJanitor>.Instance);
+
+    await _runToCompletionAsync(janitor);
+
+    await Assert.That(coordinator.LastHandledTypeNames).Contains("Contracts.Jobs.JobStarted, Contracts")
+      .Because("an absorbed namespace's events are kept on receive, so the janitor must not purge them as orphans");
+    await Assert.That(coordinator.LastHandledTypeNames).DoesNotContain("Other.Gone, Other")
+      .Because("a type nothing here keeps is still an orphan");
+  }
+
+  /// <summary>
+  /// The old shape ran the purge inline  /// <summary>
   /// The old shape ran the purge inline in <c>StartAsync</c>, so every later hosted service
   /// waited on it. StartAsync must now return without purging — the sweep is background work.
   /// </summary>
@@ -243,9 +299,13 @@ public class OrphanInboxJanitorTests {
   private static ServiceProvider _buildProviderWith(
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry? perspectives = null,
-      IRawReceptorRegistry? raw = null) {
+      IRawReceptorRegistry? raw = null,
+      IConsumerRegistry? consumers = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    if (consumers != null) {
+      services.AddSingleton(consumers);
+    }
     if (perspectives != null) {
       services.AddSingleton(perspectives);
     }
@@ -306,6 +366,10 @@ public class OrphanInboxJanitorTests {
     public IReadOnlyList<string>? LastHandledTypeNames { get; private set; }
     public IReadOnlyList<PurgedOrphanInboxRow> PurgeResult { get; set; } = [];
     public bool ThrowOnPurge { get; set; }
+    public IReadOnlyList<string> PendingTypes { get; init; } = [];
+
+    Task<IReadOnlyList<string>> IWorkCoordinator.GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken) =>
+      Task.FromResult(PendingTypes);
 
     // Explicit interface impl required to override the default interface
     // method on IWorkCoordinator — a `new` member wouldn't be dispatched
@@ -320,6 +384,11 @@ public class OrphanInboxJanitorTests {
       }
       return Task.FromResult(PurgeResult);
     }
+  }
+
+  private sealed class ConsumedRegistry(params ConsumedMessageInfo[] consumed) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
   }
 
   private sealed class StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {

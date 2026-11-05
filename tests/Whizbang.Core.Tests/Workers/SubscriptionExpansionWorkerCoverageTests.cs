@@ -33,12 +33,20 @@ public class SubscriptionExpansionWorkerCoverageTests {
 
   private static readonly string _probeType = TypeNameFormatter.FormatClrTypeName(typeof(ProbeEvent));
 
-  private sealed class EmptyTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class EmptyTypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
-  private sealed class OneTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(ProbeEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class OneTypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(ProbeEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   /// <summary>In-memory consumed-type registry mirroring production status semantics.</summary>
@@ -97,12 +105,12 @@ public class SubscriptionExpansionWorkerCoverageTests {
   /// provider registered by design. If this reconciler assumed they exist, that host would crash
   /// on every boot instead of simply having nothing to reconcile with.</summary>
   [Test]
-  public async Task RunOnceAsync_NoCoordinatorOrTypeProviderRegistered_ReturnsWithoutThrowingAsync() {
+  public async Task RunOnceAsync_NoCoordinatorOrConsumerRegistryRegistered_ReturnsWithoutThrowingAsync() {
     var transport = new CaptureTransport();
     var logger = new CapturingLogger();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    // Deliberately no IWorkCoordinator and no IEventTypeProvider — schema-only / diagnostic
+    // Deliberately no IWorkCoordinator and no IConsumerRegistry: schema-only / diagnostic
     // composition. A transport IS present, so "nothing was broadcast" is a fact about the
     // reconciler rather than about there being nowhere to broadcast to.
     services.AddSingleton<ITransport>(transport);
@@ -127,7 +135,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new EmptyTypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new EmptyTypeProvider());
     var worker = _build(services);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -149,7 +157,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new OneTypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new OneTypeProvider());
     services.AddSingleton<ITransport>(transport);
     var worker = _build(services);
 
@@ -187,7 +195,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new OneTypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new OneTypeProvider());
     // No ITransport, no IEnvelopeSerializer, no IServiceInstanceProvider — nothing to send with.
     var worker = _build(services,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger);

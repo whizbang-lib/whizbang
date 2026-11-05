@@ -36,7 +36,7 @@ internal static class ReceiveConsumerGate {
   /// something does, or when the envelope type cannot say.
   /// </summary>
   /// <param name="envelopeType">The envelope type name the transport carried.</param>
-  /// <param name="registry">The compile-time consumer registry.</param>
+  /// <param name="registry">The consumer registry.</param>
   /// <param name="runtimeRegistry">The runtime receptor registry (integration-test waits, dynamic registrations).</param>
   /// <param name="markerResolver">Recognizes composites, which nothing consumes as such.</param>
   /// <param name="discardPolicy">The shared discard policy, when the worker pipeline registered one.</param>
@@ -47,7 +47,7 @@ internal static class ReceiveConsumerGate {
   /// </remarks>
   internal static string? UnconsumedMessageType(
       string? envelopeType,
-      IReceptorRegistryQuery registry,
+      IConsumerRegistry registry,
       IReceptorRegistry runtimeRegistry,
       IEventMarkerResolver markerResolver,
       IMessageDiscardPolicy? discardPolicy) {
@@ -55,17 +55,35 @@ internal static class ReceiveConsumerGate {
       return null;
     }
     var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
-    if (innerMessageType is null
-        || registry.HasAnyConsumer(innerMessageType)
-        || runtimeRegistry.HasAnyRuntimeReceptors(innerMessageType)
-        || CompositeInboxFanout.IsCompositeWireType(innerMessageType, markerResolver)) {
+    if (innerMessageType is null || Keeps(innerMessageType, registry, runtimeRegistry, markerResolver, discardPolicy)) {
       return null;
     }
-    // No policy (a host without the worker pipeline) keeps the registry-only decision: unconsumed. The receive gate's
-    // topic and subscription are not part of the decision: the policy derives the namespace from the payload type,
-    // since a transport's topic can be a queue name.
-    return discardPolicy?.EvaluateReceive(innerMessageType, string.Empty, string.Empty).ShouldDiscard != false
-      ? innerMessageType
-      : null;
+    return innerMessageType;
   }
+
+  /// <summary>
+  /// Whether this service keeps a received message of the given payload type: something here consumes it, it is a
+  /// composite (consumed by the fan-out), or the discard policy keeps it (an absorbed namespace, a tag this host acts
+  /// on). The one decision the receive boundary and stream integrity's filters share (#2058).
+  /// </summary>
+  /// <param name="innerMessageType">The payload type name.</param>
+  /// <param name="registry">The consumer registry; null keeps nothing on its account.</param>
+  /// <param name="runtimeRegistry">The runtime receptor registry.</param>
+  /// <param name="markerResolver">Recognizes composites; null recognizes none.</param>
+  /// <param name="discardPolicy">The shared discard policy, when the worker pipeline registered one.</param>
+  /// <returns>True when the message is kept.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+  internal static bool Keeps(
+      string innerMessageType,
+      IConsumerRegistry? registry,
+      IReceptorRegistry runtimeRegistry,
+      IEventMarkerResolver? markerResolver,
+      IMessageDiscardPolicy? discardPolicy) =>
+    registry?.HasAnyConsumer(innerMessageType) == true
+      || runtimeRegistry.HasAnyRuntimeReceptors(innerMessageType)
+      || CompositeInboxFanout.IsCompositeWireType(innerMessageType, markerResolver)
+      // No policy (a host without the worker pipeline) keeps the registry-only decision. The receive gate's topic and
+      // subscription are not part of the decision: the policy derives the namespace from the payload type, since a
+      // transport's topic can be a queue name.
+      || discardPolicy?.EvaluateReceive(innerMessageType, string.Empty, string.Empty).ShouldDiscard == false;
 }

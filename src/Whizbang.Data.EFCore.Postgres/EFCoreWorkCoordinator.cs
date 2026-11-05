@@ -910,6 +910,37 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Best-effort: a prune that cannot reach the ledger is logged and answers 0; the next audit cycle prunes.</remarks>
+  public async Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+      IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(consumedEventTypes);
+    ArgumentNullException.ThrowIfNull(absorbedNamespaces);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_forget_unconsumed");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      cmd.Parameters.AddWithValue("p_consumed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, consumedEventTypes.ToArray());
+      cmd.Parameters.AddWithValue("p_absorbed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, absorbedNamespaces.ToArray());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_consumed,@p_absorbed)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_forget_unconsumed failed; rows of unconsumed event types stay until the next audit cycle.");
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
   /// out their backoff only, as before.</remarks>
   public async Task<int> IntegrityMarkAnswerPendingAsync(
@@ -1926,7 +1957,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)untilSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      AddDigestExemptParam(cmd);
 
       return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
         cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
@@ -2027,38 +2058,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Pages walk WHOLE streams in stream-id order (streams are homogeneous — one type, one
       // tenant — so rows ≈ streams). The pick fetches one sentinel stream past the bound: its
       // presence is how we know the window is not complete without a second count query.
-      cmd.CommandText = $"""
-        WITH lane AS (
-          SELECT es.*,
-                 CASE WHEN (@p_origin::uuid) IS NULL THEN es.commit_sequence
-                      ELSE es.origin_commit_sequence END AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-                 OR es.origin_service_id = @p_origin)
-        ),
-        win AS (
-          SELECT l.* FROM lane l
-          WHERE l.lane_seq IS NOT NULL AND l.lane_seq >= @p_since AND l.lane_seq < @p_until
-            AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-            AND COALESCE(l.flags, 0) & 8 = 0
-            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-            AND l.created_at < NOW() - @p_settle::interval
-        ),
-        pick AS (
-          SELECT DISTINCT w.stream_id FROM win w
-          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
-          ORDER BY w.stream_id
-          LIMIT @p_limit
-        )
-        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
-               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
-        FROM win w JOIN pick p ON p.stream_id = w.stream_id
-        GROUP BY 1, 2, 3
-        ORDER BY 3, 1, 2
-        """;
+      cmd.CommandText = WindowedStreamDigestSql(schema);
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
@@ -2067,7 +2067,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LIMIT, pageBound + 1));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      AddDigestExemptParam(cmd);
 
       var rows = new List<StreamDigest>();
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
@@ -3287,7 +3287,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
-      _addDigestExemptParam(count);
+      AddDigestExemptParam(count);
       await using var reader = await count.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var tenant = reader.GetString(0);
@@ -3350,7 +3350,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
-    _addDigestExemptParam(cmd);
+    AddDigestExemptParam(cmd);
 
     var results = new List<CheckpointBucket>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -3526,7 +3526,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      AddDigestExemptParam(cmd);
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
         .ConfigureAwait(false);
@@ -3726,8 +3726,54 @@ public class EFCoreWorkCoordinator<TDbContext>(
              (SELECT COUNT(*)::int FROM drift_added)
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-    _addDigestExemptParam(cmd);
+    AddDigestExemptParam(cmd);
   }
+
+  /// <summary>
+  /// The windowed stream-digest query <see cref="ComputeStreamDigestsWindowedAsync"/> runs: one page of whole streams
+  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs</tests>
+#pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
+  internal static string WindowedStreamDigestSql(string schema) => $"""
+        WITH lane AS (
+          -- #2080: one branch per lane, each with the window as a direct range on its own indexed column, so the read
+          -- is the window's rows rather than the whole lane filtered through a CASE no index can serve.
+          SELECT es.*, es.commit_sequence AS lane_seq
+          FROM {schema}.wh_event_store es
+          WHERE (@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+            AND es.commit_sequence >= @p_since AND es.commit_sequence < @p_until
+          UNION ALL
+          SELECT es.*, es.origin_commit_sequence AS lane_seq
+          FROM {schema}.wh_event_store es
+          WHERE (@p_origin::uuid) IS NOT NULL AND es.origin_service_id = @p_origin
+            AND es.origin_commit_sequence >= @p_since AND es.origin_commit_sequence < @p_until
+        ),
+        win AS (
+          SELECT l.* FROM lane l
+          WHERE ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
+            AND COALESCE(l.flags, 0) & 8 = 0
+            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+            AND l.created_at < NOW() - @p_settle::interval
+        ),
+        pick AS (
+          SELECT DISTINCT w.stream_id FROM win w
+          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
+          ORDER BY w.stream_id
+          LIMIT @p_limit
+        )
+        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
+               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM win w JOIN pick p ON p.stream_id = w.stream_id
+        GROUP BY 1, 2, 3
+        ORDER BY 3, 1, 2
+        """;
+#pragma warning restore S2077, RCS1158
 
   /// <summary>
   /// Binds the digest queries' shared filter: the origin service and the event types, each null when
@@ -3749,7 +3795,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   // Binds the digest exemption every recompute folds against (#1492).
-  private static void _addDigestExemptParam(System.Data.Common.DbCommand cmd) =>
+  internal static void AddDigestExemptParam(System.Data.Common.DbCommand cmd) =>
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_DIGEST_EXEMPT, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
     });
@@ -5253,6 +5299,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ));
     }
     return rows;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default) {
+    var schema = _resolveSchema(typeof(InboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var command = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified table names built from a validated schema constant.
+    command.CommandText = Whizbang.Data.Postgres.PendingInboxTypesSql.Query($"\"{schema}\".");
+#pragma warning restore S2077
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var types = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      types.Add(reader.GetString(0));
+    }
+    return types;
   }
 
   /// <inheritdoc />

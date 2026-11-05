@@ -61,6 +61,18 @@ public class StreamIntegrityOptionsValidatorTests {
   }
 
   [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AControlMessageTimeToLiveBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { ControlMessageTimeToLiveMinutes = minutes });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2078: a lifetime below a minute expires a directed request before its addressee can read it");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes");
+  }
+
+  [Test]
   public async Task Validate_BothSettingsWrong_NamesBothKeysAsync() {
     var result = new StreamIntegrityOptionsValidator().Validate(
       null, new StreamIntegrityOptions { MaxRepairDrainBacklog = 0, RepairAnswerTimeoutMinutes = 0 });

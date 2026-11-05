@@ -76,6 +76,8 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var (envelope, destination, _) = transport.Published[0];
     await Assert.That(destination.Address).IsEqualTo("events-topic");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a redelivery answer is an integrity control message, so it expires at the broker");
     await Assert.That(envelope.Target).IsEqualTo("damaged-svc")
       .Because("re-delivery bundles are DIRECTED at the requester — every other consumer discards them.");
     var composite = serializer.Captured[0].Payload;
@@ -364,6 +366,28 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(transport.Published).IsEmpty()
       .Because("absent options read as the report-only default; serving repair is the opt-in");
     await Assert.That(coordinator.Requests).IsEmpty();
+  }
+
+  /// <summary>
+  /// An operator request is served even with no integrity options registered (#1028), and its answer still expires at
+  /// the broker, after the default integrity time to live (#2078).
+  /// </summary>
+  [Test]
+  public async Task Receptor_AnOperatorRequest_WithNoIntegrityOptions_AnswersWithTheDefaultTimeToLiveAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, repairMode: null);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId) with { OperatorRequested = true });
+
+    await Assert.That(transport.Published).Count().IsEqualTo(1);
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata))
+      .IsEqualTo(TimeSpan.FromMinutes(new StreamIntegrityOptions().ControlMessageTimeToLiveMinutes))
+      .Because("with no options registered the answer takes the default integrity time to live");
   }
 
   private static ServiceProvider _buildProvider(

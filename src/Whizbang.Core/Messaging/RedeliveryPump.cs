@@ -112,6 +112,14 @@ public sealed class RedeliveryPump(
   public bool OperatorRequested { get; init; }
 
   /// <summary>
+  /// How long each answering bundle lives at the broker (#2078): a redelivery answer is an integrity control message,
+  /// and a stale one expires rather than accumulating on a stopped requester's subscription. Null (the default, used by
+  /// non-integrity pumps such as the audit ledger rebuild) leaves the broker's own expiry.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
+  public TimeSpan? AnswerTimeToLive { get; init; }
+
+  /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
   /// Returns the number of composites published.
   /// </summary>
@@ -232,6 +240,9 @@ public sealed class RedeliveryPump(
     // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
     var destination = Transports.ControlPlaneDestination.For(topic, composite.StreamId, typeof(RedeliveryComposite));
+    if (AnswerTimeToLive is { } lifetime) {
+      destination = Transports.ControlMessageTtl.Stamp(destination, lifetime);
+    }
 
     // A broker under throttle fails sends transiently; without a bounded retry ONE failed send
     // aborts the whole serve — every later chunk dies with it and the requester's attempt burns

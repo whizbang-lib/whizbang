@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Stream-integrity Phase S: the startup subscription-expansion reconciler. Diffs this service's
-/// consumed event-type catalog against the persisted consumed-type registry. FIRST boot baselines
+/// consumed event types (its consumer registry, #2058) against the persisted consumed-type registry. FIRST boot baselines
 /// the whole catalog (nothing existed to miss). A type appearing on a LATER boot is an EXPANSION —
 /// history exists this service never received — recorded as Pending and, when
 /// <see cref="StreamIntegrityOptions.BackfillOnSubscriptionGrowth"/> (default true), repaired via
@@ -52,17 +52,18 @@ public sealed partial class SubscriptionExpansionWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
-    var typeProvider = services.GetRequiredService<IEventTypeProvider>();
-    if (coordinator is null || !typeProvider.IsAvailable) {
+    if (coordinator is null) {
       return;   // schema-only / diagnostic hosts: nothing to reconcile with.
     }
 
+    // The consumed event types (#2058): what the consumer registry says this service consumes, receptors included, not
+    // the perspective event list, which is empty for a service with no perspectives.
     // The registry keys on the no-assembly CLR name (persisted rows predate any form change and
     // must not re-baseline), but the ORIGIN matches redelivery types against event_type in the
     // assembly-qualified WIRE form — so the outgoing request maps through this table.
     var wireByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
-    foreach (var type in typeProvider.GetEventTypes()) {
-      wireByClrName.TryAdd(TypeNameFormatter.FormatClrTypeName(type), TypeNameFormatter.Format(type));
+    foreach (var wire in ConsumedMessageTypes.EventTypeNames(services)) {
+      wireByClrName.TryAdd(TypeNameFormatter.GetFullName(wire), wire);
     }
     var catalogTypes = wireByClrName.Keys.ToList();
     if (catalogTypes.Count == 0) {
@@ -155,24 +156,29 @@ public sealed partial class SubscriptionExpansionWorker(
     foreach (var (owner, types) in byOwner.Values) {
       var command = new RequestRedeliveryCommand { EventTypes = types, RequesterService = requester, Topic = topic, StateOnly = true };
       await RedeliveryRequestDispatch.PublishAsync(
-        transport, serializer, instanceProvider, command, owner.OwnerServiceName, owner.RequestTopic!, owner.OwnerServiceId,
+        transport, serializer, instanceProvider, command, owner.OwnerServiceName,
+        IntegrityControlDestination.For(owner.RequestTopic!, owner.OwnerServiceId, typeof(RequestRedeliveryCommand), _options),
         DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
       LogBackfillDirected(_logger, types.Count, owner.OwnerServiceName);
     }
     if (unowned.Count == 0) {
       return true;
     }
-    await _broadcastAsync(transport, serializer, instanceProvider, requester, topic, unowned, cancellationToken).ConfigureAwait(false);
+    // #2078: the reply comes back to this service's own inbox, but a broadcast must ride the shared topic every service
+    // reads, never this service's own inbox.
+    // Never null here: the reply topic resolved, so the service has a configured topic or a destination to broadcast on.
+    var broadcastTopic = RepairTopicResolver.ResolveBroadcast(_options.RepairTopic, services)!;
+    await _broadcastAsync(transport, serializer, instanceProvider, requester, topic, broadcastTopic, unowned, cancellationToken).ConfigureAwait(false);
     return true;
   }
 
   /// <summary>ONE broadcast (no Target) for the types with no usable owner; the answering side ships only what it
   /// authored, so in practice only the author answers.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "One broadcast send: the transport and serializer, the sender's identity and name, the reply topic, the types and cancellation, all held separately by the one caller.")]
-  private static async Task _broadcastAsync(
+    Justification = "One broadcast send: the transport and serializer, the sender's identity and name, the reply and broadcast topics, the types and cancellation, all held separately by the one caller.")]
+  private async Task _broadcastAsync(
       ITransport transport, IEnvelopeSerializer serializer, IServiceInstanceProvider? instanceProvider, string requester,
-      string topic, List<string> pendingTypes, CancellationToken cancellationToken) {
+      string topic, string broadcastTopic, List<string> pendingTypes, CancellationToken cancellationToken) {
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -189,7 +195,7 @@ public sealed partial class SubscriptionExpansionWorker(
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      ControlPlaneDestination.For(topic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      IntegrityControlDestination.For(broadcastTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), _options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 

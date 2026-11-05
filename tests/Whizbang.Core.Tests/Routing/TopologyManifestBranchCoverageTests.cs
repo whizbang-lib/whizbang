@@ -33,4 +33,22 @@ public class TopologyManifestBranchCoverageTests {
       .Because("on a type-name tie the kind breaks it, so catalog enumeration order cannot leak into the manifest");
     await Assert.That(manifest.PublishDestinations[1].Kind).IsEqualTo(MessageKind.Event);
   }
+
+  /// <summary>
+  /// #2074: a plain message (neither command nor event) has its own catalog kind, "message". It still publishes the
+  /// way it did when the catalog called it an event, so the topology (and what a provisioner creates) is unchanged.
+  /// </summary>
+  [Test]
+  public async Task Build_APlainMessage_PublishesAsItDidBeforeItHadItsOwnKindAsync() {
+    var type = typeof(OutboxTestTypes.Orders.Events.OrderCreated);
+    var context = new InboxSubscriptionContext("OrderService", new HashSet<string>(StringComparer.OrdinalIgnoreCase), []);
+    var asMessage = new[] { new MessageTypeCatalogEntry(type, type.FullName!, "message", PinnedId: null) };
+    var asEvent = new[] { new MessageTypeCatalogEntry(type, type.FullName!, "event", PinnedId: null) };
+
+    var message = TopologyManifestBuilder.Build(new SharedTopicOutboxStrategy(), new SharedTopicInboxStrategy(), context, asMessage);
+    var @event = TopologyManifestBuilder.Build(new SharedTopicOutboxStrategy(), new SharedTopicInboxStrategy(), context, asEvent);
+
+    await Assert.That(message.PublishDestinations).IsEquivalentTo(@event.PublishDestinations)
+      .Because("the kind split must not move where a plain message publishes or what the provisioner creates for it");
+  }
 }

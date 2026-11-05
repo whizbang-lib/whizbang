@@ -160,6 +160,8 @@ public class IntegrityCheckpointReceptorTests {
     var (envelope, destination, _) = fx.Transport.Published.Single();
     await Assert.That(destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never to the requester's own topic.");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a directed integrity request expires at the broker instead of piling up");
     await Assert.That(envelope.Target).IsEqualTo("origin-svc")
       .Because("the request is DIRECTED at the origin — only it should run the selection.");
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -454,7 +456,7 @@ public class IntegrityCheckpointReceptorTests {
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
@@ -562,8 +564,12 @@ public class IntegrityCheckpointReceptorTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(VerifiedEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(VerifiedEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
@@ -796,13 +802,14 @@ public class IntegrityCheckpointReceptorTests {
     }
     var total = scans;
 
-    // Every checkpoint still pays a first-sight count of its OWN window (both halves of each pair,
-    // so 12 across six cycles); those windows advance in production and are per-checkpoint cost,
-    // not per-gap cost. The governor bounds the repeated CONFIRMATION recount of the same stale
-    // window: two (the unchanged threshold), then the cooldown holds.
-    await Assert.That(total).IsEqualTo(14)
-      .Because("detection cost on an unchanged answer must be bounded: 12 first-sight counts + 2 "
-             + "confirmation recounts, then the cooldown holds. Unbounded is 18");
+    // Every checkpoint that names a bucket this service keeps pays a first-sight count of its OWN window (one per
+    // pair here, so 6 across six cycles: an empty checkpoint names nothing to verify, and since #2058 it counts
+    // nothing). Those windows advance in production and are per-checkpoint cost, not per-gap cost. The governor
+    // bounds the repeated CONFIRMATION recount of the same stale window: two (the unchanged threshold), then the
+    // cooldown holds.
+    await Assert.That(total).IsEqualTo(8)
+      .Because("detection cost on an unchanged answer must be bounded: 6 first-sight counts + 2 "
+             + "confirmation recounts, then the cooldown holds. Unbounded is 12");
   }
 
 
