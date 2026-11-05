@@ -59,7 +59,8 @@ public class EFCoreAppSignalTransactionSourceTests {
     await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     await using var scope = provider.CreateAsyncScope();
     var source = (EFCoreAppSignalTransactionSource)scope.ServiceProvider.GetRequiredService<IAppSignalTransactionSource>();
-    await Assert.That(source.ContextTypes).IsEquivalentTo([typeof(DriverSelectorTestDbContext), typeof(WorkCoordinationDbContext)]);
+    await Assert.That(source.ContextTypes.SequenceEqual([typeof(DriverSelectorTestDbContext), typeof(WorkCoordinationDbContext)])).IsTrue()
+      .Because("each context is read once, in the order the driver was composed with it");
     await Assert.That(source.CurrentTransaction).IsNull();
     await Assert.That(() => EFCoreAppSignalTransactionSource.Register(null!, typeof(WorkCoordinationDbContext))).Throws<ArgumentNullException>();
     await Assert.That(() => EFCoreAppSignalTransactionSource.Register(services, null!)).Throws<ArgumentNullException>();

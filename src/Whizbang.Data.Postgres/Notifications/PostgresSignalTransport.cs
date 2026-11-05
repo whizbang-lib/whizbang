@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -44,6 +45,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// travels on <c>wh_app_&lt;topic&gt;</c>, LISTENed while it has a subscriber, with the payload fanned out in memory to
 /// every handler. This is the only place in the library that issues NOTIFY or LISTEN outside the shared connection
 /// itself, and the coordination source guard holds it there.
+/// </para>
+/// <para>
+/// <strong>Transactional publish (#2076).</strong> A topic published inside the caller's transaction is sent inside it,
+/// on the caller's connection, and delivered only on commit; inside a <c>TransactionScope</c> it is sent once the scope
+/// commits; anything else is sent at once on a connection of its own. See <see cref="PublishTopicAsync"/>.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
@@ -298,20 +304,91 @@ public sealed partial class PostgresSignalTransport(
   // Application topics (#2046): the bus's IAppSignalChannel hands each topic here.
   // ============================================================
 
+  /// <summary>
+  /// Test seam: called once a publish deferred to a <see cref="System.Transactions.TransactionScope"/>'s outcome is
+  /// settled, with the channel and whether the notification was sent (false on rollback, with no connection, or when the
+  /// send failed). Lets a test prove a rolled-back scope sent nothing without waiting on time.
+  /// </summary>
+  internal Action<string, bool> DeferredTopicSettled { get; set; } = static (_, _) => { };
+
   /// <inheritdoc />
-  public async Task PublishTopicAsync(string topic, string payload, CancellationToken cancellationToken = default) {
+  /// <remarks>
+  /// <para>Where the notification is sent (#2076):</para>
+  /// <list type="number">
+  ///   <item><description>
+  ///     Inside the caller's open Npgsql <paramref name="transaction"/>, on its connection: PostgreSQL delivers it when the
+  ///     transaction commits and discards it on rollback (or when the savepoint it was sent in rolls back).
+  ///   </description></item>
+  ///   <item><description>
+  ///     Inside a <see cref="System.Transactions.TransactionScope"/>: on a connection of its own once the scope commits,
+  ///     nothing on rollback. It is not sent on an enlisted connection: a second connection enlisted in one scope makes the
+  ///     commit two-phase, which PostgreSQL refuses unless prepared transactions are enabled, and would fail the caller's
+  ///     commit. A send that fails after the commit is logged, since nobody awaits it.
+  ///   </description></item>
+  ///   <item><description>
+  ///     Otherwise at once, on a connection of its own, as before. Another provider's transaction is treated as none; an
+  ///     Npgsql transaction that already finished is refused by Npgsql, so the publish fails instead of escaping it.
+  ///   </description></item>
+  /// </list>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AppSignalTransactionalPublishTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperAppSignalTransactionTests.cs</tests>
+  public async Task PublishTopicAsync(string topic, string payload, DbTransaction? transaction, CancellationToken cancellationToken = default) {
     var channel = AppSignalTopicValidator.ToChannelName(topic);
+    payload ??= string.Empty;
+    if (transaction is NpgsqlTransaction npgsqlTransaction) {
+      // An open transaction always has its connection; a finished one makes Npgsql refuse the command, which surfaces
+      // rather than silently sending outside the transaction the caller asked for.
+      await _notifyAsync(npgsqlTransaction.Connection!, npgsqlTransaction, channel, payload, cancellationToken);
+      return;
+    }
+    if (System.Transactions.Transaction.Current is { } ambient) {
+      ambient.TransactionCompleted += (_, _) => _onAmbientCompleted(ambient, channel, payload);
+      return;
+    }
+    _ = await _publishNowAsync(channel, payload, cancellationToken);
+  }
+
+  private void _onAmbientCompleted(System.Transactions.Transaction ambient, string channel, string payload) {
+    if (ambient.TransactionInformation.Status != System.Transactions.TransactionStatus.Committed) {
+      DeferredTopicSettled(channel, false);
+      return;
+    }
+    // Off the completing thread, with the caller's context left behind: a connection opened in the finished scope's flow
+    // would try to enlist in it.
+    using (ExecutionContext.SuppressFlow()) {
+      _ = Task.Run(() => _publishAfterCommitAsync(channel, payload));
+    }
+  }
+
+  private async Task _publishAfterCommitAsync(string channel, string payload) {
+    var delivered = false;
+    try {
+      delivered = await _publishNowAsync(channel, payload, CancellationToken.None);
+    } catch (Exception ex) {
+      LogTopicPublishAfterCommitFailed(_logger, channel, ex);
+    }
+    DeferredTopicSettled(channel, delivered);
+  }
+
+  private async Task<bool> _publishNowAsync(string channel, string payload, CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
     if (!plan.IsAvailable) {
       LogTopicPublishSkippedNoConnection(_logger, channel);
-      return;
+      return false;
     }
 
     await using var conn = await plan.OpenAsync(cancellationToken);
-    await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
-    cmd.Parameters.AddWithValue("channel", channel);
-    cmd.Parameters.AddWithValue(nameof(payload), payload ?? string.Empty);
+    await _notifyAsync(conn, transaction: null, channel, payload, cancellationToken);
+    return true;
+  }
+
+  private static async Task _notifyAsync(
+      NpgsqlConnection connection, NpgsqlTransaction? transaction, string channel, string payload, CancellationToken cancellationToken) {
+    await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", connection, transaction);
+    cmd.Parameters.AddWithValue(nameof(channel), channel);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
   }
 
@@ -420,6 +497,10 @@ public sealed partial class PostgresSignalTransport(
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
     Message = "PostgresSignalTransport: a handler for application topic {Topic} threw; other handlers continue")]
   static partial void LogTopicHandlerThrew(ILogger logger, string topic, Exception ex);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+    Message = "PostgresSignalTransport: the application signal on {Channel}, held for its TransactionScope to commit, could not be sent after the commit; subscribers will not hear it")]
+  static partial void LogTopicPublishAfterCommitFailed(ILogger logger, string channel, Exception ex);
 
   /// <summary>Releases the broadcast, per-instance and coordination-channel LISTEN registrations on the shared connection.</summary>
   public void Dispose() {

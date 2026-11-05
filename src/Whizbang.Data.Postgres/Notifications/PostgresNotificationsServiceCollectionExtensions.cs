@@ -12,7 +12,6 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Notifications;
-using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 
@@ -134,9 +133,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Hosted to start at Accept commands (#1636): it stamps the message tables the data plane fills.
     services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
 
-    // App signals ride the signal bus (#2046): the channel is the bus, whose Postgres transport carries each topic on
-    // wh_app_<topic>.
-    services.TryAddSingleton<IAppSignalChannel>(static sp => sp.GetRequiredService<Whizbang.Core.Signals.SignalBus>());
+    // App signals ride the signal bus (#2046), whose Postgres transport carries each topic on wh_app_<topic>. The channel
+    // is resolved per scope over the bus (#2076), so a publish inside the scope's transaction is delivered on its commit.
+    services.AddWhizbangAppSignalChannel();
 
     // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
     // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink —

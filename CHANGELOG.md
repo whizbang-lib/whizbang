@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### App signals
+- **An app signal published inside a transaction is delivered on its commit (#2076).** `IAppSignalChannel` is now
+  resolved per scope over the signal bus (`AddWhizbangAppSignalChannel`, called by the Postgres driver). A publish
+  through a channel resolved in a scope whose framework DbContext has a transaction open is sent on that transaction's
+  connection: subscribers hear it only when it commits, never when it (or the savepoint it was made in) rolls back, and
+  PostgreSQL delivers identical topic-and-payload publishes in one transaction once. Inside a `TransactionScope` the
+  signal is sent once the scope commits and dropped on rollback, on EF Core and Dapper alike. Everything else is sent at
+  once, as before: no transaction, a channel held by a singleton or resolved from the root, and a transaction begun on a
+  Dapper connection of the caller's own. Callers do not change. The Postgres driver registers the new
+  `IAppSignalTransactionSource` for every framework DbContext. **Upgrade notes:** a custom `ISignalTopicTransport`
+  implements `PublishTopicAsync(topic, payload, DbTransaction? transaction, ...)`; a payload PostgreSQL rejects (over
+  8000 bytes) published inside a caller's transaction now fails that transaction; code that resolved `IAppSignalChannel`
+  and expected the `SignalBus` instance now receives a per-scope channel over it.
+
 #### Security
 - **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
   singleton `ReceptorInterceptorPipeline`) are asked immediately before every receptor invocation: `SendAsync`,

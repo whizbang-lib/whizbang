@@ -42,7 +42,7 @@ public class DapperAppSignalTransactionTests : PostgresTestBase {
   public async Task InsideATransactionScope_IsHeardOnlyAfterCommitAsync(CancellationToken cancellationToken) {
     await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
     var (channel, transport) = _channel();
-    using var _ = transport;
+    using var ownedTransport = transport;
 
     using (var ambient = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled)) {
       await using (var connection = new NpgsqlConnection(ConnectionString)) {
@@ -63,7 +63,7 @@ public class DapperAppSignalTransactionTests : PostgresTestBase {
   public async Task InsideARolledBackTransactionScope_IsNeverHeardAsync(CancellationToken cancellationToken) {
     await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
     var (channel, transport) = _channel();
-    using var _ = transport;
+    using var ownedTransport = transport;
     var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     transport.DeferredTopicSettled = (_, delivered) => settled.TrySetResult(delivered);
 
@@ -84,7 +84,7 @@ public class DapperAppSignalTransactionTests : PostgresTestBase {
   public async Task InsideAConnectionsOwnTransaction_IsSentAtOnce_TheDocumentedBoundaryAsync(CancellationToken cancellationToken) {
     await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
     var (channel, transport) = _channel();
-    using var _ = transport;
+    using var ownedTransport = transport;
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
     await using var tx = await connection.BeginTransactionAsync(cancellationToken);
@@ -100,7 +100,7 @@ public class DapperAppSignalTransactionTests : PostgresTestBase {
   public async Task WithNoTransaction_IsHeardAtOnceAsync(CancellationToken cancellationToken) {
     await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
     var (channel, transport) = _channel();
-    using var _ = transport;
+    using var ownedTransport = transport;
 
     await channel.PublishAsync(TOPIC, "now", cancellationToken);
 

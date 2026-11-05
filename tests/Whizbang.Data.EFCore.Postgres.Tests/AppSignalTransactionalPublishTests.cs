@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Data;
 using System.Data.Common;
 using System.Transactions;
 using Microsoft.EntityFrameworkCore;
@@ -58,7 +57,7 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
 
   /// <summary>A transaction of another provider: the Postgres transport cannot send on it.</summary>
   private sealed class ForeignTransaction : DbTransaction {
-    public override IsolationLevel IsolationLevel => IsolationLevel.ReadCommitted;
+    public override System.Data.IsolationLevel IsolationLevel => System.Data.IsolationLevel.ReadCommitted;
     protected override DbConnection? DbConnection => null;
     public override void Commit() { }
     public override void Rollback() { }
@@ -281,21 +280,31 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ATransactionThePostgresTransportCannotUse_IsSentAtOnceAsync(CancellationToken cancellationToken) {
-    // Neither a completed Npgsql transaction (no connection any more) nor another provider's transaction can carry the
-    // notification; the publish falls back to sending at once rather than failing.
+  public async Task AnotherProvidersTransaction_IsSentAtOnceAsync(CancellationToken cancellationToken) {
+    // The Postgres transport cannot send inside another provider's transaction, so it treats it as none.
+    await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
+    using var transport = _transport();
+
+    await transport.PublishTopicAsync(TOPIC, "foreign", new ForeignTransaction(), cancellationToken);
+
+    await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo("foreign");
+  }
+
+  [Test]
+  public async Task AFinishedNpgsqlTransaction_FailsThePublish_RatherThanSendingOutsideItAsync(CancellationToken cancellationToken) {
+    // A publish handed a transaction is meant to be tied to it. Once that transaction has finished there is nothing to tie
+    // it to, and sending at once would announce a change the caller meant to commit with it; Npgsql refuses instead.
     await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
     using var transport = _transport();
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
-    var committed = await connection.BeginTransactionAsync(cancellationToken);
-    await committed.CommitAsync(cancellationToken);
+    await using var finished = await connection.BeginTransactionAsync(cancellationToken);
+    await finished.CommitAsync(cancellationToken);
 
-    await transport.PublishTopicAsync(TOPIC, "after-commit", committed, cancellationToken);
-    await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo("after-commit");
-
-    await transport.PublishTopicAsync(TOPIC, "foreign", new ForeignTransaction(), cancellationToken);
-    await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo("foreign");
-    await committed.DisposeAsync();
+    await Assert.That(async () => await transport.PublishTopicAsync(TOPIC, "finished", finished, cancellationToken))
+      .Throws<InvalidOperationException>();
+    await probe.SendSentinelAsync(SENTINEL, cancellationToken);
+    await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo(SENTINEL)
+      .Because("the refused publish sent nothing");
   }
 }

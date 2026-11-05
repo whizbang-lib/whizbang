@@ -55,7 +55,7 @@ internal sealed class AppSignalNotifyProbe : IAsyncDisposable {
     await connection.OpenAsync(cancellationToken);
     await using var notify = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", connection);
     notify.Parameters.AddWithValue("channel", _channel);
-    notify.Parameters.AddWithValue("payload", payload);
+    notify.Parameters.AddWithValue(nameof(payload), payload);
     _ = await notify.ExecuteScalarAsync(cancellationToken);
   }
 
