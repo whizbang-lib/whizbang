@@ -7,10 +7,10 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Transports.HotChocolate.Tests.Fixtures;
+using Whizbang.Transports.HotChocolate.Ids.Tests.Fixtures;
 using Whizbang.Transports.HotChocolate.Types;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Unit;
+namespace Whizbang.Transports.HotChocolate.Ids.Tests.Unit;
 
 /// <summary>
 /// The scalar <c>AddWhizbangIds</c> adds for each id type, read and written directly (#2073).

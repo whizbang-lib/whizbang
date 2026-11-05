@@ -7,9 +7,9 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Transports.HotChocolate.Tests.Fixtures;
+using Whizbang.Transports.HotChocolate.Ids.Tests.Fixtures;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Unit;
+namespace Whizbang.Transports.HotChocolate.Ids.Tests.Unit;
 
 /// <summary>An input type with a strong id field.</summary>
 public sealed class OrderLookupInput {

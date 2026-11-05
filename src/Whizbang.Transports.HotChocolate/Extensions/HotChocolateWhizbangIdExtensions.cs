@@ -12,7 +12,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// Extension methods that let a <c>[WhizbangId]</c> type be a GraphQL argument, input field or output field.
 /// </summary>
 /// <docs>apis/graphql/setup</docs>
-/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangIdGraphQLTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Ids.Tests/Unit/WhizbangIdGraphQLTests.cs</tests>
 /// <example>
 /// services.AddGraphQLServer()
 ///     .AddWhizbangLenses()

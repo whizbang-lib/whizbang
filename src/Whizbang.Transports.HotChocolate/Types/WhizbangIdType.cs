@@ -15,7 +15,7 @@ namespace Whizbang.Transports.HotChocolate.Types;
 /// error instead of reaching the resolver.
 /// </summary>
 /// <docs>apis/graphql/setup</docs>
-/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangIdTypeTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Ids.Tests/Unit/WhizbangIdTypeTests.cs</tests>
 internal sealed class WhizbangIdType : ScalarType {
   /// <summary>The error code of a value that is not a valid id.</summary>
   internal const string INVALID_ID_CODE = "WHIZBANG_INVALID_ID";

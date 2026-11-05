@@ -3,7 +3,7 @@
 
 using Whizbang.Core;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Fixtures;
+namespace Whizbang.Transports.HotChocolate.Ids.Tests.Fixtures;
 
 // Ids for the GraphQL id tests. Kept in their own file so the generator has produced them
 // before the tests reference them.

@@ -13,9 +13,6 @@
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
     <NoWarn>$(NoWarn);CA1707</NoWarn>
-    <!-- The generators run here only to produce the [WhizbangId] types the GraphQL id tests use. The index advisories
-         (WHIZ306, WHIZ308) they also run concern a database a lens reads; these lenses are in-memory fixtures. -->
-    <NoWarn>$(NoWarn);WHIZ306;WHIZ308</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <!-- Exclude generated files from compilation (they're already compiled via the generator pipeline) -->
@@ -24,8 +21,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
-    <!-- Generates the [WhizbangId] types the GraphQL id tests take as arguments and input fields. -->
-    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
