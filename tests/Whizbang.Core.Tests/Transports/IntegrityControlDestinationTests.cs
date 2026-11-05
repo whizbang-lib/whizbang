@@ -49,11 +49,15 @@ public class IntegrityControlDestinationTests {
     await transport.InitializeAsync();
     var orders = new Received();
     var billing = new Received();
-    // Each service consumes its own command inbox and the shared topic, as the namespace inbox strategy provisions them.
+    // #2090: each service consumes its own control inbox, its command inboxes and the shared topic. Billing also handles a
+    // command of the orders namespace, so it reads the orders command inbox too: the shape that leaked before.
     var subscriptions = new List<ISubscription>();
-    subscriptions.AddRange(await _subscribeAsync(transport, orders, "inbox.app.orders", "inbox.whizbang"));
-    subscriptions.AddRange(await _subscribeAsync(transport, billing, "inbox.app.billing", "inbox.whizbang"));
-    var ordersAdvertises = RepairTopicResolver.Resolve(null, _consumer(_ownInbox("inbox.app.orders"), new("inbox.whizbang")))!;
+    subscriptions.AddRange(await _subscribeAsync(transport, orders,
+      "inbox.whizbang.service.orders", "inbox.app.orders", "inbox.whizbang"));
+    subscriptions.AddRange(await _subscribeAsync(transport, billing,
+      "inbox.whizbang.service.billing", "inbox.app.billing", "inbox.app.orders", "inbox.whizbang"));
+    var ordersAdvertises = RepairTopicResolver.Resolve(null, _consumer(
+      _ownInbox("inbox.app.orders"), _control("inbox.whizbang.service.orders"), new("inbox.whizbang")))!;
 
     await transport.PublishAsync(_envelope(), IntegrityControlDestination.For(
       ordersAdvertises, TrackedGuid.New().Value, typeof(RequestIntegrityManifest), new StreamIntegrityOptions()));
@@ -64,7 +68,8 @@ public class IntegrityControlDestinationTests {
 
     await Assert.That(orders.Count).IsEqualTo(1);
     await Assert.That(billing.Count).IsEqualTo(0)
-      .Because("a directed request goes to the addressee's own inbox, which no other service subscribes to");
+      .Because("a directed request goes to the addressee's own control inbox, which no other service subscribes to, "
+               + "even one that handles a command of the addressee's namespace");
   }
 
   private static async Task<List<ISubscription>> _subscribeAsync(InProcessTransport transport, Received received, params string[] topics) {
@@ -86,6 +91,10 @@ public class IntegrityControlDestinationTests {
 
   private static TransportDestination _ownInbox(string topic) => new(topic, Metadata: new Dictionary<string, JsonElement> {
     [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = JsonElement.Parse("true"),
+  });
+
+  private static TransportDestination _control(string topic) => new(topic, Metadata: new Dictionary<string, JsonElement> {
+    [NamespaceInboxStrategy.ServiceControlInboxMetadataKey] = JsonElement.Parse("true"),
   });
 
   private static MessageEnvelope<JsonElement> _envelope() => new() {

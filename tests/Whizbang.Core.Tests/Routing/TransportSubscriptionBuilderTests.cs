@@ -66,9 +66,9 @@ public class TransportSubscriptionBuilderTests {
 
     // Assert - only inbox destinations. The DEFAULT inbox entity changed with the topology
     // arc's default flip (it was the legacy catch-all "inbox"); with no receptors registered
-    // the default topology names just the system broadcast inbox.
-    await Assert.That(destinations.Count).IsEqualTo(1);
-    await Assert.That(destinations[0].Address).IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
+    // the default topology names the service's own control inbox (#2090) and the system broadcast inbox.
+    await Assert.That(destinations.Select(d => d.Address)).IsEquivalentTo(
+      [CommandInboxNaming.ServiceControlTopicFor("OrderService"), CommandInboxNaming.SystemBroadcastTopic]);
   }
 
   #endregion
@@ -511,10 +511,10 @@ public class TransportSubscriptionBuilderTests {
     await Assert.That(manifest!.ServiceName).IsEqualTo("OrderService");
     // The DEFAULT topology changed with the topology arc's default flip: it named exactly the
     // one legacy "inbox" subscription; it now names the system broadcast inbox (no receptors
-    // are registered here, so there is no per-namespace command inbox) and NO catch-all.
-    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(1);
-    await Assert.That(manifest.Subscriptions[0].Topic)
-      .IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
+    // are registered here, so there is no per-namespace command inbox), the service's own control
+    // inbox (#2090), and NO catch-all.
+    await Assert.That(manifest.Subscriptions.Select(s => s.Topic)).IsEquivalentTo(
+      [CommandInboxNaming.ServiceControlTopicFor("OrderService"), CommandInboxNaming.SystemBroadcastTopic]);
   }
 
   [Test]

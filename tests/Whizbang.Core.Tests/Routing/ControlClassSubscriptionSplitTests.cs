@@ -145,7 +145,8 @@ public class ControlClassSubscriptionSplitTests {
     await Assert.That(subscriptions.Select(s => s.Topic).Order()).IsEquivalentTo([
       CommandInboxNaming.ControlBroadcastTopic,
       CommandInboxNaming.SystemBroadcastTopic,
-    ]).Because("no catch-all remnant survives the split either");
+      CommandInboxNaming.ServiceControlTopicFor(_context().ServiceName),
+    ]).Because("no catch-all remnant survives the split either; the service's own control inbox (#2090) stays");
   }
 
   // ========================================
