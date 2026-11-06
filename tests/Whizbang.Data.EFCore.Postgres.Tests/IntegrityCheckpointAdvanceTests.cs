@@ -29,6 +29,8 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
 
+  private static readonly string[] _unscopedWindowBuckets = ["(none)|Contracts.TypeY=1", "tenant-a|Contracts.TypeX=1"];
+
   /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
   private const int AT_MOST_ONCE_FLAG = 32;
 
@@ -79,6 +81,26 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await Assert.That(quiet).IsNotNull();
     await Assert.That(quiet!.FromCommitSequence).IsEqualTo(quiet.ToCommitSequence);
     await Assert.That(quiet.Buckets).IsEmpty();
+  }
+
+  [Test]
+  public async Task Advance_UnscopedEvent_BucketsWithNoTenantAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+    await coordinator.AdvanceIntegrityCheckpointAsync();   // baseline
+
+    // One event in a tenant and one whose scope carries no tenant (a global, unscoped stream).
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, TENANT_A, "Contracts.TypeX");
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, tenant: null, "Contracts.TypeY");
+
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+    await Assert.That(window).IsNotNull();
+    await Assert.That(window!.Buckets.Select(b => $"{b.TenantScope ?? "(none)"}|{b.EventType}={b.Count}").Order().ToList())
+      .IsEquivalentTo(_unscopedWindowBuckets)
+      .Because("an event with no tenant in its scope counts under a null tenant, the same unscoped key a receiver " +
+               "reports, never under an empty-string tenant that would read as a distinct bucket.");
   }
 
   [Test]
@@ -323,7 +345,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   /// <summary>Seeds one stamped event (store pointer + body).</summary>
   private static async Task<Guid> _seedAsync(
-      NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
+      NpgsqlConnection conn, Guid streamId, int version, string? tenant, string eventType,
       int flags = 0, bool stamped = true) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
@@ -334,7 +356,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
+      store.Parameters.AddWithValue("scope", tenant is null ? "{}" : $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue(nameof(version), version);
       store.Parameters.AddWithValue(nameof(flags), flags);
       store.Parameters.AddWithValue(nameof(stamped), stamped);
