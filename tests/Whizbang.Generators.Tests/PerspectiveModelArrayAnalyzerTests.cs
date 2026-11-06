@@ -150,6 +150,96 @@ public class PerspectiveModelArrayAnalyzerTests {
   }
 
   // ========================================
+  // Recursive types (#2112)
+  // ========================================
+
+  private const string RECURSIVE_ADVICE =
+    "so the model is stored as one opaque document and none of its fields can be indexed. Keep it opaque: the mapped "
+    + "path would store only the first level of a recursive type, in any collection shape, and drop the rest.";
+
+  /// <summary>
+  /// An array of a node that holds itself is told it is recursive, not to become a List: a List of a recursive type is
+  /// mapped one level deep and silently drops the rest.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AnArrayOfItself_IsReportedAsRecursive_WithoutTheListAdviceAsync() {
+    var reported = await _whiz200Async(_source("  public List<Node>? Skeleton { get; set; }", """
+      public sealed record Node {
+        public string Label { get; init; } = "";
+        public Node[]? Children { get; init; }
+      }
+      """));
+
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(_locatedAt(reported[0])).IsEqualTo("Children");
+    var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).IsEqualTo(
+      "Property 'Skeleton.Children' of perspective model 'LedgerModel' holds 'Node[]', which is recursive (a type in it "
+      + "holds itself), " + RECURSIVE_ADVICE);
+    await Assert.That(message).DoesNotContain("List<Node>", StringComparison.Ordinal)
+      .Because("following that advice is what turned a whole opaque tree into a truncated mapped one");
+  }
+
+  /// <summary>
+  /// A List of itself, which is what the old advice led to, is reported too: the model is opaque and loses its
+  /// indexing, and the author should know why.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("List<Node>?")]
+  [Arguments("IList<Node>?")]
+  [Arguments("ImmutableList<Node>?")]
+  public async Task ACollectionOfItself_IsReportedAsRecursiveAsync(string childrenType) {
+    var reported = await _whiz200Async(_source("  public Node? Tree { get; set; }", $$"""
+      public sealed record Node {
+        public string Label { get; init; } = "";
+        public {{childrenType}} Children { get; init; }
+      }
+      """));
+
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(_locatedAt(reported[0])).IsEqualTo("Children");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).IsEqualTo(
+      $"Property 'Tree.Children' of perspective model 'LedgerModel' holds '{childrenType.TrimEnd('?')}', which is "
+      + "recursive (a type in it holds itself), " + RECURSIVE_ADVICE);
+  }
+
+  /// <summary>
+  /// An array of a type that is recursive further down gets the recursive message too: a List of it would be opaque
+  /// all the same, so recommending one is advice that changes nothing.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AnArrayOfARecursiveType_IsReportedAsRecursiveAsync() {
+    var reported = await _whiz200Async(_source("  public Branch[] Roots { get; set; } = [];", """
+      public sealed class Branch { public string Label { get; set; } = ""; public List<Leaf>? Leaves { get; set; } }
+      public sealed class Leaf { public string Label { get; set; } = ""; public List<Branch>? Branches { get; set; } }
+      """));
+
+    var messages = reported.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).ToList();
+    await Assert.That(messages).Count().IsEqualTo(2)
+      .Because("the array is reported, and so is the property where the path returns to a type it is inside");
+    await Assert.That(messages).Contains(
+      "Property 'Roots' of perspective model 'LedgerModel' holds 'Branch[]', which is recursive (a type in it holds "
+      + "itself), " + RECURSIVE_ADVICE);
+    await Assert.That(messages).Contains(
+      "Property 'Roots.Leaves.Branches' of perspective model 'LedgerModel' holds 'List<Branch>', which is recursive (a "
+      + "type in it holds itself), " + RECURSIVE_ADVICE);
+  }
+
+  /// <summary>The build switch that turns WHIZ200 off turns the recursive report off with it.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TheBuildProperty_TurnsTheRecursiveReportOffAsync() {
+    var source = _source("  public Node? Tree { get; set; }", """
+      public sealed record Node { public List<Node>? Children { get; init; } }
+      """);
+
+    await Assert.That(await _whiz200Async(source, properties: new Dictionary<string, string> { [SWITCH_PROPERTY] = "false" })).IsEmpty();
+  }
+
+  // ========================================
   // Not reported
   // ========================================
 
