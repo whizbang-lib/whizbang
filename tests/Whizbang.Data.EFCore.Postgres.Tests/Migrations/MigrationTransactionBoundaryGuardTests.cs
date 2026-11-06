@@ -95,6 +95,9 @@ public partial class MigrationTransactionBoundaryGuardTests {
     ["wh_integrity_record_bundle_answer"] =
       "320 (#2033): judges a bundle at commit with the same child lookup as 253, so it reads error from wh_inbox_state "
       + "(alias ist); wh_inbox supplies only message_id, stream_id, scope and message_type, none of which moved",
+    ["wh_reconcile_redelivered_bundles"] =
+      "335 (#2099): the batch form of 253's reconcile, with the same child lookup: it reads error from wh_inbox_state "
+      + "(alias ist); wh_inbox supplies only message_id, stream_id, scope and message_type, none of which moved",
   };
 
   /// <summary>
