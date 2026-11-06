@@ -26,6 +26,8 @@ public static class RepairTraffic {
   public static IReadOnlyList<string> InboxMessageTypeNames { get; } = [
     EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RequestRedeliveryCommand))),
     EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RedeliveryComposite))),
+    // #2092: a paced backfill window's answer is repair traffic too; a report-only service applies none.
+    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(BackfillWindowAnswer))),
   ];
 
   /// <summary>

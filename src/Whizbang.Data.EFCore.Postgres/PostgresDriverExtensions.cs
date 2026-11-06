@@ -209,6 +209,13 @@ public static class PostgresDriverExtensions {
                 dbContextType,
                 sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
 
+        // TURNKEY: the maintenance step that builds the framework indexes a migration must not build, concurrently and
+        // outside any transaction, so writes to the indexed table go on during the build (#2092). Idle once each is valid.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new FrameworkIndexBuildMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<FrameworkIndexBuildMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,

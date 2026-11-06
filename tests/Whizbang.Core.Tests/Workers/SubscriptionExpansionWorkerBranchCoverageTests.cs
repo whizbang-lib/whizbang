@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -63,6 +62,12 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
 
   private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
+    public List<SubscriptionBackfillSeed> Seeds { get; } = [];
+
+    public Task EnqueueSubscriptionBackfillsAsync(IReadOnlyList<SubscriptionBackfillSeed> seeds, CancellationToken cancellationToken = default) {
+      Seeds.AddRange(seeds);
+      return Task.CompletedTask;
+    }
 
     public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
@@ -120,13 +125,6 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     return (worker, sp);
   }
 
-  private static RequestRedeliveryCommand _command(IMessageEnvelope envelope) {
-    var options = JsonContextRegistry.CreateCombinedOptions();
-    return (RequestRedeliveryCommand)JsonSerializer.Deserialize(
-      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
-      options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-  }
-
   [Test]
   public async Task Constructor_NullOptions_ThrowsArgumentNullExceptionAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
@@ -163,10 +161,9 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
 
     await worker.RunOnceAsync(CancellationToken.None);
 
-    await Assert.That(transport.Published).Count().IsEqualTo(1);
-    var command = _command(transport.Published[0]);
-    await Assert.That(command.EventTypes).IsEquivalentTo([_catalogWireType, REMOVED_TYPE])
-      .Because("a catalog type is sent in its wire form, and a type no longer in the catalog passes through unchanged");
+    await Assert.That(coordinator.Seeds.Select(s => s.EventType)).IsEquivalentTo([_catalogWireType, REMOVED_TYPE])
+      .Because("a catalog type is queued in its wire form, and a type no longer in the catalog passes through unchanged");
+    await Assert.That(transport.Published).IsEmpty();
   }
 
   [Test]
@@ -196,7 +193,7 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
     listener.RecordObservableInstruments();
 
     await Assert.That(readings).Contains(2L)
-      .Because("one backfill request covering two pending types counts both on the registered meter");
+      .Because("queuing two pending types counts both on the registered meter");
     await Assert.That(coordinator.Registry[_catalogType]).IsEqualTo(ConsumedTypeBackfillStatus.Requested);
   }
 }

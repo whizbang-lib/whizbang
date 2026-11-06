@@ -63,6 +63,27 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Phase S state-only backfill requests broadcast for consumed-set growth (value = new type count).</summary>
   public PassiveCounter<long> BackfillsRequested { get; }
 
+  /// <summary>#2092: paced backfill windows requested of owners, retries included. Tagged by event_type.</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillWindowsRequested { get; }
+
+  /// <summary>#2092: events the answered backfill windows selected. Tagged by event_type.</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillEventsReceived { get; }
+
+  /// <summary>#2092: paced backfills that ended. Tagged by outcome (complete | unanswered).</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillsEnded { get; }
+
+  /// <summary>
+  /// #2098: redelivery answers an origin stopped at its event bound with more of the selection left. A windowed
+  /// backfill continues from where the answer stopped; any other request does not, so a non-zero rate on the
+  /// "ordinary" kind means requests wider than the bound.
+  /// Tagged by kind (window | ordinary).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> RedeliveryAnswersCapped { get; }
+
   /// <summary>Settled digest buckets checked by the trust-but-verify sweep.</summary>
   public PassiveCounter<long> DigestBucketsVerified { get; }
 
@@ -298,6 +319,35 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.reattribution_hop_disagreements",
       description: "Stored events re-attribution left because their first hop names a service other than the owner");
 
+    BackfillWindowsRequested = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfill_windows_requested",
+      description: "Paced backfill windows requested of owners, retries included; tagged by event_type");
+    BackfillEventsReceived = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfill_events_received",
+      description: "Events the answered paced backfill windows selected; tagged by event_type");
+    BackfillsEnded = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfills_ended",
+      description: "Paced backfills that ended; tagged by outcome (complete | unanswered)");
+    RedeliveryAnswersCapped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivery_answers_capped",
+      description: "Redelivery answers stopped at the origin's event bound with more selected; tagged by kind (window | ordinary)");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.backfill_windows_in_flight",
+      () => _backfill.WindowsInFlight,
+      description: "Paced backfill windows requested and awaiting their answer");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.backfill_remaining_events",
+      () => {
+        var remaining = _backfill.Remaining;
+        var measurements = new Measurement<long>[remaining.Count];
+        for (var i = 0; i < remaining.Count; i++) {
+          measurements[i] = new Measurement<long>(remaining[i].Events,
+            new KeyValuePair<string, object?>("event_type", remaining[i].EventType));
+        }
+        return measurements;
+      },
+      description: "Events each running paced backfill is estimated to have left, by event_type; falls to zero as it finishes");
+
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.sealed_through",
       () => {
@@ -346,7 +396,24 @@ public sealed class StreamIntegrityMetrics {
     DigestDriftHealed.Touch("kind", _driftKinds);
     RepairTrafficDiscarded.Touch("role", _discardRoles);
     RepairsDeferred.Touch("reason", _deferralReasons);
+    BackfillsEnded.Touch("outcome", _backfillOutcomes);
+    RedeliveryAnswersCapped.Touch("kind", _cappedKinds);
   }
+
+  private static readonly string[] _backfillOutcomes = ["complete", "unanswered"];
+  private static readonly string[] _cappedKinds = ["window", "ordinary"];
+
+  private volatile BackfillGaugeSnapshot _backfill = BackfillGaugeSnapshot.Empty;
+
+  /// <summary>Publishes the paced backfill's current state to its gauges (#2092), swapped atomically like the ledger's.</summary>
+  /// <param name="snapshot">The reading; null resets to empty.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SubscriptionBackfillWorkerTests.cs</tests>
+  public void UpdateBackfillGauges(BackfillGaugeSnapshot snapshot) =>
+    _backfill = snapshot ?? BackfillGaugeSnapshot.Empty;
+
+  /// <summary>The backfill reading the gauges would currently report.</summary>
+  internal BackfillGaugeSnapshot CurrentBackfillGaugesForTest => _backfill;
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
@@ -409,3 +476,22 @@ public sealed record LedgerGaugeSnapshot {
 /// <param name="SealedThrough">Exclusive end of the highest window that audited clean and complete.</param>
 /// <docs>resilience/stream-integrity</docs>
 public sealed record OriginSeal(Guid OriginServiceId, long SealedThrough);
+
+/// <summary>An atomically swappable reading of the paced backfill, for its gauges (#2092).</summary>
+/// <docs>resilience/stream-integrity#paced-backfill</docs>
+public sealed record BackfillGaugeSnapshot {
+  /// <summary>Nothing running (also the reading before the first tick).</summary>
+  public static BackfillGaugeSnapshot Empty { get; } = new();
+
+  /// <summary>Windows requested and awaiting their answer.</summary>
+  public int WindowsInFlight { get; init; }
+
+  /// <summary>Each running backfill's estimated remaining events, by event type.</summary>
+  public IReadOnlyList<BackfillRemaining> Remaining { get; init; } = [];
+}
+
+/// <summary>One running backfill's estimated remaining events, for the <c>backfill_remaining_events</c> gauge.</summary>
+/// <param name="EventType">The event type.</param>
+/// <param name="Events">Events estimated to remain.</param>
+/// <docs>resilience/stream-integrity#paced-backfill</docs>
+public sealed record BackfillRemaining(string EventType, long Events);

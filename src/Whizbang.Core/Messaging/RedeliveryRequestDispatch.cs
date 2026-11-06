@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 internal static class RedeliveryRequestDispatch {
   /// <summary>
-  /// Publishes <paramref name="command"/> to <paramref name="originServiceName"/> at <paramref name="destination"/>: the
+  /// Publishes <paramref name="command"/> to <paramref name="originServiceName"/> (null broadcasts, #2092) at <paramref name="destination"/>: the
   /// origin's request topic, keyed by one of the requested streams and carrying the integrity time to live (#2078, built
   /// by <see cref="IntegrityControlDestination"/>).
   /// </summary>
@@ -27,7 +27,7 @@ internal static class RedeliveryRequestDispatch {
     Justification = "One directed send: the transport and serializer, the sender's identity, the command, its addressee and destination, the clock and cancellation. Every caller holds each separately.")]
   internal static async Task PublishAsync(
       ITransport transport, IEnvelopeSerializer serializer, IServiceInstanceProvider? instanceProvider,
-      RequestRedeliveryCommand command, string originServiceName, TransportDestination destination,
+      RequestRedeliveryCommand command, string? originServiceName, TransportDestination destination,
       DateTimeOffset now, CancellationToken cancellationToken) {
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
