@@ -84,16 +84,33 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Ensure_WhileAnotherSessionHoldsTheBuild_StepsAsideAsync() {
+  [Timeout(120_000)]
+  public async Task Ensure_WhileAnotherBuildIsInProgressOnTheTable_StepsAside_AndLeavesItsIndexAloneAsync(CancellationToken testToken) {
     await using var conn = await _openAsync();
-    await using var other = await _openAsync();
-    await _executeAsync(other, $"SELECT pg_advisory_lock({ConcurrentIndexBuild.LockKey("public", INDEX)})");
+    await using var blocker = await _openAsync();
+    await using var builder = await _openAsync();
+    // An open snapshot holds a concurrent build in its wait phase, with its index already in the catalog, invalid.
+    await using var snapshot = await blocker.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, testToken);
+    await using (var read = new NpgsqlCommand("SELECT count(*) FROM wh_event_store", blocker, snapshot)) {
+      await read.ExecuteScalarAsync(testToken);
+    }
+    await using var build = new NpgsqlCommand($"CREATE INDEX CONCURRENTLY {INDEX} ON wh_event_store (event_type, commit_sequence)", builder) {
+      CommandTimeout = 0,
+    };
+    var building = build.ExecuteNonQueryAsync(testToken);
+    while (await _scalarAsync(conn, "SELECT count(*) FROM pg_stat_progress_create_index WHERE relid = 'public.wh_event_store'::regclass") is 0L) {
+      await Task.Yield();   // waits on the other build's progress row, the signal that it has started
+    }
 
-    var outcome = await ConcurrentIndexBuild.EnsureAsync(conn, "public", _definition(), 120);
+    var outcome = await ConcurrentIndexBuild.EnsureAsync(conn, "public", _definition(), 120, cancellationToken: testToken);
+    var during = await _validityAsync(conn, INDEX);
+    await snapshot.CommitAsync(testToken);
+    await building;
 
     await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Busy);
-    await Assert.That(await _validityAsync(conn, INDEX)).IsNull()
-      .Because("an invalid index during another session's build is its work in progress, never a leftover to drop");
+    await Assert.That(during).IsEqualTo(false)
+      .Because("an invalid index during another build is its work in progress, never a leftover to drop");
+    await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true).Because("the other build finished undisturbed");
   }
 
   [Test]
@@ -170,13 +187,6 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
     await Assert.That(async () => await ConcurrentIndexBuild.EnsureAsync(null!, "public", _definition(), 1)).Throws<ArgumentNullException>();
     await Assert.That(async () => await ConcurrentIndexBuild.EnsureAsync(conn, "public", null!, 1)).Throws<ArgumentNullException>();
     await Assert.That(async () => await ConcurrentIndexBuild.EnsureAsync(conn, " ", _definition(), 1)).Throws<ArgumentException>();
-  }
-
-  [Test]
-  public async Task LockKey_DiffersByIndexAndSchema_AndIsStableAsync() {
-    await Assert.That(ConcurrentIndexBuild.LockKey("public", INDEX)).IsEqualTo(ConcurrentIndexBuild.LockKey("public", INDEX));
-    await Assert.That(ConcurrentIndexBuild.LockKey("public", INDEX)).IsNotEqualTo(ConcurrentIndexBuild.LockKey("svc", INDEX));
-    await Assert.That(ConcurrentIndexBuild.LockKey("public", INDEX)).IsNotEqualTo(ConcurrentIndexBuild.LockKey("public", "idx_other"));
   }
 
   private static ConcurrentIndexDefinition _definition() => ConcurrentIndexBuild.FrameworkIndexes.Single(i => i.Name == INDEX);
