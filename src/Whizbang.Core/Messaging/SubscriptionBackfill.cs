@@ -92,7 +92,26 @@ public sealed record SubscriptionBackfillCursor {
   /// null until a window has answered with events and a head.
   /// </summary>
   /// <returns>The estimate, or null when nothing yet supports one.</returns>
-#pragma warning disable CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113 // RED stub (#2092)
-  public long? EstimateRemaining() => null;
-#pragma warning restore CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113
+  public long? EstimateRemaining() {
+    if (CompletedAt is not null) {
+      return 0;
+    }
+    if (CursorCommitSequence is null) {
+      return null;
+    }
+    if (FirstCommitSequence is null) {
+      return null;
+    }
+    if (HeadCommitSequence is null) {
+      return null;
+    }
+    var cursor = CursorCommitSequence.Value;
+    var first = FirstCommitSequence.Value;
+    var ahead = HeadCommitSequence.Value - cursor;
+    if (ahead <= 0) {
+      return 0;
+    }
+    var covered = cursor - first + 1;
+    return (long)Math.Ceiling((double)EventsReceived * ahead / covered);
+  }
 }
