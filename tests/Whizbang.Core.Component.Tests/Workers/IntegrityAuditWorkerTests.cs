@@ -109,6 +109,24 @@ public class IntegrityAuditWorkerTests {
   }
 
   [Test]
+  public async Task AfterARestart_KnownOriginsAreAskedBeforeAnyNewCheckpointArrivesAsync() {
+    // #2104: a fresh process's tracker knows nothing until it loads what the store kept; the first audit asks the
+    // origins the previous process knew instead of skipping a checkpoint interval.
+    var origin = TrackedGuid.New().Value;
+    var coordinator = new AuditCoordinator {
+      KeptState = new IntegrityGapTrackerState(
+        [new IntegrityKnownOrigin(origin, "origin-a", "origin-a.requests", DateTimeOffset.UtcNow)], []),
+    };
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), new IntegrityGapTracker());
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var (_, destination, _) = transport.Published.Single(p => p.Envelope.Target == "origin-a");
+    await Assert.That(destination.Address).IsEqualTo("origin-a.requests");
+  }
+
+  [Test]
   public async Task ClaimDenied_SkipsTheWholeCycleAsync() {
     var coordinator = new AuditCoordinator {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }],
@@ -649,6 +667,12 @@ public class IntegrityAuditWorkerTests {
   }
 
   private sealed class AuditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    /// <summary>#2104: what the store kept of the gap tracker before a restart.</summary>
+    public IntegrityGapTrackerState? KeptState { get; init; }
+
+    public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(KeptState);
+
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int? LastMaxGaps { get; private set; }

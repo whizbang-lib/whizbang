@@ -1892,6 +1892,46 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
   /// <summary>
+  /// #2104: what the store keeps of the integrity gap tracker (known origins, pending gaps), read once by a new process.
+  /// Null = unsupported: the tracker starts empty, as before, and learns from the next checkpoints.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The kept state, or null.</returns>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityGapTrackerState?>(null);
+
+  /// <summary>
+  /// #2104: keeps an origin's checkpoint (its name, its request address, and the time) so a restarted process knows
+  /// the origin and its liveness. A null <paramref name="requestTopic"/> keeps the address already known. No-op =
+  /// unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="originServiceName">Its logical name.</param>
+  /// <param name="requestTopic">Its announced request address, or null.</param>
+  /// <param name="checkpointAt">When the checkpoint was recorded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityRecordOriginCheckpointAsync(
+    Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2104: replaces the kept pending gaps of one origin with <paramref name="pending"/> (empty = none), so a gap seen
+  /// before a restart is confirmed by the first checkpoint after it. No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="pending">The origin's pending gaps after this checkpoint.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityReplacePendingGapsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// #2103: records, per keyed ledger row, the one event its bucket is missing (or null when the comparison could not
   /// name one), so the paced repair drain asks the owner for that event instead of the stream. Pairs by position with
   /// <paramref name="keys"/>; a null clears an id recorded by an earlier comparison. No-op = unsupported, and the drain

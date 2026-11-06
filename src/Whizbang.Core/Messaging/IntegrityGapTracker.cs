@@ -118,4 +118,14 @@ public sealed class IntegrityGapTracker {
     [.. _origins
       .Where(kv => now - kv.Value.LastSeen > staleAfter)
       .Select(kv => (kv.Key, kv.Value.Name, kv.Value.LastSeen))];
+
+  /// <summary>#2104 (RED stub).</summary>
+  public IReadOnlyList<PendingGap> PeekPending(Guid originServiceId) => [.. _pending.Where(p => p.OriginServiceId == originServiceId).Take(0)];
+
+  /// <summary>#2104 (RED stub).</summary>
+  public System.Threading.Tasks.Task EnsureHydratedAsync(IWorkCoordinator coordinator, System.Threading.CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(coordinator);
+    _ = _origins.Count + (cancellationToken.IsCancellationRequested ? 1 : 0);
+    return System.Threading.Tasks.Task.CompletedTask;
+  }
 }

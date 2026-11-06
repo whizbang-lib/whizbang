@@ -435,8 +435,9 @@ public class IntegrityCheckpointReceptorTests {
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegrityRepairPolicy? policy = null,
       Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null,
-      bool withMetrics = true) {
-    var coordinator = new VerifyCoordinator();
+      bool withMetrics = true,
+      VerifyCoordinator? coordinator = null) {
+    coordinator ??= new VerifyCoordinator();
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
     var services = new ServiceCollection();
@@ -613,6 +614,31 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
       Guid originServiceId, long fromCommitSequence, long toCommitSequence, CancellationToken cancellationToken = default) =>
       Task.FromResult(Counts((originServiceId, fromCommitSequence, toCommitSequence)));
+
+    /// <summary>#2104: what the store keeps of the gap tracker, shared by the fixtures of a simulated restart.</summary>
+    public Dictionary<Guid, IntegrityKnownOrigin> KeptOrigins { get; } = [];
+    public Dictionary<Guid, IReadOnlyList<IntegrityGapTracker.PendingGap>> KeptPending { get; } = [];
+    public int PendingWrites { get; private set; }
+
+    public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<IntegrityGapTrackerState?>(new IntegrityGapTrackerState(
+        [.. KeptOrigins.Values], [.. KeptPending.Values.SelectMany(p => p)]));
+
+    public Task IntegrityRecordOriginCheckpointAsync(
+        Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+        CancellationToken cancellationToken = default) {
+      KeptOrigins[originServiceId] = new IntegrityKnownOrigin(
+        originServiceId, originServiceName,
+        requestTopic ?? (KeptOrigins.TryGetValue(originServiceId, out var prior) ? prior.RequestTopic : null), checkpointAt);
+      return Task.CompletedTask;
+    }
+
+    public Task IntegrityReplacePendingGapsAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) {
+      PendingWrites++;
+      KeptPending[originServiceId] = pending;
+      return Task.CompletedTask;
+    }
 
     /// <summary>#2102: the (tenant, type) folds of events held from the origin without an origin sequence.</summary>
     public IReadOnlyList<StreamDigest> Unsequenced { get; set; } = [];
@@ -1030,5 +1056,38 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(fx.Transport.Published).IsEmpty().Because("nothing is missing, so nothing is redelivered");
     await Assert.That(await fx.Ledger.TryBeginRepairAsync(key, _fixedNow, TimeSpan.FromHours(1), 1)).IsTrue()
       .Because("the type lane healed, so its spent attempt is forgotten");
+  }
+
+  // ── #2104: the tracker's origins and pending gaps survive a restart ────
+
+  [Test]
+  public async Task Checkpoint_IsKeptByTheStore_WithTheOriginsAddressAndTimeAsync() {
+    var fx = _fixture();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    var kept = fx.Coordinator.KeptOrigins[fx.OriginId];
+    await Assert.That(kept.OriginServiceName).IsEqualTo("origin-svc");
+    await Assert.That(kept.RequestTopic).IsEqualTo("origin.requests");
+    await Assert.That(fx.Coordinator.PendingWrites).IsEqualTo(0)
+      .Because("a checkpoint that neither finds nor clears a gap writes no pending state");
+  }
+
+  [Test]
+  public async Task APendingGapSeenBeforeARestart_IsConfirmedByTheFirstCheckpointAfterItAsync() {
+    var options = new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true };
+    var before = _fixture(options);
+    before.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+    await before.Receptor.HandleAsync(_checkpoint(before, from: 0, to: 5, count: 3));   // deficit: pending, kept
+
+    // A new process: a fresh tracker over the same store.
+    var after = _fixture(options, coordinator: before.Coordinator);
+    await after.Receptor.HandleAsync(_checkpoint(before, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var report = (IntegrityGapDetected)after.Dispatcher.Published.Single();
+    await Assert.That(report.FromCommitSequence).IsEqualTo(0L)
+      .Because("the gap seen before the restart is confirmed by the first checkpoint after it, not re-detected a cycle late");
+    await Assert.That(before.Coordinator.KeptPending[before.OriginId]).IsEmpty()
+      .Because("a confirmed gap leaves the kept pending set");
   }
 }
