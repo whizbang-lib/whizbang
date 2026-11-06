@@ -201,6 +201,71 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
     }
   }
 
+  private const string CHECKPOINT_ENVELOPE_TYPE =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.IntegrityCheckpoint, Whizbang.Core]], Whizbang.Core";
+
+  /// <summary>
+  /// #2099: an integrity checkpoint is published once per topic of its origin's owned types, every copy with the same
+  /// message id, so a consumer subscribed to ten of those topics observes it ten times while its first copy is being
+  /// handled (one processing attempt). That is fan-out, not a redelivery loop, and the checkpoint is control-plane
+  /// traffic, which is dropped rather than stored as a dead letter. Layer 2 leaves the row where it is: moving it
+  /// dead-lettered every such checkpoint and took the in-flight row from under its handler, so the origin was reported
+  /// as not checkpointing.
+  /// </summary>
+  [Test]
+  public async Task Batch_ControlPlaneMessageObservedPastTheBound_IsNotMovedToDeadLettersAsync() {
+    var envelope = _envelope();
+    var coordinator = new ObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(envelope.MessageId.Value, 10) { ProcessingAttempts = 1 }]);
+    var deadLetters = new RecordingDeadLetterStore();
+    var (worker, transport, sp) = _buildWorker(coordinator, deadLetters, maxDurableObservations: 10);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, CHECKPOINT_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
+        .Because("precondition: the checkpoint reached the store, which reported its observations");
+      await Assert.That(deadLetters.Attempted).IsEmpty()
+        .Because("a checkpoint's copies on several topics share one message id, so the observation count measures "
+          + "the fan-out, and control-plane traffic is never stored as a dead letter; the row is left to its handler");
+    }
+  }
+
+  /// <summary>
+  /// #2099: the exemption is the control plane's alone. A domain message reported at the same counts in the same batch
+  /// as a checkpoint is still quarantined.
+  /// </summary>
+  [Test]
+  public async Task Batch_DomainMessageBesideAControlPlaneMessage_IsStillQuarantinedAsync() {
+    var checkpoint = _envelope();
+    var domain = _envelope();
+    var coordinator = new ObservingWorkCoordinator([
+      new InboxRedeliveryObservation(checkpoint.MessageId.Value, 10) { ProcessingAttempts = 1 },
+      new InboxRedeliveryObservation(domain.MessageId.Value, 10) { ProcessingAttempts = 1 },
+    ]);
+    var deadLetters = new RecordingDeadLetterStore();
+    var (worker, transport, sp) = _buildWorker(coordinator, deadLetters, maxDurableObservations: 10);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([
+        new TransportMessage(checkpoint, CHECKPOINT_ENVELOPE_TYPE),
+        new TransportMessage(domain, CONSUMED_ENVELOPE_TYPE),
+      ]);
+      await cts.CancelAsync();
+
+      await Assert.That(deadLetters.Moved.Select(m => m.SourceId)).IsEquivalentTo([domain.MessageId.Value]);
+    }
+  }
+
   #region Fixtures
 
   private static readonly Guid _hostage = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff0001");
