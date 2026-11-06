@@ -33,8 +33,9 @@ public class SingleMissingEventTests {
       TenantScope = "t1",
       EventType = "Contracts.Placed",
       StreamId = _a,
-      DigestLo = 1,
-      DigestHi = 2,
+      // A stand-in for the hash lanes that, like them, differs for different sets.
+      DigestLo = lo ^ 0x5555,
+      DigestHi = hi ^ 0x6666,
       EventCount = count,
       IdLo = lo,
       IdHi = hi,

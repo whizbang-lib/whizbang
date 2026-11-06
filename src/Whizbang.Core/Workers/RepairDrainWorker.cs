@@ -135,7 +135,10 @@ public sealed partial class RepairDrainWorker(
     var sent = new Dictionary<Guid, List<IntegrityRepairLedger.DivergenceKey>>();
     // #2034: grouped by window too, so no stream is re-shipped over a wider range than its own divergence. Rows a
     // comparison stamped together share their window, so this costs few extra requests.
-    foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.TenantScope, c.EventType, c.WindowFrom, c.WindowUntil))) {
+    // #2103: rows that name their one missing event ask for those events, apart from rows that ask for their streams:
+    // an id list narrows a request to its ids.
+    foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.TenantScope, c.EventType, c.WindowFrom, c.WindowUntil,
+                                                Named: c.MissingEventId is not null))) {
       if (!byOrigin.TryGetValue(group.Key.OriginServiceId, out var origin)) {
         continue;   // learned set changed mid-pass; the attempt re-offers after backoff.
       }
@@ -151,6 +154,7 @@ public sealed partial class RepairDrainWorker(
         TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
         EventTypes = [group.Key.EventType],
         StreamIds = items.ConvertAll(i => i.StreamId),
+        EventIds = group.Key.Named ? items.ConvertAll(i => i.MissingEventId!.Value) : null,
         RequesterService = requester,
         Topic = replyTopic,
         FromCommitSequence = fromSeq,

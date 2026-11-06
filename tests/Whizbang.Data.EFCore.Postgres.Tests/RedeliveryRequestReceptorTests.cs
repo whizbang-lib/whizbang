@@ -669,7 +669,8 @@ public class RedeliveryRequestReceptorTests {
 
     await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([missing])
       .Because("the stream missing one event receives exactly that event");
-    await Assert.That(coordinator.Requests.Single().EventIds).IsEquivalentTo([missing]);
+    await Assert.That(coordinator.Requests.All(r => r.EventIds is { Count: 1 } ids && ids[0] == missing)).IsTrue()
+      .Because("every page of the selection names the missing event; no stream is asked for whole");
   }
 
   [Test]
@@ -695,7 +696,7 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).Order().ToList())
       .IsEquivalentTo(new[] { e1, e2, e3 }.Order().ToList())
       .Because("the named event ships alone; a stream whose named event this store does not hold is synced whole");
-    var fallback = coordinator.Requests.Single(r => r.EventIds is null);
+    var fallback = coordinator.Requests.First(r => r.EventIds is null);
     await Assert.That(fallback.StreamIds).IsEquivalentTo([unnamed]);
     await Assert.That(fallback.ToCommitSequence).IsEqualTo(99L).Because("over the request's window");
   }
@@ -717,6 +718,6 @@ public class RedeliveryRequestReceptorTests {
       Topic = "events-topic",
     });
 
-    await Assert.That(coordinator.Requests.Count).IsEqualTo(1).Because("nothing is left to sync by range");
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse().Because("nothing is left to sync by range");
   }
 }

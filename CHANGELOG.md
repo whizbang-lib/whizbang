@@ -1386,6 +1386,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A repair asks for the one event a stream is missing instead of re-sending the stream (#2103).** A
+  `RequestRedeliveryCommand` could name only types, streams and a range, so one missing event cost the stream's whole
+  history in transport and processing. Stream digests carry id lanes (#2106), and every stream-level digest a
+  comparison reads now carries them (`StreamDigest.IdLo`/`IdHi`). When the origin's bucket holds exactly one event more
+  than the consumer's, origin XOR local is that event's id
+  (`IntegrityDigestMath.SingleMissingEventId`): the burst path sends it as `RequestRedeliveryCommand.EventIds` (at most
+  500 per request; a larger set is paged), and the paced drain records it on the deficit's ledger row
+  (`IntegrityRecordMissingEventsAsync`, migration 338's `wh_integrity_ledger.missing_event_id`) and sends it from there.
+  The owner ships exactly the named events (`RedeliveryRequest.EventIds`), and answers a named stream whose event it
+  does not hold over the window. Streams and window always ride along, so an owner that predates the field answers the
+  range as before; a bucket without id lanes, or missing more than one event, syncs whole. Buckets stay per (origin,
+  tenant, type, stream), so a consumer that keeps only some of a stream's types compares and repairs only those.
 - **The integrity audit no longer reports deficits for events a consumer holds without the origin's commit sequence
   (#2102).** Windowed comparisons counted a consumer's events by the origin's commit sequence, so an event that carries
   the origin but not the sequence (history re-attributed to its owner) was counted in no window, and its bucket read short

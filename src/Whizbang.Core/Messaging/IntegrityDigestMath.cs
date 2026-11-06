@@ -81,6 +81,8 @@ public static class IntegrityDigestMath {
       DigestHi = (placed?.DigestHi ?? 0) ^ sequenceless.DigestHi,
       EventCount = placedCount + sequenceless.EventCount,
       UpdatedAt = placed?.UpdatedAt,
+      IdLo = _xorLane(placed, placed?.IdLo, sequenceless.IdLo),
+      IdHi = _xorLane(placed, placed?.IdHi, sequenceless.IdHi),
     };
     if (_sameFold(origin, held)) {
       return new(HeldWindowVerdict.Matches, held);
@@ -88,8 +90,41 @@ public static class IntegrityDigestMath {
     return new(held.EventCount < origin.EventCount ? HeldWindowVerdict.Deficit : HeldWindowVerdict.Undecided, held);
   }
 
-  /// <summary>#2103 (RED stub).</summary>
-  public static Guid? SingleMissingEventId(StreamDigest origin, StreamDigest? held) => origin.EventCount < 0 && held is null ? Guid.Empty : null;
+  /// <summary>
+  /// #2103: the one event a bucket is missing, when it can be named. Id lanes are the XOR of each event id's two 64-bit
+  /// halves, so when the origin's bucket holds exactly one event more than the consumer's, origin XOR local IS that
+  /// event's id. Null when the origin holds any other number more, when either side carries no id lanes (an older peer,
+  /// or a stored bucket not yet backfilled), or when the XOR is the empty id; the stream then syncs whole.
+  /// </summary>
+  /// <param name="origin">The origin's bucket.</param>
+  /// <param name="held">The consumer's bucket (placed and held events, see <see cref="PlaceHeld"/>), or null when it
+  /// holds none.</param>
+  /// <returns>The missing event's id, or null.</returns>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SingleMissingEventTests.cs</tests>
+  public static Guid? SingleMissingEventId(StreamDigest origin, StreamDigest? held) {
+    ArgumentNullException.ThrowIfNull(origin);
+    if (origin.IdLo is not long originLo || origin.IdHi is not long originHi
+        || origin.EventCount - (held?.EventCount ?? 0) != 1) {
+      return null;
+    }
+    long heldLo = 0, heldHi = 0;
+    if (held is not null) {
+      if (held.IdLo is not long lo || held.IdHi is not long hi) {
+        return null;
+      }
+      (heldLo, heldHi) = (lo, hi);
+    }
+    Span<byte> bytes = stackalloc byte[16];
+    System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes[..8], originLo ^ heldLo);
+    System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes[8..], originHi ^ heldHi);
+    var id = new Guid(bytes, bigEndian: true);
+    return id == Guid.Empty ? null : id;
+  }
+
+  /// <summary>XOR of two id lanes, null when either is unknown; a side that holds no events folds as zero.</summary>
+  private static long? _xorLane(StreamDigest? placed, long? placedLane, long? sequencelessLane) =>
+    (placed is null ? 0L : placedLane) ^ sequencelessLane;
 
   private static bool _sameFold(StreamDigest origin, StreamDigest? local) =>
     local is not null && local.DigestLo == origin.DigestLo && local.DigestHi == origin.DigestHi;

@@ -108,36 +108,57 @@ public sealed partial class RedeliveryRequestReceptor(
       var totalSelected = 0;
       var totalShipped = 0;
       var totalComposites = 0;
-      Guid? afterStream = null;
-      long? afterVersion = null;
-      while (totalSelected < maxEvents) {
-        var page = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
-          TenantScope = message.TenantScope,
-          EventTypes = message.EventTypes,
-          StreamIds = message.StreamIds,
-          FromCommitSequence = message.FromCommitSequence,
-          ToCommitSequence = message.ToCommitSequence,
-          MaxEvents = Math.Min(pageSize, maxEvents - totalSelected),
-          AfterStreamId = afterStream,
-          AfterVersion = afterVersion,
-          // #2032: the bundle names this service as origin, so it carries only events this service wrote.
-          AuthoredBy = instanceProvider.ServiceName,
-        }, cancellationToken).ConfigureAwait(false);
-        if (page.Count == 0) {
-          break;
-        }
+      var template = new RedeliveryRequest {
+        TenantScope = message.TenantScope,
+        EventTypes = message.EventTypes,
+        StreamIds = message.StreamIds,
+        FromCommitSequence = message.FromCommitSequence,
+        ToCommitSequence = message.ToCommitSequence,
+        // #2032: the bundle names this service as origin, so it carries only events this service wrote.
+        AuthoredBy = instanceProvider.ServiceName,
+      };
+      // Select-and-publish one selection in keyset pages, within what is left of the request's cap; returns the streams
+      // the selection reached.
+      async Task<HashSet<Guid>> shipAsync(RedeliveryRequest selection) {
+        var reached = new HashSet<Guid>();
+        Guid? afterStream = null;
+        long? afterVersion = null;
+        while (totalSelected < maxEvents) {
+          var page = await coordinator.SelectRedeliveryEventsAsync(selection with {
+            MaxEvents = Math.Min(pageSize, maxEvents - totalSelected),
+            AfterStreamId = afterStream,
+            AfterVersion = afterVersion,
+          }, cancellationToken).ConfigureAwait(false);
+          if (page.Count == 0) {
+            break;
+          }
 
-        var owned = page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, ownedDomains)).ToList();
-        if (owned.Count > 0) {
-          totalComposites += await pump
-            .PublishAsync(owned, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
-            .ConfigureAwait(false);
+          var owned = page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, ownedDomains)).ToList();
+          if (owned.Count > 0) {
+            totalComposites += await pump
+              .PublishAsync(owned, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
+              .ConfigureAwait(false);
+          }
+          totalShipped += owned.Count;
+          totalSelected += page.Count;
+          reached.UnionWith(page.Select(e => e.StreamId));
+          var last = page[page.Count - 1];
+          afterStream = last.StreamId;
+          afterVersion = last.Version;
         }
-        totalShipped += owned.Count;
-        totalSelected += page.Count;
-        var last = page[page.Count - 1];
-        afterStream = last.StreamId;
-        afterVersion = last.Version;
+        return reached;
+      }
+
+      if (message.EventIds is { Count: > 0 } named) {
+        // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
+        // this store does not hold (the requester's id lanes named no event it wrote) is answered over the window instead.
+        var reached = await shipAsync(template with { EventIds = named }).ConfigureAwait(false);
+        var unreached = message.StreamIds?.Where(s => !reached.Contains(s)).ToList();
+        if (unreached is { Count: > 0 }) {
+          _ = await shipAsync(template with { StreamIds = unreached }).ConfigureAwait(false);
+        }
+      } else {
+        _ = await shipAsync(template).ConfigureAwait(false);
       }
 
       if (totalShipped == 0) {

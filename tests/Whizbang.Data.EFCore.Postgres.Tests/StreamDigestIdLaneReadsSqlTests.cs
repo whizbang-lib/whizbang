@@ -69,7 +69,7 @@ public class StreamDigestIdLaneReadsSqlTests : EFCoreTestBase {
     await using var fold = conn.CreateCommand();
     fold.CommandText = """
       SELECT _wh_fold_stream_digests(array_agg(COALESCE(@o, '00000000-0000-0000-0000-000000000000'::uuid)),
-                                     array_agg('tenant-a'), array_agg(@type), array_agg(@s), array_agg(e), 'fold',
+                                     array_agg('tenant-a'::text), array_agg(@type), array_agg(@s), array_agg(e), 'fold',
                                      NOW() - INTERVAL '2 hours')
       FROM unnest(@ids) AS e
       """;

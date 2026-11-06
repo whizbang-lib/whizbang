@@ -785,6 +785,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task IntegrityRecordMissingEventsAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    ArgumentNullException.ThrowIfNull(missingEventIds);
+    if (keys.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // One statement for the comparison's deficits, each row found by its primary key; a row whose missing event is
+      // already the recorded one is not rewritten.
+      cmd.CommandText = $"""
+        UPDATE {schema}.wh_integrity_ledger l
+        SET missing_event_id = m.missing_event_id
+        FROM unnest(@p_tenants::text[], @p_types::text[], @p_streams::uuid[], @p_missing::uuid[])
+          AS m(tenant_scope, event_type, stream_id, missing_event_id)
+        WHERE l.origin_service_id = @p_origin AND l.tenant_scope = m.tenant_scope
+          AND l.event_type = m.event_type AND l.stream_id = m.stream_id
+          AND l.missing_event_id IS DISTINCT FROM m.missing_event_id
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenants", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = keys.Select(k => k.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_missing", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = missingEventIds.Select(id => (object?)id ?? DBNull.Value).ToArray()
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       int limit, CancellationToken cancellationToken = default) {
@@ -806,7 +844,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue(P_LIMIT, limit);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit)";
+      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped.
+      cmd.CommandText = $"""
+        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id
+        FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit) c
+        LEFT JOIN {schema}.wh_integrity_ledger l
+          ON l.origin_service_id = c.origin_service_id AND l.tenant_scope = c.tenant_scope
+         AND l.event_type = c.event_type AND l.stream_id = c.stream_id
+        """;
 #pragma warning restore S2077
       var items = new List<IntegrityRepairDrainItem>(limit);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -817,7 +862,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
           reader.GetString(2),
           reader.GetGuid(3),
           await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
-          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
+          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6)));
       }
       return items;
     } catch (OperationCanceledException) {
@@ -1985,7 +2031,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
                bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
                bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
         FROM {schema}.wh_event_store es
         WHERE es.origin_service_id = @p_origin
           AND es.stream_id = ANY(@p_streams::uuid[])
@@ -2012,7 +2060,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       AddDigestExemptParam(cmd);
 
       return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
-        cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
+        cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true).ConfigureAwait(false);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -2037,7 +2085,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
       AddDigestExemptParam(cmd);
-      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken)
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken, hasIdLanes: byStream)
         .ConfigureAwait(false);
     }, cancellationToken).ConfigureAwait(false);
   }
@@ -2054,7 +2102,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
                bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
                bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
         FROM {schema}.wh_event_store es
         WHERE es.stream_id = ANY(@p_streams::uuid[])
           AND es.origin_service_id = @p_origin
@@ -2213,6 +2263,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
             DigestHi = reader.GetInt64(4),
             EventCount = reader.GetInt32(5),
             UpdatedAt = null,
+            IdLo = reader.GetInt64(6),
+            IdHi = reader.GetInt64(7),
           });
         }
       }
@@ -2952,6 +3004,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       WHERE (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
         AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
+        AND ((@p_event_ids::uuid[]) IS NULL OR es.event_id = ANY(@p_event_ids::uuid[]))
         AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
         AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
@@ -2979,6 +3032,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = request.StreamIds is null ? DBNull.Value : request.StreamIds.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = request.EventIds is null ? DBNull.Value : request.EventIds.ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)request.FromCommitSequence ?? DBNull.Value
@@ -3644,7 +3700,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
                bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
                bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
         FROM {schema}.wh_event_store es
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
                OR es.origin_service_id = @p_origin)
@@ -3660,7 +3718,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
       AddDigestExemptParam(cmd);
 
-      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true)
         .ConfigureAwait(false);
     }, cancellationToken);
 
@@ -3720,7 +3778,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Requested names normalize to the stored wire form so a long-AQN caller still matches.
       var normalizeFn = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
       cmd.CommandText = $"""
-        SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
+        SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at, id_lo, id_hi
         FROM {schema}.wh_stream_digests
         WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
           AND ((@p_types::text[]) IS NULL OR event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_types::text[]) AS t))
@@ -3728,7 +3786,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
 
-      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken)
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken, hasIdLanes: true)
         .ConfigureAwait(false);
     }, cancellationToken);
 
@@ -3761,10 +3819,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// hi, count[, updated]); type-level omits the stream column and carries <see cref="Guid.Empty"/>.
   /// Recomputed reads have no update time.</summary>
   private static async Task<IReadOnlyList<StreamDigest>> _readStreamDigestsAsync(
-      System.Data.Common.DbCommand cmd, bool hasUpdatedAt, bool typeLevel, CancellationToken cancellationToken) {
+      System.Data.Common.DbCommand cmd, bool hasUpdatedAt, bool typeLevel, CancellationToken cancellationToken,
+      bool hasIdLanes = false) {
     var results = new List<StreamDigest>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     var idx = typeLevel ? 2 : 3;
+    // #2103: the id lanes follow the count (and the update time, when read); NULL when a stored bucket has none yet.
+    var idLanes = idx + (hasUpdatedAt ? 4 : 3);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var tenant = reader.GetString(0);
       results.Add(new StreamDigest {
@@ -3775,10 +3836,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DigestHi = reader.GetInt64(idx + 1),
         EventCount = reader.GetInt32(idx + 2),
         UpdatedAt = hasUpdatedAt ? await reader.GetFieldValueAsync<DateTimeOffset>(idx + 3, cancellationToken) : null,
+        IdLo = hasIdLanes ? await _nullableInt64Async(reader, idLanes, cancellationToken) : null,
+        IdHi = hasIdLanes ? await _nullableInt64Async(reader, idLanes + 1, cancellationToken) : null,
       });
     }
     return results;
   }
+
+  private static async Task<long?> _nullableInt64Async(
+      System.Data.Common.DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(ordinal);
 
   /// <inheritdoc />
   public async Task<DigestVerificationResult> VerifyDigestTableAsync(
@@ -3859,7 +3926,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
                bit_xor({schema}._wh_digest_lane(w.event_id, 0)) AS digest_lo,
                bit_xor({schema}._wh_digest_lane(w.event_id, 1)) AS digest_hi,
-               COUNT(*)::int
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(w.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(w.event_id, 3)) AS id_hi
         FROM win w JOIN pick p ON p.stream_id = w.stream_id
         GROUP BY 1, 2, 3
         ORDER BY 3, 1, 2

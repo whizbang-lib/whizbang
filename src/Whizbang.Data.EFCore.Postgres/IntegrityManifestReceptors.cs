@@ -304,6 +304,12 @@ public sealed partial class IntegrityManifestReceptor(
     ILogger<IntegrityManifestReceptor> logger) : IReceptor<IntegrityManifest> {
 
   /// <summary>
+  /// #2103: the most named events one repair request carries. A larger missing set is paged into several requests, so
+  /// one request never grows with the divergence.
+  /// </summary>
+  internal const int MAX_NAMED_EVENTS_PER_REQUEST = 500;
+
+  /// <summary>
   /// One manifest comparison at a time per process. Manifest chunks arrive in bursts (every
   /// origin answers a fresh audit at once), and a comparison against an unpopulated digest lane
   /// falls back to a full-store recompute; unbounded concurrency multiplies that footprint —
@@ -479,7 +485,7 @@ public sealed partial class IntegrityManifestReceptor(
     var now = DateTimeOffset.UtcNow;
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     var repairBudget = options.MaxAutoRepairRequestsPerAudit;
-    var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<Guid>>();
+    var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<(Guid Stream, Guid? Missing)>>();
     var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), DivergenceTally>();
     var reportCap = Math.Max(1, options.MaxDivergenceReportsPerManifest);
     var reportsPublished = 0;
@@ -579,13 +585,17 @@ public sealed partial class IntegrityManifestReceptor(
     // continuously at an adaptive rate instead of bursting the budget at the audit tick. The
     // legacy burst path remains behind RepairDrainEnabled=false for engines without a
     // drain-capable coordinator.
-    if (options.RepairDrainEnabled && deficitIndexes.Count > 0 && message.ComputedThrough is long stampUntil) {
+    if (options.RepairDrainEnabled && deficitIndexes.Count > 0) {
       var stampKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
-      var stampCoordinator = services.GetService<IWorkCoordinator>();
-      if (stampCoordinator is not null) {
-        await stampCoordinator.IntegrityStampRepairWindowsAsync(
+      if (message.ComputedThrough is long stampUntil) {
+        await coordinator.IntegrityStampRepairWindowsAsync(
           message.OriginServiceId, stampKeys, message.SinceSequence ?? 0, stampUntil, cancellationToken).ConfigureAwait(false);
       }
+      // #2103: the one event each deficit is missing, when the id lanes name it, so the drain asks for that event only.
+      await coordinator.IntegrityRecordMissingEventsAsync(
+        message.OriginServiceId, stampKeys,
+        deficitIndexes.ConvertAll(i => IntegrityDigestMath.SingleMissingEventId(divergent[i].Origin, divergent[i].Mine)),
+        cancellationToken).ConfigureAwait(false);
     }
     var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
       && !options.RepairDrainEnabled;
@@ -616,7 +626,7 @@ public sealed partial class IntegrityManifestReceptor(
         if (!repairBatches.TryGetValue((origin.TenantScope, origin.EventType), out var streams)) {
           repairBatches[(origin.TenantScope, origin.EventType)] = streams = [];
         }
-        streams.Add(origin.StreamId);
+        streams.Add((origin.StreamId, IntegrityDigestMath.SingleMissingEventId(origin, mine)));
       }
       if (!shouldReport) {
         continue;   // same unhealed divergence inside the cooldown — cadence, not news.
@@ -680,9 +690,18 @@ public sealed partial class IntegrityManifestReceptor(
 
     // One directed request per divergent (tenant, type) — per-stream commands multiplied every
     // storm by the stream count for no selection benefit (the origin's WHERE takes a stream set).
-    foreach (var ((tenantScope, eventType), streamIds) in repairBatches) {
-      await _sendRepairRequestAsync(services, options, message, tenantScope, eventType, streamIds, cancellationToken)
-        .ConfigureAwait(false);
+    // #2103: a stream whose one missing event is named asks for that event; an id list narrows a request to its ids,
+    // so those streams go in their own requests (at most MAX_NAMED_EVENTS_PER_REQUEST each) and the rest ask whole.
+    foreach (var ((tenantScope, eventType), streams) in repairBatches) {
+      foreach (var page in streams.Where(s => s.Missing is not null).Chunk(MAX_NAMED_EVENTS_PER_REQUEST)) {
+        await _sendRepairRequestAsync(services, options, message, tenantScope, eventType,
+          [.. page.Select(p => p.Stream)], [.. page.Select(p => p.Missing!.Value)], cancellationToken).ConfigureAwait(false);
+      }
+      var whole = streams.Where(s => s.Missing is null).Select(s => s.Stream).ToList();
+      if (whole.Count > 0) {
+        await _sendRepairRequestAsync(services, options, message, tenantScope, eventType, whole, null, cancellationToken)
+          .ConfigureAwait(false);
+      }
     }
 
     // #80-B cursor-following: a non-null resume cursor means this window has MORE stream pages.
@@ -1146,9 +1165,10 @@ public sealed partial class IntegrityManifestReceptor(
     return true;
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "One repair request: where it is answered (services, options, manifest), what it asks for (tenant, type, streams, named events) and its cancellation. A request object would only restate these fields.")]
   private async Task _sendRepairRequestAsync(
       IServiceProvider services, StreamIntegrityOptions options,
-      IntegrityManifest manifest, string? tenantScope, string eventType, List<Guid> streamIds,
+      IntegrityManifest manifest, string? tenantScope, string eventType, List<Guid> streamIds, List<Guid>? eventIds,
       CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
@@ -1177,6 +1197,7 @@ public sealed partial class IntegrityManifestReceptor(
         TenantScope = tenantScope,
         EventTypes = [eventType],
         StreamIds = streamIds,
+        EventIds = eventIds,
         RequesterService = requester,
         Topic = topic,
         // #80-C range-bounded backfill: a deficit found comparing a WINDOW is a deficit in that
