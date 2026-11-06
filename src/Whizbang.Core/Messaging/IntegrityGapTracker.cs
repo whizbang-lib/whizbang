@@ -10,9 +10,10 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Stream-integrity Phase B: the consumer-side gap state — per-origin PENDING deficits awaiting
-/// two-cycle confirmation, and per-origin checkpoint liveness. In-memory by design: a restart
-/// re-baselines (the deep-audit phases cover history), and a pending deficit that heals in flight
-/// simply never confirms. Bounded: pending entries are capped; overflow drops the OLDEST pending
+/// two-cycle confirmation, and per-origin checkpoint liveness. Held in memory and kept by the store (#2104): the
+/// checkpoint receptor writes each origin's checkpoint and its pending set, and a new process loads both once
+/// (<see cref="EnsureHydratedAsync"/>), so a restart neither forgets its origins nor delays a confirmation. A pending
+/// deficit that heals in flight simply never confirms. Bounded: pending entries are capped; overflow drops the OLDEST pending
 /// (it re-detects on a later cycle if still real).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
@@ -42,6 +43,8 @@ public sealed class IntegrityGapTracker {
   private readonly List<PendingGap> _pending = [];
   private readonly HashSet<string> _confirmedWindows = [];
   private readonly ConcurrentDictionary<Guid, (string Name, DateTimeOffset LastSeen, string? RequestTopic)> _origins = new();
+  private System.Threading.Tasks.Task? _hydrating;
+  private bool _hydrated;
 
   /// <summary>Records a checkpoint arrival for liveness accounting. <paramref name="requestTopic"/>
   /// is the origin-carried address directed integrity requests publish to (newest wins; null keeps
@@ -119,13 +122,68 @@ public sealed class IntegrityGapTracker {
       .Where(kv => now - kv.Value.LastSeen > staleAfter)
       .Select(kv => (kv.Key, kv.Value.Name, kv.Value.LastSeen))];
 
-  /// <summary>#2104 (RED stub).</summary>
-  public IReadOnlyList<PendingGap> PeekPending(Guid originServiceId) => [.. _pending.Where(p => p.OriginServiceId == originServiceId).Take(0)];
+  /// <summary>#2104: the origin's pending gaps, without taking them; what the store keeps after a checkpoint.</summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <returns>Its pending gaps.</returns>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  public IReadOnlyList<PendingGap> PeekPending(Guid originServiceId) {
+    lock (_lock) {
+      return [.. _pending.Where(p => p.OriginServiceId == originServiceId)];
+    }
+  }
 
-  /// <summary>#2104 (RED stub).</summary>
-  public System.Threading.Tasks.Task EnsureHydratedAsync(IWorkCoordinator coordinator, System.Threading.CancellationToken cancellationToken = default) {
+  /// <summary>
+  /// #2104: loads what the store kept of this tracker (<see cref="IWorkCoordinator.IntegrityLoadGapTrackerStateAsync"/>)
+  /// once per process, before the first read that needs it: the known origins with their last checkpoint times, and the
+  /// pending gaps. What this process already learned from a live checkpoint wins over the kept copy. A load that throws
+  /// leaves the tracker unloaded, so the next caller tries again; a store that keeps nothing (null) counts as loaded.
+  /// </summary>
+  /// <param name="coordinator">The store.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityGapTrackerDurabilityTests.cs</tests>
+  public async System.Threading.Tasks.Task EnsureHydratedAsync(
+      IWorkCoordinator coordinator, System.Threading.CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(coordinator);
-    _ = _origins.Count + (cancellationToken.IsCancellationRequested ? 1 : 0);
-    return System.Threading.Tasks.Task.CompletedTask;
+    System.Threading.Tasks.Task loading;
+    lock (_lock) {
+      if (_hydrated) {
+        return;
+      }
+      // Concurrent first readers share one load.
+      loading = _hydrating ??= _loadAsync(coordinator, cancellationToken);
+    }
+    try {
+      await loading.ConfigureAwait(false);
+    } catch {
+      lock (_lock) {
+        _hydrating = null;   // a failed load is not a load: the next caller tries again
+      }
+      throw;
+    }
+  }
+
+  private async System.Threading.Tasks.Task _loadAsync(IWorkCoordinator coordinator, System.Threading.CancellationToken cancellationToken) {
+    var state = await coordinator.IntegrityLoadGapTrackerStateAsync(cancellationToken).ConfigureAwait(false);
+    if (state is not null) {
+      _hydrate(state);
+    }
+    lock (_lock) {
+      _hydrated = true;
+    }
+  }
+
+  private void _hydrate(IntegrityGapTrackerState state) {
+    foreach (var origin in state.Origins) {
+      _origins.TryAdd(origin.OriginServiceId, (origin.OriginServiceName, origin.LastCheckpointAt, origin.RequestTopic));
+    }
+    lock (_lock) {
+      foreach (var gap in state.Pending.Where(g => !_pending.Contains(g))) {
+        if (_pending.Count >= MAX_PENDING) {
+          break;
+        }
+        _pending.Add(gap);
+      }
+    }
   }
 }

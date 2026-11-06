@@ -63,7 +63,13 @@ public sealed partial class IntegrityCheckpointReceptor(
       return;
     }
 
-    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow, message.RequestTopic);
+    // #2104: the kept state first, so a gap seen before a restart is confirmed by this checkpoint.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
+    var checkpointAt = DateTimeOffset.UtcNow;
+    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, checkpointAt, message.RequestTopic);
+    await coordinator.IntegrityRecordOriginCheckpointAsync(
+      message.OriginServiceId, message.OriginServiceName, message.RequestTopic, checkpointAt, cancellationToken).ConfigureAwait(false);
+    var pendingBefore = tracker.PeekPending(message.OriginServiceId);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     // #2008: the origin's announced domains replace its claims; the map built from every claim decides which buckets
@@ -266,6 +272,7 @@ public sealed partial class IntegrityCheckpointReceptor(
       .Where(b => keeps(b.EventType) && !ownership.IsOwnedByAnother(b.EventType, message.OriginServiceId))
       .ToList();
     if (verified.Count == 0) {
+      await _keepPendingAsync(coordinator, tracker, message.OriginServiceId, pendingBefore, cancellationToken).ConfigureAwait(false);
       return;
     }
     var actualBuckets = await coordinator
@@ -294,6 +301,22 @@ public sealed partial class IntegrityCheckpointReceptor(
         });
       }
     }
+    await _keepPendingAsync(coordinator, tracker, message.OriginServiceId, pendingBefore, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2104: keeps the origin's pending gaps in the store when this checkpoint changed them (a gap confirmed, healed or
+  /// first seen), so a restarted process confirms them with its first checkpoint. A checkpoint that changed nothing
+  /// writes nothing.
+  /// </summary>
+  private static async Task _keepPendingAsync(
+      IWorkCoordinator coordinator, IntegrityGapTracker tracker, Guid originServiceId,
+      IReadOnlyList<IntegrityGapTracker.PendingGap> before, CancellationToken cancellationToken) {
+    var after = tracker.PeekPending(originServiceId);
+    if (after.SequenceEqual(before)) {
+      return;
+    }
+    await coordinator.IntegrityReplacePendingGapsAsync(originServiceId, after, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>Wire-only, directed at the origin — the pump's own publish pattern. A lost request

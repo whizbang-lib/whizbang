@@ -785,6 +785,121 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IntegrityGapTrackerState?>(async (cmd, schema) => {
+      // #2104: one read per process start, two primary-key-ordered scans of small tables (one row per origin, one per
+      // pending gap).
+      cmd.CommandText = $"""
+        SELECT origin_service_id, origin_service_name, request_topic, last_checkpoint_at
+        FROM {schema}.wh_integrity_known_origins ORDER BY origin_service_id;
+        SELECT origin_service_id, origin_service_name, tenant_scope, event_type, from_commit_sequence,
+               to_commit_sequence, expected_count
+        FROM {schema}.wh_integrity_pending_gaps ORDER BY 1, 3, 4, 5, 6;
+        """;
+      var origins = new List<IntegrityKnownOrigin>();
+      var pending = new List<IntegrityGapTracker.PendingGap>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        origins.Add(new IntegrityKnownOrigin(
+          reader.GetGuid(0), reader.GetString(1),
+          await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
+          await reader.GetFieldValueAsync<DateTimeOffset>(3, cancellationToken).ConfigureAwait(false)));
+      }
+      await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(2);
+        pending.Add(new IntegrityGapTracker.PendingGap {
+          OriginServiceId = reader.GetGuid(0),
+          OriginServiceName = reader.GetString(1),
+          TenantScope = tenant.Length == 0 ? null : tenant,
+          EventType = reader.GetString(3),
+          FromCommitSequence = reader.GetInt64(4),
+          ToCommitSequence = reader.GetInt64(5),
+          ExpectedCount = reader.GetInt32(6),
+        });
+      }
+      return new IntegrityGapTrackerState(origins, pending);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task IntegrityRecordOriginCheckpointAsync(
+      Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+      CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // #2104: one row per origin, rewritten in place per checkpoint; no indexed column changes, so the update is
+      // heap-only. An origin that announces no address keeps the known one.
+      cmd.CommandText = $"""
+        INSERT INTO {schema}.wh_integrity_known_origins AS k
+          (origin_service_id, origin_service_name, request_topic, last_checkpoint_at)
+        VALUES (@p_origin, @p_name, @p_topic, @p_at)
+        ON CONFLICT (origin_service_id) DO UPDATE SET
+          origin_service_name = EXCLUDED.origin_service_name,
+          request_topic = COALESCE(EXCLUDED.request_topic, k.request_topic),
+          last_checkpoint_at = GREATEST(k.last_checkpoint_at, EXCLUDED.last_checkpoint_at)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_name", originServiceName));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_topic", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)requestTopic ?? DBNull.Value });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", checkpointAt));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task IntegrityReplacePendingGapsAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(pending);
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // #2104: the origin's set replaced in one statement: rows no longer pending leave, new ones are added, rows still
+      // pending are left alone.
+      cmd.CommandText = $"""
+        WITH kept AS (
+          SELECT * FROM unnest(@p_names::text[], @p_tenants::text[], @p_types::text[], @p_from::bigint[], @p_to::bigint[],
+                               @p_expected::int[])
+            AS g(origin_service_name, tenant_scope, event_type, from_commit_sequence, to_commit_sequence, expected_count)
+        ),
+        gone AS (
+          DELETE FROM {schema}.wh_integrity_pending_gaps p
+          WHERE p.origin_service_id = @p_origin
+            AND NOT EXISTS (SELECT 1 FROM kept g
+                            WHERE g.tenant_scope = p.tenant_scope AND g.event_type = p.event_type
+                              AND g.from_commit_sequence = p.from_commit_sequence
+                              AND g.to_commit_sequence = p.to_commit_sequence)
+        )
+        INSERT INTO {schema}.wh_integrity_pending_gaps AS kp
+          (origin_service_id, origin_service_name, tenant_scope, event_type, from_commit_sequence, to_commit_sequence,
+           expected_count)
+        SELECT @p_origin, g.origin_service_name, g.tenant_scope, g.event_type, g.from_commit_sequence,
+               g.to_commit_sequence, g.expected_count
+        FROM kept g
+        ORDER BY 3, 4, 5, 6
+        ON CONFLICT (origin_service_id, tenant_scope, event_type, from_commit_sequence, to_commit_sequence)
+        DO UPDATE SET expected_count = EXCLUDED.expected_count
+        WHERE kp.expected_count IS DISTINCT FROM EXCLUDED.expected_count
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.OriginServiceName).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenants", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = pending.Select(g => g.FromCommitSequence).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = pending.Select(g => g.ToCommitSequence).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_expected", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = pending.Select(g => g.ExpectedCount).ToArray()
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task IntegrityRecordMissingEventsAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
       CancellationToken cancellationToken = default) {

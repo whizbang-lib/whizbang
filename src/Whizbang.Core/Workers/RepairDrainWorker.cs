@@ -109,6 +109,8 @@ public sealed partial class RepairDrainWorker(
     // Directed or not at all — the same rule as every other integrity send: only origins whose
     // request topic a checkpoint has taught. Unlearned origins are not CLAIMED, so no attempt
     // budget is ever burned on a request that could not leave the process.
+    // #2104: the origins the store kept count from the first tick after a restart.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     var origins = tracker.GetOrigins().Where(o => !string.IsNullOrEmpty(o.RequestTopic)).ToList();
     if (origins.Count == 0) {
       return;

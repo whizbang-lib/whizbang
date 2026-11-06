@@ -1386,6 +1386,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
+  so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
+  their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them
+  (`wh_integrity_known_origins`, written per recorded checkpoint as a heap-only update; `wh_integrity_pending_gaps`,
+  replaced only when a checkpoint changes an origin's pending set), and a new process loads both once before the tracker
+  is first read (`IntegrityGapTracker.EnsureHydratedAsync`, `IWorkCoordinator.IntegrityLoadGapTrackerStateAsync`). What
+  the process already learned from a live checkpoint wins, and a failed load is retried rather than latched.
 - **A repair asks for the one event a stream is missing instead of re-sending the stream (#2103).** A
   `RequestRedeliveryCommand` could name only types, streams and a range, so one missing event cost the stream's whole
   history in transport and processing. Stream digests carry id lanes (#2106), and every stream-level digest a

@@ -263,6 +263,8 @@ public sealed partial class IntegrityAuditWorker(
     // matches nothing and every origin answers with silence. Never null: null asks for every type.
     var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
+    // #2104: a restarted process asks the origins the store kept, not only those whose checkpoint arrived since.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
       if (string.IsNullOrEmpty(originRequestTopic)) {
         // Directed or not at all: without the origin-carried address the only other topic on
