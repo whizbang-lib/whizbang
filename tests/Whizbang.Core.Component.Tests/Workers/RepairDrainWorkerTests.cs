@@ -86,6 +86,37 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
+  public async Task DrainTick_ARowThatNamesItsMissingEvent_AsksForThatEventOnly_ApartFromWholeStreamRowsAsync() {
+    // #2103: a bucket missing exactly one event records that event's id; its request names it, so the owner ships
+    // one event instead of the stream. Rows that name none still ask for their streams over the window, separately,
+    // because an id list narrows a request to those ids.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var named = TrackedGuid.New().Value;
+    var missing = TrackedGuid.New().Value;
+    var whole = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", named, 100, 500, missing),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", whole, 100, 500),
+    ]);
+
+    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    await Assert.That(requests.Count).IsEqualTo(2);
+    var one = requests.Single(r => r.EventIds is { Count: > 0 });
+    await Assert.That(one.EventIds).IsEquivalentTo([missing]);
+    await Assert.That(one.StreamIds).IsEquivalentTo([named])
+      .Because("the stream and window stay on the request, so an owner that cannot name the event answers the range");
+    await Assert.That(one.FromCommitSequence).IsEqualTo(99L);
+    var rest = requests.Single(r => r.EventIds is null);
+    await Assert.That(rest.StreamIds).IsEquivalentTo([whole]);
+  }
+
+  [Test]
   public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_ButNotAGroupWhoseSendFailedAsync() {
     // #2029: a bucket whose request left is not claimed again while its answer is on the way. A group whose send
     // failed never asked, so it waits out its backoff only.

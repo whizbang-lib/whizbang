@@ -203,6 +203,44 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     await Assert.That(answer.MarkedUnchanged).IsEmpty();
   }
 
+  // ===== #2103: the one missing event rides the ledger to the drain =====
+
+  [Test]
+  public async Task RecordMissingEvents_TheClaimCarriesEachRowsNamedEvent_OrNoneAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var (named, unnamed) = (_key(origin, TrackedGuid.New().Value), _key(origin, TrackedGuid.New().Value));
+    var missing = TrackedGuid.New().Value;
+    await _reportAsync(coordinator, named, deficit: 1, at: _t0);
+    await _reportAsync(coordinator, unnamed, deficit: 2, at: _t0);
+
+    await ((IWorkCoordinator)coordinator).IntegrityRecordMissingEventsAsync(origin, [named, unnamed], [missing, null]);
+    var claimed = await coordinator.IntegrityClaimRepairDrainAsync([origin], _t0.AddSeconds(1), _backoff, maxAttempts: 8, limit: 10);
+
+    await Assert.That(claimed.Single(c => c.StreamId == named.StreamId).MissingEventId).IsEqualTo(missing);
+    await Assert.That(claimed.Single(c => c.StreamId == unnamed.StreamId).MissingEventId).IsNull();
+  }
+
+  [Test]
+  public async Task RecordMissingEvents_ALaterComparisonThatNamesNone_ClearsTheIdAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var key = _key(origin, TrackedGuid.New().Value);
+    await _reportAsync(coordinator, key, deficit: 1, at: _t0);
+    await ((IWorkCoordinator)coordinator).IntegrityRecordMissingEventsAsync(origin, [key], [TrackedGuid.New().Value]);
+
+    await ((IWorkCoordinator)coordinator).IntegrityRecordMissingEventsAsync(origin, [key], [null]);
+    var claimed = await coordinator.IntegrityClaimRepairDrainAsync([origin], _t0.AddSeconds(1), _backoff, maxAttempts: 8, limit: 10);
+
+    await Assert.That(claimed.Single().MissingEventId).IsNull()
+      .Because("a stale id would ask the owner for the wrong event; the stream syncs whole instead");
+  }
+
+  [Test]
+  public async Task RecordMissingEvents_NothingToRecord_IsHarmlessAsync() {
+    await ((IWorkCoordinator)_coordinator()).IntegrityRecordMissingEventsAsync(TrackedGuid.New().Value, [], []);
+  }
+
   // ===== #2029: a real cap =====
 
   [Test]

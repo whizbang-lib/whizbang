@@ -673,6 +673,14 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityRecordMissingEventsAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(async () => await coordinator.IntegrityRecordMissingEventsAsync(Guid.Empty, [], [])).ThrowsNothing()
+      .Because("an engine that cannot record the named event has the drain sync the stream whole, as before");
+  }
+
+  [Test]
   public async Task GetIntegritySealAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

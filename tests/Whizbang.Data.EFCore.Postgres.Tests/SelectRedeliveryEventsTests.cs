@@ -134,6 +134,27 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Select_EventIds_SelectsOnlyThoseEvents_WithinTheOtherFiltersAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+    var other = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, version: 1, TENANT_A, "Contracts.TypeOne");
+    await _seedAsync(conn, stream, version: 2, TENANT_A, "Contracts.TypeOne");
+    await _seedAsync(conn, other, version: 1, TENANT_A, "Contracts.TypeOne");
+    var all = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { TenantScope = TENANT_A, StreamIds = [stream, other] });
+    var wanted = all.First(e => e.StreamId == stream && e.Version == 2).EventId;
+    var elsewhere = all.Single(e => e.StreamId == other).EventId;
+
+    var named = await coordinator.SelectRedeliveryEventsAsync(
+      new RedeliveryRequest { TenantScope = TENANT_A, StreamIds = [stream], EventIds = [wanted, elsewhere] });
+
+    await Assert.That(named.Select(e => e.EventId).ToList()).IsEquivalentTo([wanted])
+      .Because("a named event is shipped only from the streams the request names (#2103)");
+  }
+
+  [Test]
   public async Task Select_KeysetContinuation_PagesWithoutOverlapOrLossAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);

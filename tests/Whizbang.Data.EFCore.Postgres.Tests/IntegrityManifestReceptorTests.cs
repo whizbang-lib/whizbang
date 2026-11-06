@@ -2816,6 +2816,16 @@ public class IntegrityManifestReceptorTests {
       return [.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))];
     }
 
+    /// <summary>#2103: what the comparison recorded as each deficit's one missing event.</summary>
+    public List<(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, IReadOnlyList<Guid?> Ids)> MissingRecorded { get; } = [];
+
+    public Task IntegrityRecordMissingEventsAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
+        CancellationToken cancellationToken = default) {
+      MissingRecorded.Add((keys, missingEventIds));
+      return Task.CompletedTask;
+    }
+
     /// <summary>#2102: the folds of events held from the origin without an origin sequence.</summary>
     public IReadOnlyList<StreamDigest> UnsequencedDigests { get; set; } = [];
     public List<(IReadOnlyList<string> Types, IReadOnlyList<Guid>? Streams)> UnsequencedAsks { get; } = [];
@@ -3283,5 +3293,144 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(Interlocked.Read(ref unplaced)).IsEqualTo(1L)
       .Because("an undecided bucket is not a deficit, but it is counted, so the operator sees how much the windows cannot place");
+  }
+
+  // ── #2103: one missing event is named by the id lanes ───────────────────
+
+  private static StreamDigest _named(Guid stream, int count, Guid[] ids, string type = "Contracts.TypeX") {
+    long lo = 0, hi = 0;
+    foreach (var id in ids) {
+      var bytes = id.ToByteArray(bigEndian: true);
+      lo ^= System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(0, 8));
+      hi ^= System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(8, 8));
+    }
+    return new StreamDigest {
+      TenantScope = "tenant-a",
+      EventType = type,
+      StreamId = stream,
+      DigestLo = lo ^ 0x55,
+      DigestHi = hi ^ 0x66,
+      EventCount = count,
+      IdLo = lo,
+      IdHi = hi,
+    };
+  }
+
+  private static StreamIntegrityOptions _burst => new() {
+    RepairDrainEnabled = false,
+    RepairMode = IntegrityRepairMode.AutoRepairCapped,
+    MaxAutoRepairRequestsPerAudit = 5000,
+  };
+
+  [Test]
+  public async Task Repair_AStreamMissingOneEvent_AsksForThatEventOnlyAsync() {
+    var (coordinator, transport, _, receptor) = _heldFixture(_burst);
+    var stream = TrackedGuid.New().Value;
+    var (a, b) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [_named(stream, 1, ids: [a])];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_named(stream, 2, ids: [a, b])])));
+
+    var request = _redeliveries(transport).Single();
+    await Assert.That(request.EventIds).IsEquivalentTo([b])
+      .Because("origin XOR local over the id lanes is the one event the stream is missing");
+    await Assert.That(request.StreamIds).IsEquivalentTo([stream])
+      .Because("the stream and window stay on the request for an owner that cannot name events");
+    await Assert.That(request.FromCommitSequence).IsEqualTo(99L);
+  }
+
+  [Test]
+  public async Task Repair_AStreamMissingNothing_AsksForNothingAsync() {
+    var (coordinator, transport, _, receptor) = _heldFixture(_burst);
+    var stream = TrackedGuid.New().Value;
+    var a = TrackedGuid.New().Value;
+    coordinator.ReceivedDigests = [_named(stream, 1, ids: [a])];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_named(stream, 1, ids: [a])])));
+
+    await Assert.That(_redeliveries(transport)).IsEmpty();
+  }
+
+  [Test]
+  public async Task Repair_WithoutIdLanes_OrMoreThanOneMissing_AsksForTheWholeStreamAsync() {
+    var (coordinator, transport, _, receptor) = _heldFixture(_burst);
+    var twoMissing = TrackedGuid.New().Value;
+    var oldOrigin = TrackedGuid.New().Value;
+    var (a, b, c) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [_named(twoMissing, 1, ids: [a]), _named(oldOrigin, 1, ids: [a])];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [
+      _named(twoMissing, 3, ids: [a, b, c]),
+      _named(oldOrigin, 2, ids: [a, b]) with { IdLo = null, IdHi = null },
+    ])));
+
+    var request = _redeliveries(transport).Single();
+    await Assert.That(request.EventIds).IsNull().Because("no single event can be named, so both streams sync whole");
+    await Assert.That(request.StreamIds).IsEquivalentTo([twoMissing, oldOrigin]);
+  }
+
+  [Test]
+  public async Task Repair_NamedAndWholeStreams_GoInSeparateRequests_AndManyNamedEventsArePagedAsync() {
+    var (coordinator, transport, _, receptor) = _heldFixture(_burst);
+    var named = Enumerable.Range(0, 1200).Select(_ => (Stream: TrackedGuid.New().Value, Held: TrackedGuid.New().Value, Missing: TrackedGuid.New().Value)).ToList();
+    var whole = TrackedGuid.New().Value;
+    coordinator.ReceivedDigests = [.. named.Select(n => _named(n.Stream, 1, ids: [n.Held]))];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator,
+      [.. named.Select(n => _named(n.Stream, 2, ids: [n.Held, n.Missing])), _named(whole, 3, ids: [TrackedGuid.New().Value])])));
+
+    var requests = _redeliveries(transport).ToList();
+    var byId = requests.Where(r => r.EventIds is not null).ToList();
+    await Assert.That(byId.Select(r => r.EventIds!.Count).Order().ToList()).IsEquivalentTo([200, 500, 500])
+      .Because("a large missing set is paged, at most 500 named events per request");
+    await Assert.That(byId.All(r => r.StreamIds!.Count == r.EventIds!.Count)).IsTrue();
+    await Assert.That(byId.SelectMany(r => r.EventIds!).Order().ToList()).IsEquivalentTo(named.Select(n => n.Missing).Order().ToList());
+    await Assert.That(requests.Single(r => r.EventIds is null).StreamIds).IsEquivalentTo([whole])
+      .Because("an id list narrows a request to those ids, so a stream that names none asks on its own");
+  }
+
+  [Test]
+  public async Task Repair_AStreamOfThreeTypes_ComparesOnlyTheTypeThisServiceKeepsAsync() {
+    // Buckets are per (origin, tenant, type, stream): a consumer keeps a subset of a stream's types, so a whole-stream
+    // digest would mismatch and heal forever.
+    var coordinator = new AuditCoordinator();
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport, _burst, tracker: tracker, consumers: new ConsumesOnly("Contracts.A"));
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    var stream = TrackedGuid.New().Value;
+    var (heldA, missingA) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [_named(stream, 1, [heldA], "Contracts.A")];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [
+      _named(stream, 2, [heldA, missingA], "Contracts.A"),
+      _named(stream, 4, [TrackedGuid.New().Value], "Contracts.B"),
+      _named(stream, 6, [TrackedGuid.New().Value], "Contracts.C"),
+    ])));
+
+    var request = _redeliveries(transport).Single();
+    await Assert.That(request.EventTypes).IsEquivalentTo(["Contracts.A"]);
+    await Assert.That(request.EventIds).IsEquivalentTo([missingA])
+      .Because("only the kept type's bucket is compared, and its one missing event named; B and C are never asked for");
+  }
+
+  [Test]
+  public async Task DrainMode_RecordsEachDeficitsMissingEvent_OrNullAsync() {
+    var (coordinator, _, _, receptor) = _heldFixture(new StreamIntegrityOptions {
+      RepairDrainEnabled = true,
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+    });
+    var one = TrackedGuid.New().Value;
+    var two = TrackedGuid.New().Value;
+    var (a, b, c) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [_named(one, 1, ids: [a]), _named(two, 1, ids: [a])];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_named(one, 2, ids: [a, b]), _named(two, 3, ids: [a, b, c])])));
+
+    var (keys, ids) = coordinator.MissingRecorded.Single();
+    var byStream = keys.Zip(ids).ToDictionary(k => k.First.StreamId, k => k.Second);
+    await Assert.That(byStream[one]).IsEqualTo(b).Because("the drain later asks the owner for exactly this event");
+    await Assert.That(byStream[two]).IsNull().Because("two missing events name none; a stale id is cleared");
   }
 }

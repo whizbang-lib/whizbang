@@ -88,6 +88,9 @@ public static class IntegrityDigestMath {
     return new(held.EventCount < origin.EventCount ? HeldWindowVerdict.Deficit : HeldWindowVerdict.Undecided, held);
   }
 
+  /// <summary>#2103 (RED stub).</summary>
+  public static Guid? SingleMissingEventId(StreamDigest origin, StreamDigest? held) => origin.EventCount < 0 && held is null ? Guid.Empty : null;
+
   private static bool _sameFold(StreamDigest origin, StreamDigest? local) =>
     local is not null && local.DigestLo == origin.DigestLo && local.DigestHi == origin.DigestHi;
 }
