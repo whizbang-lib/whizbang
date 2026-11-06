@@ -90,6 +90,42 @@ public class RedeliveryWindowAnswerTests {
   }
 
   [Test]
+  [NotInParallel("Metrics")]
+  public async Task Window_StoppedAtTheOwnerBound_SaysWhereAndThatMoreRemains_AndTheNextWindowsReceiveTheRestAsync() {
+    // #2098: an owner capped every answer at its bound and stopped without a word, so a type larger than the bound never
+    // completed. Here the bound is 3 and the type has 7 events: every event arrives, across three windows.
+    var coordinator = new WindowCoordinator {
+      Events = [.. Enumerable.Range(1, 7).Select(i => _evt(i % 2 == 0 ? _s1 : _s2, i, i))],
+    };
+    var serializer = new CaptureSerializer();
+    var metrics = _metrics(out var meterServices);
+    await using var ownedMeters = meterServices;
+    using var capped = new MetricProbe(metrics.RedeliveryAnswersCapped.Instrument, "kind");
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer,
+      new RedeliveryPumpOptions { MaxEventsPerRequest = 3, SelectPageSize = 2 }, metrics);
+    var receptor = _receptor(sp);
+    var backfill = TrackedGuid.New().Value;
+
+    long? position = null;
+    var window = 0L;
+    BackfillWindowAnswer answer;
+    do {
+      window++;
+      await receptor.HandleAsync(_window(backfill, window, position, max: 1_000));
+      answer = serializer.Answers[^1].Payload;
+      position = answer.StoppedAtCommitSequence ?? position;
+    } while (answer.HasMore && window < 10);
+
+    await Assert.That(window).IsEqualTo(3L).Because("3 + 3 + 1: the requester's 1,000 is clamped to the owner's bound of 3");
+    await Assert.That(serializer.Answers.Select(a => (a.Payload.StoppedAtCommitSequence, a.Payload.HasMore)))
+      .IsEquivalentTo([((long?)3, true), ((long?)6, true), ((long?)7, false)]);
+    await Assert.That(serializer.Composites.SelectMany(c => c.InnerCommitSequences!).Order())
+      .IsEquivalentTo([(long?)1, 2, 3, 4, 5, 6, 7])
+      .Because("every event of the type arrives exactly once across the windows");
+    await Assert.That(capped.Total("window")).IsEqualTo(2L).Because("the two windows that stopped at the bound are counted; the last, short window is not");
+  }
+
+  [Test]
   public async Task Window_SelectingNothing_AnswersThatNothingRemains_WithoutABundleAsync() {
     var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 1)] };
     var serializer = new CaptureSerializer();
@@ -123,6 +159,25 @@ public class RedeliveryWindowAnswerTests {
 
   [Test]
   [NotInParallel("Metrics")]
+  public async Task OrdinaryRequest_StoppedAtTheBoundWithMoreLeft_IsCountedAsCappedAsync() {
+    // An ordinary request has no window to continue from, so stopping at the bound with more selected is reported, never
+    // silent.
+    var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 1), _evt(_s1, 2, 2), _evt(_s1, 3, 3)] };
+    var metrics = _metrics(out var meterServices);
+    await using var ownedMeters = meterServices;
+    using var capped = new MetricProbe(metrics.RedeliveryAnswersCapped.Instrument, "kind");
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer,
+      new RedeliveryPumpOptions { MaxEventsPerRequest = 2 }, metrics);
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(capped.Total("ordinary")).IsEqualTo(1L);
+    await Assert.That(serializer.Answers).IsEmpty().Because("only a windowed request is answered with a window answer");
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
   public async Task OrdinaryRequest_ThatSelectedEverything_IsNotCappedAsync() {
     var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 1), _evt(_s1, 2, 2)] };
     var metrics = _metrics(out var meterServices);
@@ -134,6 +189,17 @@ public class RedeliveryWindowAnswerTests {
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(capped.Sum()).IsEqualTo(0L).Because("exactly the bound, with nothing after it, is a complete answer");
+  }
+
+  [Test]
+  public async Task OrdinaryRequest_StoppedAtTheBound_WithoutMetrics_StillAnswersAsync() {
+    var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 1), _evt(_s1, 2, 2), _evt(_s1, 3, 3)] };
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer, new RedeliveryPumpOptions { MaxEventsPerRequest = 2 });
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(serializer.Composites.SelectMany(c => c.InnerEventIds)).Count().IsEqualTo(2);
   }
 
   [Test]
