@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace Whizbang.Data.Postgres;
@@ -34,21 +35,169 @@ public enum ConcurrentIndexOutcome {
   Failed,
 }
 
-/// <summary>Builds framework indexes concurrently after the migrations (#2092).</summary>
+/// <summary>
+/// Builds the framework indexes a migration must not build (#2092): an index on a large, write-heavy table, which a
+/// <c>CREATE INDEX</c> inside the migration's transaction would hold every write to for the whole build. Each is built
+/// with <c>CREATE INDEX CONCURRENTLY</c>, outside any transaction, so writes go on while it builds; reads that would use
+/// it run without it until it is valid.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Idempotent and restart-safe: a valid index is left alone, so once built each run is one catalog read. One session
+/// builds at a time, under a session advisory lock keyed by schema and index (<see cref="LockKey"/>); a session that finds
+/// the lock taken steps aside, because an invalid index under the name is then the other session's build in progress.
+/// </para>
+/// <para>
+/// A concurrent build that is interrupted (a crash, a cancellation, a failure reading the table) leaves an INVALID index
+/// under the name, which every later <c>CREATE INDEX IF NOT EXISTS</c> would take for the index while no read could use
+/// it. Under the lock, an invalid index is a leftover: it is dropped concurrently and the index built again, and a build
+/// that fails drops what it left before reporting.
+/// </para>
+/// </remarks>
 /// <docs>operations/infrastructure/migrations#indexes-built-after-the-migrations</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ConcurrentIndexBuildTests.cs</tests>
-public static class ConcurrentIndexBuild {
-  /// <summary>The framework indexes built this way.</summary>
-  public static IReadOnlyList<ConcurrentIndexDefinition> FrameworkIndexes { get; } = [];
+public static partial class ConcurrentIndexBuild {
+  /// <summary>
+  /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092). Its predicate
+  /// also names <c>event_type IS NOT NULL</c>, which every row satisfies (the column is NOT NULL) but only a query
+  /// filtering on the type implies, so the planner never offers it to a commit-sequence probe that names no type.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PacedBackfillIndexTests.cs</tests>
+  public static IReadOnlyList<ConcurrentIndexDefinition> FrameworkIndexes { get; } = [
+    new ConcurrentIndexDefinition(
+      "wh_event_store",
+      "idx_event_store_type_commit_sequence",
+      "(event_type, commit_sequence)",
+      "commit_sequence IS NOT NULL AND event_type IS NOT NULL",
+      "One type's stamped events in commit order (#2092): a paced backfill window reads from a commit sequence onward under a limit, and a window answer reads the type's head. Built concurrently after the migrations."),
+  ];
 
-#pragma warning disable RCS1163, IDE0060 // RED stub (#2092)
   /// <summary>The session advisory lock key one build of <paramref name="name"/> in <paramref name="schema"/> holds.</summary>
-  public static long LockKey(string schema, string name) => 0;
+  /// <param name="schema">The schema, unquoted.</param>
+  /// <param name="name">The index name.</param>
+  /// <returns>The key.</returns>
+  public static long LockKey(string schema, string name) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+    ArgumentException.ThrowIfNullOrWhiteSpace(name);
+    return FnvHash64.Compute($"whizbang:concurrent-index:{schema}.{name}");
+  }
 
-  /// <summary>Ensures the index exists and is valid.</summary>
-  public static Task<ConcurrentIndexOutcome> EnsureAsync(
+  /// <summary>Ensures <paramref name="index"/> exists in <paramref name="schema"/> and is valid, building it concurrently.</summary>
+  /// <param name="connection">An open connection, outside any transaction, that the caller owns.</param>
+  /// <param name="schema">The schema, unquoted.</param>
+  /// <param name="index">The index.</param>
+  /// <param name="commandTimeoutSeconds">The timeout for the build (0 waits as long as it takes); a concurrent build
+  /// waits for every transaction older than it, then reads the table twice.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What it did.</returns>
+  public static async Task<ConcurrentIndexOutcome> EnsureAsync(
       NpgsqlConnection connection, string schema, ConcurrentIndexDefinition index, int commandTimeoutSeconds,
-      ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    Task.FromResult(ConcurrentIndexOutcome.Failed);
-#pragma warning restore RCS1163, IDE0060
+      ILogger? logger = null, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(connection);
+    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+    ArgumentNullException.ThrowIfNull(index);
+    var log = logger ?? NullLogger.Instance;
+    var key = LockKey(schema, index.Name);
+    if (!await _scalarAsync<bool>(connection, "SELECT pg_try_advisory_lock($1)", key, cancellationToken).ConfigureAwait(false)) {
+      LogBusy(log, index.Name, schema);
+      return ConcurrentIndexOutcome.Busy;
+    }
+    try {
+      var state = await _stateAsync(connection, schema, index, cancellationToken).ConfigureAwait(false);
+      if (state == IndexState.Valid) {
+        return ConcurrentIndexOutcome.AlreadyValid;
+      }
+      if (state == IndexState.TableAbsent) {
+        return ConcurrentIndexOutcome.TableAbsent;
+      }
+      return await _buildAsync(connection, schema, index, state, commandTimeoutSeconds, log, cancellationToken).ConfigureAwait(false);
+    } finally {
+      await _scalarAsync<bool>(connection, "SELECT pg_advisory_unlock($1)", key, CancellationToken.None).ConfigureAwait(false);
+    }
+  }
+
+  private static async Task<ConcurrentIndexOutcome> _buildAsync(
+      NpgsqlConnection connection, string schema, ConcurrentIndexDefinition index, IndexState state,
+      int commandTimeoutSeconds, ILogger log, CancellationToken cancellationToken) {
+    var qualifiedIndex = $"{PgIdentifier.Quote(schema)}.{PgIdentifier.Quote(index.Name)}";
+    try {
+      if (state == IndexState.Invalid) {
+        await _executeAsync(connection, $"DROP INDEX CONCURRENTLY IF EXISTS {qualifiedIndex}", commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        LogDroppedLeftover(log, index.Name, schema);
+      }
+      var where = index.Predicate is null ? string.Empty : $" WHERE {index.Predicate}";
+      await _executeAsync(connection,
+        $"CREATE INDEX CONCURRENTLY IF NOT EXISTS {PgIdentifier.Quote(index.Name)} ON {PgIdentifier.Quote(schema)}.{PgIdentifier.Quote(index.Table)} {index.Columns}{where}",
+        commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+      if (index.Comment is not null) {
+        await _executeAsync(connection,
+          $"COMMENT ON INDEX {qualifiedIndex} IS '{index.Comment.Replace("'", "''", StringComparison.Ordinal)}'",
+          commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+      }
+      LogBuilt(log, index.Name, schema, index.Table);
+      return ConcurrentIndexOutcome.Built;
+    } catch (PostgresException ex) {
+      LogFailed(log, ex, index.Name, schema, index.Table);
+      if (await _stateAsync(connection, schema, index, CancellationToken.None).ConfigureAwait(false) == IndexState.Invalid) {
+        await _executeAsync(connection, $"DROP INDEX CONCURRENTLY IF EXISTS {qualifiedIndex}", commandTimeoutSeconds, CancellationToken.None).ConfigureAwait(false);
+      }
+      return ConcurrentIndexOutcome.Failed;
+    }
+  }
+
+  private enum IndexState { Absent, Valid, Invalid, TableAbsent }
+
+  private static async Task<IndexState> _stateAsync(
+      NpgsqlConnection connection, string schema, ConcurrentIndexDefinition index, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand("""
+      SELECT CASE
+        WHEN to_regclass(format('%I.%I', $1, $2)) IS NULL THEN 'table-absent'
+        ELSE COALESCE((SELECT CASE WHEN i.indisvalid THEN 'valid' ELSE 'invalid' END
+                       FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                       JOIN pg_index i ON i.indexrelid = c.oid
+                       WHERE n.nspname = $1 AND c.relname = $3), 'absent')
+      END
+      """, connection);
+    command.Parameters.Add(new NpgsqlParameter { Value = schema });
+    command.Parameters.Add(new NpgsqlParameter { Value = index.Table });
+    command.Parameters.Add(new NpgsqlParameter { Value = index.Name });
+    var state = (string)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    return state switch {
+      "valid" => IndexState.Valid,
+      "invalid" => IndexState.Invalid,
+      "table-absent" => IndexState.TableAbsent,
+      _ => IndexState.Absent,
+    };
+  }
+
+  private static async Task<T> _scalarAsync<T>(NpgsqlConnection connection, string sql, long key, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(sql, connection);
+    command.Parameters.Add(new NpgsqlParameter { Value = key });
+    return (T)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive",
+    Justification = "Identifiers are quoted by PgIdentifier from the framework's own definitions; the key and predicate are framework constants.")]
+  private static async Task _executeAsync(NpgsqlConnection connection, string sql, int commandTimeoutSeconds, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = commandTimeoutSeconds };
+    await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Index {Index} in {Schema} built concurrently on {Table}")]
+  private static partial void LogBuilt(ILogger logger, string index, string schema, string table);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Index {Index} in {Schema}: dropped the invalid leftover of an interrupted concurrent build before building it again")]
+  private static partial void LogDroppedLeftover(ILogger logger, string index, string schema);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Index {Index} in {Schema}: another session is building it; this run steps aside")]
+  private static partial void LogBusy(ILogger logger, string index, string schema);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Index {Index} in {Schema} on {Table} could not be built concurrently; reads that would use it run without it, and the next maintenance run tries again")]
+  private static partial void LogFailed(ILogger logger, Exception exception, string index, string schema, string table);
 }

@@ -1416,7 +1416,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BackfillMaxConcurrentWindows` (default 2) at once, paced by a token bucket of `BackfillEventsPerMinute` (default
   6,000) with `BackfillWindowSize` events per window (default 1,000), on the maintainer under the idle gate and never in
   report-only. Progress is durable (migration 334, `wh_subscription_backfills`), so a restart resumes and a finished
-  type stops. Answers carry many events per bundle across streams, on the backfill's own session. An owner on an
+  type stops. A window reads its type through `idx_event_store_type_commit_sequence`, which the new framework index
+  build (`ConcurrentIndexBuild`, a maintenance step on the EF Core driver) creates with `CREATE INDEX CONCURRENTLY` after
+  the migrations, so writes to the event store go on while it builds; an invalid index an interrupted build left is
+  dropped and rebuilt, and windows read without it until it is valid. Answers carry many events per bundle across streams, on the backfill's own session. An owner on an
   earlier release answers a window the legacy way; after `BackfillMaxWindowAttempts` (default 3) unanswered requests the
   type's backfill ends as unanswered. Metrics: `backfill_windows_requested`, `backfill_events_received`,
   `backfills_ended`, and the gauges `backfill_windows_in_flight` and `backfill_remaining_events`.

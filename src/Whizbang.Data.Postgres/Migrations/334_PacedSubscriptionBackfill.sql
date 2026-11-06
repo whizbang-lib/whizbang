@@ -7,26 +7,21 @@
 --
 --              The startup reconciler used to ask each owner for the whole history of every newly consumed type at
 --              once, and each owner answered with a bundle per event, capped at its answer bound with no follow-up.
---              Two objects let the backfill walk each type in bounded windows instead:
+--              The backfill walks each type in bounded windows instead:
 --
 --              1. wh_subscription_backfills (requester side): one row per (owner, event type) with the durable
 --                 position (the last owner commit sequence received), the window awaiting its answer and until when,
 --                 attempts, counts and the outcome. A restart resumes from the position; an ended row stops.
---              2. idx_event_store_type_commit_sequence (owner side): a window reads one type from a commit sequence
---                 onward, in commit-sequence order, under a limit. Without an index keyed that way the read fetches and
---                 sorts every remaining event of the type for every window, so a backfill of a type with millions of
---                 events costs the square of its size. Partial on stamped rows, as idx_event_store_commit_sequence
---                 (046) is: unstamped rows are not selectable by commit sequence until they stamp. The predicate also
---                 names event_type IS NOT NULL, which every row satisfies (the column is NOT NULL): only a query that
---                 filters on event_type implies it, so the planner never offers this index to a commit-sequence probe
---                 that does not name a type, which idx_event_store_commit_sequence serves. Built inside the
---                 migration's transaction, like 195: on a large store the first start of this release pays one index
---                 build.
+--              2. The owner-side index a window reads through (idx_event_store_type_commit_sequence, one type's
+--                 stamped events in commit order) is NOT built here: a CREATE INDEX inside this migration's
+--                 transaction would hold every write to wh_event_store for the whole build, minutes on a large store.
+--                 It is built concurrently after the migrations by the framework index build (ConcurrentIndexBuild,
+--                 run by a maintenance step), and windows read without it until it is valid.
 --
 --              Number 334: the next free number.
 --
--- Dependencies: wh_event_store (the infrastructure schema, applied before the migrations)
--- Objects: wh_subscription_backfills, idx_event_store_type_commit_sequence
+-- Dependencies: none (a standalone table)
+-- Objects: wh_subscription_backfills
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_subscription_backfills (
   backfill_id UUID PRIMARY KEY,
@@ -56,10 +51,3 @@ COMMENT ON COLUMN __SCHEMA__.wh_subscription_backfills.answer_due_by IS
 'Set while window_number awaits its answer; past it the window may be asked again, up to the attempt limit.';
 COMMENT ON COLUMN __SCHEMA__.wh_subscription_backfills.outcome IS
 '0 running / 1 complete (the owner had nothing more) / 2 unanswered (a window went unanswered for every attempt, which an owner on a release before windowed backfill does).';
-
-CREATE INDEX IF NOT EXISTS idx_event_store_type_commit_sequence
-  ON __SCHEMA__.wh_event_store (event_type, commit_sequence)
-  WHERE commit_sequence IS NOT NULL AND event_type IS NOT NULL;
-
-COMMENT ON INDEX __SCHEMA__.idx_event_store_type_commit_sequence IS
-  'One type''s stamped events in commit order (334): a paced backfill window reads from a commit sequence onward under a limit, and a window answer reads the type''s head.';

@@ -2887,7 +2887,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (request.OrderByCommitSequence) {
       // #2092: one type's stamped history in commit order from the floor. Each type is read through
       // idx_event_store_type_commit_sequence in order under the limit (a lateral per type), so a window costs its own
-      // rows however much of the type's history lies behind or ahead of it.
+      // rows however much of the type's history lies behind or ahead of it. That index is built concurrently after the
+      // migrations (ConcurrentIndexBuild); until it is valid the same read answers correctly, more slowly.
       if (request.EventTypes is not { Count: > 0 }) {
         throw new ArgumentException("A commit-sequence selection names its event types.", nameof(request));
       }
@@ -3591,7 +3592,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken).ConfigureAwait(false);
 
   /// <inheritdoc />
-  /// <remarks>One index probe per type (a lateral over idx_event_store_type_commit_sequence), never a scan of the type.</remarks>
+  /// <remarks>One index probe per type (a lateral over idx_event_store_type_commit_sequence, once the concurrent
+  /// framework index build has made it valid), never a scan of the type.</remarks>
   public Task<long?> GetRedeliveryHeadCommitSequenceAsync(IReadOnlyList<string> eventTypes, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypes);
     return _withCoordinatorCommandAsync<long?>(async (cmd, schema) => {
