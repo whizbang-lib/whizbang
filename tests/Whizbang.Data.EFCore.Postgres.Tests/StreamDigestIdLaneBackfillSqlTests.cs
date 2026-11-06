@@ -250,7 +250,9 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
 
   private sealed record BatchRow(string? Kind, Guid? Stream, long? StoredLo, long? RecomputedLo);
 
-  private static async Task<(int Visited, List<BatchRow> Rows)> _batchAsync(NpgsqlConnection conn, int limit) {
+  private sealed record Batch(int Visited, List<BatchRow> Rows);
+
+  private static async Task<Batch> _batchAsync(NpgsqlConnection conn, int limit) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT visited, kind, stream_id, stored_lo, recomputed_lo FROM wh_backfill_stream_digest_id_lanes_batch(@n)";
     cmd.Parameters.AddWithValue("n", limit);
@@ -263,7 +265,7 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
         rows.Add(new BatchRow(r.GetString(1), r.GetGuid(2), r.IsDBNull(3) ? null : r.GetInt64(3), r.IsDBNull(4) ? null : r.GetInt64(4)));
       }
     }
-    return (visited, rows.Where(x => x.Kind != "filled").ToList());
+    return new Batch(visited, rows.Where(x => x.Kind != "filled").ToList());
   }
 
   private static async Task _executeAsync(NpgsqlConnection conn, string sql) {
@@ -288,8 +290,10 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
     return (string?)await cmd.ExecuteScalarAsync();
   }
 
+  private sealed record LogEntry(LogLevel Level, string Message);
+
   private sealed class ListLogger : ILogger {
-    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public List<LogEntry> Entries { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -297,6 +301,6 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) =>
-      Entries.Add((logLevel, formatter(state, exception)));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
   }
 }

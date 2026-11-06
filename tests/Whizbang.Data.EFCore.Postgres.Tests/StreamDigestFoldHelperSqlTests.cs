@@ -46,7 +46,9 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     return (int)(await cmd.ExecuteScalarAsync())!;
   }
 
-  private static async Task<(long Lo, long Hi, long? IdLo, long? IdHi, int Count)?> _rowAsync(NpgsqlConnection conn, Guid stream) {
+  private sealed record DigestRow(long Lo, long Hi, long? IdLo, long? IdHi, int Count);
+
+  private static async Task<DigestRow?> _rowAsync(NpgsqlConnection conn, Guid stream) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT digest_lo, digest_hi, id_lo, id_hi, event_count FROM wh_stream_digests WHERE stream_id = @s";
     cmd.Parameters.AddWithValue("s", stream);
@@ -54,7 +56,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     if (!await r.ReadAsync()) {
       return null;
     }
-    return (r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetInt32(4));
+    return new DigestRow(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetInt32(4));
   }
 
   /// <summary>The expected lanes, computed in C#: the id halves are the uuid's bytes in network order.</summary>
@@ -77,20 +79,20 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
 
     await Assert.That(await _foldAsync(conn, "fold", stream, ids)).IsEqualTo(1);
     var (idLo, idHi) = _idLanes(ids);
-    var folded = (await _rowAsync(conn, stream))!.Value;
+    var folded = (await _rowAsync(conn, stream))!;
     await Assert.That(folded.IdLo).IsEqualTo(idLo).Because("the id lanes are the XOR of the ids' big-endian halves");
     await Assert.That(folded.IdHi).IsEqualTo(idHi);
     await Assert.That(folded.Count).IsEqualTo(3);
 
     await Assert.That(await _foldAsync(conn, "unfold", stream, ids[0])).IsEqualTo(1);
     var (restLo, restHi) = _idLanes(ids[1], ids[2]);
-    var unfolded = (await _rowAsync(conn, stream))!.Value;
+    var unfolded = (await _rowAsync(conn, stream))!;
     await Assert.That(unfolded.IdLo).IsEqualTo(restLo).Because("XOR is self-inverse: the unfolded event's halves leave");
     await Assert.That(unfolded.IdHi).IsEqualTo(restHi);
     await Assert.That(unfolded.Count).IsEqualTo(2);
 
     await _foldAsync(conn, "fold", stream, ids[0]);
-    var refolded = (await _rowAsync(conn, stream))!.Value;
+    var refolded = (await _rowAsync(conn, stream))!;
     await Assert.That((refolded.Lo, refolded.Hi)).IsEqualTo((folded.Lo, folded.Hi))
       .Because("folding the event back restores the hash lanes exactly");
   }
@@ -106,7 +108,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     await Assert.That(await _foldAsync(conn, "seed", stream, TrackedGuid.New().Value)).IsEqualTo(0)
       .Because("a seed never rewrites a bucket that exists");
     var (idLo, _) = _idLanes(first);
-    await Assert.That((await _rowAsync(conn, stream))!.Value.IdLo).IsEqualTo(idLo);
+    await Assert.That((await _rowAsync(conn, stream))!.IdLo).IsEqualTo(idLo);
   }
 
   [Test]
@@ -226,7 +228,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     _ = await _storeAsync(conn, stream);   // stored, but missing from the bucket: drift
     await _foldAsync(conn, "fold", stream, a);
     await _ageDigestsAsync(conn, stream);
-    var stored = (await _rowAsync(conn, stream))!.Value;
+    var stored = (await _rowAsync(conn, stream))!;
 
     var report = await _healAsync(conn, [stream], fill: false);
 
@@ -234,7 +236,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     await Assert.That(report[0].Kind).IsEqualTo("drift_updated");
     await Assert.That(report[0].StoredLo).IsEqualTo(stored.Lo).Because("the report names what was stored");
     await StoredDigestInvariant.AssertAgreeAsync(conn, stream);
-    await Assert.That(report[0].RecomputedLo).IsEqualTo((await _rowAsync(conn, stream))!.Value.Lo)
+    await Assert.That(report[0].RecomputedLo).IsEqualTo((await _rowAsync(conn, stream))!.Lo)
       .Because("and what it was rewritten to");
   }
 
