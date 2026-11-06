@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics;
 using System.Text.Json;
 using Npgsql;
 using TUnit.Assertions;
@@ -103,17 +102,13 @@ public class RedeliveryBatchReconcileSqlTests : EFCoreTestBase {
     var perBundleEvents = await _storeManyAsync(conn, perBundle, backlog);
     var batchedEvents = await _storeManyAsync(conn, batched, backlog);
 
-    var singleClock = Stopwatch.StartNew();
     var singleFolds = await _singleBundleCallsCountingFoldsAsync(conn, perBundle, perBundleEvents);
-    singleClock.Stop();
-    var batchClock = Stopwatch.StartNew();
     var (rows, batchFolds) = await _reconcileCountingFoldsAsync(conn,
       [.. batchedEvents.Select((e, i) => new Bundle(batched, ORIGIN_NAME, (e, i + 1)))]);
-    batchClock.Stop();
+    // The fold count is the measure: it is deterministic, where elapsed time depends on the machine.
     TestContext.Current?.Output.WriteLine(
       $"#2099 backlog of {backlog} one-event bundles over 5 sealed epochs of {width}: single-bundle calls "
-      + $"{singleFolds} epoch folds in {singleClock.ElapsedMilliseconds} ms; batch {batchFolds} epoch folds in "
-      + $"{batchClock.ElapsedMilliseconds} ms");
+      + $"{singleFolds} epoch folds; batch {batchFolds} epoch folds");
 
     await Assert.That(rows.Sum(r => r.Adopted)).IsEqualTo(backlog);
     await Assert.That(singleFolds).IsEqualTo(backlog)
