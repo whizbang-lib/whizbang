@@ -1983,8 +1983,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // answer side; a null window includes them (full history).
       cmd.CommandText = $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE es.origin_service_id = @p_origin
@@ -2052,8 +2052,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
   internal static string UnsequencedByStreamSql(string schema) => $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE es.stream_id = ANY(@p_streams::uuid[])
@@ -2078,8 +2078,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByType_UnderAGenericPlan_ReadsTheOriginsSequencelessRows_NotItsSequencedLaneAsync</tests>
   internal static string UnsequencedByTypeSql(string schema) => $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE es.origin_service_id = @p_origin
@@ -3642,8 +3642,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // out of both sides' digests.
       cmd.CommandText = $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
@@ -3799,66 +3799,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   private static void _prepareVerifyDigestCommand(
       System.Data.Common.DbCommand cmd, string schema, TimeSpan settleWindow) {
-    // A1c trust-but-verify: one statement, one snapshot — recompute settled buckets from the event
-    // store and heal the table three ways (update drifted / delete phantom / insert missing). The
-    // settle gates (bucket updated_at, event created_at) keep in-flight folds out of both sides:
-    // a bucket touched inside the window is skipped this pass, and a fresh event with no bucket is
-    // not "missing" — it simply hasn't settled. Data-modifying CTEs share the statement snapshot —
-    // the three heal sets are disjoint by construction, so ordering between them is immaterial.
+    // A1c trust-but-verify: recompute settled buckets from the event store and heal the table three ways (update
+    // drifted / delete phantom / insert missing). The settle gates (bucket updated_at, event created_at) keep in-flight
+    // folds out of both sides: a bucket touched inside the window is skipped this pass, and a fresh event with no
+    // bucket is not "missing", it simply has not settled.
+    // #2106: the heal is the shared SQL helper, which recomputes with the one lane function and rewrites every lane
+    // of a drifted bucket together. It returns one row per bucket it changed; the sweep counts them by kind. Id lanes
+    // never computed are left to the bounded backfill (p_fill_id_lanes false): filling them here would rewrite the
+    // whole table in one statement.
     cmd.CommandText = $"""
-      WITH recomputed AS (
-        SELECT COALESCE(es.origin_service_id, '{ZERO_ORIGIN_UUID}'::uuid) AS origin_service_id,
-               COALESCE(es.scope->>'t', '') AS scope_tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int AS event_count
-        FROM {schema}.wh_event_store es
-        WHERE COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-          AND es.created_at < NOW() - @p_settle::interval
-        GROUP BY 1, 2, 3, 4
-      ),
-      drift_updated AS (
-        UPDATE {schema}.wh_stream_digests d
-        SET digest_lo = r.digest_lo, digest_hi = r.digest_hi, event_count = r.event_count, updated_at = NOW()
-        FROM recomputed r
-        WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
-          AND d.event_type = r.event_type AND d.stream_id = r.stream_id
-          AND d.updated_at < NOW() - @p_settle::interval
-          AND (d.digest_lo <> r.digest_lo OR d.digest_hi <> r.digest_hi OR d.event_count <> r.event_count)
-        RETURNING 1
-      ),
-      drift_removed AS (
-        DELETE FROM {schema}.wh_stream_digests d
-        WHERE d.updated_at < NOW() - @p_settle::interval
-          AND NOT EXISTS (
-            SELECT 1 FROM recomputed r
-            WHERE r.origin_service_id = d.origin_service_id AND r.scope_tenant = d.scope_tenant
-              AND r.event_type = d.event_type AND r.stream_id = d.stream_id)
-        RETURNING 1
-      ),
-      drift_added AS (
-        INSERT INTO {schema}.wh_stream_digests
-          (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
-        SELECT r.origin_service_id, r.scope_tenant, r.event_type, r.stream_id,
-               r.digest_lo, r.digest_hi, r.event_count
-        FROM recomputed r
-        WHERE NOT EXISTS (
-          SELECT 1 FROM {schema}.wh_stream_digests d
-          WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
-            AND d.event_type = r.event_type AND d.stream_id = r.stream_id)
-        ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO NOTHING
-        RETURNING 1
+      WITH heal AS (
+        SELECT h.kind FROM {schema}._wh_heal_stream_digests(NULL, @p_settle::interval, false) h
       )
       SELECT (SELECT COUNT(*)::int FROM {schema}.wh_stream_digests
               WHERE updated_at < NOW() - @p_settle::interval),
-             (SELECT COUNT(*)::int FROM drift_updated),
-             (SELECT COUNT(*)::int FROM drift_removed),
-             (SELECT COUNT(*)::int FROM drift_added)
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_updated'),
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_removed'),
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_added')
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-    AddDigestExemptParam(cmd);
   }
 
   /// <summary>
@@ -3898,8 +3857,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
           LIMIT @p_limit
         )
         SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
-               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
+               bit_xor({schema}._wh_digest_lane(w.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(w.event_id, 1)) AS digest_hi,
                COUNT(*)::int
         FROM win w JOIN pick p ON p.stream_id = w.stream_id
         GROUP BY 1, 2, 3

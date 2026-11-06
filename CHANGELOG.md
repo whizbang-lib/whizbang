@@ -830,6 +830,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Stream digest math has one home, and stream digests carry id lanes (#2106).** Fifteen SQL functions wrote
+  `wh_stream_digests` with their own copy of the fold, so a change made in one and missed in another would silently
+  corrupt the digests the integrity audit trusts. Migration 336 adds `_wh_digest_lane` (the only place an event id
+  becomes a digest lane, inlined by the planner), `_wh_fold_stream_digests` (folds, takes out or seeds a set of events,
+  every lane together) and `_wh_heal_stream_digests` (recomputes buckets and rewrites drift, returning each changed
+  bucket with its stored and recomputed values); every writer, the epoch folds, the C# live folds and the sweep's
+  verification now go through them, with the hash lanes and counts they store unchanged. `wh_stream_digests` gains
+  `id_lo`/`id_hi`, the XOR of each folded event id's two 64-bit halves; NULL until computed, and a fold keeps NULL as
+  NULL. A guard test fails when any function or C# SQL writes digest lanes or hashes an event id outside the helpers.
 - **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
   (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
   claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,

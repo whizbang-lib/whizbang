@@ -21,6 +21,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
   private const string TYPE = "Whizbang.Tests.FoldHelperEvent, Whizbang.Tests";
   private static readonly DateTimeOffset _t0 = new(2026, 11, 6, 12, 0, 0, TimeSpan.Zero);
+  private static readonly Guid[] _oneOrigin = [Guid.Empty];
+  private static readonly string[] _oneTenant = ["tenant-a"];
+  private static readonly string[] _oneType = [TYPE];
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext dbContext) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -132,11 +135,11 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT _wh_fold_stream_digests(@o, @t, @ty, @s, @e, 'fold', NOW())";
-    cmd.Parameters.AddWithValue("o", new[] { Guid.Empty });
-    cmd.Parameters.AddWithValue("t", new[] { "tenant-a" });
-    cmd.Parameters.AddWithValue("ty", new[] { TYPE });
-    cmd.Parameters.AddWithValue("s", new[] { TrackedGuid.New().Value });
-    cmd.Parameters.AddWithValue("e", new[] { TrackedGuid.New().Value, TrackedGuid.New().Value });
+    cmd.Parameters.AddWithValue("o", _oneOrigin);
+    cmd.Parameters.AddWithValue("t", _oneTenant);
+    cmd.Parameters.AddWithValue("ty", _oneType);
+    cmd.Parameters.AddWithValue("s", (Guid[])[TrackedGuid.New().Value]);
+    cmd.Parameters.AddWithValue("e", (Guid[])[TrackedGuid.New().Value, TrackedGuid.New().Value]);
 
     await Assert.That(async () => await cmd.ExecuteScalarAsync())
       .Throws<PostgresException>().Because("unnest pads unpaired arrays with NULL keys, which would fold into no bucket");
@@ -220,8 +223,8 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var stream = TrackedGuid.New().Value;
     var a = await _storeAsync(conn, stream);
-    var b = await _storeAsync(conn, stream);
-    await _foldAsync(conn, "fold", stream, a);   // b is missing from the bucket: drift
+    _ = await _storeAsync(conn, stream);   // stored, but missing from the bucket: drift
+    await _foldAsync(conn, "fold", stream, a);
     await _ageDigestsAsync(conn, stream);
     var stored = (await _rowAsync(conn, stream))!.Value;
 
@@ -266,7 +269,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
 
     var report = await _healAsync(conn, [phantom, missing], fill: false);
 
-    await Assert.That(report.Select(r => (r.Kind, r.Stream)).ToList())
+    await Assert.That(report.ConvertAll(r => (r.Kind, r.Stream)))
       .IsEquivalentTo([("drift_added", missing), ("drift_removed", phantom)]);
     await StoredDigestInvariant.AssertAgreeAsync(conn, missing);
     await Assert.That(await _rowAsync(conn, phantom)).IsNull();
@@ -279,6 +282,7 @@ public class StreamDigestFoldHelperSqlTests : EFCoreTestBase {
     var stream = TrackedGuid.New().Value;
     await _storeAsync(conn, stream);
     await _foldAsync(conn, "fold", stream, TrackedGuid.New().Value);   // drifted, but just written
+    await _executeAsync(conn, $"UPDATE wh_stream_digests SET updated_at = NOW() WHERE stream_id = '{stream}'");
 
     await Assert.That(await _healAsync(conn, [stream], fill: true)).IsEmpty()
       .Because("a bucket touched inside the settle window may be mid-fold; it is healed on a later pass");
