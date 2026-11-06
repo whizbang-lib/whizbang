@@ -29,7 +29,7 @@ public class RedeliveryRequestReceptorRegistrarCoverageTests {
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
-      NullLogger<AuditRebuildRequestReceptor>.Instance);
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     var stopTask = registrar.StopAsync(CancellationToken.None);
 

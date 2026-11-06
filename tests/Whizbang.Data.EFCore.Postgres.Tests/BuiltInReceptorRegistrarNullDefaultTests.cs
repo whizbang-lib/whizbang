@@ -80,7 +80,7 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
     await using var sp = _hostWithoutReceptors();
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
-      NullLogger<AuditRebuildRequestReceptor>.Instance);
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
   }

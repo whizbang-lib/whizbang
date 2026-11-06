@@ -30,7 +30,11 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
     ILogger<RedeliveryRequestReceptor> receptorLogger,
-    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger) : IHostedService {
+    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger,
+    ILogger<BackfillWindowAnswerReceptor> backfillAnswerLogger) : IHostedService {
+#pragma warning disable CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113 // RED stub (#2092)
+  private readonly ILogger<BackfillWindowAnswerReceptor> _backfillAnswerLogger = backfillAnswerLogger;
+#pragma warning restore CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
