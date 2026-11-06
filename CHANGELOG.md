@@ -839,6 +839,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification now go through them, with the hash lanes and counts they store unchanged. `wh_stream_digests` gains
   `id_lo`/`id_hi`, the XOR of each folded event id's two 64-bit halves; NULL until computed, and a fold keeps NULL as
   NULL. A guard test fails when any function or C# SQL writes digest lanes or hashes an event id outside the helpers.
+  Buckets stored before 336 get their id lanes from a bounded, idle-gated maintenance step
+  (`StreamDigestIdLaneBackfillMaintenanceStep`, migration 337's `wh_backfill_stream_digest_id_lanes_batch`): batches
+  of streams under their append locks, resumable from a cursor, done once. A bucket it finds drifted from its events is
+  logged at Warning with its stored and recomputed values and counted on
+  `whizbang.stream_integrity.stream_digest_drift_corrected` before it is corrected.
 - **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
   (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
   claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,

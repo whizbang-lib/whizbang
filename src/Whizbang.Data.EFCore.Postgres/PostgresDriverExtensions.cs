@@ -209,6 +209,13 @@ public static class PostgresDriverExtensions {
                 dbContextType,
                 sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
 
+        // TURNKEY: the maintenance step that fills the id lanes of stream digests stored before migration 336 (#2106),
+        // reporting any drift it corrects. Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamDigestIdLaneBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamDigestIdLaneBackfillMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
