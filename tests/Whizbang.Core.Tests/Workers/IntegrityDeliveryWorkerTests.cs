@@ -381,6 +381,29 @@ public class IntegrityDeliveryWorkerTests {
     await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesProcessed)).IsEqualTo(4);
   }
 
+  /// <summary>
+  /// #2099: recorded redelivery reconciles drain through the registry's own batch handler: one store call for the lease,
+  /// and every reconcile completed.
+  /// </summary>
+  [Test]
+  public async Task RecordedReconciles_DrainAsOneBatchCall_AndEachIsCompletedAsync() {
+    await using var fx = await _buildAsync();
+    fx.Coordinator.BatchAnswer = bundles => [.. bundles.Select(_ => (IReadOnlyList<RedeliveredBucketPresence>)[])];
+    var origin = Guid.Parse("0199aaaa-0000-7000-8000-000000000001");
+    fx.Coordinator.Seed(_id(1), RedeliveryReconciler.DELIVERY_TYPE, _reconcilePayload(origin, _id(11)));
+    fx.Coordinator.Seed(_id(2), RedeliveryReconciler.DELIVERY_TYPE, _reconcilePayload(origin, _id(12)));
+
+    var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(fx.Coordinator.BatchReconciles.Single().Select(b => b.EventIds.Single())).IsEquivalentTo([_id(11), _id(12)]);
+    await Assert.That(fx.Coordinator.Adoptions).IsEmpty();
+    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo([_id(1), _id(2)]);
+    await Assert.That(pass.Processed).IsEqualTo(2);
+  }
+
+  private static string _reconcilePayload(Guid origin, Guid eventId) =>
+    $$"""{"originServiceId":"{{origin}}","originServiceName":"orders-service","eventIds":["{{eventId}}"],"commitSequences":[7],"allPresentAtCommit":true}""";
+
   [Test]
   public async Task ALoneDeliveryOfABatchedType_IsHandledOnItsOwnAsync() {
     await using var fx = await _buildAsync();
