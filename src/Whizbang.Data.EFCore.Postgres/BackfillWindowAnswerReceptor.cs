@@ -18,11 +18,53 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>resilience/stream-integrity#paced-backfill</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BackfillWindowAnswerReceptorTests.cs</tests>
-#pragma warning disable CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113 // RED stub (#2092)
 public sealed partial class BackfillWindowAnswerReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<BackfillWindowAnswerReceptor> logger) : IReceptor<BackfillWindowAnswer> {
+
   /// <inheritdoc />
-  public ValueTask HandleAsync(BackfillWindowAnswer message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  public async ValueTask HandleAsync(BackfillWindowAnswer message, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+    await using var scope = scopeFactory.CreateAsyncScope();
+    var services = scope.ServiceProvider;
+    var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
+    if (!RepairTraffic.IsRepairEnabled(integrity)) {
+      LogDeclined(logger, message.BackfillId);
+      return;
+    }
+    var coordinator = services.GetService<IWorkCoordinator>();
+    if (coordinator is null) {
+      LogNoCoordinator(logger, message.BackfillId);
+      return;
+    }
+    var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    var progress = await coordinator.RecordSubscriptionBackfillAnswerAsync(message, now, cancellationToken).ConfigureAwait(false);
+    if (progress is null) {
+      LogStale(logger, message.Window, message.BackfillId);
+      return;
+    }
+    var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    metrics?.BackfillEventsReceived.Add(message.EventCount, new KeyValuePair<string, object?>("event_type", progress.EventType));
+    if (progress.Outcome != SubscriptionBackfillOutcome.Complete) {
+      return;
+    }
+    metrics?.BackfillsEnded.Add(1, new KeyValuePair<string, object?>("outcome", "complete"));
+    LogFinished(logger, progress.EventType, progress.OwnerServiceName, progress.EventsReceived, progress.WindowsRequested);
+  }
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Backfill of {EventType} from '{OwnerServiceName}' finished: {EventCount} events in {WindowCount} window request(s)")]
+  private static partial void LogFinished(ILogger logger, string eventType, string ownerServiceName, long eventCount, long windowCount);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Backfill window {Window} answer for backfill {BackfillId} applied to nothing (late, duplicate or ended)")]
+  private static partial void LogStale(ILogger logger, long window, Guid backfillId);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Backfill window answer for backfill {BackfillId} not applied: RepairMode is ReportOnly")]
+  private static partial void LogDeclined(ILogger logger, Guid backfillId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Backfill window answer for backfill {BackfillId} received but no work coordinator is registered; ignored")]
+  private static partial void LogNoCoordinator(ILogger logger, Guid backfillId);
 }
-#pragma warning restore CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113
