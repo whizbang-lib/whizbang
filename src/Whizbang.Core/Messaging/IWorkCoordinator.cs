@@ -2046,6 +2046,24 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
 
   /// <summary>
+  /// Reconciles many redelivery bundles at once (#2099), each as <see cref="AdoptRedeliveredOriginAsync"/> reconciles
+  /// one, so that a backlog of recorded reconciles drains at the cost of the bundles rather than of the sealed epochs
+  /// each one touches. Every bundle's streams are locked once, the fills are one update, and each sealed digest epoch
+  /// that holds a moved event is refolded once for the whole batch. An event two bundles of the batch name adopts once,
+  /// for the first bundle that can fill it; the other counts it present and not adopted, as a later call would.
+  /// </summary>
+  /// <param name="bundles">The bundles, in the order a sequence of single calls would have reconciled them.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Per bundle, in the order given, its buckets as <see cref="AdoptRedeliveredOriginAsync"/> returns them, with
+  /// <see cref="RedeliveredBucketPresence.OriginsFilled"/> set; null = unsupported, and the caller reconciles each bundle
+  /// on its own.</returns>
+  /// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryBatchReconcileCoordinatorTests.cs</tests>
+  Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+    IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?>(null);
+
+  /// <summary>
   /// Records the domains an origin announced on its checkpoint as its claim set, replacing the claims it made before:
   /// a domain it no longer announces is given up, and an empty list gives up all of them (#2008). Domains key without
   /// case. A null <paramref name="requestTopic"/> keeps the request address already on record.

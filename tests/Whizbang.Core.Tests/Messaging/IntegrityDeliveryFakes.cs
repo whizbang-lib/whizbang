@@ -94,6 +94,23 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
     return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(AdoptionAnswer);
   }
 
+  /// <summary>Every batch reconcile the drain asked for (#2099).</summary>
+  public List<IReadOnlyList<RedeliveredBundle>> BatchReconciles { get; } = [];
+
+  /// <summary>Answers a batch reconcile per bundle; null makes the store one without the batch call.</summary>
+  public Func<IReadOnlyList<RedeliveredBundle>, IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>>? BatchAnswer { get; set; }
+
+  public Exception? BatchFailure { get; set; }
+
+  public Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) {
+    BatchReconciles.Add(bundles);
+    if (BatchFailure is { } failure) {
+      return Task.FromException<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?>(failure);
+    }
+    return Task.FromResult(BatchAnswer?.Invoke(bundles));
+  }
+
   /// <summary>What the store answers an adoption with.</summary>
   public IReadOnlyList<RedeliveredBucketPresence> AdoptionAnswer { get; set; } = [];
 
