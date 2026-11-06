@@ -120,6 +120,33 @@ public sealed class RedeliveryPump(
   public TimeSpan? AnswerTimeToLive { get; init; }
 
   /// <summary>
+  /// When set, bundles span streams (#2092): events group by scope only, so a window of one type's history ships in as
+  /// few bundles as <see cref="RedeliveryPumpOptions.MaxInnerEventsPerComposite"/> and
+  /// <see cref="RedeliveryPumpOptions.MaxBytesPerComposite"/> allow instead of one per stream, each child names the
+  /// stream it is stored on, and every bundle's own stream (its broker session) is this id, so a backfill's bundles
+  /// and its window answers arrive in order. Null (the default) keeps one stream per bundle, which every receiver
+  /// understands; only a windowed backfill, whose requester is new enough to ask for it, sets it.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+  public Guid? BundleStreamId { get; init; }
+
+  /// <summary>
+  /// Publishes a backfill window's answer to <paramref name="target"/> on <paramref name="topic"/>, on the backfill's
+  /// session so it follows the window's bundles (#2092), with the same time to live and send retry as a bundle.
+  /// </summary>
+  /// <param name="answer">The answer.</param>
+  /// <param name="topic">The requester's reply topic.</param>
+  /// <param name="target">The requester's service name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+#pragma warning disable CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113 // RED stub (#2092)
+  public Task PublishWindowAnswerAsync(BackfillWindowAnswer answer, string topic, string target, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+#pragma warning restore CA1822, S2325, RCS1163, S1144, IDE0052, IDE0060, RCS1213, CS9113
+
+  /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
   /// Returns the number of composites published.
   /// </summary>
