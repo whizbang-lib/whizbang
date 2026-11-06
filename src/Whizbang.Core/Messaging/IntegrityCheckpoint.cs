@@ -335,7 +335,7 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
-  public int BackfillWindowSize { get; set; }
+  public int BackfillWindowSize { get; set; } = 1_000;
 
   /// <summary>
   /// The backfill's pace, in events requested per minute across every type (default 6,000, #2092). Each window spends
@@ -345,14 +345,14 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
-  public int BackfillEventsPerMinute { get; set; }
+  public int BackfillEventsPerMinute { get; set; } = 6_000;
 
   /// <summary>
   /// Backfill windows awaiting their answer at once, across every type and owner (default 2, #2092). Must be at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
-  public int BackfillMaxConcurrentWindows { get; set; }
+  public int BackfillMaxConcurrentWindows { get; set; } = 2;
 
   /// <summary>
   /// Times one backfill window is requested without an answer before the backfill of that type stops (default 3,
@@ -363,7 +363,7 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
-  public int BackfillMaxWindowAttempts { get; set; }
+  public int BackfillMaxWindowAttempts { get; set; } = 3;
 
   /// <summary>Phase A/L: run the scheduled deep audit (default true).</summary>
   public bool AuditEnabled { get; set; } = true;
