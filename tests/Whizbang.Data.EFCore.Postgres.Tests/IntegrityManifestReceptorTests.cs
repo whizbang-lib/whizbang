@@ -2644,8 +2644,12 @@ public class IntegrityManifestReceptorTests {
       AuditCoordinator coordinator, CaptureTransport transport,
       StreamIntegrityOptions? options = null, CaptureDispatcher? dispatcher = null,
       IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null,
-      Whizbang.Core.Routing.RoutingOptions? routing = null, IConsumerRegistry? consumers = null) {
+      Whizbang.Core.Routing.RoutingOptions? routing = null, IConsumerRegistry? consumers = null,
+      StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     if (routing is not null) {
       services.AddSingleton(Options.Create(routing));
     }
@@ -3095,18 +3099,24 @@ public class IntegrityManifestReceptorTests {
   }
 
   private static (AuditCoordinator Coordinator, CaptureTransport Transport, ObservingLedger Ledger, IntegrityManifestReceptor Receptor)
-      _heldFixture(StreamIntegrityOptions? options = null) {
+      _heldFixture(StreamIntegrityOptions? options = null, StreamIntegrityMetrics? metrics = null) {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var ledger = new ObservingLedger();
     var sp = _provider(coordinator, transport,
       options ?? new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
-      tracker: tracker, ledger: ledger);
+      tracker: tracker, ledger: ledger, metrics: metrics);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     return (coordinator, transport, ledger,
       new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance));
   }
+
+  private static readonly StreamIntegrityOptions _bulkOptions = new() {
+    RepairDrainEnabled = false,
+    RepairMode = IntegrityRepairMode.AutoRepairCapped,
+    BulkBackfillThresholdEvents = 1000,
+  };
 
   private static IntegrityManifest _windowed(IntegrityManifest manifest) =>
     manifest with { SinceSequence = 100, ComputedThrough = 300, ChunkCount = 1 };
@@ -3133,9 +3143,9 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(ledger.Forgotten).Contains(
       new IntegrityRepairLedger.DivergenceKey(coordinator.OriginId, "tenant-a", "Contracts.TypeX", stream))
       .Because("the bucket matches, so a false deficit recorded before this release clears on the next comparison");
-    var ask = coordinator.UnsequencedAsks.Single();
-    await Assert.That(ask.Streams!).IsEquivalentTo([stream]).Because("bounded by the chunk's short streams");
-    await Assert.That(ask.Types).IsEquivalentTo(["Contracts.TypeX"]);
+    var (types, streams) = coordinator.UnsequencedAsks.Single();
+    await Assert.That(streams).IsEquivalentTo([stream]).Because("bounded by the chunk's short streams");
+    await Assert.That(types).IsEquivalentTo(["Contracts.TypeX"]);
   }
 
   [Test]
@@ -3147,11 +3157,11 @@ public class IntegrityManifestReceptorTests {
 
     await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x7, 0x7, 3)])));
 
-    var report = ledger.Reports.Single();
-    await Assert.That(report.LocalLo).IsEqualTo(0x41L)
+    var (_, localLo, localHi) = ledger.Reports.Single();
+    await Assert.That(localLo).IsEqualTo(0x41L)
       .Because("the recorded local digest keeps the events held without a sequence");
-    await Assert.That(report.LocalHi).IsEqualTo(0x81L);
-    await Assert.That(_redeliveries(transport).Single().StreamIds!).IsEquivalentTo([stream])
+    await Assert.That(localHi).IsEqualTo(0x81L);
+    await Assert.That(_redeliveries(transport).Single().StreamIds).IsEquivalentTo([stream])
       .Because("three events and at most two held: a genuinely missing event is still a deficit and is repaired");
   }
 
@@ -3217,9 +3227,7 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task WindowedType_ADeficitTheHeldEventsMayFill_IsNotBulkBackfilledAsync() {
-    var (coordinator, transport, ledger, receptor) = _heldFixture(new StreamIntegrityOptions {
-      RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000,
-    });
+    var (coordinator, transport, ledger, receptor) = _heldFixture(_bulkOptions);
     coordinator.WindowedTypeResult = new WindowedDigestResult {
       Digests = [_typeDigest("Contracts.TypeX", 0x1, 0x1, 100)],
       ComputedThrough = 300,
@@ -3238,9 +3246,7 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task WindowedType_ADeficitBeyondTheHeldEvents_IsBulkBackfilledByWhatIsMissingAsync() {
-    var (coordinator, transport, _, receptor) = _heldFixture(new StreamIntegrityOptions {
-      RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000,
-    });
+    var (coordinator, transport, _, receptor) = _heldFixture(_bulkOptions);
     coordinator.WindowedTypeResult = new WindowedDigestResult {
       Digests = [_typeDigest("Contracts.TypeX", 0x1, 0x1, 100)],
       ComputedThrough = 300,
@@ -3251,5 +3257,31 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(_redeliveries(transport).Single().StateOnly).IsTrue()
       .Because("at least 1,400 events are missing even if every held one belongs here");
+  }
+
+  [Test]
+  public async Task WindowedStream_UndecidedBuckets_AreCountedOnTheUnplacedCounterAsync() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    long unplaced = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (instrument.Name == "whizbang.stream_integrity.unplaced_buckets") {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref unplaced, value));
+    listener.Start();
+    var (coordinator, _, _, receptor) = _heldFixture(metrics: metrics);
+    var stream = TrackedGuid.New().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+    coordinator.UnsequencedDigests = [_digest(stream, 0x4, 0x4, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)])));
+    listener.RecordObservableInstruments();
+
+    await Assert.That(Interlocked.Read(ref unplaced)).IsEqualTo(1L)
+      .Because("an undecided bucket is not a deficit, but it is counted, so the operator sees how much the windows cannot place");
   }
 }

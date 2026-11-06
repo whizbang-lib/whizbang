@@ -1372,6 +1372,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The integrity audit no longer reports deficits for events a consumer holds without the origin's commit sequence
+  (#2102).** Windowed comparisons counted a consumer's events by the origin's commit sequence, so an event that carries
+  the origin but not the sequence (history re-attributed to its owner) was counted in no window, and its bucket read short
+  on every audit: a false deficit, and a pointless redelivery with repair on. A windowed stream or type comparison, and a
+  checkpoint count that reads short, now also fold the events held from that origin without a sequence
+  (`IWorkCoordinator.ComputeUnsequencedReceivedDigestsAsync`, bounded by the disagreeing streams or by the origin's
+  sequence-less rows) and place them by identity (`IntegrityDigestMath.PlaceHeld`): the bucket matches when they complete
+  the window, is a deficit only when the origin counts more events than are held placed and sequence-less together, and
+  is otherwise left undecided (not recorded or repaired, counted by `whizbang.stream_integrity.unplaced_buckets`; the
+  full-history comparison, whose folds include every held event, decides those streams). A recorded deficit keeps the
+  sequence-less events in its local digest. Existing false deficit rows clear on the next comparison, and a bulk
+  backfill is sized by what is missing beyond the held events.
 - **A service receives only the commands it handles on a per-namespace command inbox (#2089).** A service that handled
   any command of a namespace subscribed to that namespace's command inbox with a match-all filter, so handling one command
   of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.

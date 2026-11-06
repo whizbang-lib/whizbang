@@ -2015,10 +2015,85 @@ public class EFCoreWorkCoordinator<TDbContext>(
         cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
     }, cancellationToken);
 
-#pragma warning disable RCS1158 // #2102 RED stubs.
-  internal static string UnsequencedByStreamSql(string schema) => $"SELECT 1 FROM {schema}.wh_event_store WHERE false";
-  internal static string UnsequencedByTypeSql(string schema) => $"SELECT 1 FROM {schema}.wh_event_store WHERE false";
-#pragma warning restore RCS1158
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+    Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0 || streamIds is { Count: 0 }) {
+      return [];
+    }
+    return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var byStream = streamIds is not null;
+      cmd.CommandText = byStream ? UnsequencedByStreamSql(schema) : UnsequencedByTypeSql(schema);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      if (byStream) {
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = streamIds!.ToArray()
+        });
+      }
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+      AddDigestExemptParam(cmd);
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken)
+        .ConfigureAwait(false);
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2102: the fold of the named streams' events held from the origin without its commit sequence, one row per
+  /// (tenant, type, stream). Bounded by the chunk: the named streams' rows, found through the stream index.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByStream_UnderAGenericPlan_ReadsTheNamedStreamsRows_NotTheOriginsLaneAsync</tests>
+#pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
+  internal static string UnsequencedByStreamSql(string schema) => $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        WHERE es.stream_id = ANY(@p_streams::uuid[])
+          AND es.origin_service_id = @p_origin
+          AND es.origin_commit_sequence IS NULL
+          AND es.event_type = ANY(@p_types::text[])
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 3
+        """;
+
+  /// <summary>
+  /// #2102: the fold of the events held from the origin without its commit sequence, one row per (tenant, type).
+  /// Bounded by the origin's sequence-less rows: the origin lane index (155) keys on (origin, origin sequence), so the
+  /// read is the NULL-sequence range of that origin, never the origin's sequenced lane.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByType_UnderAGenericPlan_ReadsTheOriginsSequencelessRows_NotItsSequencedLaneAsync</tests>
+  internal static string UnsequencedByTypeSql(string schema) => $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
+               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
+               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        WHERE es.origin_service_id = @p_origin
+          AND es.origin_commit_sequence IS NULL
+          AND es.event_type = ANY(@p_types::text[])
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+#pragma warning restore S2077, RCS1158
+
 
   /// <inheritdoc />
   public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>

@@ -39,22 +39,79 @@ public static class IntegrityDigestMath {
     return originUpdatedAt > floor || localUpdatedAt > floor;
   }
 
-  /// <summary>#2102 (RED stub).</summary>
-  public static HeldWindowPlacement PlaceHeld(StreamDigest origin, StreamDigest? placed, StreamDigest? sequenceless) =>
-    new(HeldWindowVerdict.Differs, sequenceless ?? placed ?? origin);
+  /// <summary>
+  /// #2102: places the events a consumer holds from an origin without knowing the origin's commit sequence for them
+  /// (re-attributed history: the origin is recorded, the sequence is not). A fold over an origin-sequence window leaves
+  /// them out, so the window's bucket read short and was recorded as a deficit for events the consumer holds.
+  /// <list type="bullet">
+  /// <item><see cref="HeldWindowVerdict.Matches"/>: the placed fold equals the origin's, or the placed fold XOR the
+  /// sequence-less fold does (every event of the window is held; the sequence-less events are the window's rest).</item>
+  /// <item><see cref="HeldWindowVerdict.Deficit"/>: the origin counts more events than the consumer holds placed and
+  /// sequence-less together, so at least that many are missing.</item>
+  /// <item><see cref="HeldWindowVerdict.Differs"/>: nothing is held without a sequence and the folds differ without a
+  /// shortfall: the identity-mismatch and local-surplus taxonomy applies as before.</item>
+  /// <item><see cref="HeldWindowVerdict.Undecided"/>: sequence-less events are held and the counts fit, but the folds
+  /// differ. The window cannot say whether a sequence-less event is the missing one or belongs to another window, so
+  /// it is not a deficit; the full-history comparison, whose folds include every held event, decides the stream.</item>
+  /// </list>
+  /// <see cref="HeldWindowPlacement.Held"/> is the fold the consumer reports: the placed fold, combined with the
+  /// sequence-less one when there is one, so the digest the ledger records keeps every held event.
+  /// </summary>
+  /// <param name="origin">The origin's bucket for the window.</param>
+  /// <param name="placed">The consumer's fold of the window by origin sequence, or null when it holds none.</param>
+  /// <param name="sequenceless">The consumer's fold of the same bucket's events held without an origin sequence, or
+  /// null when it holds none.</param>
+  /// <returns>The verdict and the held fold.</returns>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/HeldWithoutOriginSequenceTests.cs</tests>
+  public static HeldWindowPlacement PlaceHeld(StreamDigest origin, StreamDigest? placed, StreamDigest? sequenceless) {
+    ArgumentNullException.ThrowIfNull(origin);
+    if (_sameFold(origin, placed)) {
+      return new(HeldWindowVerdict.Matches, placed);
+    }
+    var placedCount = placed?.EventCount ?? 0;
+    if (sequenceless is not { EventCount: > 0 }) {
+      return new(placedCount < origin.EventCount ? HeldWindowVerdict.Deficit : HeldWindowVerdict.Differs, placed);
+    }
+    var held = new StreamDigest {
+      TenantScope = origin.TenantScope,
+      EventType = origin.EventType,
+      StreamId = origin.StreamId,
+      DigestLo = (placed?.DigestLo ?? 0) ^ sequenceless.DigestLo,
+      DigestHi = (placed?.DigestHi ?? 0) ^ sequenceless.DigestHi,
+      EventCount = placedCount + sequenceless.EventCount,
+      UpdatedAt = placed?.UpdatedAt,
+    };
+    if (_sameFold(origin, held)) {
+      return new(HeldWindowVerdict.Matches, held);
+    }
+    return new(held.EventCount < origin.EventCount ? HeldWindowVerdict.Deficit : HeldWindowVerdict.Undecided, held);
+  }
+
+  private static bool _sameFold(StreamDigest origin, StreamDigest? local) =>
+    local is not null && local.DigestLo == origin.DigestLo && local.DigestHi == origin.DigestHi;
 }
 
-/// <summary>#2102 (RED stub).</summary>
+/// <summary>#2102: how a windowed bucket compares once the events held without an origin sequence are placed.</summary>
+/// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
 public enum HeldWindowVerdict {
-  /// <summary>Matches.</summary>
+  /// <summary>Every event of the origin's window is held.</summary>
   Matches = 0,
-  /// <summary>Deficit.</summary>
+
+  /// <summary>The origin counts more events than are held, placed or not: a deficit, repairable.</summary>
   Deficit = 1,
-  /// <summary>Differs.</summary>
+
+  /// <summary>Nothing is held without a sequence and the folds differ without a shortfall: identity mismatch or local
+  /// surplus, as before.</summary>
   Differs = 2,
-  /// <summary>Undecided.</summary>
+
+  /// <summary>Events are held without a sequence, the counts fit and the folds differ: the window cannot decide, so it
+  /// is no deficit; the full-history comparison decides the stream.</summary>
   Undecided = 3,
 }
 
-/// <summary>#2102 (RED stub).</summary>
+/// <summary>#2102: the verdict of <see cref="IntegrityDigestMath.PlaceHeld"/> and the fold the consumer reports.</summary>
+/// <param name="Verdict">How the bucket compares.</param>
+/// <param name="Held">The placed fold, combined with the sequence-less fold when one is held; null when nothing is.</param>
+/// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
 public readonly record struct HeldWindowPlacement(HeldWindowVerdict Verdict, StreamDigest? Held);

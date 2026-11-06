@@ -60,8 +60,13 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Type-level mismatches escalated to stream-level manifest requests. Tagged by origin.</summary>
   public PassiveCounter<long> DrillDownsRequested { get; }
 
-  /// <summary>#2102 (RED stub).</summary>
-  public PassiveCounter<long>? UnplacedBuckets { get; }
+  /// <summary>
+  /// #2102: windowed stream buckets a comparison could not decide because the consumer holds some of their events
+  /// without the origin's commit sequence. Not deficits: none is recorded or repaired, and the full-history comparison
+  /// decides those streams. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  public PassiveCounter<long> UnplacedBuckets { get; }
 
   /// <summary>Phase S state-only backfill requests broadcast for consumed-set growth (value = new type count).</summary>
   public PassiveCounter<long> BackfillsRequested { get; }
@@ -220,6 +225,9 @@ public sealed class StreamIntegrityMetrics {
     DrillDownsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.drill_downs_requested",
       description: "Type-level mismatches escalated to stream-level requests; tagged by origin");
+    UnplacedBuckets = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.unplaced_buckets",
+      description: "Windowed stream buckets left undecided because events are held without the origin's sequence; tagged by origin");
     BackfillsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.backfills_requested",
       description: "State-only backfill requests broadcast for consumed-set growth (value = new type count)");

@@ -458,6 +458,12 @@ public sealed partial class IntegrityManifestReceptor(
           ?? await coordinator.ComputeStreamDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false);
     }
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+    // #2102: a windowed fold counts an event by its origin sequence, and one held without it reads as missing. The
+    // disagreeing streams' sequence-less events are folded (bounded by the chunk, and paid only when a bucket disagrees)
+    // and placed by identity: they complete the window, bound it, or leave it undecided.
+    var heldByBucket = message.ComputedThrough is null
+      ? []
+      : await _unsequencedByBucketAsync(coordinator, message, localByBucket, settle, cancellationToken).ConfigureAwait(false);
 
     // Convergence bounding: the ledger suppresses re-reports of unchanged divergence inside the
     // cooldown and backs off repair re-requests per bucket — a persistent divergence (origin
@@ -485,17 +491,27 @@ public sealed partial class IntegrityManifestReceptor(
     // every waiting manifest held its deserialized payload behind the compare gate until the
     // process died (observed live, fleet-wide).
     var healedKeys = new List<IntegrityRepairLedger.DivergenceKey>();
+    var undecidedKeys = new List<IntegrityRepairLedger.DivergenceKey>();
     var divergent = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>();
     foreach (var origin in message.Digests) {
-      localByBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var mine);
-      if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
+      var bucket = (origin.TenantScope, origin.EventType, origin.StreamId);
+      localByBucket.TryGetValue(bucket, out var placed);
+      heldByBucket.TryGetValue(bucket, out var sequenceless);
+      var placement = IntegrityDigestMath.PlaceHeld(origin, placed, sequenceless);
+      var mine = placement.Held;
+      var key = new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId);
+      if (placement.Verdict == HeldWindowVerdict.Matches) {
         // provably complete — a later divergence is a fresh incident.
-        healedKeys.Add(new IntegrityRepairLedger.DivergenceKey(
-          message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId));
+        healedKeys.Add(key);
         continue;
       }
       if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
         continue;   // the bucket changed inside the settle window — in-flight, not divergence.
+      }
+      if (placement.Verdict == HeldWindowVerdict.Undecided) {
+        // #2102: the window cannot confirm a deficit, so none is kept; the full-history compare decides the stream.
+        undecidedKeys.Add(key);
+        continue;
       }
 
       // #80-C taxonomy — only a DEFICIT is repairable. Equal counts with differing folds mean the
@@ -514,6 +530,13 @@ public sealed partial class IntegrityManifestReceptor(
       divergent.Add((origin, mine, isDeficit, reason));
     }
 
+    if (undecidedKeys.Count > 0) {
+      // Forgotten without a heal age: the bucket did not heal, it stopped being a confirmed deficit.
+      await ledger.MarkHealedBatchAsync(undecidedKeys, cancellationToken).ConfigureAwait(false);
+      metrics?.UnplacedBuckets.Add(undecidedKeys.Count,
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
+      LogUnplacedBuckets(logger, undecidedKeys.Count, message.OriginServiceName);
+    }
     if (healedKeys.Count > 0) {
       // The heal's own delete reports each bucket's first-sighting age — per-stream
       // time-to-reconcile, measured by destroying the row that carried the clock.
@@ -881,15 +904,23 @@ public sealed partial class IntegrityManifestReceptor(
         ? await coordinator.ComputeTypeDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
         : await _typeDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false);
     }
-    var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType));
+    var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+    // #2102: a windowed type fold leaves out the events held without the origin's sequence; place them by identity.
+    var heldByBucket = windowed
+      ? await _unsequencedByBucketAsync(coordinator, message, localByBucket, settle, cancellationToken).ConfigureAwait(false)
+      : [];
 
     var mismatched = new List<string>();
     var bulkCandidates = new List<(StreamDigest Origin, StreamDigest? Mine, long Deficit)>();
     foreach (var origin in message.Digests) {
-      localByBucket.TryGetValue((origin.TenantScope, origin.EventType), out var mine);
-      if (mine is not null && mine.DigestLo == origin.DigestLo && mine.DigestHi == origin.DigestHi) {
+      var bucket = (origin.TenantScope, origin.EventType, origin.StreamId);
+      localByBucket.TryGetValue(bucket, out var placed);
+      heldByBucket.TryGetValue(bucket, out var sequenceless);
+      var placement = IntegrityDigestMath.PlaceHeld(origin, placed, sequenceless);
+      if (placement.Verdict == HeldWindowVerdict.Matches) {
         continue;
       }
+      var mine = placement.Held;
       if (!message.Recomputed && !windowed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
         continue;   // windowed folds already exclude unsettled rows on both sides.
       }
@@ -1253,6 +1284,38 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "AUDIT bulk backfill requested: {EventType} (tenant {TenantScope}) — {Deficit} event(s) missing " +
               "vs origin '{OriginServiceName}' in the audited window; ONE state-only range-bounded redelivery replaces the per-stream drip")]
   static partial void LogBulkBackfillRequested(ILogger logger, string eventType, string? tenantScope, long deficit, string originServiceName);
+
+  [LoggerMessage(EventId = 68, Level = LogLevel.Information,
+    Message = "AUDIT {Count} windowed stream bucket(s) from '{OriginServiceName}' left undecided: this service holds some " +
+              "of their events without the origin's commit sequence, so the window cannot confirm a deficit. None is " +
+              "recorded or repaired; the full-history comparison decides those streams.")]
+  static partial void LogUnplacedBuckets(ILogger logger, int count, string originServiceName);
+
+  /// <summary>
+  /// #2102: the folds of the events this service holds from the manifest's origin without the origin's commit
+  /// sequence, keyed like the local fold, for the buckets whose placed fold disagrees with the origin's. Nothing is read
+  /// when every bucket agrees; otherwise one read, bounded by the disagreeing buckets' streams (stream level) or the
+  /// origin's sequence-less rows of the disagreeing types (type level).
+  /// </summary>
+  private static async Task<Dictionary<(string? TenantScope, string EventType, Guid StreamId), StreamDigest>> _unsequencedByBucketAsync(
+      IWorkCoordinator coordinator, IntegrityManifest message,
+      Dictionary<(string? TenantScope, string EventType, Guid StreamId), StreamDigest> localByBucket,
+      TimeSpan settle, CancellationToken cancellationToken) {
+    var disagreeing = message.Digests
+      .Where(o => !localByBucket.TryGetValue((o.TenantScope, o.EventType, o.StreamId), out var mine)
+        || mine.DigestLo != o.DigestLo || mine.DigestHi != o.DigestHi)
+      .ToList();
+    if (disagreeing.Count == 0) {
+      return [];
+    }
+    var types = disagreeing.Select(d => d.EventType).Distinct(StringComparer.Ordinal).ToList();
+    IReadOnlyList<Guid>? streams = message.Level == ManifestLevel.Types
+      ? null
+      : [.. disagreeing.Select(d => d.StreamId).Distinct()];
+    var held = await coordinator.ComputeUnsequencedReceivedDigestsAsync(
+      message.OriginServiceId, types, streams, settle, cancellationToken).ConfigureAwait(false);
+    return held.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+  }
 }
 
 /// <summary>

@@ -25,8 +25,9 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
   private const string TYPE = "Contracts.HeldProbe, Contracts";
   private const string OTHER_TYPE = "Contracts.OtherProbe, Contracts";
 
-  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
-    new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+  // Through the interface: the read is an IWorkCoordinator capability.
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+    new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
@@ -46,11 +47,11 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
               nextval('wh_commit_seq'), @flags, NOW() - INTERVAL '{age}', @origin, @oseq)
       """;
     cmd.Parameters.AddWithValue("event", eventId);
-    cmd.Parameters.AddWithValue("stream", stream);
-    cmd.Parameters.AddWithValue("type", type);
-    cmd.Parameters.AddWithValue("tenant", tenant);
-    cmd.Parameters.AddWithValue("flags", flags);
-    cmd.Parameters.Add(new NpgsqlParameter("origin", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)origin ?? DBNull.Value });
+    cmd.Parameters.AddWithValue(nameof(stream), stream);
+    cmd.Parameters.AddWithValue(nameof(type), type);
+    cmd.Parameters.AddWithValue(nameof(tenant), tenant);
+    cmd.Parameters.AddWithValue(nameof(flags), flags);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(origin), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)origin ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("oseq", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)originSeq ?? DBNull.Value });
     await cmd.ExecuteNonQueryAsync();
   }
@@ -112,8 +113,8 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
     var digests = await _coordinator(ctx).ComputeUnsequencedReceivedDigestsAsync(
       origin, [TYPE], streamIds: null, TimeSpan.FromHours(1));
 
-    await Assert.That(digests.Select(d => (d.TenantScope, d.EventType, d.StreamId, d.EventCount)).ToList())
-      .IsEquivalentTo([("tenant-a", TYPE, Guid.Empty, 2), ("tenant-b", TYPE, Guid.Empty, 1)]);
+    await Assert.That(digests.Select(d => $"{d.TenantScope}|{d.EventType}|{d.StreamId}|{d.EventCount}").ToList())
+      .IsEquivalentTo([$"tenant-a|{TYPE}|{Guid.Empty}|2", $"tenant-b|{TYPE}|{Guid.Empty}|1"]);
   }
 
   [Test]
@@ -208,9 +209,9 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
     await _execAsync(conn, $"""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope,
                                   commit_sequence, created_at, origin_service_id, origin_commit_sequence)
-      SELECT gen_random_uuid(), s, s, 'TestAggregate', 1, '{TYPE}', NULL, nextval('wh_commit_seq'),
-             NOW() - INTERVAL '2 hours', '{origin}'::uuid, CASE WHEN g <= {SEQUENCED_EVENTS} THEN g END
-      FROM generate_series(1, {SEQUENCED_EVENTS + SEQUENCELESS_ELSEWHERE}) AS g, LATERAL (SELECT gen_random_uuid() AS s) x
+      SELECT gen_random_uuid(), x.s, x.s, 'TestAggregate', 1, '{TYPE}', NULL, nextval('wh_commit_seq'),
+             NOW() - INTERVAL '2 hours', '{origin}'::uuid, CASE WHEN x.g <= {SEQUENCED_EVENTS} THEN x.g END
+      FROM (SELECT g, gen_random_uuid() AS s FROM generate_series(1, {SEQUENCED_EVENTS + SEQUENCELESS_ELSEWHERE}) AS g) x
       """);
     await _execAsync(conn, $"""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope,
