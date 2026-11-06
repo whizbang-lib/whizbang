@@ -16,7 +16,10 @@
 --                 onward, in commit-sequence order, under a limit. Without an index keyed that way the read fetches and
 --                 sorts every remaining event of the type for every window, so a backfill of a type with millions of
 --                 events costs the square of its size. Partial on stamped rows, as idx_event_store_commit_sequence
---                 (046) is: unstamped rows are not selectable by commit sequence until they stamp. Built inside the
+--                 (046) is: unstamped rows are not selectable by commit sequence until they stamp. The predicate also
+--                 names event_type IS NOT NULL, which every row satisfies (the column is NOT NULL): only a query that
+--                 filters on event_type implies it, so the planner never offers this index to a commit-sequence probe
+--                 that does not name a type, which idx_event_store_commit_sequence serves. Built inside the
 --                 migration's transaction, like 195: on a large store the first start of this release pays one index
 --                 build.
 --
@@ -56,7 +59,7 @@ COMMENT ON COLUMN __SCHEMA__.wh_subscription_backfills.outcome IS
 
 CREATE INDEX IF NOT EXISTS idx_event_store_type_commit_sequence
   ON __SCHEMA__.wh_event_store (event_type, commit_sequence)
-  WHERE commit_sequence IS NOT NULL;
+  WHERE commit_sequence IS NOT NULL AND event_type IS NOT NULL;
 
 COMMENT ON INDEX __SCHEMA__.idx_event_store_type_commit_sequence IS
   'One type''s stamped events in commit order (334): a paced backfill window reads from a commit sequence onward under a limit, and a window answer reads the type''s head.';
