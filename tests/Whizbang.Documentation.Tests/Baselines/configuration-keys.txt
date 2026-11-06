@@ -338,6 +338,7 @@ Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow
 Whizbang:StreamRateLimiter:StaleEntryTimeout
 Whizbang:StreamRateLimiter:WindowDuration
+Whizbang:Superseding:ReconcileHistory
 Whizbang:SystemEvents:AccessDeniedEnabled
 Whizbang:SystemEvents:AccessGrantedEnabled
 Whizbang:SystemEvents:AuditBodyDefault
