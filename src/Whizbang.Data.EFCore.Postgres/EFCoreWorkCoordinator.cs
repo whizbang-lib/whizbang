@@ -2118,8 +2118,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LIMIT, pageBound + 1));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      AddDigestExemptParam(cmd);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
       var rows = new List<StreamDigest>();
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
@@ -3885,48 +3884,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// The windowed stream-digest query <see cref="ComputeStreamDigestsWindowedAsync"/> runs: one page of whole streams
-  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>.
+  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>. The fold is
+  /// <c>wh_compute_stream_digests_window</c> (#2107), which plans each call against its own window and types, so a sparse
+  /// type is read through an index on the type instead of being filtered from every event in the window.
   /// </summary>
   /// <param name="schema">The validated schema name.</param>
   /// <returns>The query text.</returns>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestTypeIndexTests.cs</tests>
 #pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
-  internal static string WindowedStreamDigestSql(string schema) => $"""
-        WITH lane AS (
-          -- #2080: one branch per lane, each with the window as a direct range on its own indexed column, so the read
-          -- is the window's rows rather than the whole lane filtered through a CASE no index can serve.
-          SELECT es.*, es.commit_sequence AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE (@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-            AND es.commit_sequence >= @p_since AND es.commit_sequence < @p_until
-          UNION ALL
-          SELECT es.*, es.origin_commit_sequence AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE (@p_origin::uuid) IS NOT NULL AND es.origin_service_id = @p_origin
-            AND es.origin_commit_sequence >= @p_since AND es.origin_commit_sequence < @p_until
-        ),
-        win AS (
-          SELECT l.* FROM lane l
-          WHERE ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-            AND COALESCE(l.flags, 0) & 8 = 0
-            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-            AND l.created_at < NOW() - @p_settle::interval
-        ),
-        pick AS (
-          SELECT DISTINCT w.stream_id FROM win w
-          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
-          ORDER BY w.stream_id
-          LIMIT @p_limit
-        )
-        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
-               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
-        FROM win w JOIN pick p ON p.stream_id = w.stream_id
-        GROUP BY 1, 2, 3
-        ORDER BY 3, 1, 2
-        """;
+  internal static string WindowedStreamDigestSql(string schema) =>
+    "SELECT tenant, event_type, stream_id, digest_lo, digest_hi, event_count " +
+    $"FROM {BuildSchemaQualifiedName(schema, "wh_compute_stream_digests_window")}" +
+    "(@p_origin, @p_types, @p_since, @p_until, @p_resume, @p_limit, NOW(), @p_settle)";
 #pragma warning restore S2077, RCS1158
 
   /// <summary>
