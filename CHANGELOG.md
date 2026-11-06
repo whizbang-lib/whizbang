@@ -1523,6 +1523,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
   to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
   topic keeps receiving its traffic there until it upgrades.
+- **A type-filtered digest window costs in proportion to the rows it returns, and one audit window is capped (#2107).**
+  After #2080 the windowed stream-digest read was bound by its window, but as an auto-prepared statement it settled into
+  a generic plan that found the window's rows through `idx_event_store_commit_sequence` and filtered the requested
+  types on the heap, so a wide window read every event in it (on a large store, seconds and hundreds of thousands of
+  pages per call) to return a few hundred. The read is now `wh_compute_stream_digests_window` (migration 340), planned
+  per call against its own window and types (`plan_cache_mode = force_custom_plan`), so a sparse type is read through an
+  index on the type (`idx_event_store_type_commit_sequence` from #2092 once built, or `idx_event_store_type_tenant`),
+  and the page is assembled without a nested loop over the window. An origin now answers at most
+  `StreamIntegrityOptions.MaxAuditWindowSequences` commit sequences per windowed audit request (default 500,000, five
+  default digest epochs) and marks the answer `IntegrityManifest.WindowCapped`; the consumer seals a clean capped window
+  and asks for the next one from where it stopped, so history is walked in bounded slices instead of read at once or
+  skipped. A windowed type-level answer with no digests is now compared too, and seals its window when this service
+  holds nothing there either, so a capped slice with nothing to audit no longer freezes the seal. The seal advances only
+  over a window that starts at or below it.
 - **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
   the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
   (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.
