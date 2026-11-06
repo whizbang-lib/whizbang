@@ -128,7 +128,8 @@ public sealed partial class SubscriptionBackfillWorker(
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
     var replyTopic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(replyTopic)) {
+    if (transport is null || serializer is null || instanceProvider is null || string.IsNullOrEmpty(requester)
+        || string.IsNullOrEmpty(replyTopic)) {
       return 0;   // nothing can leave: the backfills stay queued until the service can send.
     }
     using var admission = await IntegrityAdmission.TryAdmitAsync(
@@ -165,7 +166,7 @@ public sealed partial class SubscriptionBackfillWorker(
 
   /// <summary>What the tick sends windows with, resolved once per tick.</summary>
   private readonly record struct BackfillSender(
-    ITransport Transport, IEnvelopeSerializer Serializer, IServiceInstanceProvider? InstanceProvider, string Requester, string ReplyTopic);
+    ITransport Transport, IEnvelopeSerializer Serializer, IServiceInstanceProvider InstanceProvider, string Requester, string ReplyTopic);
 
   /// <summary>Ends a backfill whose window went unanswered through every attempt.</summary>
   private async Task _endUnansweredAsync(
