@@ -98,47 +98,19 @@ public sealed partial class RedeliveryRequestReceptor(
         OperatorRequested = message.OperatorRequested,
         // #2078: the answer is an integrity control message, so it expires at the broker like the request did.
         AnswerTimeToLive = TimeSpan.FromMinutes((integrity ?? new StreamIntegrityOptions()).ControlMessageTimeToLiveMinutes),
+        // #2092: a backfill window ships across streams, every bundle on the backfill's session.
+        BundleStreamId = message.BackfillId,
       };
 
-      // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter
-      // how wide the request is — materializing the whole cap at once has OOM-killed origins.
       // #2008: only events of types this service owns are its own; the rest were received from their authors.
       var ownedDomains = services.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()?
         .Value.OwnedDomains ?? new HashSet<string>();
-      var totalSelected = 0;
-      var totalShipped = 0;
-      var totalComposites = 0;
-      Guid? afterStream = null;
-      long? afterVersion = null;
-      while (totalSelected < maxEvents) {
-        var page = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
-          TenantScope = message.TenantScope,
-          EventTypes = message.EventTypes,
-          StreamIds = message.StreamIds,
-          FromCommitSequence = message.FromCommitSequence,
-          ToCommitSequence = message.ToCommitSequence,
-          MaxEvents = Math.Min(pageSize, maxEvents - totalSelected),
-          AfterStreamId = afterStream,
-          AfterVersion = afterVersion,
-          // #2032: the bundle names this service as origin, so it carries only events this service wrote.
-          AuthoredBy = instanceProvider.ServiceName,
-        }, cancellationToken).ConfigureAwait(false);
-        if (page.Count == 0) {
-          break;
-        }
-
-        var owned = page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, ownedDomains)).ToList();
-        if (owned.Count > 0) {
-          totalComposites += await pump
-            .PublishAsync(owned, message.Topic, message.RequesterService, originServiceId, message.StateOnly, cancellationToken)
-            .ConfigureAwait(false);
-        }
-        totalShipped += owned.Count;
-        totalSelected += page.Count;
-        var last = page[page.Count - 1];
-        afterStream = last.StreamId;
-        afterVersion = last.Version;
+      var serve = new Serve(coordinator, pump, metrics, originServiceId, instanceProvider.ServiceName, ownedDomains, maxEvents, pageSize);
+      if (message.BackfillId is { } backfillId) {
+        await _answerWindowAsync(message, backfillId, serve, cancellationToken).ConfigureAwait(false);
+        return;
       }
+      var (totalShipped, totalComposites) = await _serveOrdinaryAsync(message, serve, cancellationToken).ConfigureAwait(false);
 
       if (totalShipped == 0) {
         LogNothingSelected(logger, message.RequesterService);
@@ -151,6 +123,139 @@ public sealed partial class RedeliveryRequestReceptor(
       _buildGate.Release();
     }
   }
+
+  /// <summary>What one serve needs, held together so each path takes it whole.</summary>
+  private sealed record Serve(
+    IWorkCoordinator Coordinator, RedeliveryPump Pump, Whizbang.Core.Observability.StreamIntegrityMetrics? Metrics,
+    Guid OriginServiceId, string OriginServiceName, IReadOnlySet<string> OwnedDomains, int MaxEvents, int PageSize);
+
+  /// <summary>
+  /// An ordinary request: select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter how
+  /// wide the request is (materializing the whole cap at once has OOM-killed origins). An answer that stops at the bound
+  /// with more selected is counted and logged (#2098): this request has no window to continue from.
+  /// </summary>
+  private async Task<(int Shipped, int Composites)> _serveOrdinaryAsync(
+      RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
+    var totalSelected = 0;
+    var totalShipped = 0;
+    var totalComposites = 0;
+    Guid? afterStream = null;
+    long? afterVersion = null;
+    while (totalSelected < serve.MaxEvents) {
+      var page = await serve.Coordinator.SelectRedeliveryEventsAsync(
+        _ordinaryRequest(message, serve, Math.Min(serve.PageSize, serve.MaxEvents - totalSelected), afterStream, afterVersion),
+        cancellationToken).ConfigureAwait(false);
+      if (page.Count == 0) {
+        break;
+      }
+      var owned = _owned(page, serve);
+      if (owned.Count > 0) {
+        totalComposites += await serve.Pump
+          .PublishAsync(owned, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
+          .ConfigureAwait(false);
+      }
+      totalShipped += owned.Count;
+      totalSelected += page.Count;
+      var last = page[page.Count - 1];
+      afterStream = last.StreamId;
+      afterVersion = last.Version;
+    }
+    if (totalSelected >= serve.MaxEvents) {
+      var beyond = await serve.Coordinator.SelectRedeliveryEventsAsync(
+        _ordinaryRequest(message, serve, 1, afterStream, afterVersion), cancellationToken).ConfigureAwait(false);
+      if (beyond.Count > 0) {
+        serve.Metrics?.RedeliveryAnswersCapped.Add(1, new KeyValuePair<string, object?>("kind", "ordinary"));
+        LogOrdinaryAnswerCapped(logger, serve.MaxEvents, message.RequesterService);
+      }
+    }
+    return (totalShipped, totalComposites);
+  }
+
+  private static RedeliveryRequest _ordinaryRequest(
+      RequestRedeliveryCommand message, Serve serve, int maxEvents, Guid? afterStream, long? afterVersion) => new() {
+        TenantScope = message.TenantScope,
+        EventTypes = message.EventTypes,
+        StreamIds = message.StreamIds,
+        FromCommitSequence = message.FromCommitSequence,
+        ToCommitSequence = message.ToCommitSequence,
+        MaxEvents = maxEvents,
+        AfterStreamId = afterStream,
+        AfterVersion = afterVersion,
+        // #2032: the bundle names this service as origin, so it carries only events this service wrote.
+        AuthoredBy = serve.OriginServiceName,
+      };
+
+  /// <summary>
+  /// One window of a paced backfill (#2092): the type's events after the requester's position in commit-sequence order,
+  /// up to the window's bound, in pages, each page shipped across streams in (stream, version) order; then the answer,
+  /// saying where the window stopped and whether it stopped at its bound with more possibly left (#2098).
+  /// </summary>
+  private async Task _answerWindowAsync(
+      RequestRedeliveryCommand message, Guid backfillId, Serve serve, CancellationToken cancellationToken) {
+    if (message.EventTypes is not { Count: > 0 } eventTypes) {
+      LogWindowWithoutTypes(logger, message.RequesterService);
+      return;
+    }
+    var floor = message.FromCommitSequence;
+    long? first = null;
+    var selected = 0;
+    var shipped = 0;
+    var composites = 0;
+    var exhausted = false;
+    while (selected < serve.MaxEvents) {
+      var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
+      var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+        TenantScope = message.TenantScope,
+        EventTypes = eventTypes,
+        StreamIds = message.StreamIds,
+        FromCommitSequence = floor,
+        ToCommitSequence = message.ToCommitSequence,
+        MaxEvents = want,
+        OrderByCommitSequence = true,
+        AuthoredBy = serve.OriginServiceName,
+      }, cancellationToken).ConfigureAwait(false);
+      if (page.Count > 0) {
+        if (first is null) {
+          first = page[0].CommitSequence;
+        }
+        floor = page[page.Count - 1].CommitSequence;
+        // The receiver's fan-out takes each stream's events in version order.
+        var owned = _owned(page, serve).OrderBy(e => e.StreamId).ThenBy(e => e.Version).ToList();
+        if (owned.Count > 0) {
+          composites += await serve.Pump
+            .PublishAsync(owned, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
+            .ConfigureAwait(false);
+        }
+        shipped += owned.Count;
+        selected += page.Count;
+      }
+      if (page.Count < want) {
+        exhausted = true;
+        break;
+      }
+    }
+
+    var head = await serve.Coordinator.GetRedeliveryHeadCommitSequenceAsync(eventTypes, cancellationToken).ConfigureAwait(false);
+    await serve.Pump.PublishWindowAnswerAsync(new BackfillWindowAnswer {
+      BackfillId = backfillId,
+      Window = message.BackfillWindow,
+      OriginServiceId = serve.OriginServiceId,
+      OriginServiceName = serve.OriginServiceName,
+      EventCount = selected,
+      FirstCommitSequence = first,
+      StoppedAtCommitSequence = selected > 0 ? floor : null,
+      HasMore = !exhausted,
+      HeadCommitSequence = head,
+    }, message.Topic, message.RequesterService, cancellationToken).ConfigureAwait(false);
+    if (!exhausted) {
+      serve.Metrics?.RedeliveryAnswersCapped.Add(1, new KeyValuePair<string, object?>("kind", "window"));
+    }
+    serve.Metrics?.RedeliveryEventsShipped.Add(shipped);
+    LogWindowAnswered(logger, message.BackfillWindow, selected, composites, message.RequesterService, !exhausted);
+  }
+
+  private static List<RedeliveryEvent> _owned(IReadOnlyList<RedeliveryEvent> page, Serve serve) =>
+    [.. page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, serve.OwnedDomains))];
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Warning,
     Message = "RequestRedeliveryCommand received but required infrastructure is missing " +
@@ -172,4 +277,16 @@ public sealed partial class RedeliveryRequestReceptor(
   [LoggerMessage(EventId = 50, Level = LogLevel.Information,
     Message = "Re-delivery request from {RequesterService} on {Topic} declined: RepairMode is ReportOnly, so this origin serves no repair (the request is discarded, not retried)")]
   static partial void LogRepairRequestDeclined(ILogger logger, string requesterService, string topic);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Re-delivery answer to {RequesterService} stopped at this origin's bound of {MaxEvents} events with more selected; an ordinary request is not continued, so the rest stays for the integrity audit (#2098)")]
+  static partial void LogOrdinaryAnswerCapped(ILogger logger, int maxEvents, string requesterService);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Backfill window {Window} for {RequesterService} answered: {EventCount} events in {CompositeCount} bundles, more remaining: {HasMore}")]
+  static partial void LogWindowAnswered(ILogger logger, long window, int eventCount, int compositeCount, string requesterService, bool hasMore);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Backfill window from {RequesterService} names no event type; it is not answered")]
+  static partial void LogWindowWithoutTypes(ILogger logger, string requesterService);
 }
