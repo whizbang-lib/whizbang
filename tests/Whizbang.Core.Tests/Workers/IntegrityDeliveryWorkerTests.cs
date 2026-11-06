@@ -335,6 +335,103 @@ public class IntegrityDeliveryWorkerTests {
       .Because("one spent its attempts and one has no handler");
   }
 
+  private const string BATCHED = "batched-delivery";
+
+  /// <summary>Registers <see cref="BATCHED"/> with a single handler and a batch handler, both recording what they ran.</summary>
+  private static (List<string> Single, List<IReadOnlyList<string>> Batches, List<bool> BatchInsideTheDrain) _registerBatched(
+      Fixture fx, Exception? batchFailure = null) {
+    List<string> single = [];
+    List<IReadOnlyList<string>> batches = [];
+    List<bool> inside = [];
+    fx.Deliveries.Register(BATCHED, (payload, _, _) => {
+      single.Add(payload);
+      return Task.CompletedTask;
+    });
+    fx.Deliveries.RegisterBatch(BATCHED, (payloads, _, _) => {
+      batches.Add(payloads);
+      inside.Add(IntegrityDrainContext.IsActive);
+      return batchFailure is null ? Task.CompletedTask : Task.FromException(batchFailure);
+    });
+    return (single, batches, inside);
+  }
+
+  /// <summary>
+  /// #2099: a lease holding several deliveries of a type with a batch handler hands them to it together, at the position
+  /// of the first, inside the drain, and completes each; the other deliveries keep arrival order around them.
+  /// </summary>
+  [Test]
+  public async Task DeliveriesOfABatchedType_AreHandledTogether_AndEachIsCompletedAsync() {
+    using var probe = new IntegrityMetricsProbe();
+    await using var fx = await _buildAsync(metrics: probe.Metrics);
+    var (single, batches, inside) = _registerBatched(fx);
+    fx.Coordinator.Seed(_id(1), TYPE, "before");
+    fx.Coordinator.Seed(_id(2), BATCHED, "a");
+    fx.Coordinator.Seed(_id(3), TYPE, "between");
+    fx.Coordinator.Seed(_id(4), BATCHED, "b");
+
+    var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(batches.Single()).IsEquivalentTo(["a", "b"]);
+    await Assert.That(inside.Single()).IsTrue().Because("the batch handler runs the work for real, inside the drain");
+    await Assert.That(single).IsEmpty();
+    await Assert.That(fx.Handled.ConvertAll(h => h.Payload)).IsEquivalentTo(["before", "between"]);
+    await Assert.That(fx.Coordinator.Completed).IsEquivalentTo([_id(1), _id(2), _id(4), _id(3)])
+      .Because("the batch is handled at the position of its first delivery");
+    await Assert.That(pass.Processed).IsEqualTo(4);
+    await Assert.That(probe.Total(probe.Metrics.IntegrityDeliveriesProcessed)).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task ALoneDeliveryOfABatchedType_IsHandledOnItsOwnAsync() {
+    await using var fx = await _buildAsync();
+    var (single, batches, _) = _registerBatched(fx);
+    fx.Coordinator.Seed(_id(1), BATCHED, "alone");
+
+    var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(batches).IsEmpty();
+    await Assert.That(single).IsEquivalentTo(["alone"]);
+    await Assert.That(pass.Processed).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AFailedBatch_HandlesEachDeliveryOnItsOwn_WithAWarningAsync() {
+    await using var fx = await _buildAsync();
+    var (single, batches, _) = _registerBatched(fx, new InvalidOperationException("one payload is unreadable"));
+    fx.Coordinator.Seed(_id(1), BATCHED, "a");
+    fx.Coordinator.Seed(_id(2), BATCHED, "b");
+
+    var pass = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(batches.Count).IsEqualTo(1);
+    await Assert.That(single).IsEquivalentTo(["a", "b"])
+      .Because("a failed batch fails none of its deliveries; each is handled on its own, so a bad one fails alone");
+    await Assert.That(pass.Processed).IsEqualTo(2);
+    await Assert.That(fx.Logger.Entries.Count(e => e.Level == LogLevel.Warning && e.Message.Contains(BATCHED, StringComparison.Ordinal)))
+      .IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CancellationDuringABatch_StopsThePass_WithoutHandlingEachOnItsOwnAsync() {
+    await using var fx = await _buildAsync();
+    using var cts = new CancellationTokenSource();
+    var (single, _, _) = _registerBatched(fx);
+    fx.Deliveries.RegisterBatch("cancelled-batch", (_, _, _) => {
+      cts.Cancel();
+      return Task.FromException(new OperationCanceledException(cts.Token));
+    });
+    fx.Deliveries.Register("cancelled-batch", (payload, _, _) => {
+      single.Add(payload);
+      return Task.CompletedTask;
+    });
+    fx.Coordinator.Seed(_id(1), "cancelled-batch", "a");
+    fx.Coordinator.Seed(_id(2), "cancelled-batch", "b");
+
+    await Assert.That(async () => await fx.Worker.RunPassAsync(cts.Token)).Throws<OperationCanceledException>();
+    await Assert.That(single).IsEmpty();
+    await Assert.That(fx.Coordinator.Completed).IsEmpty();
+  }
+
   internal sealed class CapturingLogger : ILogger<IntegrityDeliveryWorker> {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

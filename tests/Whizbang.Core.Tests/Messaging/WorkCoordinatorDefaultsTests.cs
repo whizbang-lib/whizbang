@@ -581,6 +581,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task ReconcileRedeliveredBundlesAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReconcileRedeliveredBundlesAsync([]);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain to reconcile each bundle on its own (#2099)");
+  }
+
+  [Test]
   public async Task IntegrityClaimRepairDrainAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

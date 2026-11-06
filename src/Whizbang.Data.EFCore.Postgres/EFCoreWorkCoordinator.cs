@@ -1080,6 +1080,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(
       Guid ownerServiceId, string ownerServiceName, string? requestTopic, IReadOnlyList<string> domains,
       CancellationToken cancellationToken = default) {

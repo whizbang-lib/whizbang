@@ -32,7 +32,11 @@ namespace Whizbang.Core.Messaging;
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 public readonly record struct RedeliveredBucketPresence(
   Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
-  int RefusedForeignOrigin = 0);
+  int RefusedForeignOrigin = 0, int? OriginsFilled = null);
+
+/// <summary>One redelivery bundle as a batch reconcile takes it (#2099).</summary>
+public sealed record RedeliveredBundle(
+  Guid OriginServiceId, string? OriginServiceName, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> CommitSequences);
 
 /// <summary>
 /// What a committed redelivery bundle answered, judged when its children commit (#2033): how many of its events the
@@ -300,6 +304,10 @@ public static partial class RedeliveryReconciler {
         .Select(e => e.ValueKind == JsonValueKind.Null ? (long?)null : e.GetInt64())],
       allPresent);
   }
+
+  internal static Task HandleDeferredBatchAsync(
+      IReadOnlyList<string> payloads, IServiceProvider services, CancellationToken cancellationToken) =>
+    throw new NotImplementedException();
 
   /// <summary>The reconcile itself, shared by the inline path and the maintainer's drain.</summary>
   private static async Task<RedeliveryReconciliation> _reconcileCoreAsync(

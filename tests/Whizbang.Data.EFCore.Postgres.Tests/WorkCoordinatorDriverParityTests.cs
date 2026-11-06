@@ -44,6 +44,7 @@ public class WorkCoordinatorDriverParityTests {
   /// </summary>
   internal static readonly IReadOnlyDictionary<string, string> DapperAllowList = new Dictionary<string, string>(StringComparer.Ordinal) {
     [nameof(IWorkCoordinator.AdoptRedeliveredOriginAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.ReconcileRedeliveredBundlesAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegrityDomainClaimsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetOriginReattributionWindowAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ReattributeOriginsAsync)] = INTEGRITY,
