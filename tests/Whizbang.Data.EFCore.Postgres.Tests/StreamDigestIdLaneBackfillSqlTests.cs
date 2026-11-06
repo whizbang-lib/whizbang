@@ -265,7 +265,7 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
         rows.Add(new BatchRow(r.GetString(1), r.GetGuid(2), r.IsDBNull(3) ? null : r.GetInt64(3), r.IsDBNull(4) ? null : r.GetInt64(4)));
       }
     }
-    return new Batch(visited, rows.Where(x => x.Kind != "filled").ToList());
+    return new Batch(visited, [.. rows.Where(x => x.Kind != "filled")]);
   }
 
   private static async Task _executeAsync(NpgsqlConnection conn, string sql) {
