@@ -3117,7 +3117,7 @@ public class IntegrityManifestReceptorTests {
     var sp = _provider(coordinator, transport,
       options ?? new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
       tracker: tracker, ledger: ledger, metrics: metrics);
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     return (coordinator, transport, ledger,
       new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance));
   }
@@ -3397,7 +3397,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport, _burst, tracker: tracker, consumers: new ConsumesOnly("Contracts.A"));
-    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     var stream = TrackedGuid.New().Value;
     var (heldA, missingA) = (TrackedGuid.New().Value, TrackedGuid.New().Value);

@@ -31,6 +31,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityAuditWorker.cs</code-under-test>
 public class IntegrityAuditWorkerTests {
 
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
   [Test]
   public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {
     var coordinator = new AuditCoordinator {
@@ -115,7 +117,7 @@ public class IntegrityAuditWorkerTests {
     var origin = TrackedGuid.New().Value;
     var coordinator = new AuditCoordinator {
       KeptState = new IntegrityGapTrackerState(
-        [new IntegrityKnownOrigin(origin, "origin-a", "origin-a.requests", DateTimeOffset.UtcNow)], []),
+        [new IntegrityKnownOrigin(origin, "origin-a", "origin-a.requests", _fixedNow)], []),
     };
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), new IntegrityGapTracker());

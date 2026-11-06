@@ -103,7 +103,7 @@ public class RepairDrainWorkerTests {
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", whole, 100, 500),
     ]);
 
-    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
 
     var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
     await Assert.That(requests.Count).IsEqualTo(2);
