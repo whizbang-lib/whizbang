@@ -238,6 +238,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either refuses is not registered. The flag-name parser learns `Superseding`. New API: `SupersedingAttribute`,
   `SupersedingKeyAttribute`, `SupersedingEvents`, `EventFlags.Superseding`, `MessageTypeCatalogEntry.IsSuperseding`,
   `EnvelopeMetadata.SupersedingKey`.
+- **Declaring an event type `[Superseding]` now reclaims the history stored before the declaration (#2110).** Until
+  now only events stored after the declaration carried the flag and key, so adopting `[Superseding]` on a type with
+  history stopped growth but recovered none of the space already used. A new maintenance step,
+  `superseding-history-reconcile`, walks each superseding type's stored events (idle-gated, under the maintainer turn,
+  5,000 events of the store per batch, 20 batches per cycle, one instance per type, resumable after a crash), reads each
+  key from the stored payload with the same generated accessor the write paths use, stamps the flag and key, and queues
+  every event but the newest of each stream, type and key in `wh_superseded_events`. The reaper then deletes them past
+  all of its gates (consumed, no cursor or snapshot on it, no destruction hold, stamped, not debug mode); the step
+  itself deletes nothing. A null key stays unkeyed and is never superseded; a payload whose key cannot be read is kept
+  and logged. Each service reconciles its own store, received copies included. The walk restarts when the
+  type-definition registry records a newer definition of the type, and the generator's settings hash now includes
+  `[Superseding]`, so becoming superseding is recorded as a definition change (every other type keeps its hash).
+  Migration 345 adds `wh_superseding_history` and its functions; no new index. New API: `SupersedingOptions`,
+  `SupersedingEvents.Types()`, `SupersedingHistoryReconcileStep`. **Upgrade note:** this is on by default. After
+  upgrading, a type already declared `[Superseding]` that has history from before its declaration has that history
+  reclaimed down to the newest event of each key once consumed, and every such type registers one new type definition
+  on its first boot (logged as drift once). Set `Whizbang:Superseding:ReconcileHistory` to `false` to keep that history.
 - **The Azure Blob archive store writes its objects at a chosen access tier (#1897).** `AzureBlobArchiveOptions.AccessTier`
   (`Whizbang:Archive:AzureBlob:AccessTier`) takes `Hot`, `Cool` or `Cold` in any case; unset, objects take the storage
   account's default tier as before. `Archive` and every other value are refused when the setting is bound, when the

@@ -183,7 +183,8 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await Assert.That(await _flagsAsync(conn, p1)).IsEqualTo(0L).Because("only the types registered as superseding are walked");
     await Assert.That(await _flagsAsync(conn, p2)).IsEqualTo(0L);
     await Assert.That(await _queuedAsync(conn)).IsEmpty();
-    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_superseding_history WHERE last_event_id IS NOT NULL")).IsEqualTo(0L)
+    await Assert.That(await _scalarAsync(conn,
+      "SELECT count(*) FROM wh_superseding_history WHERE event_type = @t AND last_event_id IS NULL AND events_stamped = 0", ("t", _plain))).IsEqualTo(1L)
       .Because("the walk of a type that is no longer superseding does not move");
   }
 
@@ -418,7 +419,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("t", _embedded);
     cmd.Parameters.AddWithValue("e", a1);
     cmd.Parameters.AddWithValue("ids", new[] { a1 });
-    cmd.Parameters.AddWithValue("keys", new[] { "k" });
+    cmd.Parameters.AddWithValue("keys", _oneKey);
     var status = (string)(await cmd.ExecuteScalarAsync())!;
 
     await Assert.That(status).StartsWith("skipped").Because("an apply with no walk begun in its transaction applies nothing");
@@ -451,13 +452,15 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
 
   // ===== Helpers =====
 
+  private static readonly string[] _oneKey = ["k"];
+
   private static readonly string _definitionName = TypeNameFormatter.FormatClrTypeName(typeof(SupersedingProbeEmbedded));
 
   private sealed class ListLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
       Entries.Add((logLevel, formatter(state, exception)));
   }
 
