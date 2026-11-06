@@ -439,16 +439,16 @@ public class IntegrityDeliveryWorkerTests {
     await using var fx = await _buildAsync();
     using var cts = new CancellationTokenSource();
     var (single, _, _) = _registerBatched(fx);
-    fx.Deliveries.RegisterBatch("cancelled-batch", (_, _, _) => {
+    fx.Deliveries.RegisterBatch("canceled-batch", (_, _, _) => {
       cts.Cancel();
       return Task.FromException(new OperationCanceledException(cts.Token));
     });
-    fx.Deliveries.Register("cancelled-batch", (payload, _, _) => {
+    fx.Deliveries.Register("canceled-batch", (payload, _, _) => {
       single.Add(payload);
       return Task.CompletedTask;
     });
-    fx.Coordinator.Seed(_id(1), "cancelled-batch", "a");
-    fx.Coordinator.Seed(_id(2), "cancelled-batch", "b");
+    fx.Coordinator.Seed(_id(1), "canceled-batch", "a");
+    fx.Coordinator.Seed(_id(2), "canceled-batch", "b");
 
     await Assert.That(async () => await fx.Worker.RunPassAsync(cts.Token)).Throws<OperationCanceledException>();
     await Assert.That(single).IsEmpty();
