@@ -53,6 +53,12 @@ public static class SupersedingEvents {
     return _byType.ContainsKey(eventType);
   }
 
+  /// <summary>The event types registered as superseding, as a snapshot.</summary>
+  /// <returns>Every registered superseding type; the history reconcile walks the stored events of each (#2110).</returns>
+  /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:Types_ListsEveryRegisteredSupersedingType_AndNoOtherAsync</tests>
+  public static IReadOnlyList<Type> Types() => [.. _byType.Keys];
+
   /// <summary>The key a typed <paramref name="payload"/> is stored with: the dispatch and direct-append paths.</summary>
   /// <param name="payload">The payload, possibly null.</param>
   /// <returns>The key; the empty string for a superseding type with no key property; <see langword="null"/> when the
