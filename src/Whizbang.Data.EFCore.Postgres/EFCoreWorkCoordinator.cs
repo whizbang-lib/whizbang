@@ -67,6 +67,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
   private const string P_TYPES = "p_types";
+  private const string P_STREAMS = "p_streams";
+  private const string P_FROM = "p_from";
+  private const string P_TO = "p_to";
+  private const string P_TENANTS = "p_tenants";
 
   // Unqualified object names; every use goes through BuildSchemaQualifiedName so the
   // caller's schema is applied and escaped.
@@ -880,16 +884,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = pending.Select(g => g.OriginServiceName).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenants", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = pending.Select(g => g.TenantScope ?? string.Empty).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = pending.Select(g => g.EventType).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = pending.Select(g => g.FromCommitSequence).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = pending.Select(g => g.ToCommitSequence).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_expected", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
@@ -921,13 +925,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND l.missing_event_id IS DISTINCT FROM m.missing_event_id
         """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenants", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = keys.Select(k => k.EventType).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = keys.Select(k => k.StreamId).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_missing", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -2162,7 +2166,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         ORDER BY 1, 2, 3
         """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = streamIds.ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -2194,7 +2198,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = eventTypes.ToArray()
       });
       if (byStream) {
-        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
           Value = streamIds!.ToArray()
         });
       }
@@ -3145,10 +3149,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = request.EventTypes is null ? DBNull.Value : request.EventTypes.ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = request.StreamIds is null ? DBNull.Value : request.StreamIds.ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = request.EventIds is null ? DBNull.Value : request.EventIds.ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -3585,8 +3589,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;
-      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
-      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, prior.Value));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, current));
       count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
@@ -3651,8 +3655,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ORDER BY 1, 2
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, fromCommitSequence));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, toCommitSequence));
     AddDigestExemptParam(cmd);
 
     var results = new List<CheckpointBucket>();
