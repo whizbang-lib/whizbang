@@ -177,7 +177,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.ExplicitType,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -202,6 +203,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   private static bool _isWhizbangIdAttribute(AttributeData attribute) =>
     TypeNameUtilities.SimpleNameOrNull(attribute.AttributeClass) is "WhizbangIdAttribute" or "WhizbangId";
+
+  /// <summary>Whether <c>[WhizbangId(AcceptAnyVersion = true)]</c> is written: the id takes any non-empty Guid (#2071).</summary>
+  private static bool _acceptsAnyVersion(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "AcceptAnyVersion").Value.Value is true;
 
   private static (WhizbangIdInfo?, Location?, string?)? _extractPropertyBasedId(
       GeneratorSyntaxContext context,
@@ -249,7 +254,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.Property,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -305,7 +311,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.Parameter,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -497,7 +504,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Uses init accessor for EF Core ComplexProperty().ToJson() deserialization
     // When EF Core deserializes, it sets Value which creates an untracked TrackedGuid
     sb.AppendLine("  /// <summary>Gets the underlying Guid value.</summary>");
-    sb.AppendLine("  public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
+    sb.AppendLine($"  public Guid Value {{ get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal({_checked(id, "value", "Value")}); }}");
     sb.AppendLine();
 
     // IWhizbangId.ToGuid() implementation
@@ -551,26 +558,14 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Parameter name MUST match property name (Value) for EF Core constructor binding
     // Creates untracked TrackedGuid since we don't know the original source
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Parameter name matches property for EF Core binding.</summary>");
-    sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
+    sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal({_checked(id, "Value", "Value")});");
     sb.AppendLine();
 
-    // From(TrackedGuid) factory method - preserves tracking metadata
-    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} From(TrackedGuid tracked) {{");
-    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
-    sb.AppendLine($"      throw new ArgumentException(\"{id.TypeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
-    sb.AppendLine("    return new(tracked);");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-
-    // From(Guid) factory method - validates v7, creates untracked
-    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} From(Guid value) {{");
-    sb.AppendLine("    if (value.Version != 7)");
-    sb.AppendLine($"      throw new ArgumentException($\"{id.TypeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
-    sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
-    sb.AppendLine("  }");
-    sb.AppendLine();
+    if (id.AcceptAnyVersion) {
+      _appendAnyVersionFactories(sb, id.TypeName);
+    } else {
+      _appendUuidV7Factories(sb, id.TypeName);
+    }
 
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
@@ -639,12 +634,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Explicit conversion from Guid (validates v7)
-    sb.AppendLine("  /// <summary>Explicitly converts from Guid. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  /// <summary>Explicitly converts from Guid. Throws if {_rejected(id)}.</summary>");
     sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => From(value);");
     sb.AppendLine();
 
     // Parse method for string deserialization (validates v7)
-    sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  /// <summary>Parses a string representation of a Guid into this ID type. Throws if {_rejected(id)}.</summary>");
     sb.AppendLine($"  public static {id.TypeName} Parse(string value) => From(Guid.Parse(value));");
     sb.AppendLine();
 
@@ -661,6 +656,62 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
 
     return sb.ToString();
+  }
+
+  /// <summary>What a generated id refuses, for its doc comments: a non-v7 Guid, or only the empty one.</summary>
+  private static string _rejected(WhizbangIdInfo id) =>
+    id.AcceptAnyVersion ? "the Guid is empty" : "not UUIDv7";
+
+  /// <summary>
+  /// The expression a constructor or initializer stores: the Guid as given for a default id, which has always
+  /// stored it unchecked, or the Guid checked non-empty for an id that takes any version, so that every way in
+  /// agrees with <c>From</c> (#2071).
+  /// </summary>
+  private static string _checked(WhizbangIdInfo id, string value, string parameterName) =>
+    id.AcceptAnyVersion ? $"_requireNonEmpty({value}, nameof({parameterName}))" : value;
+
+  /// <summary>The default factories: <c>From</c> takes UUIDv7 only.</summary>
+  private static void _appendUuidV7Factories(StringBuilder sb, string typeName) {
+    // From(TrackedGuid) factory method - preserves tracking metadata
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
+    sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    // From(Guid) factory method - validates v7, creates untracked
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) {{");
+    sb.AppendLine("    if (value.Version != 7)");
+    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
+    sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
+    sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// The factories of an id declared with <c>AcceptAnyVersion = true</c>: <c>From</c> takes any Guid but the empty
+  /// one, and so do the constructor and the <c>Value</c> initializer, through the same check (#2071).
+  /// </summary>
+  private static void _appendAnyVersionFactories(StringBuilder sb, string typeName) {
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid of any version, preserving tracking metadata. Throws if the Guid is empty.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    _requireNonEmpty(tracked.Value, nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid of any version. Throws if the Guid is empty.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) => new(TrackedGuid.FromExternal(_requireNonEmpty(value, nameof(value))));");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Returns the Guid, or throws if it is empty: the one Guid this id refuses.</summary>");
+    sb.AppendLine("  private static Guid _requireNonEmpty(Guid value, string parameterName) {");
+    sb.AppendLine("    if (value == Guid.Empty)");
+    sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires a non-empty Guid\", parameterName);");
+    sb.AppendLine("    return value;");
+    sb.AppendLine("  }");
   }
 
   /// <summary>
@@ -819,6 +870,21 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       template,
       "DI_REGISTRATIONS",
       diRegistrations.ToString()
+    );
+
+    // Each id's From(Guid), so an integration that binds ids by type (a GraphQL server) can convert a Guid to the
+    // id without reflection and with the id's own version rule (#2073).
+    var guidConversions = new StringBuilder();
+    foreach (var id in ids) {
+      guidConversions.AppendLine(
+        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::{id.FullyQualifiedName}>(" +
+        $"global::{id.FullyQualifiedName}.From);"
+      );
+    }
+    template = TemplateUtilities.ReplaceRegion(
+      template,
+      "GUID_CONVERSION_REGISTRATIONS",
+      guidConversions.ToString()
     );
 
     context.AddSource("WhizbangIdProviderRegistration.g.cs", template);

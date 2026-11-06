@@ -36,6 +36,7 @@ namespace Whizbang.Core;
 public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
+  private static readonly Dictionary<Type, Func<Guid, object>> _guidConversions = [];
   private static readonly Lock _lock = new();
 
   /// <summary>
@@ -141,6 +142,37 @@ public static class WhizbangIdProviderRegistry {
       foreach (var registration in _diRegistrations) {
         registration(services, baseProvider);
       }
+    }
+  }
+
+  /// <summary>
+  /// Records how to turn a Guid into the id type, through the id's own <c>From(Guid)</c>, so that an
+  /// integration that only knows the id's <see cref="Type"/> (a GraphQL server binding arguments, say)
+  /// can convert without reflection. The conversion keeps the id's version rule and throws
+  /// <see cref="ArgumentException"/> for a Guid the id refuses.
+  /// Called automatically by generated ModuleInitializer - users should not call this directly.
+  /// </summary>
+  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
+  /// <param name="fromGuid">The id's <c>From(Guid)</c></param>
+  /// <exception cref="ArgumentNullException">Thrown when fromGuid is null</exception>
+  public static void RegisterGuidConversion<TId>(Func<Guid, TId> fromGuid)
+    where TId : struct, IWhizbangId {
+    ArgumentNullException.ThrowIfNull(fromGuid);
+
+    lock (_lock) {
+      _guidConversions[typeof(TId)] = guid => fromGuid(guid);
+    }
+  }
+
+  /// <summary>
+  /// Gets the Guid conversion of every id type that has one, recorded by <see cref="RegisterGuidConversion{TId}"/>:
+  /// every generated WhizbangId in the loaded assemblies. Each conversion returns the boxed id and throws
+  /// <see cref="ArgumentException"/> for a Guid the id refuses.
+  /// </summary>
+  /// <returns>The conversions by id type, as a snapshot</returns>
+  public static IReadOnlyDictionary<Type, Func<Guid, object>> GetGuidConversions() {
+    lock (_lock) {
+      return new Dictionary<Type, Func<Guid, object>>(_guidConversions);
     }
   }
 

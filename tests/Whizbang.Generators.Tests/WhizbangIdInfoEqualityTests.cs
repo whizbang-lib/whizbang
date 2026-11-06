@@ -23,6 +23,19 @@ public class WhizbangIdInfoEqualityTests {
     await Assert.That(fromType.GetHashCode()).IsEqualTo(fromProperty.GetHashCode());
   }
 
+  /// <summary>
+  /// The accepted versions change the generated code, so an id whose option was toggled must not compare equal to
+  /// the cached one, or the incremental pipeline would keep the old output.
+  /// </summary>
+  [Test]
+  public async Task SameName_DifferentAcceptAnyVersion_IsNotEqualAsync() {
+    var strict = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType);
+    var anyVersion = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType, AcceptAnyVersion: true);
+
+    await Assert.That(strict.Equals(anyVersion)).IsFalse();
+    await Assert.That(strict.GetHashCode()).IsNotEqualTo(anyVersion.GetHashCode());
+  }
+
   [Test]
   public async Task DifferentName_IsNotEqualAsync() {
     var shop = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType);
