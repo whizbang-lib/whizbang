@@ -215,9 +215,7 @@ public sealed partial class RedeliveryRequestReceptor(
         AuthoredBy = serve.OriginServiceName,
       }, cancellationToken).ConfigureAwait(false);
       if (page.Count > 0) {
-        if (first is null) {
-          first = page[0].CommitSequence;
-        }
+        first ??= page[0].CommitSequence;
         floor = page[page.Count - 1].CommitSequence;
         // The receiver's fan-out takes each stream's events in version order.
         var owned = _owned(page, serve).OrderBy(e => e.StreamId).ThenBy(e => e.Version).ToList();

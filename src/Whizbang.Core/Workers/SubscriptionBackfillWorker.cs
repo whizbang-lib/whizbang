@@ -138,50 +138,21 @@ public sealed partial class SubscriptionBackfillWorker(
     }
 
     var claims = await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false);
+    var sender = new BackfillSender(transport, serializer, instanceProvider, requester, replyTopic);
     var window = _options.BackfillWindowSize;
     var slots = _options.BackfillMaxConcurrentWindows - inFlight;
     var sent = 0;
     foreach (var backfill in due) {
       if (backfill.AnswerDueBy is not null && backfill.WindowAttempts >= _options.BackfillMaxWindowAttempts) {
-        await coordinator.EndSubscriptionBackfillAsync(backfill.BackfillId, SubscriptionBackfillOutcome.Unanswered, now, cancellationToken)
-          .ConfigureAwait(false);
-        metrics?.BackfillsEnded.Add(1, new KeyValuePair<string, object?>("outcome", "unanswered"));
-        LogUnanswered(_logger, backfill.EventType, backfill.OwnerServiceName, backfill.Window, backfill.WindowAttempts);
+        await _endUnansweredAsync(coordinator, metrics, backfill, now, cancellationToken).ConfigureAwait(false);
         continue;
       }
       if (sent >= slots || _tokens < window) {
         continue;   // keep walking: a later backfill may still need ending.
       }
-      var destination = _destination(backfill, claims, services);
-      if (destination is null) {
-        LogNoAddress(_logger, backfill.EventType, backfill.OwnerServiceName);
+      if (!await _trySendWindowAsync(sender, backfill, claims, services, coordinator, now, cancellationToken).ConfigureAwait(false)) {
         continue;
       }
-      // An answered (or never asked) window is followed by the next; an unanswered one is asked again as it was.
-      var number = backfill.AnswerDueBy is null ? backfill.Window + 1 : backfill.Window;
-      var command = new RequestRedeliveryCommand {
-        EventTypes = [backfill.EventType],
-        RequesterService = requester,
-        Topic = replyTopic,
-        StateOnly = true,
-        FromCommitSequence = backfill.CursorCommitSequence,
-        MaxEvents = window,
-        BackfillId = backfill.BackfillId,
-        BackfillWindow = number,
-      };
-      try {
-        await RedeliveryRequestDispatch.PublishAsync(
-          transport, serializer, instanceProvider, command, destination.Value.Target, destination.Value.Destination, now, cancellationToken)
-          .ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        // A transient broker failure costs this window only; it is asked again on a later tick.
-        LogSendFailed(_logger, backfill.EventType, backfill.OwnerServiceName, ex);
-        continue;
-      }
-      await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(
-        backfill.BackfillId, number, now, now.AddMinutes(_options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
       _tokens -= window;
       sent++;
       metrics?.BackfillWindowsRequested.Add(1, new KeyValuePair<string, object?>("event_type", backfill.EventType));
@@ -190,6 +161,61 @@ public sealed partial class SubscriptionBackfillWorker(
       }
     }
     return sent;
+  }
+
+  /// <summary>What the tick sends windows with, resolved once per tick.</summary>
+  private readonly record struct BackfillSender(
+    ITransport Transport, IEnvelopeSerializer Serializer, IServiceInstanceProvider? InstanceProvider, string Requester, string ReplyTopic);
+
+  /// <summary>Ends a backfill whose window went unanswered through every attempt.</summary>
+  private async Task _endUnansweredAsync(
+      IWorkCoordinator coordinator, StreamIntegrityMetrics? metrics, SubscriptionBackfillCursor backfill, DateTimeOffset now,
+      CancellationToken cancellationToken) {
+    await coordinator.EndSubscriptionBackfillAsync(backfill.BackfillId, SubscriptionBackfillOutcome.Unanswered, now, cancellationToken)
+      .ConfigureAwait(false);
+    metrics?.BackfillsEnded.Add(1, new KeyValuePair<string, object?>("outcome", "unanswered"));
+    LogUnanswered(_logger, backfill.EventType, backfill.OwnerServiceName, backfill.Window, backfill.WindowAttempts);
+  }
+
+  /// <summary>
+  /// Asks the owner for a backfill's next window (or the unanswered one again) and records it as requested.
+  /// False when the owner has no address or the send failed; the window is asked on a later tick.
+  /// </summary>
+  private async Task<bool> _trySendWindowAsync(
+      BackfillSender sender, SubscriptionBackfillCursor backfill, IReadOnlyList<IntegrityDomainClaim> claims, IServiceProvider services,
+      IWorkCoordinator coordinator, DateTimeOffset now, CancellationToken cancellationToken) {
+    var destination = _destination(backfill, claims, services);
+    if (destination is null) {
+      LogNoAddress(_logger, backfill.EventType, backfill.OwnerServiceName);
+      return false;
+    }
+    // An answered (or never asked) window is followed by the next; an unanswered one is asked again as it was.
+    var number = backfill.AnswerDueBy is null ? backfill.Window + 1 : backfill.Window;
+    var command = new RequestRedeliveryCommand {
+      EventTypes = [backfill.EventType],
+      RequesterService = sender.Requester,
+      Topic = sender.ReplyTopic,
+      StateOnly = true,
+      FromCommitSequence = backfill.CursorCommitSequence,
+      MaxEvents = _options.BackfillWindowSize,
+      BackfillId = backfill.BackfillId,
+      BackfillWindow = number,
+    };
+    try {
+      await RedeliveryRequestDispatch.PublishAsync(
+        sender.Transport, sender.Serializer, sender.InstanceProvider, command, destination.Value.Target, destination.Value.Destination, now,
+        cancellationToken)
+        .ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // A transient broker failure costs this window only; it is asked again on a later tick.
+      LogSendFailed(_logger, backfill.EventType, backfill.OwnerServiceName, ex);
+      return false;
+    }
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(
+      backfill.BackfillId, number, now, now.AddMinutes(_options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
+    return true;
   }
 
   /// <summary>
