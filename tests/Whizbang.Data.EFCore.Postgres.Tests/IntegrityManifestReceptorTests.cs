@@ -1641,6 +1641,7 @@ public class IntegrityManifestReceptorTests {
     // chunk with no resume cursor — only then has the whole window provably been verified, and
     // only then may the next audit start past it.
     var coordinator = new AuditCoordinator {
+      Seal = 100,   // the audit asked from the seal
       WindowedTypeResult = new WindowedDigestResult {
         Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
         ComputedThrough = 300,
@@ -1728,6 +1729,212 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(coordinator.SealAdvancedTo).IsNull()
       .Because("certifying a window from one chunk of two would seal over whatever the lost chunk carried");
+  }
+
+  // ── #2107: one audit window is capped; the asker continues from where it stopped ───────────
+
+  private static RequestIntegrityManifest _windowedAsk(long since, long? until = null, ManifestLevel level = ManifestLevel.Types) => new() {
+    RequesterService = "auditor-svc",
+    Topic = "inbox",
+    EventTypes = ["Contracts.TypeX"],
+    Level = level,
+    Windowed = true,
+    SinceSequence = since,
+    UntilSequence = until,
+  };
+
+  private static async Task<(AuditCoordinator Coordinator, CaptureTransport Transport)> _answerAsync(
+      RequestIntegrityManifest ask, long computedThrough, int maxWindow = 1_000) {
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [_typeDigest("Contracts.TypeX", 1, 2, 3)], ComputedThrough = computedThrough },
+      WindowedStreamResult = new WindowedDigestResult { Digests = [_digest(Guid.Empty, 1, 2, 3)], ComputedThrough = computedThrough },
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { MaxAuditWindowSequences = maxWindow });
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+    await receptor.HandleAsync(ask);
+    return (coordinator, transport);
+  }
+
+  [Test]
+  public async Task RequestReceptor_AnOpenEndedAsk_ReadsOneCappedWindow_AndSaysItWasCappedAsync() {
+    var (coordinator, transport) = await _answerAsync(_windowedAsk(since: 400), computedThrough: 1_400);
+
+    await Assert.That(coordinator.WindowedUntilSeen).IsEqualTo(1_400L)
+      .Because("an audit asked from an old seal must not read every sequence from there to the settled head in one call");
+    var manifest = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(manifest.ComputedThrough).IsEqualTo(1_400L);
+    await Assert.That(manifest.WindowCapped).IsTrue()
+      .Because("the asker continues from the end of a capped window instead of waiting a whole audit interval");
+  }
+
+  [Test]
+  public async Task RequestReceptor_AWindowThatSettlesBeforeTheCap_IsNotCappedAsync() {
+    var (coordinator, transport) = await _answerAsync(_windowedAsk(since: 400), computedThrough: 900);
+
+    await Assert.That(coordinator.WindowedUntilSeen).IsEqualTo(1_400L);
+    var manifest = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(manifest.WindowCapped).IsFalse()
+      .Because("the answer reached the settled head, so there is nothing to continue to");
+  }
+
+  [Test]
+  public async Task RequestReceptor_ABoundedAskInsideTheCap_IsReadAsAskedAsync() {
+    var (coordinator, transport) = await _answerAsync(
+      _windowedAsk(since: 400, until: 900, ManifestLevel.Streams), computedThrough: 900);
+
+    await Assert.That(coordinator.WindowedUntilSeen).IsEqualTo(900L)
+      .Because("a drill-down inherits the window its type-level answer covered, which the cap already bounded");
+    await Assert.That(_deserializeManifest(transport.Published.Single().Envelope).WindowCapped).IsFalse();
+  }
+
+  [Test]
+  public async Task RequestReceptor_ABoundedAskWiderThanTheCap_IsCappedAsync() {
+    var (coordinator, transport) = await _answerAsync(
+      _windowedAsk(since: 400, until: 5_000, ManifestLevel.Streams), computedThrough: 1_400);
+
+    await Assert.That(coordinator.WindowedUntilSeen).IsEqualTo(1_400L);
+    await Assert.That(_deserializeManifest(transport.Published.Single().Envelope).WindowCapped).IsTrue();
+  }
+
+  [Test]
+  public async Task RequestReceptor_AWindowStartingNearTheEndOfTheSequence_SaturatesTheCapAsync() {
+    var (coordinator, transport) = await _answerAsync(_windowedAsk(since: long.MaxValue - 10), computedThrough: long.MaxValue);
+
+    await Assert.That(coordinator.WindowedUntilSeen).IsEqualTo(long.MaxValue)
+      .Because("the cap's end saturates rather than overflowing into a negative window");
+    await Assert.That(_deserializeManifest(transport.Published.Single().Envelope).WindowCapped).IsFalse();
+  }
+
+  private static (AuditCoordinator Coordinator, CaptureTransport Transport, IntegrityManifestReceptor Receptor) _consumer(
+      long seal, IReadOnlyList<StreamDigest> local, bool originTopicKnown = true) {
+    var coordinator = new AuditCoordinator {
+      Seal = seal,
+      WindowedTypeResult = new WindowedDigestResult { Digests = local, ComputedThrough = 1_100 },
+    };
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    if (originTopicKnown) {
+      tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    }
+    var sp = _provider(coordinator, transport, tracker: tracker, consumers: new ConsumesOnly("Contracts.TypeX"));
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    return (coordinator, transport, receptor);
+  }
+
+  private static List<RequestIntegrityManifest> _requests(CaptureTransport transport) =>
+    [.. transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Where(r => r is not null).Select(r => r!)];
+
+  private static IntegrityManifest _cappedAnswer(AuditCoordinator coordinator, List<StreamDigest> digests, bool capped = true) =>
+    _manifest(coordinator, digests, ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 1_100,
+      ChunkCount = 1,
+      WindowCapped = capped,
+    };
+
+  [Test]
+  public async Task ManifestReceptor_ACleanCappedWindow_SealsIt_AndAsksForTheNextWindowAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
+    var next = _requests(transport).Single();
+    await Assert.That(next.Level).IsEqualTo(ManifestLevel.Types);
+    await Assert.That(next.Windowed).IsTrue();
+    await Assert.That(next.SinceSequence).IsEqualTo(1_100L)
+      .Because("the next window starts exactly where the capped one stopped, so no history is skipped");
+    await Assert.That(next.UntilSequence).IsNull();
+    await Assert.That(next.EventTypes).Contains("Contracts.TypeX")
+      .Because("the next window audits the whole consumed surface, as the scheduled audit does");
+    await Assert.That(transport.Published.Single().Envelope.Target).IsEqualTo("origin-svc");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ACleanWindowThatWasNotCapped_AsksForNothingMoreAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], capped: false));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
+    await Assert.That(_requests(transport)).IsEmpty()
+      .Because("the answer reached the origin's settled head; the next scheduled audit carries on from the seal");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ADivergentCappedWindow_KeepsTheSeal_AndDoesNotSkipAheadAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 99, 98, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull();
+    await Assert.That(_requests(transport).Any(r => r.Level == ManifestLevel.Types)).IsFalse()
+      .Because("a window that did not verify is audited again from the seal, never stepped over");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AWindowThatStartsAboveTheSeal_NeverAdvancesItAsync() {
+    // The seal was reset (a new origin generation) while a continuation was in flight: that window starts above the
+    // seal, and sealing it would certify everything below it unverified.
+    var (coordinator, transport, receptor) = _consumer(seal: 0, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull()
+      .Because("the seal advances only over a window that starts at or below it");
+    await Assert.That(_requests(transport)).IsEmpty();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AQuietCappedWindow_EmptyOnBothSides_SealsIt_AndContinuesAsync() {
+    // A capped slice can hold no event of any audited type. Dropping that answer froze the seal at the slice's start:
+    // every later audit asked for the same empty slice and never reached the history after it.
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: []);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, []));
+
+    await Assert.That(coordinator.WindowedTypesSeen).Contains("Contracts.TypeX")
+      .Because("an empty answer is checked against this service's whole consumed surface in the window");
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
+    await Assert.That(_requests(transport).Single().SinceSequence).IsEqualTo(1_100L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AQuietCappedWindow_WithLocalEvents_NeitherSealsNorContinuesAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, []));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull()
+      .Because("zero origin buckets against local events in the window verifies nothing");
+    await Assert.That(_requests(transport)).IsEmpty();
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ACleanCappedWindow_WithoutTheOriginsAddress_SealsButAsksNothingAsync() {
+    var (coordinator, transport, receptor) = _consumer(
+      seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)], originTopicKnown: false);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("directed or not at all: the next scheduled audit continues from the seal instead");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AnEmptyStreamLevelAnswer_IsStillIgnoredAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: []);
+
+    await receptor.HandleAsync(_manifest(coordinator, []) with { SinceSequence = 100, ComputedThrough = 1_100, ChunkCount = 1 });
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull();
+    await Assert.That(coordinator.WindowedUntilSeen).IsNull()
+      .Because("only a type-level answer carries the window's verdict; an empty stream page has nothing to compare");
+    await Assert.That(transport.Published).IsEmpty();
   }
 
   private static RequestIntegrityManifest? _tryDeserializeRequest(IMessageEnvelope envelope) {
@@ -2748,6 +2955,12 @@ public class IntegrityManifestReceptorTests {
     public int? WindowedMaxSeen;
     public long? SealAdvancedTo;
     public Guid? SealAdvancedOrigin;
+    public long Seal { get; set; }
+    public long? WindowedUntilSeen;
+    public IReadOnlyList<string>? WindowedTypesSeen;
+
+    public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(Seal);
     public long OriginGeneration { get; set; }
     public bool SealGenerationCoherent { get; set; } = true;
     public long? GenerationGuardSeen;
@@ -2771,6 +2984,8 @@ public class IntegrityManifestReceptorTests {
       Guid? originServiceId, IReadOnlyList<string>? eventTypes,
       long sinceSequence, long? untilSequence, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
+      WindowedTypesSeen = eventTypes;
       return Task.FromResult(WindowedTypeResult);
     }
 
@@ -2779,6 +2994,7 @@ public class IntegrityManifestReceptorTests {
       long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       WindowedSinceSeen = sinceSequence;
+      WindowedUntilSeen = untilSequence;
       WindowedMaxSeen = maxDigests;
       return Task.FromResult(WindowedStreamResult);
     }

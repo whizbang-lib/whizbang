@@ -453,6 +453,28 @@ public sealed class StreamIntegrityOptions {
   public int MaxManifestPagesPerAudit { get; set; } = 8;
 
   /// <summary>
+  /// The widest window, in commit sequences, an origin answers for one windowed audit request (default 500,000, #2107).
+  /// An audit asks from the consumer's seal to the origin's settled head; after a seal reset, on a new consumer, or
+  /// while a divergence holds the seal back, that span is most of the origin's history, and the stream-level drill-down
+  /// over it read every event in it. The origin answers at most this many sequences and marks the answer
+  /// <see cref="IntegrityManifest.WindowCapped"/>; the consumer seals a clean capped window and immediately asks for the
+  /// next one from where it stopped, so history is walked in bounded slices instead of skipped or read at once.
+  /// </summary>
+  /// <remarks>
+  /// The default is five of the default 100,000-sequence digest epochs (<c>integrity_epoch_width</c>): a window that
+  /// starts on an epoch boundary answers its type-level roll-up from sealed epochs, and the widest live fringe is two
+  /// epochs. At the 20 or so events an 8 KB page holds in a typical event store, the worst case for a drill-down into a
+  /// type dense enough to fill every page of the window is about 25,000 pages, against the hundreds of thousands an
+  /// uncapped window read on a large store. Lower it when drill-downs on a large store are still slow; raise it when a
+  /// store with little history needs fewer round trips. Applied by the origin, so a consumer always follows the
+  /// origin's setting. Must be at least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:RequestReceptor_AnOpenEndedAsk_ReadsOneCappedWindow_AndSaysItWasCappedAsync</tests>
+  public int MaxAuditWindowSequences { get; set; } = 500_000;
+
+  /// <summary>
   /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
   /// least this many events of one (tenant, type) in the window (default 1000), the consumer asks
   /// the origin for ONE state-only range-bounded backfill of the whole type instead of drilling

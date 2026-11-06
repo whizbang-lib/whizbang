@@ -151,6 +151,15 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// divergence WITHOUT a generation change remains damage. Null = a pre-generation origin.
   /// </summary>
   public long? OriginGeneration { get; init; }
+
+  /// <summary>
+  /// #2107: true when the origin shortened the window at its <see cref="StreamIntegrityOptions.MaxAuditWindowSequences"/>:
+  /// <see cref="ComputedThrough"/> is the end of the slice it answered, not its settled head, and more settled history
+  /// follows. A consumer that seals a clean capped window asks for the next one from <see cref="ComputedThrough"/>.
+  /// False on an uncapped answer and on an answer from an origin that predates the cap.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public bool WindowCapped { get; init; }
 }
 
 /// <summary>

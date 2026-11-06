@@ -134,4 +134,29 @@ public class StreamIntegrityOptionsValidatorTests {
 
     await Assert.That(result.Succeeded).IsTrue();
   }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnAuditWindowBelowOneSequence_FailsNamingTheKeyAsync(int sequences) {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowSequences = sequences });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2107: a window below one sequence covers nothing, so no audit could ever advance its seal");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:MaxAuditWindowSequences");
+  }
+
+  [Test]
+  public async Task Validate_AnAuditWindowOfOneSequence_SucceedsAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowSequences = 1 });
+
+    await Assert.That(result.Succeeded).IsTrue();
+  }
+
+  [Test]
+  public async Task MaxAuditWindowSequences_DefaultsToFiveEpochsAsync() =>
+    await Assert.That(new StreamIntegrityOptions().MaxAuditWindowSequences).IsEqualTo(500_000)
+      .Because("five of the default 100,000-sequence digest epochs: an aligned window answers from its seals");
 }
