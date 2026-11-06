@@ -5,11 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
-using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
 
@@ -18,10 +15,11 @@ namespace Whizbang.Core.Workers;
 /// consumed event types (its consumer registry, #2058) against the persisted consumed-type registry. FIRST boot baselines
 /// the whole catalog (nothing existed to miss). A type appearing on a LATER boot is an EXPANSION —
 /// history exists this service never received — recorded as Pending and, when
-/// <see cref="StreamIntegrityOptions.BackfillOnSubscriptionGrowth"/> (default true), repaired via
-/// STATE-ONLY <see cref="RequestRedeliveryCommand"/>s: one directed at each known domain owner (#2032), and ONE
-/// broadcast for the types with no usable owner; each origin answers with its own history targeted back at this service; bundles build state without re-firing triggers, and
-/// duplicate sources converge by event-id identity. Disabled = expansions stay Pending (the audit
+/// <see cref="StreamIntegrityOptions.BackfillOnSubscriptionGrowth"/> (default true), queued for the PACED backfill
+/// (<see cref="SubscriptionBackfillWorker"/>, #2092): one backfill per type, for its known domain owner (#2032) or for a
+/// broadcast where no owner is usable, walked in bounded windows of STATE-ONLY redelivery; bundles build state without
+/// re-firing triggers, and duplicate sources converge by event-id identity. Nothing is sent from here: asking every
+/// owner for the whole history of every type at once was a flood. Disabled = expansions stay Pending (the audit
 /// surface). One-shot: runs once when it starts at Accept commands, then completes.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
@@ -107,96 +105,36 @@ public sealed partial class SubscriptionExpansionWorker(
       return;
     }
 
-    // A pending name with no catalog entry (type since removed) passes through unchanged —
+    // A pending name with no catalog entry (type since removed) passes through unchanged:
     // an unmatched name at the origin is a no-op, same as today.
     var pendingWireForms = pending
-      .ConvertAll(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
-;
-    if (await _sendBackfillRequestsAsync(services, coordinator, pendingWireForms, cancellationToken).ConfigureAwait(false)) {
-      await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
-      services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);
-      LogBackfillRequested(_logger, pending.Count);
-    }
+      .ConvertAll(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p);
+    await _enqueueBackfillsAsync(coordinator, pendingWireForms, cancellationToken).ConfigureAwait(false);
+    await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
+    services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);
+    LogBackfillRequested(_logger, pending.Count);
   }
 
   /// <summary>
-  /// STATE-ONLY, wire-only requests. #2032: a type whose domain owner is known from the ownership map, with a request
-  /// address, is asked of that owner alone, directed on its request topic; the types with no usable owner go out as ONE
-  /// broadcast (no Target), as before. A lost request re-detects as Pending next boot.
+  /// #2092: queues one paced backfill per pending type, nothing sent here. #2032: a type whose domain owner is known from
+  /// the ownership map, with a request address, is queued for that owner; a type with no usable owner is queued for a
+  /// broadcast (the empty owner id). The paced worker then walks each type in bounded windows.
   /// </summary>
-  private async Task<bool> _sendBackfillRequestsAsync(
-      IServiceProvider services, IWorkCoordinator coordinator, List<string> pendingTypes, CancellationToken cancellationToken) {
-    var transport = services.GetService<ITransport>();
-    var serializer = services.GetService<IEnvelopeSerializer>();
-    var instanceProvider = services.GetService<IServiceInstanceProvider>();
-    var requester = instanceProvider?.ServiceName;
-    var topic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      LogBackfillSkipped(_logger,
-        transport is null, serializer is null, string.IsNullOrEmpty(requester), string.IsNullOrEmpty(topic));
-      return false;
-    }
-
+  private static async Task _enqueueBackfillsAsync(
+      IWorkCoordinator coordinator, List<string> pendingTypes, CancellationToken cancellationToken) {
     var ownership = new IntegrityDomainOwnership(
       await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
-    var unowned = new List<string>();
-    var byOwner = new Dictionary<Guid, (IntegrityDomainClaim Owner, List<string> Types)>();
+    var seeds = new List<SubscriptionBackfillSeed>(pendingTypes.Count);
     foreach (var type in pendingTypes) {
-      if (ownership.FindOwner(type) is { } owner && owner.OwnerServiceId != self && !string.IsNullOrEmpty(owner.RequestTopic)) {
-        if (!byOwner.TryGetValue(owner.OwnerServiceId, out var group)) {
-          byOwner[owner.OwnerServiceId] = group = (owner, []);
-        }
-        group.Types.Add(type);
+      var owner = ownership.FindOwner(type);
+      if (owner is not null && owner.OwnerServiceId != self && !string.IsNullOrEmpty(owner.RequestTopic)) {
+        seeds.Add(new SubscriptionBackfillSeed(owner.OwnerServiceId, owner.OwnerServiceName, type));
       } else {
-        unowned.Add(type);
+        seeds.Add(new SubscriptionBackfillSeed(Guid.Empty, string.Empty, type));
       }
     }
-
-    foreach (var (owner, types) in byOwner.Values) {
-      var command = new RequestRedeliveryCommand { EventTypes = types, RequesterService = requester, Topic = topic, StateOnly = true };
-      await RedeliveryRequestDispatch.PublishAsync(
-        transport, serializer, instanceProvider, command, owner.OwnerServiceName,
-        IntegrityControlDestination.For(owner.RequestTopic!, owner.OwnerServiceId, typeof(RequestRedeliveryCommand), _options),
-        DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
-      LogBackfillDirected(_logger, types.Count, owner.OwnerServiceName);
-    }
-    if (unowned.Count == 0) {
-      return true;
-    }
-    // #2078: the reply comes back to this service's own inbox, but a broadcast must ride the shared topic every service
-    // reads, never this service's own inbox.
-    // Never null here: the reply topic resolved, so the service has a configured topic or a destination to broadcast on.
-    var broadcastTopic = RepairTopicResolver.ResolveBroadcast(_options.RepairTopic, services)!;
-    await _broadcastAsync(transport, serializer, instanceProvider, requester, topic, broadcastTopic, unowned, cancellationToken).ConfigureAwait(false);
-    return true;
-  }
-
-  /// <summary>ONE broadcast (no Target) for the types with no usable owner; the answering side ships only what it
-  /// authored, so in practice only the author answers.</summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "One broadcast send: the transport and serializer, the sender's identity and name, the reply and broadcast topics, the types and cancellation, all held separately by the one caller.")]
-  private async Task _broadcastAsync(
-      ITransport transport, IEnvelopeSerializer serializer, IServiceInstanceProvider? instanceProvider, string requester,
-      string topic, string broadcastTopic, List<string> pendingTypes, CancellationToken cancellationToken) {
-    var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
-      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.New()),
-      Payload = new RequestRedeliveryCommand {
-        EventTypes = pendingTypes,
-        RequesterService = requester,
-        Topic = topic,
-        StateOnly = true,
-      },
-      Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
-      ],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-    };
-    var serialized = serializer.SerializeEnvelope(envelope);
-    await transport.PublishAsync(serialized.JsonEnvelope,
-      IntegrityControlDestination.For(broadcastTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), _options), serialized.EnvelopeType,
-      cancellationToken: cancellationToken).ConfigureAwait(false);
+    await coordinator.EnqueueSubscriptionBackfillsAsync(seeds, cancellationToken).ConfigureAwait(false);
   }
 
   [LoggerMessage(EventId = 70, Level = LogLevel.Information,
@@ -208,21 +146,12 @@ public sealed partial class SubscriptionExpansionWorker(
   static partial void LogExpansionDetected(ILogger logger, int expansionCount, string types);
 
   [LoggerMessage(EventId = 72, Level = LogLevel.Information,
-    Message = "Backfill requested for {PendingCount} expanded type(s): state-only re-delivery requests sent to their owners, or broadcast where no owner is known")]
+    Message = "Backfill queued for {PendingCount} expanded type(s): the paced backfill asks each owner, or broadcasts where no owner is known, in bounded windows")]
   static partial void LogBackfillRequested(ILogger logger, int pendingCount);
-
-  [LoggerMessage(EventId = 76, Level = LogLevel.Information,
-    Message = "Backfill for {TypeCount} expanded type(s) directed at their owner '{OwnerServiceName}'")]
-  static partial void LogBackfillDirected(ILogger logger, int typeCount, string ownerServiceName);
 
   [LoggerMessage(EventId = 73, Level = LogLevel.Warning,
     Message = "Backfill disabled — {PendingCount} expanded type(s) stay PENDING (audit surface)")]
   static partial void LogBackfillDisabled(ILogger logger, int pendingCount);
-
-  [LoggerMessage(EventId = 74, Level = LogLevel.Warning,
-    Message = "Backfill request skipped — missing infrastructure (transport={TransportMissing}, " +
-              "serializer={SerializerMissing}, requester={RequesterMissing}, topic={TopicMissing}); types stay PENDING")]
-  static partial void LogBackfillSkipped(ILogger logger, bool transportMissing, bool serializerMissing, bool requesterMissing, bool topicMissing);
 
   [LoggerMessage(EventId = 75, Level = LogLevel.Error,
     Message = "Subscription-expansion reconciliation failed; expansions re-detect next boot")]

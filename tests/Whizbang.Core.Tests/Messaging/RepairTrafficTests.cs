@@ -17,12 +17,14 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <code-under-test>src/Whizbang.Core/Messaging/RepairTraffic.cs</code-under-test>
 public class RepairTrafficTests {
   [Test]
-  public async Task InboxMessageTypeNames_NameTheRequestAndTheBundle_NormalizedAsync() {
+  public async Task InboxMessageTypeNames_NameTheRequestTheBundleAndTheWindowAnswer_NormalizedAsync() {
     var names = RepairTraffic.InboxMessageTypeNames;
 
     await Assert.That(names).Contains($"{typeof(RequestRedeliveryCommand).FullName}, Whizbang.Core");
     await Assert.That(names).Contains($"{typeof(RedeliveryComposite).FullName}, Whizbang.Core");
-    await Assert.That(names.Count).IsEqualTo(2)
+    await Assert.That(names).Contains($"{typeof(BackfillWindowAnswer).FullName}, Whizbang.Core")
+      .Because("#2092: a paced backfill window's answer is repair traffic; a report-only service applies none");
+    await Assert.That(names.Count).IsEqualTo(3)
       .Because("detection traffic (checkpoints, manifests, gap reports) is never repair");
     foreach (var name in names) {
       await Assert.That(name).DoesNotContain("Version=")

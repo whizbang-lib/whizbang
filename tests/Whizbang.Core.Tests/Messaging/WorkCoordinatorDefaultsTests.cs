@@ -175,6 +175,22 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task SubscriptionBackfillMembers_WithoutProviderSupport_UseTheInertDefaultsAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var id = Guid.Parse("0b000000-0000-0000-0000-00000000000b");
+    var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+
+    await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, "Contracts.A")]);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, now, now.AddMinutes(1));
+    await coordinator.EndSubscriptionBackfillAsync(id, SubscriptionBackfillOutcome.Unanswered, now);
+
+    await Assert.That(await coordinator.GetSubscriptionBackfillsAsync()).IsEmpty()
+      .Because("an engine without the backfill table queues nothing, so it has nothing to walk");
+    await Assert.That(await coordinator.RecordSubscriptionBackfillAnswerAsync(new BackfillWindowAnswer { BackfillId = id, Window = 1 }, now)).IsNull();
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.A"])).IsNull();
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

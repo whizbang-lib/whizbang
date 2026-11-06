@@ -239,7 +239,7 @@ public class RedeliveryRequestReceptorTests {
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
-      NullLogger<AuditRebuildRequestReceptor>.Instance);
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
 
@@ -264,7 +264,7 @@ public class RedeliveryRequestReceptorTests {
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
-      NullLogger<AuditRebuildRequestReceptor>.Instance);
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
 
@@ -292,7 +292,7 @@ public class RedeliveryRequestReceptorTests {
 
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
-      NullLogger<AuditRebuildRequestReceptor>.Instance);
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);   // must not throw
   }
