@@ -1408,6 +1408,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one update fills every sequence and each sealed epoch the batch touches is refolded once. The reconcile's report now
   tells an event whose origin it filled apart from one that only took its sequence, which used to read as the same
   origins being filled again and again.
+- **The backfill of a grown subscription is paced (#2092).** A boot that widened a service's consumed set asked each
+  owner for the whole history of every newly consumed type at once, and each owner answered with one bundle per event,
+  which flooded the transport and the shared database. The subscription-expansion reconciler now queues one backfill
+  per (owner, type) and the new `SubscriptionBackfillWorker` walks each in bounded windows by the owner's commit
+  sequence: the next window is requested only after the previous one is answered, at most
+  `BackfillMaxConcurrentWindows` (default 2) at once, paced by a token bucket of `BackfillEventsPerMinute` (default
+  6,000) with `BackfillWindowSize` events per window (default 1,000), on the maintainer under the idle gate and never in
+  report-only. Progress is durable (migration 334, `wh_subscription_backfills`), so a restart resumes and a finished
+  type stops. Answers carry many events per bundle across streams, on the backfill's own session. An owner on an
+  earlier release answers a window the legacy way; after `BackfillMaxWindowAttempts` (default 3) unanswered requests the
+  type's backfill ends as unanswered. Metrics: `backfill_windows_requested`, `backfill_events_received`,
+  `backfills_ended`, and the gauges `backfill_windows_in_flight` and `backfill_remaining_events`.
+- **A redelivery answer that stops at its bound says so, and a backfill continues from there (#2098).** An owner capped
+  every answer at 10,000 events and stopped without a word, so a backfill of a larger type never completed. A backfill
+  window's answer (`BackfillWindowAnswer`) now reports the last commit sequence it covered and whether more remains, and
+  the requester asks for the next window from exactly that point. An ordinary request that reaches the bound with more
+  selected is counted (`redelivery_answers_capped`) and logged.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
