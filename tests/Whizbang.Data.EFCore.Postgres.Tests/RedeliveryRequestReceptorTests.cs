@@ -720,4 +720,25 @@ public class RedeliveryRequestReceptorTests {
 
     await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse().Because("nothing is left to sync by range");
   }
+
+  [Test]
+  public async Task Receptor_NamedEventsWithoutStreams_ShipsWhatItFinds_AndSyncsNothingWholeAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(stream, e1, 1)];
+    await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      EventIds = [e1, TrackedGuid.New().Value],
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([e1]);
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse()
+      .Because("with no streams named there is no stream to answer over the window");
+  }
 }

@@ -125,4 +125,16 @@ public class IntegrityGapTrackerDurabilityTests {
   public async Task EnsureHydrated_RefusesANullCoordinatorAsync() {
     await Assert.That(async () => await new IntegrityGapTracker().EnsureHydratedAsync(null!)).Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task Hydrate_KeepsAtMostTheBoundOfPendingGapsAsync() {
+    var origin = TrackedGuid.New().Value;
+    var kept = Enumerable.Range(0, 1_001).Select(i => _gap(origin) with { FromCommitSequence = i }).ToList();
+    var tracker = new IntegrityGapTracker();
+
+    await tracker.EnsureHydratedAsync(new StoreCoordinator { State = new IntegrityGapTrackerState([], kept) });
+
+    await Assert.That(tracker.TakePending(origin).Count).IsEqualTo(1_000)
+      .Because("the kept set loads within the same bound the live tracker keeps");
+  }
 }

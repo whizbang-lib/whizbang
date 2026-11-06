@@ -157,6 +157,26 @@ public class StreamDigestIdLaneBackfillSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Run_APhantomBucket_IsReportedWithNothingRecomputed_EvenWithoutMetricsAsync() {
+    await using var conn = await _openAsync();
+    var streams = await _storedBeforeTheLanesAsync(conn, 1);
+    var phantom = TrackedGuid.New().Value;
+    await _executeAsync(conn, $"""
+      INSERT INTO wh_stream_digests (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
+      VALUES ('00000000-0000-0000-0000-000000000000', '', '{TYPE}', '{phantom}', 1, 2, 3)
+      """);
+    var logger = new ListLogger();
+
+    _ = await StreamDigestIdLaneBackfill.RunAsync(conn, "\"public\"", 10, 10, logger, metrics: null, CancellationToken.None);
+
+    var warning = logger.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains(phantom.ToString());
+    await Assert.That(warning).Contains("drift_removed");
+    await Assert.That(warning).Contains("none").Because("a bucket with no events behind it recomputes to nothing");
+    await StoredDigestInvariant.AssertAgreeAsync(conn, streams);
+  }
+
+  [Test]
   public async Task Run_StopsAtItsRoundLimit_AndWhenBusy_StepsAsideAsync() {
     await using var conn = await _openAsync();
     await _storedBeforeTheLanesAsync(conn, 3);
