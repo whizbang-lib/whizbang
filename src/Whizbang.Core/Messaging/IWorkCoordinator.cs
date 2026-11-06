@@ -2326,6 +2326,29 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<StreamDigest>?>(null);
 
   /// <summary>
+  /// #2102: the digests of the events this store holds from <paramref name="originServiceId"/> WITHOUT the origin's
+  /// commit sequence (re-attributed history, whose origin is recorded and whose sequence is not). A fold over an
+  /// origin-sequence window leaves these events out, so a windowed comparison places them with
+  /// <see cref="IntegrityDigestMath.PlaceHeld"/> instead of reading their bucket as short. Folded under the same
+  /// predicates as every digest fold (not ephemeral, not at-most-once, not exempt, older than the settle window).
+  /// With <paramref name="streamIds"/>, one row per (tenant, type, stream) of those streams; without, one row per
+  /// (tenant, type) with <see cref="StreamDigest.StreamId"/> = <see cref="Guid.Empty"/>. The default returns nothing:
+  /// a store that cannot tell holds no such events as far as a comparison knows, and compares as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the events were received from.</param>
+  /// <param name="eventTypes">The stored event types to fold.</param>
+  /// <param name="streamIds">The streams to fold, one row per stream; null for one row per (tenant, type).</param>
+  /// <param name="settleWindow">Only events older than this count, matching the windowed folds.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The folds; empty when there are none, or the store cannot tell.</returns>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+    Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<StreamDigest>>([]);
+
+  /// <summary>
   /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
   /// clean in a past complete-window audit, so steady-state audits start here instead of zero —
   /// what stops verified history from being re-shipped and re-verified forever. Default 0 =

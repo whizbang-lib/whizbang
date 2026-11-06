@@ -663,6 +663,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task ComputeUnsequencedReceivedDigestsAsync_WithoutProviderSupport_HoldsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeUnsequencedReceivedDigestsAsync(Guid.Empty, ["Contracts.T"], null, TimeSpan.Zero);
+
+    await Assert.That(result).IsEmpty()
+      .Because("a store that cannot tell holds no sequence-less events as far as a comparison knows, and compares as before");
+  }
+
+  [Test]
   public async Task GetIntegritySealAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

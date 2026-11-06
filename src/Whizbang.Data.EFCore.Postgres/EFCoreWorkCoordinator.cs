@@ -2015,6 +2015,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
     }, cancellationToken);
 
+#pragma warning disable RCS1158 // #2102 RED stubs.
+  internal static string UnsequencedByStreamSql(string schema) => $"SELECT 1 FROM {schema}.wh_event_store WHERE false";
+  internal static string UnsequencedByTypeSql(string schema) => $"SELECT 1 FROM {schema}.wh_event_store WHERE false";
+#pragma warning restore RCS1158
+
   /// <inheritdoc />
   public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {

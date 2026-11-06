@@ -60,6 +60,9 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Type-level mismatches escalated to stream-level manifest requests. Tagged by origin.</summary>
   public PassiveCounter<long> DrillDownsRequested { get; }
 
+  /// <summary>#2102 (RED stub).</summary>
+  public PassiveCounter<long>? UnplacedBuckets { get; }
+
   /// <summary>Phase S state-only backfill requests broadcast for consumed-set growth (value = new type count).</summary>
   public PassiveCounter<long> BackfillsRequested { get; }
 

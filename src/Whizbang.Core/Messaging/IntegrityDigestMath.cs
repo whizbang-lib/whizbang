@@ -38,4 +38,23 @@ public static class IntegrityDigestMath {
     var floor = DateTimeOffset.UtcNow - settle;
     return originUpdatedAt > floor || localUpdatedAt > floor;
   }
+
+  /// <summary>#2102 (RED stub).</summary>
+  public static HeldWindowPlacement PlaceHeld(StreamDigest origin, StreamDigest? placed, StreamDigest? sequenceless) =>
+    new(HeldWindowVerdict.Differs, sequenceless ?? placed ?? origin);
 }
+
+/// <summary>#2102 (RED stub).</summary>
+public enum HeldWindowVerdict {
+  /// <summary>Matches.</summary>
+  Matches = 0,
+  /// <summary>Deficit.</summary>
+  Deficit = 1,
+  /// <summary>Differs.</summary>
+  Differs = 2,
+  /// <summary>Undecided.</summary>
+  Undecided = 3,
+}
+
+/// <summary>#2102 (RED stub).</summary>
+public readonly record struct HeldWindowPlacement(HeldWindowVerdict Verdict, StreamDigest? Held);

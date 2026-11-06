@@ -50,6 +50,7 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifests_requested");
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifest_chunks_sent");
     await Assert.That(observed).Contains("whizbang.stream_integrity.drill_downs_requested");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.unplaced_buckets");
     await Assert.That(observed).Contains("whizbang.stream_integrity.backfills_requested");
     await Assert.That(observed).Contains("whizbang.stream_integrity.digest_buckets_verified");
     await Assert.That(observed).Contains("whizbang.stream_integrity.digest_drift_healed");
@@ -69,6 +70,7 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(metrics.ManifestsRequested).IsNotNull();
     await Assert.That(metrics.ManifestChunksSent).IsNotNull();
     await Assert.That(metrics.DrillDownsRequested).IsNotNull();
+    await Assert.That(metrics.UnplacedBuckets).IsNotNull();
     await Assert.That(metrics.BackfillsRequested).IsNotNull();
     await Assert.That(metrics.DigestBucketsVerified).IsNotNull();
     await Assert.That(metrics.DigestDriftHealed).IsNotNull();

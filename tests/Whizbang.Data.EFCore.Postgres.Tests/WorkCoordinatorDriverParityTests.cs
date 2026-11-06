@@ -58,6 +58,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.ComputeStreamDigestsWindowedAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ComputeTypeDigestsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.ComputeTypeDigestsWindowedAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.ComputeUnsequencedReceivedDigestsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.CountReceivedFromOriginAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.EnqueueIntegrityDeliveryAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.EnsureIntegritySealGenerationAsync)] = INTEGRITY,
