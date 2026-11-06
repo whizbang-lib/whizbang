@@ -1396,6 +1396,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advertised the system broadcast inbox as its request and reply address, so every request to it and every answer it
   asked for was delivered to every service. Directed traffic now uses the addressee's own control inbox (#2090); only
   system commands and the backfill broadcast for types with no known owner remain on the broadcast inbox.
+- **Integrity checkpoints are no longer dead-lettered by topic fan-out, and a backlog of redelivery reconciles drains
+  as a batch (#2099).** A checkpoint is published once per topic of its origin's owned types with one message id, so a
+  consumer subscribed to ten of those topics observed it ten times after one processing attempt, and the durable
+  redelivery bound moved it to dead letters, taking the in-flight row from its handler: the origin was then reported as
+  not checkpointing. The receive-side poison quarantine now leaves control-plane traffic in place, as the dead-letter
+  boundary already drops it rather than storing it. Separately, the maintainer's drain reconciled each recorded
+  redelivery bundle on its own and refolded the sealed digest epochs of each, so a backlog of one-event bundles that
+  each fill one origin sequence (history re-attributed to its owner records the origin but not its sequence) cost one
+  epoch fold per bundle. Leased reconciles are now handed to `wh_reconcile_redelivered_bundles` (migration 335) together:
+  one update fills every sequence and each sealed epoch the batch touches is refolded once. The reconcile's report now
+  tells an event whose origin it filled apart from one that only took its sequence, which used to read as the same
+  origins being filled again and again.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

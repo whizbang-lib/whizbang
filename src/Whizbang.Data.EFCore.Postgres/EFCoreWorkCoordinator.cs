@@ -1080,9 +1080,56 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
-      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) =>
-    throw new NotSupportedException();
+  public async Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(bundles);
+    foreach (var bundle in bundles) {
+      if (bundle.EventIds.Count != bundle.CommitSequences.Count) {
+        throw new ArgumentException(
+          $"A bundle of origin {bundle.OriginServiceId} has {bundle.EventIds.Count} event ids but "
+          + $"{bundle.CommitSequences.Count} commit sequences; they pair by position.", nameof(bundles));
+      }
+    }
+    var results = new List<RedeliveredBucketPresence>[bundles.Count];
+    for (var i = 0; i < results.Length; i++) {
+      results[i] = [];
+    }
+    if (bundles.Count == 0) {
+      return results;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    // 335 (#2099): every bundle at once, each sealed epoch the batch touches refolded once.
+    var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_reconcile_redelivered_bundles");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.Select(b => b.OriginServiceId).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = bundles.Select(b => (object?)b.OriginServiceName ?? DBNull.Value).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_bundles", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = bundles.SelectMany((b, i) => b.EventIds.Select(_ => i + 1)).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.SelectMany(b => b.EventIds).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = bundles.SelectMany(b => b.CommitSequences).ToArray()
+    });
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText = $"SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_bundle_origins,@p_bundle_names,@p_event_bundles,@p_event_ids,@p_commit_sequences)";
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var tenant = reader.GetString(2);
+      results[reader.GetInt32(0) - 1].Add(new RedeliveredBucketPresence(
+        reader.GetGuid(1), tenant.Length == 0 ? null : tenant, reader.GetString(3), reader.GetInt32(4), reader.GetInt32(5),
+        reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(6)));
+    }
+    return results;
+  }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(

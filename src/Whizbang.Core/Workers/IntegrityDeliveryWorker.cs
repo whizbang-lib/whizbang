@@ -22,7 +22,9 @@ namespace Whizbang.Core.Workers;
 /// this instance holds the maintainer duty (<see cref="MaintainerDuty"/>), and nothing while the idle gate defers
 /// integrity work; once admitted, or forced through after <c>Whizbang:Housekeeping:MaxDeferral</c>, it handles up to
 /// <see cref="StreamIntegrityOptions.MaxIntegrityDeliveriesPerPass"/> deliveries in arrival order, one at a time,
-/// each inside the drain context so the receptor it runs does the work rather than recording it again.
+/// each inside the drain context so the receptor it runs does the work rather than recording it again. Deliveries of
+/// a type with a batch handler (the redelivery reconcile, #2099) are handed to it together when a lease holds more than
+/// one of them, so a backlog of reconciles refolds each sealed digest epoch once per batch rather than once per bundle.
 /// </para>
 /// <para>
 /// A handler failure is retried after <see cref="StreamIntegrityOptions.IntegrityDeliveryRetryBackoffSeconds"/>,
@@ -131,8 +133,8 @@ public sealed partial class IntegrityDeliveryWorker(
       var asked = Math.Min(budget, batchSize);
       var batch = await coordinator.LeaseIntegrityDeliveriesAsync(asked, lease, cancellationToken).ConfigureAwait(false);
       budget -= batch.Count;
-      foreach (var delivery in batch) {
-        switch (await _handleAsync(coordinator, delivery, metrics, cancellationToken).ConfigureAwait(false)) {
+      foreach (var outcome in await _handleLeasedAsync(coordinator, batch, metrics, cancellationToken).ConfigureAwait(false)) {
+        switch (outcome) {
           case DeliveryOutcome.Processed: processed++; break;
           case DeliveryOutcome.Failed: failed++; break;
           default: dropped++; break;
@@ -143,6 +145,64 @@ public sealed partial class IntegrityDeliveryWorker(
       }
     }
     return new Pass(PassOutcome.Drained, processed, failed, dropped);
+  }
+
+  /// <summary>
+  /// Handles one leased batch in arrival order. Deliveries of a type with a batch handler (#2099) are handled together,
+  /// at the position of the first of them, when more than one of that type was leased; every other delivery is handled
+  /// on its own.
+  /// </summary>
+  private async Task<List<DeliveryOutcome>> _handleLeasedAsync(
+      IWorkCoordinator coordinator, IReadOnlyList<IntegrityDelivery> batch, StreamIntegrityMetrics? metrics,
+      CancellationToken cancellationToken) {
+    var outcomes = new List<DeliveryOutcome>(batch.Count);
+    var batchedTypes = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var delivery in batch) {
+      if (batchedTypes.Contains(delivery.DeliveryType)) {
+        continue;   // handled with the first delivery of its type
+      }
+      List<IntegrityDelivery> sameType = [.. batch.Where(d => d.DeliveryType == delivery.DeliveryType)];
+      if (sameType.Count > 1 && _deliveries.TryGetBatchHandler(delivery.DeliveryType, out var batchHandler)) {
+        batchedTypes.Add(delivery.DeliveryType);
+        outcomes.AddRange(await _handleBatchAsync(coordinator, sameType, batchHandler!, metrics, cancellationToken)
+          .ConfigureAwait(false));
+        continue;
+      }
+      outcomes.Add(await _handleAsync(coordinator, delivery, metrics, cancellationToken).ConfigureAwait(false));
+    }
+    return outcomes;
+  }
+
+  /// <summary>
+  /// Hands every leased delivery of one type to its batch handler. On success each is completed; when the batch handler
+  /// faults, each delivery is handled on its own, so attempts, backoff and dropping apply to each as before.
+  /// </summary>
+  private async Task<List<DeliveryOutcome>> _handleBatchAsync(
+      IWorkCoordinator coordinator, List<IntegrityDelivery> deliveries, IntegrityDeliveryBatchHandler handler,
+      StreamIntegrityMetrics? metrics, CancellationToken cancellationToken) {
+    var type = deliveries[0].DeliveryType;
+    try {
+      await using var batchScope = _scopeFactory.CreateAsyncScope();
+      using (IntegrityDrainContext.Enter()) {
+        await handler([.. deliveries.Select(d => d.Payload)], batchScope.ServiceProvider, cancellationToken)
+          .ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      LogBatchFailed(_logger, type, deliveries.Count, ex);
+      var outcomes = new List<DeliveryOutcome>(deliveries.Count);
+      foreach (var delivery in deliveries) {
+        outcomes.Add(await _handleAsync(coordinator, delivery, metrics, cancellationToken).ConfigureAwait(false));
+      }
+      return outcomes;
+    }
+    var tag = new KeyValuePair<string, object?>("type", type);
+    foreach (var delivery in deliveries) {
+      await coordinator.CompleteIntegrityDeliveryAsync(delivery.DeliveryId, cancellationToken).ConfigureAwait(false);
+      metrics?.IntegrityDeliveriesProcessed.Add(1, tag);
+    }
+    return [.. deliveries.Select(_ => DeliveryOutcome.Processed)];
   }
 
   private async Task<DeliveryOutcome> _handleAsync(
@@ -192,6 +252,10 @@ public sealed partial class IntegrityDeliveryWorker(
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Integrity delivery drain pass failed; the deliveries stay queued and the next pass retries")]
   private static partial void LogPassFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Integrity delivery batch of {Count} {DeliveryType} deliveries failed; handling each on its own")]
+  private static partial void LogBatchFailed(ILogger logger, string deliveryType, int count, Exception exception);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Integrity delivery {DeliveryType} ({DeliveryId}) failed on attempt {Attempts}; retrying in {BackoffSeconds}s")]

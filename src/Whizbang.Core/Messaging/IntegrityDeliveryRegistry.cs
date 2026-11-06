@@ -44,6 +44,7 @@ public sealed class IntegrityDeliveryRegistry {
   /// <summary>Initializes a new instance, with the redelivery reconcile handler and its batch handler registered.</summary>
   public IntegrityDeliveryRegistry() {
     Register(RedeliveryReconciler.DELIVERY_TYPE, RedeliveryReconciler.HandleDeferredAsync);
+    RegisterBatch(RedeliveryReconciler.DELIVERY_TYPE, RedeliveryReconciler.HandleDeferredBatchAsync);
   }
 
   /// <summary>
