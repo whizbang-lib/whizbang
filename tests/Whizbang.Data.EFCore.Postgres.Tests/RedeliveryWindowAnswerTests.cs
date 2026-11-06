@@ -90,7 +90,6 @@ public class RedeliveryWindowAnswerTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task Window_StoppedAtTheOwnerBound_SaysWhereAndThatMoreRemains_AndTheNextWindowsReceiveTheRestAsync() {
     // #2098: an owner capped every answer at its bound and stopped without a word, so a type larger than the bound never
     // completed. Here the bound is 3 and the type has 7 events: every event arrives, across three windows.
@@ -158,7 +157,6 @@ public class RedeliveryWindowAnswerTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task OrdinaryRequest_StoppedAtTheBoundWithMoreLeft_IsCountedAsCappedAsync() {
     // An ordinary request has no window to continue from, so stopping at the bound with more selected is reported, never
     // silent.
@@ -177,7 +175,6 @@ public class RedeliveryWindowAnswerTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task OrdinaryRequest_ThatSelectedEverything_IsNotCappedAsync() {
     var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 1), _evt(_s1, 2, 2)] };
     var metrics = _metrics(out var meterServices);

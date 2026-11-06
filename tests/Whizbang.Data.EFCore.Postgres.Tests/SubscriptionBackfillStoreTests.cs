@@ -19,7 +19,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/SubscriptionBackfillSql.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/334_PacedSubscriptionBackfill.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("SubscriptionBackfillStore")]
 [Category("Shard3")]
 public class SubscriptionBackfillStoreTests : EFCoreTestBase {
   private static readonly DateTimeOffset _now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);

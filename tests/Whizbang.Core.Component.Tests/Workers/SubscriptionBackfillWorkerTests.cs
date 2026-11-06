@@ -117,7 +117,6 @@ public class SubscriptionBackfillWorkerTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task Tick_AWindowUnansweredForEveryAttempt_EndsTheBackfillAsUnanswered_AndAsksNoMoreAsync() {
     // An owner on a release that predates windowed backfill answers the request the legacy way, with no window answer.
     // Asking forever would re-ship the same window forever; the backfill ends and the audit reports what is missing.
@@ -332,7 +331,6 @@ public class SubscriptionBackfillWorkerTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task Tick_CountsWindowsRequested_AndPublishesTheInFlightAndRemainingGaugesAsync() {
     var running = _cursor(_billing, "billing-svc", BILLED) with {
       Window = 2,

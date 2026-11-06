@@ -35,7 +35,6 @@ public class BackfillWindowAnswerReceptorTests {
   private const string PLACED = "App.Contracts.Orders.Placed, App.Contracts";
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task Answer_IsAppliedToItsBackfill_AndItsEventsCountedByTypeAsync() {
     var answer = _answer(hasMore: true);
     var coordinator = new AnswerCoordinator { Result = _cursor(answer.BackfillId) with { EventsReceived = 1_000 } };
@@ -54,7 +53,6 @@ public class BackfillWindowAnswerReceptorTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task FinalAnswer_EndsTheBackfill_AndCountsItCompleteAsync() {
     var answer = _answer(hasMore: false);
     var coordinator = new AnswerCoordinator {
@@ -71,7 +69,6 @@ public class BackfillWindowAnswerReceptorTests {
   }
 
   [Test]
-  [NotInParallel("Metrics")]
   public async Task AnAnswerThatAppliesToNothing_CountsNothingAsync() {
     var coordinator = new AnswerCoordinator { Result = null };
     var metrics = _metrics(out var meterServices);
