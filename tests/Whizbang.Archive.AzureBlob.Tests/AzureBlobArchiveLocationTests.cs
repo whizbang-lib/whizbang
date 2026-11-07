@@ -103,6 +103,22 @@ public class AzureBlobArchiveLocationTests {
   }
 
   [Test]
+  public async Task VerifyLocation_DefaultsToOn_AndIsBoundFromConfigurationAsync() {
+    var off = new AzureBlobArchiveOptions();
+    var blank = new AzureBlobArchiveOptions();
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(
+      new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["VerifyLocation"] = "False" }).Build(), off);
+    AzureBlobArchiveServiceCollectionExtensions.Bind(
+      new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["VerifyLocation"] = " " }).Build(), blank);
+
+    await Assert.That(new AzureBlobArchiveOptions().VerifyLocation).IsTrue()
+      .Because("the safety net against a copied or restored database is on unless a service turns it off");
+    await Assert.That(off.VerifyLocation).IsFalse();
+    await Assert.That(blank.VerifyLocation).IsTrue().Because("a blank value keeps the default");
+  }
+
+  [Test]
   public async Task RepointLocation_RefusesAnIdThatCannotNameARowAsync() {
     var store = _store(new BlobContainerClient("UseDevelopmentStorage=true", "archive-a"));
 

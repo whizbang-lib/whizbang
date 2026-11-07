@@ -70,6 +70,9 @@ public sealed class AzureBlobArchiveOptions {
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:ConnectionName_ThatLooksLikeAConnectionString_IsRefused_WhenBoundAndWhenBuiltAsync</tests>
   public string ConnectionName { get; set; } = DEFAULT_CONNECTION_NAME;
 
+  /// <summary>RED stub (#2137).</summary>
+  public bool VerifyLocation { get; set; } = true;
+
   /// <summary>Whether <paramref name="name"/> can be a logical connection name: not empty, without <c>;</c> or <c>=</c>.</summary>
   internal static bool IsLogicalName(string? name) =>
     !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;

@@ -274,6 +274,7 @@ public class AzureBlobArchiveRegistrationTests {
   [Arguments("CompressionLevel", "fast")]
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
+  [Arguments("VerifyLocation", "maybe")]
   public async Task Configuration_AValueThatCannotBeRead_IsRefused_NamingTheKeyAsync(string key, string value) {
     var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
         _config(new() { [key] = value }), new AzureBlobArchiveOptions()))

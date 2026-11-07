@@ -68,10 +68,11 @@ public class AzureBlobArchiveStoreTests {
 
   private AzureBlobArchiveStore _store(
       int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<AzureBlobArchiveStore>? logger = null,
-      string? connectionString = null, PostgresArchiveConnection? database = null) {
+      string? connectionString = null, PostgresArchiveConnection? database = null, bool verifyLocation = true) {
     var client = _container(container, fault, connectionString);
     return new(database ?? _database(), client,
-      new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk, ContainerName = client.Name }, logger);
+      new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk, ContainerName = client.Name, VerifyLocation = verifyLocation },
+      logger);
   }
 
   // One setting of the emulator's connection string.
@@ -604,6 +605,44 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _readAllAsync(moved, before)).IsEquivalentTo(hotBefore, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(await _readAllAsync(moved, since)).IsEquivalentTo(hotSince, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_archive_locations WHERE @s IS NOT NULL", before)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync() {
+    var (restored, _) = await _seedAsync(3);
+    var (deleted, _) = await _seedAsync(2);
+    var (written, _) = await _seedAsync(2);
+    var hot = await _hotAsync(restored);
+    var hotAsRead = await _hotAsReadAsync(restored);
+    var source = _store(maxEventsPerChunk: 10);
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(restored));
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(deleted));
+    _ = await source.WriteAsync(ArchiveBatch.Prefix(written, 1));
+    var sourceObjects = await _objectsAsync();
+    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", verifyLocation: false);
+    var target = unverified.ConfiguredLocation.Container;
+    await _copyObjectsAsync(_containerName, target);
+
+    var read = await _readAllAsync(unverified, restored);
+    var restore = await unverified.RestoreAsync(restored);
+    var eventsDeleted = await unverified.DeleteAsync(deleted);
+    var write = await unverified.WriteAsync(ArchiveBatch.Prefix(written, 2));
+
+    await Assert.That(read).IsEquivalentTo(hotAsRead, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("with the check off, the record's location is not compared: the object is read from the configured container");
+    await Assert.That(restore.Status).IsEqualTo(ArchiveStatus.RESTORED);
+    await Assert.That(await _hotAsync(restored)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(eventsDeleted).IsEqualTo(2L);
+    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("with the check off, a write is not refused");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
+      .Because("the configured location is the only place it reads, restores, deletes or writes: the source is untouched");
+    await Assert.That((await _objectsAsync(target)).All(n => n.StartsWith($"{written:D}/", StringComparison.Ordinal))).IsTrue()
+      .Because("the restore and the delete removed their objects from the configured container, and the write added its own there");
+    await Assert.That(await _rowsAsync(
+        "SELECT l.container FROM wh_archive_manifest m JOIN wh_archive_locations l USING (location_id) " +
+        "WHERE m.stream_id = @s ORDER BY m.first_version", written))
+      .IsEquivalentTo([_containerName, target], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("location rows are still written, so the check can be turned back on later");
   }
 
   [Test]
