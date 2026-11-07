@@ -77,6 +77,8 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(metrics.DigestBucketsVerified).IsNotNull();
     await Assert.That(metrics.DigestDriftHealed).IsNotNull();
     await Assert.That(metrics.RedeliveryRequestsReceived).IsNotNull();
+    await Assert.That(metrics.RedeliveredChildrenReattributed).IsNotNull();
+    await Assert.That(metrics.MisattributedOriginsCorrected).IsNotNull();
   }
 
   [Test]

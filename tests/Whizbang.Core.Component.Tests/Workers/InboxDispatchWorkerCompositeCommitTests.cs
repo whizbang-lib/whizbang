@@ -197,14 +197,21 @@ public class InboxDispatchWorkerCompositeCommitTests {
   }
 
   private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true,
-      StreamIntegrityOptions? integrityOptions = null, Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker>? logger = null) {
+      StreamIntegrityOptions? integrityOptions = null, Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker>? logger = null,
+      RoutingOptions? routing = null, bool integrityMetrics = true) {
     var coordinator = new RecordingCoordinator { FailWith = commitFailure };
+    var factory = new TestMeterFactory();
     var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
+    if (integrityMetrics) {
+      services.AddSingleton(new StreamIntegrityMetrics(new WhizbangMetrics(factory)));
+    }
+    if (routing is not null) {
+      services.AddSingleton(Options.Create(routing));
+    }
     if (withCoordinator) {
       services.AddScoped<IWorkCoordinator>(_ => coordinator);
     }
     var sp = services.BuildServiceProvider();
-    var factory = new TestMeterFactory();
     var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
     var inbox = new FakeInboxChannelWriter();
     var commitChannel = new FakeHandlerCommitChannel();
@@ -458,6 +465,50 @@ public class InboxDispatchWorkerCompositeCommitTests {
       .Because("the stored envelope names the same origin as the row");
     await Assert.That(h.Coordinator.ReconcileCalls).IsEqualTo(0)
       .Because("a held copy of the owner's event must not adopt the answering service as its origin");
+    var integrityMeter = h.MeterFactory.CreatedMeters.Single(m => m.Name == StreamIntegrityMetrics.METER_NAME);
+    await Assert.That(ProbeMeterReader.ReadTotal(integrityMeter, "whizbang.stream_integrity.redelivered_children_reattributed")).IsEqualTo(1)
+      .Because("each corrected child is counted");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WithoutTheIntegrityMeter_StillStoresTheChildUnderTheOwnerAsync() {
+    var answering = (Guid)TrackedGuid.New();
+    var owner = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, (Guid)TrackedGuid.New()), integrityOptions: _autoRepair, integrityMetrics: false);
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = owner, OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(owner)
+      .Because("the meter is optional; the correction is not");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_AChildOfATypeThisServiceOwns_KeepsTheBundlesOriginAsync() {
+    // A parent claim another service announced does not move this service's own namespace: that record is not the
+    // receive path's to change.
+    var answering = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair, routing: new RoutingOptions().OwnDomains("Contracts"));
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = (Guid)TrackedGuid.New(), OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    var (reconciledOrigin, _) = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(answering);
+    await Assert.That(reconciledOrigin).IsEqualTo(answering);
 
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);

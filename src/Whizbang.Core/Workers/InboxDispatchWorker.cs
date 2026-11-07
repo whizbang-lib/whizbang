@@ -960,8 +960,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   /// <summary>Reports the children of a redelivery bundle stored under their type's true owner (#2116).</summary>
   private void _recordReattributed(
-      CompositeInboxFanout.FanoutResult result, ICompositeEvent composite, InboxWork work, IServiceProvider scopeProvider) {
-    if (result.ReattributedChildren == 0 || composite is not RedeliveryComposite bundle) {
+      CompositeInboxFanout.FanoutResult result, RedeliveryComposite bundle, InboxWork work, IServiceProvider scopeProvider) {
+    if (result.ReattributedChildren == 0) {
       return;
     }
     scopeProvider.GetService<StreamIntegrityMetrics>()?.RedeliveredChildrenReattributed.Add(result.ReattributedChildren);
@@ -1040,7 +1040,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer, ownerOf);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
       _recordExpansion(result, fannedOut);
-      _recordReattributed(result, composite, work, scopeProvider);
+      if (composite is RedeliveryComposite redelivered) {
+        _recordReattributed(result, redelivered, work, scopeProvider);
+      }
       // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
       // thousand inner events simply declares a cap that large and passes. The consumer had no say,
       // and expansion happens after admission control has already accepted the message — so one

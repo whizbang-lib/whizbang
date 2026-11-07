@@ -315,6 +315,20 @@ public class MisattributedOriginCorrectionSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Step_WithOnlyTheDatabaseRegistered_UsesTheDefaults_AndCorrectsAsync() {
+    // No schema (the connection's search_path), no owned domains and no metrics registered: the defaults apply.
+    await using var conn = await _openAsync();
+    await _claimAsync(conn, "app.contracts.orders", _orders, "orders-svc");
+    var row = await _storeAsync(conn, TrackedGuid.New().Value, 1, ORDERS_TYPE, _relay, 11);
+    var bare = new ServiceCollection().AddSingleton(_connection(schema: null)).BuildServiceProvider();
+
+    var result = await new MisattributedOriginCorrectionStep(NullLogger.Instance).CorrectAsync(bare, CancellationToken.None);
+
+    await Assert.That(result).IsEqualTo(new MisattributedOriginCorrectionResult(1, 1, "caught-up"));
+    await Assert.That((await _originOfAsync(conn, row)).Origin).IsEqualTo(_orders);
+  }
+
+  [Test]
   public async Task FromServices_AndItsArguments_AreCheckedAsync() {
     await Assert.That(MisattributedOriginCorrectionStep.FromServices(new ServiceCollection().AddLogging().BuildServiceProvider())).IsNotNull();
     await Assert.That(MisattributedOriginCorrectionStep.FromServices(new ServiceCollection().BuildServiceProvider())).IsNotNull();
@@ -354,12 +368,12 @@ public class MisattributedOriginCorrectionSqlTests : EFCoreTestBase {
 
   private sealed record PlanNode(string Type, string? Relation, long RowsReturned);
 
-  private PostgresArchiveConnection _connection() =>
+  private PostgresArchiveConnection _connection(string? schema = "public") =>
     new(async ct => {
       var connection = new NpgsqlConnection(ConnectionString);
       await connection.OpenAsync(ct);
       return connection;
-    }, "public");
+    }, schema);
 
   private ServiceProvider _services(StreamIntegrityOptions options, RoutingOptions? routing = null) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: _meters.GetRequiredService<IMeterFactory>()));
