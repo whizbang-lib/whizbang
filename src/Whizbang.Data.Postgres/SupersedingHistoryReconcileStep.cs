@@ -188,7 +188,7 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
       return (begun.Status, 0, 0, 0, begun.Total, begun.Matched);
     }
     var (ids, keys) = await _keysAsync(connection, transaction, prefix, walk, begun, json, cancellationToken).ConfigureAwait(false);
-    var applied = await _applyAsync(connection, transaction, prefix, walk, begun, ids, keys, cancellationToken).ConfigureAwait(false);
+    var applied = await _applyAsync(transaction, prefix, walk, begun, ids, keys, cancellationToken).ConfigureAwait(false);
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     return (applied.Status, begun.Scanned, applied.Stamped, applied.Queued, applied.Total, applied.Matched);
   }
@@ -227,11 +227,11 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
   }
 
   private async Task<Applied> _applyAsync(
-      NpgsqlConnection connection, NpgsqlTransaction transaction, string prefix, TypeWalk walk, Begun begun,
+      NpgsqlTransaction transaction, string prefix, TypeWalk walk, Begun begun,
       Guid[] ids, string?[] keys, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
       "SELECT status, events_stamped, events_queued, events_total, events_matched " +
-      $"FROM {prefix}wh_superseding_history_apply($1, $2, $3, $4, $5, $6, $7)", connection, transaction);
+      $"FROM {prefix}wh_superseding_history_apply($1, $2, $3, $4, $5, $6, $7)", transaction.Connection, transaction);
     command.Parameters.AddWithValue(walk.EventType);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)begun.After ?? DBNull.Value });
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = begun.Through.GetValueOrDefault() });
