@@ -20,35 +20,33 @@ internal static class SupersedingResolver {
   private const string SUPERSEDING_ATTRIBUTE = "global::Whizbang.Core.Attributes.SupersedingAttribute";
   private const string KEY_ATTRIBUTE = "global::Whizbang.Core.Attributes.SupersedingKeyAttribute";
 
-  /// <summary><c>[Superseding]</c> on the type or a base type (the attribute is inherited). <see cref="Group"/> requires it.</summary>
-  public static bool IsDeclared(INamedTypeSymbol type) {
+  /// <summary>
+  /// The type's nearest <c>[Superseding]</c>, on the type or a base type (the attribute is inherited, and the nearest
+  /// declaration wins, as attribute inheritance reads it): whether there is one, and the superseding group it names
+  /// (#2124), null when it names none or names the empty string. The group is taken as written, never derived from a type
+  /// name, since it is stored with every event. A type with no declaration walks up to System.Object.
+  /// </summary>
+  public static (bool IsDeclared, string? Group) Declaration(INamedTypeSymbol type) {
     for (var level = type; level is not null; level = level.BaseType) {
-      if (level.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SUPERSEDING_ATTRIBUTE))) {
-        return true;
+      var declaration = level.GetAttributes()
+        .FirstOrDefault(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SUPERSEDING_ATTRIBUTE));
+      if (declaration is not null) {
+        var group = declaration.NamedArguments.FirstOrDefault(a => a.Key == "Group").Value.Value as string;
+        return (true, string.IsNullOrEmpty(group) ? null : group);
       }
     }
-    return false;
+    return (false, null);
   }
 
-  /// <summary>
-  /// The superseding group the type declares (#2124): <c>Group</c> of its nearest <c>[Superseding]</c>, on the type or a
-  /// base type (the nearest declaration wins, as attribute inheritance reads it), or null when it names none or names the
-  /// empty string. Taken as written, never derived from a type name, since it is stored with every event.
-  /// </summary>
-  public static string? Group(INamedTypeSymbol type) {
-    var declaration = _levels(type)
-      .SelectMany(level => level.GetAttributes())
-      .First(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SUPERSEDING_ATTRIBUTE));
-    var group = declaration.NamedArguments.FirstOrDefault(a => a.Key == "Group").Value.Value as string;
-    return string.IsNullOrEmpty(group) ? null : group;
-  }
+  /// <summary><c>[Superseding]</c> on the type or a base type (the attribute is inherited).</summary>
+  public static bool IsDeclared(INamedTypeSymbol type) => Declaration(type).IsDeclared;
 
   /// <summary>
   /// The properties marked <c>[SupersedingKey]</c>, on the type and its base types, nearest first, one per name: a
   /// property carrying the attribute, or the property a primary-constructor parameter carrying it declares.
   /// </summary>
-  public static List<string> KeyNames(INamedTypeSymbol type) {
-    var names = new List<string>();
+  public static List<IPropertySymbol> KeyProperties(INamedTypeSymbol type) {
+    var keys = new List<IPropertySymbol>();
     // Up to and including System.Object, which declares no key: one loop condition, so nothing is special-cased.
     for (var level = type; level is not null; level = level.BaseType) {
       var properties = level.GetMembers().OfType<IPropertySymbol>().ToList();
@@ -56,51 +54,51 @@ internal static class SupersedingResolver {
         .Concat(level.InstanceConstructors.SelectMany(c => c.Parameters).Where(_isKey)
           .Select(p => properties.FirstOrDefault(q => string.Equals(q.Name, p.Name, System.StringComparison.OrdinalIgnoreCase)))
           .OfType<IPropertySymbol>());
-      foreach (var property in marked.Where(property => !names.Contains(property.Name))) {
-        names.Add(property.Name);
-      }
+      keys.AddRange(marked.Where(property => !keys.Exists(known => known.Name == property.Name)));
     }
-    return names;
+    return keys;
   }
+
+  /// <summary>The names of <see cref="KeyProperties"/>, nearest first.</summary>
+  public static List<string> KeyNames(INamedTypeSymbol type) => [.. KeyProperties(type).Select(p => p.Name)];
 
   /// <summary>
   /// The superseding registration the generator emits: whether the type is superseding (an event, declared, not
-  /// ephemeral, at most one key) and its key property, or null for one key per stream. A type the analyzer refuses
-  /// (WHIZ135, WHIZ136) is not superseding, so a suppressed error keeps every event.
+  /// ephemeral, at most one key), its key property or null for one key per stream, the key's <c>[JsonPropertyName]</c>
+  /// (#2123) and its group (#2124). A type the analyzer refuses (WHIZ135, WHIZ136) is not superseding, so a suppressed
+  /// error keeps every event.
   /// </summary>
-  public static (bool IsSuperseding, string? Key) Resolve(INamedTypeSymbol type) {
-    if (!IsDeclared(type) || EphemeralResolver.IsEphemeral(type)) {
-      return (false, null);
+  public static SupersedingRegistration Resolve(INamedTypeSymbol type) {
+    var (declared, group) = Declaration(type);
+    if (!declared || EphemeralResolver.IsEphemeral(type)) {
+      return default;
     }
-    var keys = KeyNames(type);
+    var keys = KeyProperties(type);
     return keys.Count switch {
-      0 => (true, null),
-      1 => (true, keys[0]),
-      _ => (false, null),
+      0 => new SupersedingRegistration(true, null, null, group),
+      1 => new SupersedingRegistration(true, keys[0].Name, KeyJsonName(keys[0]), group),
+      _ => default,
     };
   }
 
   private const string JSON_PROPERTY_NAME_ATTRIBUTE = "global::System.Text.Json.Serialization.JsonPropertyNameAttribute";
 
   /// <summary>
-  /// The <c>[JsonPropertyName]</c> of the key property <paramref name="key"/>, read from its nearest declaration as
-  /// System.Text.Json reads it, or null when it has none (#2123): the name the framework's generated JSON contexts write
-  /// the key under, so a payload missing the key can be told from one carrying a default value.
+  /// The <c>[JsonPropertyName]</c> of a key property, read from the declaration <see cref="KeyProperties"/> found (the
+  /// nearest, as System.Text.Json reads it), or null when it has none (#2123): the name the framework's generated JSON
+  /// contexts write the key under, so a payload missing the key can be told from one carrying a default value.
   /// </summary>
-  /// <remarks><paramref name="key"/> is a name <see cref="KeyNames"/> returned, so the type or a base type declares it.</remarks>
-  public static string? KeyJsonName(INamedTypeSymbol type, string key) {
-    var property = _levels(type).SelectMany(level => level.GetMembers(key)).OfType<IPropertySymbol>().First();
-    return property.GetAttributes()
+  public static string? KeyJsonName(IPropertySymbol property) =>
+    property.GetAttributes()
       .FirstOrDefault(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, JSON_PROPERTY_NAME_ATTRIBUTE))
       ?.ConstructorArguments[0].Value as string;
-  }
-
-  private static IEnumerable<INamedTypeSymbol> _levels(INamedTypeSymbol type) {
-    for (var level = type; level is not null; level = level.BaseType) {
-      yield return level;
-    }
-  }
 
   private static bool _isKey(ISymbol symbol) =>
     symbol.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, KEY_ATTRIBUTE));
 }
+
+/// <summary>
+/// What the catalog generator registers for a superseding type: whether it is superseding, its key property (null for one
+/// key per stream), the key's own <c>[JsonPropertyName]</c> and its superseding group. The default is not superseding.
+/// </summary>
+internal readonly record struct SupersedingRegistration(bool IsSuperseding, string? Key, string? KeyJsonName, string? Group);

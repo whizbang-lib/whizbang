@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -104,10 +103,11 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
   private static void _analyzeType(SymbolAnalysisContext context, ConcurrentBag<GroupMember> members) {
     // Registered for SymbolKind.NamedType only, so the symbol is always a named type.
     var symbol = (INamedTypeSymbol)context.Symbol;
-    if (!SupersedingResolver.IsDeclared(symbol)) {
+    var (declared, declaredGroup) = SupersedingResolver.Declaration(symbol);
+    if (!declared) {
       return;
     }
-    if (SupersedingResolver.Group(symbol) is { } group) {
+    if (declaredGroup is { } group) {
       members.Add(new GroupMember(symbol, group, _keyType(symbol)));
     }
     if (EphemeralResolver.IsEphemeral(symbol)) {
@@ -123,23 +123,15 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
   // The key's type as the store sees it: Nullable<T> is T, since both are stored as the same text.
   private static string _keyType(INamedTypeSymbol type) {
     // Two keys are WHIZ136's to report; the first stands for the type here.
-    var keys = SupersedingResolver.KeyNames(type);
+    var keys = SupersedingResolver.KeyProperties(type);
     if (keys.Count == 0) {
       return NO_KEY;
     }
-    var property = _properties(type).First(p => p.Name == keys[0]);
+    var property = keys[0];
     var keyType = property.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
       ? nullable.TypeArguments[0]
       : property.Type;
     return $"a {TypeNameUtilities.Display(keyType.WithNullableAnnotation(NullableAnnotation.NotAnnotated))} key";
-  }
-
-  private static IEnumerable<IPropertySymbol> _properties(INamedTypeSymbol type) {
-    for (var level = type; level is not null; level = level.BaseType) {
-      foreach (var property in level.GetMembers().OfType<IPropertySymbol>()) {
-        yield return property;
-      }
-    }
   }
 
   private static void _reportGroups(CompilationAnalysisContext context, ConcurrentBag<GroupMember> members) {

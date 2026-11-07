@@ -245,6 +245,14 @@ public class SupersedingEventsTests {
   }
 
   [Test]
+  public async Task SupersedingAttribute_Group_IsNoneUnlessNamed_AndReadsBackAsNamedAsync() {
+    var named = new SupersedingAttribute { Group = "region-state" };
+
+    await Assert.That(named.Group).IsEqualTo("region-state");
+    await Assert.That(new SupersedingAttribute().Group).IsNull().Because("without a group a type is its own group");
+  }
+
+  [Test]
   public async Task GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var revised = new RegionRevised(_stream, _owner);

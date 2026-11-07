@@ -140,18 +140,25 @@ public class SupersedingEventAnalyzerTests {
       public record SlotOpened([property: SupersedingKey] int Slot) : IEvent;
       [Superseding(Group = "slot")]
       public record SlotRenamed([property: SupersedingKey] string Slot) : IEvent;
+      public record SnapshotBase : IEvent;
+      [Superseding(Group = "snapshot")]
+      public record SnapshotTaken : SnapshotBase;
+      [Superseding(Group = "snapshot")]
+      public record SnapshotKeyed([property: SupersedingKey] string Part) : IEvent;
       """;
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<SupersedingEventAnalyzer>(source);
     var found = diagnostics.Where(d => d.Id == "WHIZ138").ToArray();
     var messages = found.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).ToArray();
 
-    await Assert.That(found.Length).IsEqualTo(5).Because("every type of a group that disagrees is named, so each can be fixed");
+    await Assert.That(found.Length).IsEqualTo(7).Because("every type of a group that disagrees is named, so each can be fixed");
     await Assert.That(found.All(d => d.Severity == DiagnosticSeverity.Error)).IsTrue();
     await Assert.That(messages.Single(m => m.Contains("'RegionReplaced'", StringComparison.Ordinal))).Contains("no key")
       .Because("a keyless type in a keyed group is named with what it has");
     await Assert.That(messages.Single(m => m.Contains("'RegionOpened'", StringComparison.Ordinal))).Contains("System.Guid");
     await Assert.That(messages.Single(m => m.Contains("'SlotRenamed'", StringComparison.Ordinal))).Contains("'slot'");
+    await Assert.That(messages.Single(m => m.Contains("'SnapshotTaken'", StringComparison.Ordinal))).Contains("with no key")
+      .Because("the key search walks every base type of a type that has none, and finds none");
   }
 
   [Test]
