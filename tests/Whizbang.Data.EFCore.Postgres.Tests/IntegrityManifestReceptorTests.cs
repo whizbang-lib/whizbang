@@ -1808,7 +1808,8 @@ public class IntegrityManifestReceptorTests {
   }
 
   private static (AuditCoordinator Coordinator, CaptureTransport Transport, IntegrityManifestReceptor Receptor) _consumer(
-      long seal, IReadOnlyList<StreamDigest> local, bool originTopicKnown = true) {
+      long seal, IReadOnlyList<StreamDigest> local, bool originTopicKnown = true, bool withTracker = true,
+      bool withInstanceProvider = true, Whizbang.Core.Routing.RoutingOptions? routing = null) {
     var coordinator = new AuditCoordinator {
       Seal = seal,
       WindowedTypeResult = new WindowedDigestResult { Digests = local, ComputedThrough = 1_100 },
@@ -1818,7 +1819,8 @@ public class IntegrityManifestReceptorTests {
     if (originTopicKnown) {
       tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     }
-    var sp = _provider(coordinator, transport, tracker: tracker, consumers: new ConsumesOnly("Contracts.TypeX"));
+    var sp = _provider(coordinator, transport, tracker: withTracker ? tracker : null, routing: routing,
+      consumers: new ConsumesOnly("Contracts.TypeX"), withInstanceProvider: withInstanceProvider);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     return (coordinator, transport, receptor);
@@ -1923,6 +1925,43 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
     await Assert.That(transport.Published).IsEmpty()
       .Because("directed or not at all: the next scheduled audit continues from the seal instead");
+  }
+
+  [Test]
+  [Arguments(false, true)]
+  [Arguments(true, false)]
+  public async Task ManifestReceptor_ACleanCappedWindow_WithoutTheGapTrackerOrAnIdentity_SealsButAsksNothingAsync(
+      bool withTracker, bool withInstanceProvider) {
+    var (coordinator, transport, receptor) = _consumer(
+      seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+      withTracker: withTracker, withInstanceProvider: withInstanceProvider);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsEqualTo(1_100L);
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("with no origin address or no requester identity there is nobody to ask and no return address");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TheNextWindow_AsksForTheAbsorbedNamespacesTooAsync() {
+    var (coordinator, transport, receptor) = _consumer(
+      seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+      routing: new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces("contracts.absorbed"));
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(_requests(transport).Single().EventNamespaces).IsEquivalentTo(["contracts.absorbed"])
+      .Because("the next window audits what the receive boundary keeps, as the scheduled audit does");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TheNextWindow_WithNoAbsorbedNamespaces_AsksForNoneAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(_requests(transport).Single().EventNamespaces).IsNull();
   }
 
   [Test]
@@ -2851,7 +2890,8 @@ public class IntegrityManifestReceptorTests {
       AuditCoordinator coordinator, CaptureTransport transport,
       StreamIntegrityOptions? options = null, CaptureDispatcher? dispatcher = null,
       IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null,
-      Whizbang.Core.Routing.RoutingOptions? routing = null, IConsumerRegistry? consumers = null) {
+      Whizbang.Core.Routing.RoutingOptions? routing = null, IConsumerRegistry? consumers = null,
+      bool withInstanceProvider = true) {
     var services = new ServiceCollection();
     if (routing is not null) {
       services.AddSingleton(Options.Create(routing));
@@ -2863,7 +2903,9 @@ public class IntegrityManifestReceptorTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(dispatcher ?? new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
+    if (withInstanceProvider) {
+      services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
+    }
     // Report publishing is OFF by default in production (nothing consumes the events, and each
     // one mints its own stream). These tests exercise the opt-in publish path, so the fallback
     // turns it on; the default-off contract has its own tests below.
