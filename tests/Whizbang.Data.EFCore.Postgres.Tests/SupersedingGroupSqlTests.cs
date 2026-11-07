@@ -292,17 +292,17 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
     await using var transaction = await conn.BeginTransactionAsync();
     await using var off = new NpgsqlCommand("SET LOCAL enable_seqscan = off", conn, transaction);
     _ = await off.ExecuteNonQueryAsync();
-    // The probe _wh_queue_superseded_events and the reaper make: the older events of a stored event's group and key.
+    // One probe of _wh_queue_superseded_events and of the reaper, for one stored event: the events of its stream, group
+    // and key on the other side of its version.
     await using var explain = new NpgsqlCommand("""
       EXPLAIN SELECT older.event_id
-      FROM wh_event_store newer
-      JOIN wh_event_store older
-        ON older.stream_id = newer.stream_id
-       AND COALESCE(older.supersede_group, older.event_type) = COALESCE(newer.supersede_group, newer.event_type)
-       AND older.supersede_key = newer.supersede_key
-       AND older.version < newer.version
-      WHERE newer.stream_id = @s AND newer.version = 20 AND newer.supersede_key IS NOT NULL
+      FROM wh_event_store older
+      WHERE older.stream_id = @s
+        AND COALESCE(older.supersede_group, older.event_type) = @g
+        AND older.supersede_key = 'k1'
+        AND older.version < 20
       """, conn, transaction);
+    explain.Parameters.AddWithValue("g", GROUP);
     explain.Parameters.AddWithValue("s", stream);
     var plan = new List<string>();
     await using (var reader = await explain.ExecuteReaderAsync()) {
@@ -314,7 +314,8 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
 
     await Assert.That(text).Contains("idx_event_store_superseding_group")
       .Because("matching on COALESCE(group, type) needs the expression index; the type-keyed index narrows by stream only");
-    await Assert.That(text).Contains("COALESCE(older.supersede_group, older.event_type)");
+    await Assert.That(text).Contains("Index Cond: ((stream_id = ").And.Contains("(COALESCE(supersede_group, (event_type)::text) = ")
+      .Because("the group match is an index condition, not a filter over every keyed event of the stream");
   }
 
   // ===== Helpers =====
