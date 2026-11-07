@@ -30,6 +30,7 @@ SELECT __SCHEMA__.drop_all_overloads('claim_work');
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackEventsDoNotCrowdTheReOfferTests.cs:OneStreamReOffer_PassesOverAHeldBackEvent_ToAFetchableCheckpointAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackEventsDoNotCrowdTheReOfferTests.cs:HeldBackStream_OnceItsPredecessorIsHeldToo_IsStoredAndReOfferedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimReofferPlanShapeTests.cs:TheReOfferWalk_ReadsTheWorkTableOnlyThroughItsHeldLanesIndexAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkSqlTests.cs:ClaimWork_OutboxHasUnprocessedWork_ReturnsThatWorkAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimOrphanedAcquisitionBoundSqlTests.cs:ClaimWork_DoesNotAcquireMoreThanItsCallerAskedForAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BucketAwareClaimSqlTests.cs:ClaimOrphanedInbox_BackgroundStreams_KeepAFloorOfTheBatchAsync</tests>
