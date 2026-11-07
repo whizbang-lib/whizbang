@@ -93,7 +93,7 @@ public class HeartbeatWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -133,7 +133,7 @@ public class HeartbeatWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -165,7 +165,7 @@ public class HeartbeatWorkerTests {
         pinnedPool: NoOpPinnedConnectionPool.Instance,
         aliveLockSource: NullInstanceAliveLockSource.Instance,
         signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
     } catch (ArgumentNullException) {
       threw = true;
     }
@@ -194,7 +194,7 @@ public class HeartbeatWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

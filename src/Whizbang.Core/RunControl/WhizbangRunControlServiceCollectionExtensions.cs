@@ -18,6 +18,7 @@ namespace Whizbang.Core.RunControl;
 /// <docs>resilience/managed-resource-run-control</docs>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_RegistersCoordinatorAndStateAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheRunControlRegistration_ProvidesOneExitPath_AndTheProcessExitCodeAsync</tests>
 public static class WhizbangRunControlServiceCollectionExtensions {
   /// <summary>Registers the lifecycle coordinator + options + state (idempotent). <paramref name="configure"/> tunes the ack timeout / fault window.</summary>
   public static IServiceCollection AddWhizbangRunControl(
@@ -47,10 +48,20 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetRequiredService<WhizbangLifecycleOptions>(),
       sp.GetService<TimeProvider>(),
       sp.GetLoggerOrNullLogger<WhizbangRunController>()));
+    // #2126: the one exit path every exit takes, and the one place the exit code is set. A test host registers its own
+    // IProcessExitCode first so the test process keeps its own exit code.
+    services.TryAddSingleton<IProcessExitCode>(ProcessExitCode.Instance);
+    services.TryAddSingleton<IWhizbangInstanceExit>(static sp => new WhizbangInstanceExit(
+      sp,
+      sp.GetRequiredService<IWhizbangRunController>(),
+      sp.GetRequiredService<IProcessExitCode>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>()));
     services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
       sp.GetRequiredService<IWhizbangRunController>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
-      sp.GetRequiredService<WhizbangLifecycleCoordinator>()));
+      sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
+      sp.GetRequiredService<IWhizbangInstanceExit>()));
     return services;
   }
 

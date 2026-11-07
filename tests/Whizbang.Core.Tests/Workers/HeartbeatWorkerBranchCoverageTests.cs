@@ -228,7 +228,7 @@ public class HeartbeatWorkerBranchCoverageTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
   }
 
   private static (HeartbeatWorker Worker, ScriptedHeartbeatCoordinator Coordinator) _worker(
@@ -252,7 +252,7 @@ public class HeartbeatWorkerBranchCoverageTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: bus ?? NullSignalBus.Instance,
-      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       timeProvider: clock,
       metrics: metrics);
     return (worker, coordinator);

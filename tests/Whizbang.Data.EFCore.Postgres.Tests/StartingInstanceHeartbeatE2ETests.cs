@@ -138,6 +138,71 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
     await Assert.That(fleet.Single(i => i.InstanceId == peerId).LifecyclePhase).IsEqualTo(nameof(LifecyclePhase.Running));
   }
 
+  /// <summary>
+  /// #2126: an instance the fleet evicted while it is still starting (a peer's reap judged it dead in Migrate) learns it
+  /// from its refused startup beat and exits once through the one exit path, code 3, so its host restarts it under a new
+  /// instance id. The exit is recorded with the eviction as the peer recorded it.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnInstanceEvictedWhileStarting_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync(
+      CancellationToken cancellationToken) {
+    var (peerId, startingId) = _pair();
+    await using var peer = await _readyPeerAsync(peerId, cancellationToken);
+    await using var starting = new StartingPod(startingId, CreateDbContext);
+    await starting.RegisterAndHoldInMigrateAsync(ConnectionString, cancellationToken);
+    var window = await _scalarAsync<int>(
+      $"SELECT liveness_window_seconds FROM wh_service_instances WHERE instance_id = '{startingId}'", cancellationToken);
+    await _ageHeartbeatAsync(startingId, TimeSpan.FromSeconds(window + 60), cancellationToken);
+    await peer.BeatAsync(cancellationToken);
+
+    await starting.StartHeartbeatExpectingRefusalAsync(cancellationToken);
+    await starting.Exit.Completion.WaitAsync(_signalDeadline, cancellationToken);
+
+    await _assertExitedOnceAsEvictedAsync(starting, startingId, peerId, window, "Migrate", cancellationToken);
+  }
+
+  /// <summary>#2126: the same for an instance evicted while it runs: its full heartbeat is refused, and it exits once.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnInstanceEvictedWhileRunning_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync(
+      CancellationToken cancellationToken) {
+    var (peerId, startingId) = _pair();
+    await using var peer = await _readyPeerAsync(peerId, cancellationToken);
+    await using var starting = new StartingPod(startingId, CreateDbContext);
+    await starting.RegisterAndHoldInMigrateAsync(ConnectionString, cancellationToken);
+    await starting.FinishStartupAsync(cancellationToken);
+    var window = await _scalarAsync<int>(
+      $"SELECT liveness_window_seconds FROM wh_service_instances WHERE instance_id = '{startingId}'", cancellationToken);
+    await _ageHeartbeatAsync(startingId, TimeSpan.FromSeconds(window + 60), cancellationToken);
+    await peer.BeatAsync(cancellationToken);
+
+    await starting.StartHeartbeatExpectingRefusalAsync(cancellationToken);
+    await starting.Exit.Completion.WaitAsync(_signalDeadline, cancellationToken);
+
+    await _assertExitedOnceAsEvictedAsync(starting, startingId, peerId, window, "Accept commands", cancellationToken);
+  }
+
+  private async Task _assertExitedOnceAsEvictedAsync(
+      StartingPod starting, Guid startingId, Guid peerId, int window, string stage, CancellationToken cancellationToken) {
+    await Assert.That(starting.ExitCodes.Codes).IsEquivalentTo([3]).Because("evicted: the host restarts it");
+    await Assert.That(starting.Lifetime.StopCalls).IsEqualTo(1);
+    var report = starting.Exit.Report!;
+    await Assert.That(report.Record.Cause).IsEqualTo(ExitCause.ClusterEviction);
+    await Assert.That(report.Record.StartupStage).IsEqualTo(stage);
+    await Assert.That(report.Recording.Recorded).IsTrue();
+    await Assert.That(report.Recording.Eviction!.EvictedBy).IsEqualTo(peerId).Because("the peer whose reap evicted it");
+    await Assert.That(report.Recording.Eviction.LivenessWindowSeconds).IsEqualTo(window);
+    await Assert.That(report.Recording.Eviction.LastHeartbeatAt.HasValue).IsTrue();
+    await Assert.That(await _scalarAsync<long>(
+        $"SELECT count(*) FROM wh_instance_exits WHERE instance_id = '{startingId}'", cancellationToken))
+      .IsEqualTo(1L).Because("one exit, one row");
+    await Assert.That(await _scalarAsync<string>(
+        $"SELECT exit_cause || ' ' || exit_code || ' ' || evicted_by FROM wh_instance_exits WHERE instance_id = '{startingId}'",
+        cancellationToken))
+      .IsEqualTo($"ClusterEviction 3 {peerId}");
+  }
+
   [Test]
   public async Task AStartupBeat_OfAnEvictedInstance_IsRefused_AndOfAnUnregisteredOne_WritesNothingAsync(
       CancellationToken cancellationToken) {
@@ -184,13 +249,21 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
       services.AddSingleton<IStartupStageReporter>(sp => new StartupStageReporter(
         sp.GetRequiredService<IServiceScopeFactory>(), Instance, [stageGate], NullLogger<StartupStageReporter>.Instance,
         new LibraryVersionProvider("999.9.9")));
+      // #2126: the one exit path, read from the pod's own services when it exits; the test keeps its own exit code.
+      services.AddSingleton<ILastAcceptedHeartbeat>(_ => _heartbeat!);
+      services.AddSingleton<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(Lifetime);
       _services = services.BuildServiceProvider();
+      var lifecycleOptions = new WhizbangLifecycleOptions();
+      Exit = new WhizbangInstanceExit(_services,
+        new WhizbangRunController(new WhizbangRunPermit(), new AnnouncesRunning(), [], [], lifecycleOptions, null,
+          NullLogger<WhizbangRunController>.Instance),
+        ExitCodes, null, NullLogger<WhizbangInstanceExit>.Instance);
       Stages = _services.GetRequiredService<IStartupStageReporter>();
       _heartbeat = new HeartbeatWorker(
         _services.GetRequiredService<IServiceScopeFactory>(), Instance, Options.Create(new HeartbeatWorkerOptions()),
         NullLogger<HeartbeatWorker>.Instance, new AnnouncesRunning(), new LibraryVersionProvider("999.9.9"),
         new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown),
-        NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance, StartupGate,
+        NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance, StartupGate, Exit,
         timeProvider: new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
       _heartbeat.OnHeartbeatRecorded += () => _firstBeat.TrySetResult();
       _hosted = new StartupStageGatedService<HeartbeatWorker>(_heartbeat, HeartbeatWorker.StartsAt, stageGate, StartupGate);
@@ -198,6 +271,15 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
 
     public ServiceInstanceProvider Instance { get; }
     public IServiceProvider Services => _services;
+    public WhizbangInstanceExit Exit { get; }
+    public RecordingExitCodes ExitCodes { get; } = new();
+    public StoppingLifetime Lifetime { get; } = new();
+
+    /// <summary>Starts the hosted heartbeat as the host starts it, without waiting for an accepted beat.</summary>
+    public async Task StartHeartbeatExpectingRefusalAsync(CancellationToken cancellationToken) {
+      _started = true;
+      await _hosted.StartAsync(cancellationToken);
+    }
     public IStartupStageReporter Stages { get; }
     public SchemaReadyGate StartupGate { get; } = new();
 
@@ -239,6 +321,26 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
       _hosted.Dispose();
       _heartbeat.Dispose();
       await _services.DisposeAsync();
+    }
+  }
+
+  /// <summary>The test process keeps its own exit code; the exit's codes are recorded instead.</summary>
+  private sealed class RecordingExitCodes : IProcessExitCode {
+    public List<int> Codes { get; } = [];
+    public void SetExitCode(int exitCode) => Codes.Add(exitCode);
+  }
+
+  /// <summary>A host lifetime that records each stop.</summary>
+  private sealed class StoppingLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime, IDisposable {
+    private readonly CancellationTokenSource _stopping = new();
+    public void Dispose() => _stopping.Dispose();
+    public int StopCalls { get; private set; }
+    public CancellationToken ApplicationStarted => CancellationToken.None;
+    public CancellationToken ApplicationStopping => _stopping.Token;
+    public CancellationToken ApplicationStopped => CancellationToken.None;
+    public void StopApplication() {
+      StopCalls++;
+      _stopping.Cancel();
     }
   }
 

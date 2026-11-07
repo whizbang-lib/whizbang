@@ -251,6 +251,8 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     var electorA = _electorFor(a);
     var held = (await electorA.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    // #2126: the exit's account of what the instance held names the role, read before the release.
+    await Assert.That(((Whizbang.Core.RunControl.IReleasesHeldRoles)electorA).HeldRoles).IsEquivalentTo([ROLE]);
 
     await electorA.ReleaseAllAsync(cancellationToken);
     await electorA.ReleaseAllAsync(cancellationToken);

@@ -40,6 +40,8 @@ public static class CapabilityServiceCollectionExtensions {
 
     services.AddMetrics();
     services.TryAddSingleton<WhizbangMetrics>();
+    // #2126: the enforcer exits through the one exit path, which the run-control registration provides (idempotent).
+    Whizbang.Core.RunControl.WhizbangRunControlServiceCollectionExtensions.AddWhizbangRunControl(services);
     services.TryAddSingleton<ICapabilityRegistry>(sp => new CapabilityRegistry(
       sp.GetServices<ICapabilityProvider>(),
       sp.GetRequiredService<ILogger<CapabilityRegistry>>(),
@@ -56,9 +58,8 @@ public static class CapabilityServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>
       new CapabilityVerdictEnforcer(
         sp.GetRequiredService<ICapabilityRegistry>(),
-        CapabilityVerdictEnforcer.StopApplicationOf(sp),
-        sp.GetRequiredService<ILogger<CapabilityVerdictEnforcer>>(),
-        CapabilityVerdictEnforcer.SetProcessExitCode)));
+        // #2126: the one exit path, registered with the run-control path it halts through.
+        sp.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>())));
     // A health entry is registered by name and a second one by the same name fails at run time, so it is added
     // only on the first call: the one that registered the registry.
     if (firstCall) {

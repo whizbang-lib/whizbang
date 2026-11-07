@@ -79,6 +79,32 @@ public class HeartbeatWorkerStartupBeatTests {
     await Assert.That(fixture.Coordinator.StartupRequests.Count).IsEqualTo(1)
       .Because("an evicted instance learns it from its first refused beat and stops asking");
     await Assert.That(fixture.Coordinator.FullBeats).IsEqualTo(0);
+    var exit = fixture.Exit.Requests.Single();
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.ClusterEviction)
+      .Because("#2126: an instance evicted while it is still starting exits, code 3, so its host restarts it");
+    await Assert.That(exit.Reason).Contains("while it was still starting");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OnceTheSchemaIsReady_ARefusedBeat_ExitsOnce_AsAClusterEvictionAsync(CancellationToken cancellationToken) {
+    var fixture = new Fixture(SchemaReadyGate.AlreadyReady(), fullAccepted: false);
+
+    await fixture.Worker.StartAsync(cancellationToken);
+    await fixture.Worker.ExecuteTask!.WaitAsync(_deadline, cancellationToken);
+
+    await Assert.That(fixture.Coordinator.FullBeats).IsEqualTo(1).Because("a refused beat is never retried");
+    var exit = fixture.Exit.Requests.Single();
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.ClusterEviction);
+    await Assert.That(Whizbang.Core.RunControl.ExitCauses.ExitCodeOf(exit.Cause)).IsEqualTo(3);
+    await Assert.That(exit.Reason).IsEqualTo(
+      "its heartbeat was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)");
+  }
+
+  [Test]
+  public async Task WithNoExitPath_TheWorkerIsNotConstructedAsync() {
+    await Assert.That(() => new Fixture(SchemaReadyGate.AlreadyReady(), withExit: false)).Throws<ArgumentNullException>()
+      .Because("an evicted instance that cannot exit would keep running sidelined");
   }
 
   [Test]
@@ -150,6 +176,23 @@ public class HeartbeatWorkerStartupBeatTests {
     await Assert.That(beforeTheGate).IsFalse();
   }
 
+  /// <summary>
+  /// The gate can open after the loop planned a wait under a closed gate and before the wait begins. The wait then ends at
+  /// once, because the full beat is due; a cadence wait here held the full beat back until the clock moved.
+  /// </summary>
+  [Test]
+  public async Task TheWait_AfterAStartupBeat_WhenTheGateOpenedSinceThePlan_EndsAtOnceAsync() {
+    var gate = new SchemaReadyGate();
+    var fixture = new Fixture(gate);
+    await fixture.Worker.TickForTestsAsync(CancellationToken.None);
+    gate.MarkReady();
+
+    var wait = fixture.Worker.WaitForNextTickAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+
+    await Assert.That(wait.IsCompleted).IsTrue();
+    await Assert.That(fixture.Time.GetUtcNow()).IsEqualTo(Fixture.Start);
+  }
+
   [Test]
   public async Task TheWait_OnceTheGateIsOpen_IsTheCadenceAsync() {
     var fixture = new Fixture(SchemaReadyGate.AlreadyReady());
@@ -177,8 +220,8 @@ public class HeartbeatWorkerStartupBeatTests {
   private sealed class Fixture {
     public static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    public Fixture(ISchemaReadyGate gate, bool startupAccepted = true) {
-      Coordinator = new BeatCoordinator(startupAccepted);
+    public Fixture(ISchemaReadyGate gate, bool startupAccepted = true, bool fullAccepted = true, bool withExit = true) {
+      Coordinator = new BeatCoordinator(startupAccepted, fullAccepted);
       var services = new ServiceCollection();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
       services.AddSingleton<IStartupStageReporter>(Stages);
@@ -197,10 +240,12 @@ public class HeartbeatWorkerStartupBeatTests {
         aliveLockSource: NullInstanceAliveLockSource.Instance,
         signalBus: Bus,
         schemaReady: gate,
+        instanceExit: withExit ? Exit : null!,
         timeProvider: Time);
     }
 
     public BeatCoordinator Coordinator { get; }
+    public Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit { get; } = new();
     public RecordingStageReporter Stages { get; } = new();
     public CapturingBus Bus { get; } = new();
     public FakeTimeProvider Time { get; } = new(Start);
@@ -229,7 +274,7 @@ public class HeartbeatWorkerStartupBeatTests {
     }
   }
 
-  private sealed class BeatCoordinator(bool startupAccepted) : IWorkCoordinator {
+  private sealed class BeatCoordinator(bool startupAccepted, bool fullAccepted) : IWorkCoordinator {
     private int _fullBeats;
 
     public List<HeartbeatRequest> StartupRequests { get; } = [];
@@ -248,7 +293,7 @@ public class HeartbeatWorkerStartupBeatTests {
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _fullBeats);
       FirstFullBeat.TrySetResult();
-      return Task.FromResult(true);
+      return Task.FromResult(fullAccepted);
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

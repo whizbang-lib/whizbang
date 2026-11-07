@@ -57,6 +57,20 @@ public class WorkCoordinatorDefaultInterfaceTests {
       .Because("the default startup beat delegates to the full heartbeat");
   }
 
+  /// <summary>#2126: a coordinator that keeps no instance records keeps no exit record, and says so.</summary>
+  [Test]
+  public async Task RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync() {
+    var exit = new Whizbang.Core.RunControl.InstanceExitRecord(
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123, Whizbang.Core.RunControl.ExitCause.HostShutdown, 0, true,
+      "stop", null, null, null, null, null, null, [], 0, 0, null);
+
+    var result = await _coordinator.RecordInstanceExitAsync(exit);
+
+    await Assert.That(result).IsSameReferenceAs(Whizbang.Core.RunControl.InstanceExitRecordResult.NotKept);
+    await Assert.That(result.Recorded).IsFalse();
+    await Assert.That(result.NotRecordedBecause).IsEqualTo("this host's work coordinator keeps no instance records");
+  }
+
   [Test]
   public async Task NotifyScheduledRetryDueAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
     var message = await _captureNotImplementedMessageAsync(

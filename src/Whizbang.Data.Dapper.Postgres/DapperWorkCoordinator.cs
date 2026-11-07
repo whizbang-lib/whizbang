@@ -1051,6 +1051,29 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_instance_exit</c>. This driver applies no bootstrap closure, so on a database its pass
+  /// has not reached yet the function does not exist: the exit is then not recorded, and the answer says why, for the
+  /// exit's log entry to state.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperInstanceExitTests.cs</tests>
+  public async Task<Whizbang.Core.RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
+      Whizbang.Core.RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(exitRecord);
+    // Not behind the work gate: an exit must not queue behind the work it is leaving.
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    try {
+      return await Whizbang.Data.Postgres.InstanceExitSql.RecordAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.InstanceExitSql.FUNCTION_NAME, exitRecord, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction) {
+      return Whizbang.Core.RunControl.InstanceExitRecordResult.NotWritten(
+        "the exit record does not exist on this database yet: the schema pass has not created wh_record_instance_exit");
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>This driver keeps instance rows, so a stage counts as recorded only once its write lands (#1636).</remarks>
   public bool RecordsInstanceTransitions => true;
 

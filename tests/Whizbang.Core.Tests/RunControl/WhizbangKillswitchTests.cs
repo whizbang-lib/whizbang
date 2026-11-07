@@ -16,6 +16,11 @@ namespace Whizbang.Core.Tests.RunControl;
 /// </summary>
 public class WhizbangKillswitchTests {
 
+  /// <summary>The test process keeps its own exit code.</summary>
+  private sealed class DiscardedExitCode : IProcessExitCode {
+    public void SetExitCode(int exitCode) { }
+  }
+
   private sealed class FakeParticipant(string component) : IWhizbangRunControl {
     public string Component { get; } = component;
     public List<LifecyclePhase> Seen { get; } = [];
@@ -41,7 +46,11 @@ public class WhizbangKillswitchTests {
     var permit = new WhizbangRunPermit();
     var controller = new WhizbangRunController(
       permit, lifecycle, [], [], options, null, NullLogger<WhizbangRunController>.Instance);
-    return (new WhizbangKillswitch(controller, lifecycle, coordinator), lifecycle, workers, transport, permit);
+    // #2126: the stop is the one exit path's, which halts through the same controller; outside a host it completes itself.
+    var exit = new WhizbangInstanceExit(
+      Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceCollection()), controller, new DiscardedExitCode(), null,
+      NullLogger<WhizbangInstanceExit>.Instance);
+    return (new WhizbangKillswitch(controller, lifecycle, coordinator, exit), lifecycle, workers, transport, permit);
   }
 
   [Test]

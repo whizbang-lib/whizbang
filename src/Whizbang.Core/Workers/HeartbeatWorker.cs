@@ -40,10 +40,17 @@ namespace Whizbang.Core.Workers;
 /// instance's connection mode and liveness window, and never writes the stage or the lifecycle phase; it writes no held
 /// stage and announces no join. The first beat after the gate opens is due at once and is the full heartbeat.
 /// </para>
+/// <para>
+/// A refused beat, startup or full, means the fleet evicted this instance (a peer reaped it and tombstoned it). The
+/// instance exits through the one exit path (#2126) with <see cref="ExitCause.ClusterEviction"/>, exit code 3, so its
+/// host restarts it under a new instance id; nothing keeps running sidelined, and nothing re-registers in place.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerStartupBeatTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileStarting_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileRunning_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
@@ -57,9 +64,10 @@ public partial class HeartbeatWorker(
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
   ISchemaReadyGate schemaReady,
+  IWhizbangInstanceExit instanceExit,
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null
-) : BackgroundService {
+) : BackgroundService, ILastAcceptedHeartbeat {
   /// <summary>
   /// Where the host starts the heartbeat (#2126): <see cref="Startup.StartupStage.Elect"/>, the first stage after
   /// Preflight, whose last step registers the instance. A starting instance beats through Elect, Migrate, Converge and
@@ -71,6 +79,8 @@ public partial class HeartbeatWorker(
 
   // #2126: until this gate opens a beat is the startup beat. A host with no schema to wait for passes an open gate.
   private readonly ISchemaReadyGate _schemaReady = ArgumentGuard.NotNull(schemaReady);
+  // #2126: an evicted instance exits through the one exit path, so its host restarts it under a new instance id.
+  private readonly IWhizbangInstanceExit _instanceExit = ArgumentGuard.NotNull(instanceExit);
   // The last accepted beat was a startup beat, so the first beat after the gate opens is due at once.
   private bool _lastBeatWasStartupBeat;
 
@@ -234,10 +244,14 @@ public partial class HeartbeatWorker(
       }
 
       if (!accepted) {
-        // This instance was reaped and tombstoned (migration 106): record_heartbeat refused it.
-        // Retrying can never succeed (the tombstone does not expire on this instance's clock),
-        // so continuing to call would just be a heartbeat that is guaranteed to be rejected forever.
-        LogEvicted(_logger, _instanceProvider.InstanceId);
+        // This instance was reaped and tombstoned (migration 106): the beat was refused. Retrying can never succeed (the
+        // tombstone does not expire on this instance's clock), and nothing may keep running sidelined: #2126, the
+        // instance exits with ClusterEviction (code 3) so its host restarts it, and the new process registers under a
+        // new instance id. The exit's one entry says when, by which peer and why.
+        _instanceExit.RequestExit(new InstanceExitRequest(ExitCause.ClusterEviction,
+          _isSchemaReady
+            ? "its heartbeat was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)"
+            : "its startup heartbeat was refused: the fleet evicted this instance while it was still starting (a peer reaped it and tombstoned it)"));
         break;
       }
     }
@@ -431,9 +445,7 @@ public partial class HeartbeatWorker(
     Message = "HeartbeatWorker failed to publish InstanceLeavingSignal on graceful stop; peers will detect via heartbeat expiry")]
   static partial void LogLeavingPublishFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 8, Level = LogLevel.Error,
-    Message = "Instance {InstanceId} has been evicted (reaped as stale, then tombstoned); heartbeat refused. Stopping the heartbeat loop; this instance must not consider itself part of the fleet.")]
-  static partial void LogEvicted(ILogger logger, Guid instanceId);
+  // EventId 8 was the eviction's own entry; since #2126 the exit's one entry (WhizbangInstanceExit) states the eviction.
 
   [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
     Message = "HeartbeatWorker forced a watchdog beat for instance {InstanceId}: the regular beat ran late enough to approach the {ThresholdSeconds}s stale threshold. Peers would have read this instance as dead without it; look for the stall that delayed the tick.")]

@@ -1950,6 +1950,20 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Records one exit of this instance in <c>wh_instance_exits</c> (#2126) and reads, in the same call, the instance's
+  /// eviction tombstone (when, by which peer, why, and the heartbeat and window it was judged by), so the exit's log entry
+  /// can state them. The default keeps no record: <see cref="InstanceExitRecordResult.NotKept"/>.
+  /// </summary>
+  /// <param name="exitRecord">The facts of the exit.</param>
+  /// <param name="cancellationToken">Cancellation token: the host's stop budget.</param>
+  /// <returns>Whether the row was written, and the tombstone when the instance has one.</returns>
+  /// <docs>operations/startup/instance-exits#the-exit-record</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync</tests>
+  Task<RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
+      RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) =>
+    Task.FromResult(RunControl.InstanceExitRecordResult.NotKept);
+
+  /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).

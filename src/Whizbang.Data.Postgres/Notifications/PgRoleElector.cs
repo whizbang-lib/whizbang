@@ -250,6 +250,10 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     }
   }
 
+  /// <summary>The roles this elector holds a tenure of right now, for the exit's account of what it held (#2126).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs:ReleaseAll_OnShutdown_ReleasesEveryOutstandingGrantAsync</tests>
+  public IReadOnlyCollection<string> HeldRoles => [];
+
   /// <summary>
   /// Releases every role this elector still holds, so a stand-down, a pause or a stop hands each one off at once: the
   /// role step of the run-control path (#2045). Idempotent; a release that cannot reach the database leaves the lease to
