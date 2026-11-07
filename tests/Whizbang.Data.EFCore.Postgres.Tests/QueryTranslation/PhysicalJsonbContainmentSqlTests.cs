@@ -261,7 +261,8 @@ public class PhysicalJsonbContainmentSqlTests {
     [JsonIgnore]
     public JsonbBare? Bare { get; set; }
 
-    private static int _contextsRegistered;
+    private static readonly Lock _contextsGate = new();
+    private static bool _contextsRegistered;
 
     /// <summary>
     /// Registers the model's serializer contexts once and its column mappings on every call.
@@ -274,9 +275,14 @@ public class PhysicalJsonbContainmentSqlTests {
     /// members after any of those classes had run.
     /// </remarks>
     internal static void Register() {
-      if (Interlocked.Exchange(ref _contextsRegistered, 1) == 0) {
-        JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
-        JsonContextRegistry.RegisterContext(new BareResolver());
+      // Under the lock, so a test running in parallel waits until both contexts are in the registry rather than seeing
+      // the guard set and reading the model before its context is there (it then read a member's CLR name as stored).
+      lock (_contextsGate) {
+        if (!_contextsRegistered) {
+          JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
+          JsonContextRegistry.RegisterContext(new BareResolver());
+          _contextsRegistered = true;
+        }
       }
 
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(GridFilter), "grid_filter");

@@ -122,6 +122,8 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
       JOIN wh_stream_digests d ON d.stream_id = $1 AND d.event_type = e.event_type
       WHERE d.digest_lo = e.lo AND d.digest_hi = e.hi AND d.event_count = e.n
       """, own)).IsEqualTo(2L).Because("each of the stream's buckets equals a recompute over its events, the moved one included");
+    // #2106: every lane of both buckets, the id lanes included, moved with the event.
+    await StoredDigestInvariant.AssertAgreeAsync(conn, own);
   }
 
   [Test]

@@ -433,6 +433,8 @@ public class RedeliveryRequestReceptorTests {
     public List<string> SelectLog { get; } = [];
     public TaskCompletionSource? BlockFirstSelect { get; set; }
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
+    /// <summary>Filter by the request's streams, as the real selection does (off for the tests that predate it).</summary>
+    public bool HonorStreams { get; set; }
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     private int _selectCalls;
 
@@ -446,6 +448,13 @@ public class RedeliveryRequestReceptorTests {
         await gate.Task;
       }
       IEnumerable<RedeliveryEvent> query = Selection;
+      // #2103: the event and stream filters the real selection applies.
+      if (request.EventIds is { } eventIds) {
+        query = query.Where(e => eventIds.Contains(e.EventId));
+      }
+      if (HonorStreams && request.StreamIds is { } streamIds) {
+        query = query.Where(e => streamIds.Contains(e.StreamId));
+      }
       if (request.AfterStreamId is { } afterStream) {
         var afterVersion = request.AfterVersion ?? 0L;
         query = query.Where(e => e.StreamId.CompareTo(afterStream) > 0
@@ -634,5 +643,102 @@ public class RedeliveryRequestReceptorTests {
     public string HostName => "test-host";
     public int ProcessId => 1;
     public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
+
+  // ── #2103: a repair that names its missing events ──────────────────────
+
+  [Test]
+  public async Task Receptor_NamedEvents_ShipsExactlyThoseEventsAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var (held, missing) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.Selection = [_evt(stream, held, 1), _evt(stream, missing, 2)];
+    await using var sp = _buildProvider(coordinator, transport, serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      StreamIds = [stream],
+      EventIds = [missing],
+      FromCommitSequence = 0,
+      ToCommitSequence = 99,
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([missing])
+      .Because("the stream missing one event receives exactly that event");
+    await Assert.That(coordinator.Requests.All(r => r.EventIds is { Count: 1 } ids && ids[0] == missing)).IsTrue()
+      .Because("every page of the selection names the missing event; no stream is asked for whole");
+  }
+
+  [Test]
+  public async Task Receptor_ANamedEventItDoesNotHold_AnswersThatStreamOverTheWindowAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var (named, unnamed) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    var (e1, e2, e3) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.Selection = [_evt(named, e1, 1), _evt(unnamed, e2, 1), _evt(unnamed, e3, 2)];
+    await using var sp = _buildProvider(coordinator, transport, serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      StreamIds = [named, unnamed],
+      EventIds = [e1, TrackedGuid.New().Value],
+      FromCommitSequence = 0,
+      ToCommitSequence = 99,
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).Order().ToList())
+      .IsEquivalentTo(new[] { e1, e2, e3 }.Order().ToList())
+      .Because("the named event ships alone; a stream whose named event this store does not hold is synced whole");
+    var fallback = coordinator.Requests.First(r => r.EventIds is null);
+    await Assert.That(fallback.StreamIds).IsEquivalentTo([unnamed]);
+    await Assert.That(fallback.ToCommitSequence).IsEqualTo(99L).Because("over the request's window");
+  }
+
+  [Test]
+  public async Task Receptor_EveryNamedEventFound_SyncsNoStreamWholeAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(stream, e1, 1)];
+    await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      StreamIds = [stream],
+      EventIds = [e1],
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse().Because("nothing is left to sync by range");
+  }
+
+  [Test]
+  public async Task Receptor_NamedEventsWithoutStreams_ShipsWhatItFinds_AndSyncsNothingWholeAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(stream, e1, 1)];
+    await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      EventIds = [e1, TrackedGuid.New().Value],
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([e1]);
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse()
+      .Because("with no streams named there is no stream to answer over the window");
   }
 }
