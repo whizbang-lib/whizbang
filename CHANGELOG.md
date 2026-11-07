@@ -1372,6 +1372,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A collective sink row this service has no handler for no longer stalls its perspective queue (#2096).** A service
+  that stores a collective event it has no `[CollectiveApplyFor]` handler for routes it to the `__collective__` sink,
+  and since #2081 that includes every collective declared in an assembly it loads. The drain could not read the row
+  (the service does not register the type), did not fail it (an unknown type is left for a newer instance, #1983) and
+  returned without completing it, so the row stayed leased, was offered on every claim and held the head of the queue
+  in front of all the perspective work behind it. The drain now completes a `__collective__` sink row whose event type
+  this service does not register, through the same completion path and `CollectivesSkipped` count as a sink row with no
+  collective to dispatch, and logs the count at Debug (EventId 80). Rows already stuck this way are completed on the
+  first drain after upgrading, with no manual cleanup. A perspective row of an unknown type is unchanged: it is still
+  left for an instance that can read it.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

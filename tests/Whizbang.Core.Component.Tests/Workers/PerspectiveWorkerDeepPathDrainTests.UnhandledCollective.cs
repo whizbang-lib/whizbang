@@ -38,9 +38,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     var (worker, harness, _) = _createWorker(coordinator, eventStore, _registry(runner));
     var cycles = 0;
+    var firstCycle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondCycle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnBatchCycleComplete += () => {
-      if (Interlocked.Increment(ref cycles) >= 2) {
+      var completed = Interlocked.Increment(ref cycles);
+      if (completed == 1) {
+        firstCycle.TrySetResult();
+      } else if (completed >= 2) {
         secondCycle.TrySetResult();
       }
     };
@@ -48,11 +52,12 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(sinkStream, cts.Token);
-    // Completions recorded in one cycle are sent at the start of the next, so drive a second one.
-    while (!secondCycle.Task.IsCompleted) {
-      await harness.EnqueueDrainStreamAsync(sinkStream, cts.Token);
-      await Task.WhenAny(secondCycle.Task, Task.Delay(50, cancellationToken));
-    }
+    await firstCycle.Task.WaitAsync(cancellationToken);
+    // Completions recorded in one cycle are sent at the start of the next. The worker is idle once the first
+    // cycle has completed, so this signal starts exactly one more.
+    await harness.EnqueueDrainStreamAsync(sinkStream, cts.Token);
+    await secondCycle.Task.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.WaitForAnyEventWorkIdAsync(cancellationToken);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
