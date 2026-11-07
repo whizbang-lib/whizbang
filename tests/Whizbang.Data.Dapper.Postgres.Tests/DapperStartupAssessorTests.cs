@@ -150,7 +150,7 @@ public class DapperStartupAssessorTests {
     await _startAsync();
     await _execAsync($"""
       WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{_newerThanThisBinary()}') RETURNING id)
-      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-a-newer-release', status = 2
         WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
       """);
 
@@ -213,5 +213,62 @@ public class DapperStartupAssessorTests {
     var online = await provider.GetRequiredService<IOnlineVersionReader>().ReadOnlineAsync(CancellationToken.None);
 
     await Assert.That(online).IsEquivalentTo([new VersionSighting(BuildInfo.Version, "2.0.0", running)]);
+  }
+
+  // ── #2022: the rollback gate, as the EF Core driver applies it ──
+
+  private async Task<int> _versionAsync(string library, string application) {
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    return await db.ExecuteScalarAsync<int>("""
+      INSERT INTO wh_schema_versions (library_version, application_version) VALUES (@library, @application)
+      ON CONFLICT (library_version, application_version) DO UPDATE SET notes = wh_schema_versions.notes
+      RETURNING id
+      """, new { library, application });
+  }
+
+  private async Task<StartupAssessment> _assessAtAsync(string applicationVersion) {
+    await using var provider = _composeAt(applicationVersion);
+    return await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task AnApplicationRollback_WithNothingMigratedSince_ServesAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(BuildInfo.Version, "2.0.0");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, status = 3");
+
+    var assessment = await _assessAtAsync("1.9.0");
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task AnApplicationRollback_AfterAnApplicationSchemaChange_StandsDown_NamingItAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(BuildInfo.Version, "2.0.0");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, content_hash = 'new-columns', status = 2 WHERE file_name = 'perspective:AssessProbe'");
+
+    var assessment = await _assessAtAsync("1.9.0");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      $"1 schema change(s) were applied by a newer version that this version did not make, and a migration cannot be "
+      + $"reversed yet (down migrations: whizbang-lib/whizbang#2122): perspective:AssessProbe (applied by library "
+      + $"{BuildInfo.Version}, application 2.0.0)");
+  }
+
+  [Test]
+  public async Task AWizbangRollback_AfterAWizbangMigration_StandsDown_AndOneThatOnlyReStamped_ServesAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(_newerThanThisBinary(), "unknown");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, status = 3");
+    await Assert.That((await _assessAtAsync("1.0.0")).Verdict).IsNotEqualTo(StartupVerdict.StandDown)
+      .Because("a newer library whose passes changed nothing left nothing this binary cannot serve");
+
+    await _execAsync($"UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-release', status = 2 WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]')");
+    var assessment = await _assessAtAsync("1.0.0");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"(applied by library {_newerThanThisBinary()}, application unknown)");
   }
 }

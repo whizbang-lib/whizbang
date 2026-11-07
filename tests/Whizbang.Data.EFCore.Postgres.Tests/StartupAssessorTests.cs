@@ -251,7 +251,8 @@ public class StartupAssessorTests : EFCoreTestBase {
     await _execAsync("""
       ALTER TABLE wh_schema_migrations DROP COLUMN owner CASCADE;
       WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
-      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v) WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations);
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-999'
+        WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations);
       """, cancellationToken);
 
     var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);

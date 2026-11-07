@@ -110,17 +110,27 @@ public class UpgradeOrderTests {
   }
 
   [Test]
-  public async Task CrossedVersions_TheLibraryDecides_SoExactlyOneOfThePairStandsDownAsync() {
-    // A newer library with an older application against an older library with a newer application. Read separately,
-    // each is older than the other in one version and both would stand down: the whole fleet down for a rollout. The
-    // library decides first, because an older library cannot serve a schema a newer one migrated, while a newer library
-    // runs an older application fine; the application version decides only between equal libraries.
-    var newerLibrary = new VersionSighting("2.0.0", "1.0.0", _me);
-    var newerApplication = new VersionSighting("1.0.0", "2.0.0", _peer);
+  public async Task CrossedVersions_TheApplicationDecides_SoExactlyOneOfThePairStandsDownAsync() {
+    // Owner decision (#2022): the newest application version has priority. A newer application on an older library
+    // against the reverse: read separately each would stand down and take the fleet with it; read in this order, the
+    // older application stands down. Whether the newer application may serve a schema its library did not create is
+    // the rollback gate's question, not this order's.
+    var newerApplication = new VersionSighting("1.0.0", "2.0.0", _me);
+    var newerLibrary = new VersionSighting("2.0.0", "1.0.0", _peer);
 
-    await Assert.That(UpgradeOrder.FindNewer(newerLibrary, [newerApplication])).IsNull();
-    var found = UpgradeOrder.FindNewer(newerApplication with { InstanceId = _otherPeer }, [newerLibrary]);
+    await Assert.That(UpgradeOrder.FindNewer(newerApplication, [newerLibrary])).IsNull();
+    var found = UpgradeOrder.FindNewer(newerLibrary with { InstanceId = _otherPeer }, [newerApplication]);
     await Assert.That(found).IsNotNull();
+    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Application);
+  }
+
+  [Test]
+  [Arguments(null, "9.0.0")]
+  [Arguments("1.0.0", "unknown")]
+  [Arguments("1.0.0", "deploy:3")]
+  public async Task WhenTheApplicationVersionsCannotBeOrdered_TheLibraryDecidesAsync(string? mine, string? theirs) {
+    var found = UpgradeOrder.FindNewer(_own("1.0.0", mine), [new VersionSighting("2.0.0", theirs, _peer)]);
+
     await Assert.That(found!.Kind).IsEqualTo(VersionKind.Library);
   }
 
@@ -143,32 +153,40 @@ public class UpgradeOrderTests {
   // ── which finding is reported ───────────────────────────────────────
 
   [Test]
-  public async Task OfSeveralFindings_TheLibraryOne_TheNewest_AndAnOnlineInstanceOverTheLedger_IsReportedAsync() {
+  public async Task OfSeveralFindings_TheApplicationOne_TheNewest_AndAnOnlineInstanceOverTheLedger_IsReportedAsync() {
     VersionSighting[] seen = [
-      new("1.0.0", "5.0.0", _peer),            // application only
-      new("1.2.0", "1.0.0", null),             // the ledger
-      new("1.2.0", "1.0.0", _otherPeer),       // the same library version, online
-      new("1.1.0", "1.0.0", _peer),            // an older library finding
+      new("1.2.0", "1.0.0", _peer),            // library only
+      new("1.0.0", "5.0.0", null),             // the ledger
+      new("1.0.0", "5.0.0", _otherPeer),       // the same application version, online
+      new("1.0.0", "4.0.0", _peer),            // an older application finding
     ];
 
     var found = UpgradeOrder.FindNewer(_own(), seen);
 
-    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Library);
-    await Assert.That(found.NewerVersion).IsEqualTo("1.2.0");
+    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Application);
+    await Assert.That(found.NewerVersion).IsEqualTo("5.0.0");
     await Assert.That(found.InstanceId).IsEqualTo(_otherPeer)
       .Because("a newer instance online names the instance an operator can go and look at");
   }
 
   [Test]
-  public async Task ALaterApplicationFinding_NeverDisplacesALibraryOne_AndTheLedgerNeverDisplacesAnEqualOnlineOneAsync() {
+  public async Task ALaterLibraryFinding_NeverDisplacesAnApplicationOne_AndTheLedgerNeverDisplacesAnEqualOnlineOneAsync() {
     var found = UpgradeOrder.FindNewer(_own(), [
-      new VersionSighting("1.2.0", "1.0.0", _peer),     // library, online
-      new VersionSighting("1.2.0", "1.0.0", null),      // the same library version, in the ledger
-      new VersionSighting("1.0.0", "9.0.0", _otherPeer), // application only
+      new VersionSighting("1.0.0", "2.0.0", _peer),     // application, online
+      new VersionSighting("1.0.0", "2.0.0", null),      // the same application version, in the ledger
+      new VersionSighting("9.0.0", "1.0.0", _otherPeer), // library only
     ]);
 
-    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Library);
+    await Assert.That(found!.Kind).IsEqualTo(VersionKind.Application);
     await Assert.That(found.InstanceId).IsEqualTo(_peer);
+  }
+
+  [Test]
+  public async Task OfTwoLibraryFindings_TheNewestIsReportedAsync() {
+    var found = UpgradeOrder.FindNewer(_own(), [new VersionSighting("1.5.0", "1.0.0", _peer), new VersionSighting("1.9.0", "1.0.0", _otherPeer),
+      new VersionSighting("1.2.0", "1.0.0", null)]);
+
+    await Assert.That(found!.NewerVersion).IsEqualTo("1.9.0");
   }
 
   [Test]
@@ -216,6 +234,108 @@ public class UpgradeOrderTests {
     var older = UpgradeOrder.OlderThan(me, online);
 
     await Assert.That(older.Select(o => o.InstanceId)).IsEquivalentTo([(Guid?)_peer]);
+  }
+
+  // ── the rollback gate ───────────────────────────────────────────────
+
+  private static AppliedSchemaChange _platform(string name, string library, string? application = "1.0.0") =>
+    new(name, SchemaChangeKind.Platform, library, application);
+
+  private static AppliedSchemaChange _application(string name, string library, string? application) =>
+    new(name, SchemaChangeKind.Application, library, application);
+
+  [Test]
+  public async Task NothingAppliedSinceThisVersion_AnApplicationRollbackHasNothingToFearAsync() {
+    // An application rolled back from 2.0.0 to 1.9.0: every change was applied by 1.9.0 or before, so it serves.
+    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.9.0"), [
+      _platform("150_Something.sql", "1.0.0", "1.2.0"),
+      _application("perspective:wh_per_orders", "1.0.0", "1.9.0"),
+      _application("perspective:wh_per_lines", "0.9.0", "1.0.0"),
+    ]);
+
+    await Assert.That(since).IsEmpty();
+  }
+
+  [Test]
+  public async Task AnApplicationSchemaChange_AppliedByANewerApplication_IsFoundAsync() {
+    var change = _application("perspective:wh_per_orders", "1.0.0", "2.0.0");
+
+    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.9.0"), [change]);
+
+    await Assert.That(since).IsEquivalentTo([change]);
+  }
+
+  [Test]
+  public async Task AnApplicationSchemaChange_AppliedByANewerLibrary_IsFound_WhateverTheApplicationVersionAsync() {
+    // The library generates the application's tables: a newer library's DDL is not this binary's to serve.
+    var change = _application("perspective:wh_per_orders", "2.0.0", "1.0.0");
+
+    await Assert.That(UpgradeOrder.AppliedSince(_own("1.0.0", "3.0.0"), [change])).IsEquivalentTo([change]);
+  }
+
+  [Test]
+  public async Task APlatformMigration_IsJudgedByTheLibraryVersionAloneAsync() {
+    var newer = _platform("351_X.sql", "2.0.0", "1.0.0");
+    var sameLibraryNewerApplication = _platform("150_Y.sql", "1.0.0", "9.0.0");
+
+    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [newer, sameLibraryNewerApplication]);
+
+    await Assert.That(since).IsEquivalentTo([newer])
+      .Because("a W! migration is the library's: a newer application on the same library applied nothing of its own");
+  }
+
+  [Test]
+  [Arguments(null, null)]
+  [Arguments("garbage", "unknown")]
+  public async Task AChangeWithNoReadableApplier_NeverStandsAnInstanceDownAsync(string? library, string? application) {
+    var since = UpgradeOrder.AppliedSince(_own(), [
+      new AppliedSchemaChange("200_Z.sql", SchemaChangeKind.Platform, library, application),
+      new AppliedSchemaChange("perspective:wh_per_z", SchemaChangeKind.Application, library, application),
+    ]);
+
+    await Assert.That(since).IsEmpty();
+  }
+
+  [Test]
+  public async Task EqualVersions_FindNothingAppliedSinceAsync() {
+    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [
+      _platform("351_X.sql", "1.0.0", "1.0.0"), _application("perspective:wh_per_x", "1.0.0", "1.0.0")]);
+
+    await Assert.That(since).IsEmpty();
+  }
+
+  [Test]
+  public async Task TheGatesError_NamesEachChange_WhoAppliedIt_AndThatItCannotBeReversedYetAsync() {
+    var own = _own("1.0.0", "1.9.0");
+    var text = UpgradeOrder.DescribeAppliedSince(own, [
+      _application("perspective:wh_per_orders", "1.0.0", "2.0.0"),
+      _platform("351_X.sql", "2.0.0", null),
+    ]);
+
+    await Assert.That(text).IsEqualTo(
+      "since this instance's version (library 1.0.0, application 1.9.0), 2 schema change(s) were applied by a newer "
+      + "version that this version did not make, and a migration cannot be reversed yet (down migrations: "
+      + "whizbang-lib/whizbang#2122): perspective:wh_per_orders (applied by library 1.0.0, application 2.0.0), "
+      + "351_X.sql (applied by library 2.0.0, application unknown)");
+  }
+
+  [Test]
+  public async Task TheGatesError_NamesTheFirstFive_AndCountsTheRestAsync() {
+    var changes = Enumerable.Range(1, 7).Select(i => _platform($"35{i}_X.sql", "2.0.0", null)).ToList();
+
+    var text = UpgradeOrder.DescribeAppliedSince(_own(), changes);
+
+    await Assert.That(text).Contains("7 schema change(s)");
+    await Assert.That(text).Contains("355_X.sql (applied by library 2.0.0, application unknown), and 2 more");
+    await Assert.That(text).DoesNotContain("356_X.sql");
+  }
+
+  [Test]
+  public async Task TheGate_RefusesNullArgumentsAsync() {
+    await Assert.That(() => UpgradeOrder.AppliedSince(null!, [])).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.AppliedSince(_own(), null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.DescribeAppliedSince(null!, [])).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.DescribeAppliedSince(_own(), null!)).Throws<ArgumentNullException>();
   }
 
   // ── the ordering primitives the other deciders share ────────────────

@@ -189,20 +189,18 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task TheLedgerRecordingANewerApplicationVersion_AtThisLibraryVersion_StandsDownAsync(CancellationToken ct) {
+  public async Task ALedgerOnlyReStampedByANewerApplication_StandsNothingDownAsync(CancellationToken ct) {
+    // Owner decision 3 (#2022): what stands an instance down is a change applied since its version (RollbackGateTests),
+    // not a newer version the ledger merely names. A pass that applied nothing only re-stamps the rows.
     var library = await _ledgerLibraryAsync(ct);
-    await Assert.That((await _assessor(new Pod(), library).AssessAsync(ct)).Verdict).IsNotEqualTo(StartupVerdict.StandDown)
-      .Because("the ledger records an unknown application version, which stands nothing down");
-
     await _execAsync("""
       WITH v AS (INSERT INTO wh_schema_versions (library_version, application_version) VALUES (@library, '5.0.0') RETURNING id)
-      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
-        WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), status = 3
       """, ct, ("library", library));
 
     var assessment = await _assessor(new Pod(), library).AssessAsync(ct);
-    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
-    await Assert.That(assessment.Reason).Contains("the ledger records application version 5.0.0, newer than this instance's 1.0.0");
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
   }
 
   [Test]
