@@ -34,6 +34,14 @@ discovery walks with two sets: the types already judged (keeps the walk finite) 
 return to one is a cycle). One set answering both questions is what hid the recursion. `CollectionMemberShapeProbeTests`
 measures the one-level mapping; if a future EF maps the whole depth, it fails and the routing is re-measured.
 
+Rows an earlier release wrote on the mapped path hold only the first level; nothing rebuilds them automatically (owner
+decision). `RecursiveDocumentRebuildNotice` runs first in the stored-form phase, before the start's migrations: when the
+migration ledger exists and lacks `351_RecursiveDocumentsStoredWhole` (a marker migration that changes nothing), each
+perspective in the generated `GetRecursivePerspectives()` whose table holds a row is logged once at Warning, event id
+2112, to be rebuilt from its events. A circular model (a recursion storing a collection and a single reference back up
+the document) is WHIZ201, a build error (`CircularReferenceDiscovery`); an object cycle it cannot see fails the write with
+the serializer's cycle detection.
+
 Both paths must read and write the same bytes. The pieces, and why each exists:
 
 | Piece | Path | What it does |

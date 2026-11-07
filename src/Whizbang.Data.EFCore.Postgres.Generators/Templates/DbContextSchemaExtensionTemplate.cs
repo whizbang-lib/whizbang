@@ -244,6 +244,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     //
     // One body for both call sites, so the two cannot drift apart.
     async Task rewriteStoredFormsAsync(Func<Npgsql.NpgsqlConnection> rewriteConnectionFactory) {
+      // Before anything this start applies, so the ledger is the one the previous release left: a database it migrated
+      // before #2112 may hold recursive documents cut after their first level, and each perspective concerned is named
+      // to be rebuilt. Nothing is rebuilt automatically, and a failure to check is said, never fatal.
+      try {
+        await global::Whizbang.Data.Postgres.Perspectives.RecursiveDocumentRebuildNotice.ReportAsync(
+          rewriteConnectionFactory, "__SCHEMA__", GetRecursivePerspectives(), logger, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        logger?.LogWarning(ex,
+          "Could not check whether perspectives with recursive models in schema {Schema} need a rebuild after the "
+          + "#2112 fix; a perspective whose rows an earlier release wrote may hold recursive members cut after their "
+          + "first level", "__SCHEMA__");
+      }
       try {
         // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
         // keeps writing the old unit into a table the ledger already says is converted, and nothing
@@ -1372,6 +1384,19 @@ END $$;
     return new (string Name, string Sql)[] {
       #region PHYSICAL_COLUMN_REWRITES
       // Physical-column rewrites will be embedded here by the source generator
+      #endregion
+    };
+  }
+
+  /// <summary>
+  /// The perspectives whose models are recursive, with their tables. Before #2112 the mapped path kept only the first
+  /// level of such a model, so a start on a database an earlier release migrated names each one to be rebuilt from its
+  /// events (RecursiveDocumentRebuildNotice).
+  /// </summary>
+  internal static (string Perspective, string Table)[] GetRecursivePerspectives() {
+    return new (string Perspective, string Table)[] {
+      #region RECURSIVE_PERSPECTIVES
+      // Recursive perspectives will be embedded here by the source generator
       #endregion
     };
   }

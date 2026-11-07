@@ -1407,7 +1407,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a
   row an earlier release wrote reads on the new path. Such a row holds only the first level of the recursion: the rest
   was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
-  events) writes the whole tree. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
+  events) writes the whole tree. **Perspectives whose models are recursive must be rebuilt after upgrading; the startup
+  log names them.** Nothing is rebuilt automatically. On the first start against a database an earlier release
+  migrated, the instance doing the schema work logs one Warning per such perspective whose table holds rows (event id
+  2112, `RecursivePerspectiveNeedsRebuild`), naming the perspective (the name a rebuild takes) and its table. It reads
+  the migration ledger: new migration `351_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
+  migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
   as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
   as errors is not affected: WHIZ200 reports a recursive model at Info, since it is stored correctly and there is
   nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).

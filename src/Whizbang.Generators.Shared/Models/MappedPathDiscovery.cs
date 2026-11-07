@@ -139,10 +139,10 @@ public static class MappedPathDiscovery {
   }
 
   /// <summary>Whether the type, or anything it holds, reaches a type it is already inside.</summary>
-  /// <param name="type">The type to judge, such as the element of an array.</param>
+  /// <param name="type">The type to judge, such as the element of an array; null is not recursive.</param>
   /// <returns><c>true</c> when the graph below the type is recursive, so it is stored opaquely in any collection shape.</returns>
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:IsRecursive_AnswersForTheTypeAndWhatItHoldsAsync</tests>
-  public static bool IsRecursive(INamedTypeSymbol type) => RecursiveMembers(type).Count != 0;
+  public static bool IsRecursive(INamedTypeSymbol? type) => type is not null && RecursiveMembers(type).Count != 0;
 
   /// <summary>
   /// The state of one depth-first walk: every type already judged, and the types on the path to the current one.

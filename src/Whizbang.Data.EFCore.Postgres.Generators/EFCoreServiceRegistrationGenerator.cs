@@ -600,7 +600,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
           : null,
         DeclaredConverters: declaredConverters,
-        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol));
+        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol),
+        IsRecursive: MappedPathDiscovery.IsRecursive(modelType as INamedTypeSymbol));
   }
 
   /// <summary>
@@ -708,7 +709,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
         ModelCopy: candidate.ModelCopy,
         DeclaredConverters: candidate.DeclaredConverters,
-        KeptObjects: candidate.KeptObjects);
+        KeptObjects: candidate.KeptObjects,
+        IsRecursive: candidate.IsRecursive);
   }
 
 
@@ -2608,6 +2610,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // The app's own stored-form migrations are generated: each is a declaration, not a discovery.
       template = TemplateUtilities.ReplaceRegion(template, "STORED_FORM_MIGRATIONS",
         _generateStoredFormMigrationsCode(matchingPerspectives, dbContext.Schema, customMigrations));
+      // The perspectives whose models are recursive, which a start on a database an earlier release migrated names to
+      // be rebuilt (#2112).
+      template = TemplateUtilities.ReplaceRegion(template, "RECURSIVE_PERSPECTIVES",
+        _generateRecursivePerspectivesCode(matchingPerspectives));
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -3540,6 +3546,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
 
   /// <summary>
+  /// The perspectives whose models are recursive, as <c>(perspective, table)</c> entries ordered by name: the CLR type
+  /// name a rebuild takes, and the table it writes. Before #2112 the mapped path kept only the first level of such a
+  /// model, so a start on a database an earlier release migrated names each one to be rebuilt.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/RecursivePerspectiveRebuildNoticeGenerationTests.cs:EveryPerspectiveOverARecursiveModel_IsListedWithItsTableAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/RecursivePerspectiveRebuildNoticeGenerationTests.cs:AContextWithNoRecursiveModel_ListsNothingAsync</tests>
+  private static string _generateRecursivePerspectivesCode(IReadOnlyList<PerspectiveModelInfo> perspectives) {
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives.Where(p => p.IsRecursive).OrderBy(p => p.PerspectiveClrTypeName, StringComparer.Ordinal)) {
+      sb.AppendLine($"      ({SymbolDisplay.FormatLiteral(perspective.PerspectiveClrTypeName, quote: true)}, "
+        + $"{SymbolDisplay.FormatLiteral(perspective.TableName, quote: true)}),");
+    }
+    return sb.ToString();
+  }
+
+  /// <summary>
   /// The app's stored-form migrations for one DbContext, as <c>StoredFormMigration</c> entries: per table (in table
   /// order) the generated ones in the order the model declares them to run, then the custom ones in their stated
   /// <c>Order</c>, class name breaking a tie.
@@ -3925,7 +3947,8 @@ internal sealed record PerspectiveModelInfo(
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
-    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
+    bool IsRecursive = false);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3972,7 +3995,8 @@ internal sealed record PerspectiveModelCandidate(
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
-    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
+    bool IsRecursive = false);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
