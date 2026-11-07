@@ -81,7 +81,9 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       title: "A recursive type stores the perspective model as one opaque document",
       messageFormat: "Property '{0}' of perspective model '{1}' holds '{2}', which is recursive (a type in it holds itself), so the model is stored as one opaque document and none of its fields can be indexed. Keep it opaque: the mapped path would store only the first level of a recursive type, in any collection shape, and drop the rest.",
       category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
+      // Info, not Warning (owner decision on #2112): the model is stored correctly and there is nothing to change; the
+      // report explains why it has no indexes.
+      defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "Entity Framework maps a recursive complex type (a tree node holding its children, or two types holding each other) one level deep and drops every level below it on write, with no error at model build, save or query. A perspective model holding one is therefore stored as one serialized document, which keeps every level. Rows an earlier release wrote on the mapped path hold only the first level; the rest was never written, and re-projecting the perspective from its events restores it. Turn the warning off for a project with WhizbangOpaqueArrayWarning=false.");
 
@@ -129,7 +131,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    foreach (var model in _modelsProjectedBy(perspective)) {
+    foreach (var model in ModelsProjectedBy(perspective)) {
       // Recursion first: an array that closes a cycle is reported once, as recursive, never with the List advice.
       foreach (var (property, path, _) in MappedPathDiscovery.RecursiveMembers(model)) {
         if (reported.TryAdd(property, 0)) {
@@ -173,7 +175,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   /// <summary>The models a type projects: the first type argument of each perspective interface it implements.</summary>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AGlobalPerspectivesModel_IsReportedAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:ATypeNoPerspectiveProjects_IsNotReported_WhateverItsNameAsync</tests>
-  private static IEnumerable<INamedTypeSymbol> _modelsProjectedBy(INamedTypeSymbol perspective) =>
+  internal static IEnumerable<INamedTypeSymbol> ModelsProjectedBy(INamedTypeSymbol perspective) =>
     perspective.AllInterfaces
       .Where(i => TypeNameUtilities.Display(i.OriginalDefinition) is PERSPECTIVE_BASE or GLOBAL_PERSPECTIVE)
       .Select(i => i.TypeArguments[0])
