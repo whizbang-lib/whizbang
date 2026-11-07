@@ -170,6 +170,8 @@ public class MappedPathDiscoveryRecursionTests {
     await Assert.That(MappedPathDiscovery.IsRecursive(_type(types, "TestApp.Holder"))).IsTrue()
       .Because("a type holding a recursive type is stored opaquely in any collection shape too");
     await Assert.That(MappedPathDiscovery.IsRecursive(_type(types, "TestApp.Tag"))).IsFalse();
+    await Assert.That(MappedPathDiscovery.IsRecursive(null)).IsFalse()
+      .Because("a model the generator could not resolve to a named type has nothing to walk");
   }
 
   /// <summary>
