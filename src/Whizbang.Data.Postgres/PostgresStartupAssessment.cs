@@ -26,8 +26,18 @@ namespace Whizbang.Data.Postgres;
 /// </para>
 /// <para>
 /// Ordering is the one version rule (<see cref="UpgradeOrder"/>, #2022): both the library and the application version,
-/// the library first. An unparseable own library version stands down, because every wrong answer at that point is worse
-/// than stopping. An unparseable recorded version cannot outrank anything.
+/// the application first. An unparseable own library version stands down, because every wrong answer at that point is
+/// worse than stopping. An unparseable recorded version cannot outrank anything.
+/// </para>
+/// <para>
+/// The ledger is read through the rollback gate (#2022, owner decision 3): an instance may serve only when nothing was
+/// applied after its own version, since a migration cannot be reversed yet (#2122). Who applied each change is
+/// <c>applied_version_id</c> (351), which a pass that only skips or re-stamps never moves, so an application rolled back
+/// with nothing migrated since serves normally. A ledger older than that record has only <c>version_id</c>, the version
+/// that last stamped each row, and it is taken as the applier: the conservative reading, and the one #1992 made. Step
+/// rows (a pass's progress) are not changes. Each row is a W! migration or an application schema change by its owner
+/// (EF Core: <c>perspective</c> and <c>association</c> are the application's) or, in a ledger with no owner column, by
+/// its name (<c>perspective:</c> and <c>app:</c>).
 /// </para>
 /// <para>
 /// Online (#2022) is live by the one liveness rule (<c>wh_live_instance_ids</c>), not evicted, and serving: the row
@@ -104,23 +114,28 @@ internal static class PostgresStartupAssessment {
     return probe.Online ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false) : [];
   }
 
-  /// <summary>The verdict table over library versions alone, as the ledger records them; for the table's own tests.</summary>
+  /// <summary>
+  /// The verdict table over library versions alone, each a W! migration recorded at that version; for the table's own
+  /// tests.
+  /// </summary>
   /// <param name="mine">This binary's library version; null when no provider says.</param>
-  /// <param name="recorded">Every library version the ledger records.</param>
+  /// <param name="recorded">Every library version the ledger records as having applied a migration.</param>
   /// <returns>Migrate, Serve or StandDown.</returns>
   internal static StartupAssessment ComputeVerdict(string? mine, IReadOnlyList<string> recorded) =>
-    ComputeVerdict(new VersionSighting(mine, null), [.. recorded.Select(v => new VersionSighting(v, null))], []);
+    ComputeVerdict(new VersionSighting(mine, null),
+      [.. recorded.Select((v, i) => new AppliedSchemaChange($"migration {i + 1} recorded at {v}", SchemaChangeKind.Platform, v, null))], []);
 
   /// <summary>
-  /// The verdict table as a pure function: this instance's versions against the ledger's and the online instances',
-  /// through the one version rule. Exposed for exhaustive unit coverage; the IO around it is two SELECTs.
+  /// The verdict table as a pure function: the rollback gate over the ledger's changes, then this instance's versions
+  /// against the online instances', through the one version rule. Exposed for exhaustive unit coverage; the IO around
+  /// it is two SELECTs.
   /// </summary>
   /// <param name="own">This instance's versions and id.</param>
-  /// <param name="ledger">Every version pair the ledger records.</param>
+  /// <param name="ledger">Every change the ledger records, with who applied it (null versions when unknown).</param>
   /// <param name="online">Every instance online.</param>
   /// <returns>Migrate, Serve or StandDown; never Current, which needs the schema read.</returns>
   internal static StartupAssessment ComputeVerdict(
-      VersionSighting own, IReadOnlyList<VersionSighting> ledger, IReadOnlyList<VersionSighting> online) {
+      VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online) {
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
@@ -139,20 +154,23 @@ internal static class PostgresStartupAssessment {
       return new StartupAssessment(StartupVerdict.Migrate, "fresh database: nothing recorded in the ledger");
     }
 
-    if (UpgradeOrder.FindNewer(own, ledger.Concat(online)) is { } newer) {
-      return new StartupAssessment(StartupVerdict.StandDown,
-        $"{newer.Describe()}; standing down: never apply anything, hold the data plane, report not-ready-while-alive");
+    const string STANDING_DOWN = "; standing down: never apply anything, hold the data plane, report not-ready-while-alive";
+    if (UpgradeOrder.AppliedSince(own, ledger) is { Count: > 0 } since) {
+      return new StartupAssessment(StartupVerdict.StandDown, UpgradeOrder.DescribeAppliedSince(own, since) + STANDING_DOWN);
+    }
+    if (UpgradeOrder.FindNewer(own, online) is { } newer) {
+      return new StartupAssessment(StartupVerdict.StandDown, newer.Describe() + STANDING_DOWN);
     }
 
     var newest = UpgradeOrder.NewestLibrary(ledger.Select(v => v.LibraryVersion));
     return new StartupAssessment(StartupVerdict.Serve,
       newest is not null
-        ? $"schema recorded at {newest}; this binary runs {mine}; nothing newer recorded or online"
+        ? $"schema recorded at {newest}; this binary runs {mine}; nothing applied since this version, and nothing newer online"
         : $"only unreadable versions recorded; this binary runs {mine}; unreadable history does not block");
   }
 
   /// <summary>What the database has: the ledger, its version table and owner column, and what reading who is online needs.</summary>
-  private readonly record struct Probe(bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online);
+  private readonly record struct Probe(bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy);
 
   private static async Task<Probe> _probeAsync(NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
     await using var probe = connection.CreateCommand();
@@ -162,7 +180,8 @@ internal static class PostgresStartupAssessment {
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'owner' AND NOT attisdropped),
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($2) AND attname = 'application_version' AND NOT attisdropped),
              to_regprocedure($3) IS NOT NULL
-               AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($4) AND attname = 'application_version' AND NOT attisdropped)
+               AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($4) AND attname = 'application_version' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_version_id' AND NOT attisdropped)
       """;
     probe.Parameters.AddWithValue(prefix + "wh_schema_migrations");
     probe.Parameters.AddWithValue(prefix + "wh_schema_versions");
@@ -170,27 +189,38 @@ internal static class PostgresStartupAssessment {
     probe.Parameters.AddWithValue(prefix + "wh_service_instances");
     await using var reader = await probe.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new Probe(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetBoolean(4));
+    return new Probe(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetBoolean(4),
+      reader.GetBoolean(5));
   }
 
-  private static async Task<IReadOnlyList<VersionSighting>> _readLedgerAsync(
+  private static async Task<IReadOnlyList<AppliedSchemaChange>> _readLedgerAsync(
       NpgsqlConnection connection, string prefix, Probe probe, CancellationToken cancellationToken) {
+    // #2022: who applied each change (351), or on an older ledger the version that last stamped it. Every row is read,
+    // so a ledger whose rows were all re-stamped is still a ledger; a row whose applier is unknown carries no versions.
+    var applier = probe.AppliedBy ? "m.applied_version_id" : "m.version_id";
+    var application = probe.LedgerApplication ? "v.application_version" : "NULL::text";
+    var (kind, notStep) = probe.Owner
+      ? ("m.owner IN ('perspective', 'association')", "m.owner <> 'step'")
+      : ("(m.file_name LIKE 'perspective:%' OR m.file_name LIKE 'app:%')", "m.file_name NOT LIKE 'step:%'");
     await using var command = connection.CreateCommand();
-#pragma warning disable S2077 // the prefix is quoted by PgIdentifier; nothing user-supplied is spliced
+#pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the fragments are this method's own literals
     command.CommandText = $"""
-      SELECT DISTINCT v.library_version, {(probe.LedgerApplication ? "v.application_version" : "NULL::text")}
+      SELECT m.file_name, {kind}, v.library_version, {application}
       FROM {prefix}wh_schema_migrations m
-      JOIN {prefix}wh_schema_versions v ON v.id = m.version_id
-      {(probe.Owner ? "WHERE m.owner = 'whizbang'" : string.Empty)}
+      LEFT JOIN {prefix}wh_schema_versions v ON v.id = {applier}
+      WHERE {notStep}
+      ORDER BY m.file_name
       """;
 #pragma warning restore S2077
-    var versions = new List<VersionSighting>();
+    var changes = new List<AppliedSchemaChange>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      // library_version is NOT NULL; the application version is SchemaLedgerVersion.UNKNOWN when nobody knew it.
-      versions.Add(new VersionSighting(reader.GetString(0), reader.GetValue(1) as string));
+      // The versions are NULL when nobody is known to have applied the row: DBNull reads as null.
+      changes.Add(new AppliedSchemaChange(reader.GetString(0),
+        reader.GetBoolean(1) ? SchemaChangeKind.Application : SchemaChangeKind.Platform,
+        reader.GetValue(2) as string, reader.GetValue(3) as string));
     }
-    return versions;
+    return changes;
   }
 
   private static async Task<IReadOnlyList<VersionSighting>> _readOnlineAsync(

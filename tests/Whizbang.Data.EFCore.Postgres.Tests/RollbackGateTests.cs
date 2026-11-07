@@ -154,10 +154,11 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task AWizbangRollback_AfterAWizbangMigration_StandsDown_NamingItAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
     var file = await _lastWhizbangMigrationAsync(ct);
     await _applyAsync(file, await _versionAsync("1000.0.0", "unknown", ct), ct);
 
-    var assessment = await _assessor(await _ledgerLibraryAsync(ct), null).AssessAsync(ct);
+    var assessment = await _assessor(library, null).AssessAsync(ct);
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).Contains($"1 {SINCE}: {file} (applied by library 1000.0.0, application unknown)");

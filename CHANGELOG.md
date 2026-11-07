@@ -481,15 +481,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instance it runs on), logged once (`StandbyWatcher` event 3). The maintenance role moves on the newer instance's
   normal vote. Assess now reads the live, serving instances beside the migration ledger, in both drivers, so an
   instance that starts while a newer one is online stands down at once.
-  - **Both versions:** an instance stands down when a strictly newer library (W!) version or application version is
-    recorded or online. One rule orders them (`UpgradeOrder`): the library first, by SemVer; the application version
-    only between equal library versions, like with like (SemVer, or a host deploy number); an unknown application
-    version and two of different schemes never order. Equal versions do nothing, and an older instance never stands a
-    newer one down. The coordination source guard fails any version comparison outside the rule.
+  - **Both versions, the application first:** an instance stands down when a strictly newer application or library
+    (W!) version is online. One rule orders them (`UpgradeOrder`): the application version first (the newest
+    application has priority), like with like (SemVer, or a host deploy number); the library, by SemVer, decides when the
+    application versions are equal, unknown or of different schemes. Equal versions do nothing, and an older instance
+    never stands a newer one down. The coordination source guard fails any version comparison outside the rule.
+  - **The rollback gate (behavior change):** an instance serves a database a newer version has touched only when
+    nothing was applied after its own version: no W! migration applied by a newer library, and no application schema
+    change (a perspective table, an association, an application object) applied by a newer application or library.
+    Anything applied since stands it down at Assess with an error naming each change and who applied it, and that a
+    migration cannot be reversed yet (down migrations: #2122). This replaces "the ledger records a newer version":
+    an application or W! rollback with nothing migrated since now serves normally, where before any newer version the
+    ledger named stood it down. Migration 351 records who applied each change (`wh_schema_migrations.applied_version_id`,
+    kept by a trigger: set on an insert or a content-hash change, kept through skips and re-stamps, never moved by a
+    failure); rows last skipped before 351 record no applier and never block, and a ledger older than 351 takes the
+    version that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
+    version yet and are not gated.
   - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
-    Assess) when the verdict no longer says stand down, for example when the newer instance died before migrating
-    anything; before, an instance stood down by the runtime re-assessment stayed down until replaced. A newer library
-    version the ledger records still keeps it down.
+    Assess) when the verdict no longer says stand down, for example when the newer instance died; before, an instance
+    stood down by the runtime re-assessment stayed down until replaced. A change applied since its version still keeps
+    it down.
   - `IOnlineVersionReader` (both Postgres drivers) reads the online instances' versions; `EFCorePostgresStartupAssessor`
     takes the application version and the instance identity.
 - **Assess is the first stage of startup, and its one verdict binds everything after it (part of #1636).**

@@ -252,8 +252,8 @@ public class DapperStartupAssessorTests {
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).Contains(
-      $"1 schema change(s) were applied by a newer version that this version did not make, and a migration cannot be "
-      + $"reversed yet (down migrations: whizbang-lib/whizbang#2122): perspective:AssessProbe (applied by library "
+      "1 schema change(s) were applied by a newer version that this version did not make, and a migration cannot be "
+      + "reversed yet (down migrations: whizbang-lib/whizbang#2122): perspective:AssessProbe (applied by library "
       + $"{BuildInfo.Version}, application 2.0.0)");
   }
 
@@ -265,7 +265,7 @@ public class DapperStartupAssessorTests {
     await Assert.That((await _assessAtAsync("1.0.0")).Verdict).IsNotEqualTo(StartupVerdict.StandDown)
       .Because("a newer library whose passes changed nothing left nothing this binary cannot serve");
 
-    await _execAsync($"UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-release', status = 2 WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]')");
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-release', status = 2 WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]')");
     var assessment = await _assessAtAsync("1.0.0");
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);

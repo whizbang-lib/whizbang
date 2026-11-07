@@ -44,6 +44,25 @@ public sealed record NewerVersionFound(VersionKind Kind, string NewerVersion, st
   }
 }
 
+/// <summary>Who owns a schema change the migration ledger records (#2022).</summary>
+/// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+public enum SchemaChangeKind {
+  /// <summary>A W! SQL migration: the library's, judged by the library version alone.</summary>
+  Platform = 0,
+
+  /// <summary>An application schema change (a perspective table, an association, an application object): the library
+  /// generates it from the application's model, so it is judged by both versions.</summary>
+  Application = 1,
+}
+
+/// <summary>A schema change the migration ledger records, and the versions that applied it (#2022).</summary>
+/// <param name="Name">The ledger's name for it (a migration file, a perspective table, an object).</param>
+/// <param name="Kind">Whose change it is.</param>
+/// <param name="LibraryVersion">The library version that applied it; null when unknown.</param>
+/// <param name="ApplicationVersion">The application version that applied it, as recorded; null or <c>unknown</c> when unknown.</param>
+/// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, string? LibraryVersion, string? ApplicationVersion);
+
 /// <summary>
 /// The one rule that orders versions (#2022). It decides whether a newer version is recorded (in the migration ledger) or
 /// online (on a live, serving instance), and it is the only place a version is compared: startup's Assess and the
@@ -59,10 +78,18 @@ public sealed record NewerVersionFound(VersionKind Kind, string NewerVersion, st
 /// </para>
 /// <para>
 /// Only a strictly newer sighting is found, so ordering is one-way: an equal version does nothing and an older instance
-/// never makes a newer one stand down. The library decides first and the application version decides between equal (or
-/// unreadable) library versions: an older library cannot serve a schema a newer one migrated, while a newer library runs
-/// an older application fine. Read separately, crossed versions (a newer library with an older application against the
-/// reverse) would stand both down and take the fleet down with them; read in this order, exactly one stands down.
+/// never makes a newer one stand down. The application version decides first (owner decision, #2022: the newest
+/// application has priority), and the library decides when the application versions are equal, unknown or of different
+/// schemes. Read separately, crossed versions (a newer application on an older library against the reverse) would
+/// stand both down and take the fleet with them; read in this order, the older application stands down. Whether the
+/// newer application may serve a schema its library did not create is the rollback gate's question
+/// (<see cref="AppliedSince"/>), not this order's.
+/// </para>
+/// <para>
+/// The rollback gate (#2022) asks of each schema change the ledger records whether it was applied after this instance's
+/// version: a W! migration by a newer library, or an application schema change (a perspective table, an association,
+/// an application object, which the library generates from the application's model) by a newer application or a newer
+/// library. A migration cannot be reversed yet (#2122), so an instance with anything applied since stands down.
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#cluster-wide-stand-down</docs>
@@ -98,7 +125,7 @@ public static class UpgradeOrder {
 
   /// <summary>
   /// Finds a version newer than this instance's among what was seen: the reason to stand down, or null when there is
-  /// none. Of several, the one reported is a library finding over an application one, then the newest, then one online
+  /// none. Of several, the one reported is an application finding over a library one, then the newest, then one online
   /// over the ledger, then the lowest instance id, so the reason does not depend on the order things were read in.
   /// </summary>
   /// <param name="own">This instance's versions and id; a sighting with the same id is its own row and is skipped.</param>
@@ -128,24 +155,61 @@ public static class UpgradeOrder {
     return [.. seen.Where(peer => FindNewer(peer, [own]) is not null)];
   }
 
+  /// <summary>
+  /// The rollback gate (#2022): every schema change applied after this instance's version. A W! migration counts when
+  /// a newer library applied it; an application schema change counts when a newer application or a newer library did.
+  /// A change whose applier is unknown never counts.
+  /// </summary>
+  /// <param name="own">This instance's versions.</param>
+  /// <param name="changes">The changes the ledger records, with who applied each.</param>
+  /// <returns>The changes applied since, in the order given.</returns>
+  public static IReadOnlyList<AppliedSchemaChange> AppliedSince(VersionSighting own, IEnumerable<AppliedSchemaChange> changes) {
+    ArgumentNullException.ThrowIfNull(own);
+    ArgumentNullException.ThrowIfNull(changes);
+    return [.. changes.Where(change => CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
+      || (change.Kind == SchemaChangeKind.Application
+          && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0))];
+  }
+
+  /// <summary>
+  /// The gate's error (#2022): this instance's versions, how many changes were applied since, the first five by name with
+  /// who applied each, and that a migration cannot be reversed yet (#2122).
+  /// </summary>
+  /// <param name="own">This instance's versions.</param>
+  /// <param name="since">The changes applied since (<see cref="AppliedSince"/>).</param>
+  /// <returns>The error text.</returns>
+  public static string DescribeAppliedSince(VersionSighting own, IReadOnlyList<AppliedSchemaChange> since) {
+    ArgumentNullException.ThrowIfNull(own);
+    ArgumentNullException.ThrowIfNull(since);
+    const int NAMED = 5;
+    var named = string.Join(", ", since.Take(NAMED).Select(c =>
+      $"{c.Name} (applied by library {_text(c.LibraryVersion)}, application {_text(c.ApplicationVersion)})"));
+    var more = since.Count > NAMED ? $", and {since.Count - NAMED} more" : string.Empty;
+    return $"since this instance's version (library {_text(own.LibraryVersion)}, application {_text(own.ApplicationVersion)}), "
+      + $"{since.Count} schema change(s) were applied by a newer version that this version did not make, and a migration "
+      + $"cannot be reversed yet (down migrations: whizbang-lib/whizbang#2122): {named}{more}";
+  }
+
+  private static string _text(string? version) => string.IsNullOrWhiteSpace(version) ? "unknown" : version;
+
   /// <summary>The finding when <paramref name="sighting"/> is strictly newer than <paramref name="own"/>, else null.</summary>
   private static NewerVersionFound? _newerThan(VersionSighting own, VersionSighting sighting) {
-    var library = CompareLibrary(sighting.LibraryVersion, own.LibraryVersion);
-    if (library > 0) {
-      return new(VersionKind.Library, sighting.LibraryVersion!, own.LibraryVersion!, sighting.InstanceId);
+    var application = CompareApplication(sighting.ApplicationVersion, own.ApplicationVersion);
+    if (application > 0) {
+      return new(VersionKind.Application, sighting.ApplicationVersion!, own.ApplicationVersion!, sighting.InstanceId);
     }
-    if (library < 0) {
-      return null;   // the library decides first: an older library is not newer, whatever its application version
+    if (application < 0) {
+      return null;   // the application decides first: an older application is not newer, whatever its library version
     }
-    return CompareApplication(sighting.ApplicationVersion, own.ApplicationVersion) > 0
-      ? new(VersionKind.Application, sighting.ApplicationVersion!, own.ApplicationVersion!, sighting.InstanceId)
+    return CompareLibrary(sighting.LibraryVersion, own.LibraryVersion) > 0
+      ? new(VersionKind.Library, sighting.LibraryVersion!, own.LibraryVersion!, sighting.InstanceId)
       : null;
   }
 
   /// <summary>Whether <paramref name="candidate"/> is the finding to report over <paramref name="best"/>.</summary>
   private static bool _outranks(NewerVersionFound candidate, NewerVersionFound best) {
     if (candidate.Kind != best.Kind) {
-      return candidate.Kind == VersionKind.Library;
+      return candidate.Kind == VersionKind.Application;
     }
     // Two findings of one kind are both newer than this instance's version, so they share its scheme and always order.
     var newer = (candidate.Kind == VersionKind.Library
