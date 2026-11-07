@@ -118,6 +118,12 @@ public class InboxDispatchWorkerCompositeCommitTests {
       return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
     }
 
+    /// <summary>The domain claims this store holds (#2116); empty unless a test sets them.</summary>
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; set; } = [];
+    public Exception? ClaimsFailWith { get; set; }
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      ClaimsFailWith is { } failure ? Task.FromException<IReadOnlyList<IntegrityDomainClaim>>(failure) : Task.FromResult(Claims);
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -413,6 +419,69 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
     await Assert.That(reconciledOrigin).IsEqualTo(origin);
     await Assert.That(reconciledIds).IsEquivalentTo([first, second]);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// #2116: a redelivery bundle names the service that answered it as every child's origin. A service that answered
+  /// with events it had only received (before #2032 limited answers to what the answering service wrote, or from a
+  /// bundle queued since) shipped another service's events as its own, and every consumer stored them under the wrong
+  /// origin: the owner's lane counted short, the answerer's long, and repair could never heal the bucket because the
+  /// owner's own redelivery is skipped as a duplicate. A child of a type this consumer knows another service owns is
+  /// stored under that owner, with no origin sequence (only the owner knows it; its next redelivery fills it), and it is
+  /// not reconciled under the answering service.
+  /// </summary>
+  [Test]
+  public async Task Redelivery_AChildOfATypeAnotherServiceOwns_IsStoredUnderTheOwner_NotTheAnsweringServiceAsync() {
+    var answering = (Guid)TrackedGuid.New();
+    var owner = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair);
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = owner, OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var work = _compositeWork();
+    await h.Inbox.WriteAsync(work, cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await h.Inbox.Released(work.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.MessageId).IsEqualTo(eventId);
+    await Assert.That(child.SourceServiceId).IsEqualTo(owner)
+      .Because("the claims name another service as the owner of the child's type, so the answering service did not write it");
+    await Assert.That(child.SourceCommitSequence).IsEqualTo(0L)
+      .Because("the sequence the bundle carries is the answering service's, a position in the wrong lane; zero stores no origin sequence");
+    await Assert.That(child.Envelope.SourceServiceId).IsEqualTo(owner)
+      .Because("the stored envelope names the same origin as the row");
+    await Assert.That(h.Coordinator.ReconcileCalls).IsEqualTo(0)
+      .Because("a held copy of the owner's event must not adopt the answering service as its origin");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WhenTheOwnershipMapCannotBeRead_KeepsTheBundlesOrigin_AndIsReconciledAsync() {
+    // Best-effort: a store that cannot answer the claims read must not lose the bundle. Every child keeps the origin
+    // the bundle names, as before, and a wrong one is left for the misattributed-origin correction.
+    var answering = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair);
+    h.Coordinator.ClaimsFailWith = new InvalidOperationException("claims unavailable");
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    var (reconciledOrigin, reconciledIds) = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(answering);
+    await Assert.That(commit.NewInboxMessages!.Single().SourceCommitSequence).IsEqualTo(1L);
+    await Assert.That(reconciledOrigin).IsEqualTo(answering);
+    await Assert.That(reconciledIds).IsEquivalentTo([eventId]);
 
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);
