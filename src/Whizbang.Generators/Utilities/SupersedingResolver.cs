@@ -38,9 +38,6 @@ internal static class SupersedingResolver {
     return (false, null);
   }
 
-  /// <summary><c>[Superseding]</c> on the type or a base type (the attribute is inherited).</summary>
-  public static bool IsDeclared(INamedTypeSymbol type) => Declaration(type).IsDeclared;
-
   /// <summary>
   /// The properties marked <c>[SupersedingKey]</c>, on the type and its base types, nearest first, one per name: a
   /// property carrying the attribute, or the property a primary-constructor parameter carrying it declares.
