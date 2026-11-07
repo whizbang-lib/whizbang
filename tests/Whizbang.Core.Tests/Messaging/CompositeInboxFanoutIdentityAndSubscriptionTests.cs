@@ -162,6 +162,58 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
       .Because("a redelivery restores what the event store lost, so the store checks deduplication against the event store for its children");
   }
 
+  // ---- a bundle origin that does not own the type (#2116) -----------------------------------------
+
+  [Test]
+  public async Task TryExpand_RedeliveryBundle_AChildTheOwnerLookupNames_IsStoredUnderTheOwnerWithNoSequenceAsync() {
+    var streamId = Guid.CreateVersion7();
+    var answering = Guid.CreateVersion7();
+    var owner = Guid.CreateVersion7();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      OriginServiceId = answering,
+      InnerPayloads = [JsonSerializer.Deserialize<JsonElement>("{\"v\":1}"), JsonSerializer.Deserialize<JsonElement>("{\"v\":2}")],
+      InnerTypeNames = ["Contracts.Job.RowAddedEvent, Contracts", "Contracts.Relay.Forwarded, Contracts"],
+      InnerEventIds = [Guid.CreateVersion7(), Guid.CreateVersion7()],
+      InnerCommitSequences = [17, 18],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _source(streamId), _scope(),
+      ownerOf: t => t.StartsWith("Contracts.Job.", StringComparison.Ordinal) ? owner : null);
+
+    await Assert.That(result.ReattributedChildren).IsEqualTo(1);
+    var moved = result.Children[0];
+    await Assert.That(moved.SourceServiceId).IsEqualTo(owner);
+    await Assert.That(moved.SourceCommitSequence).IsEqualTo(0L)
+      .Because("the carried sequence is the answering service's position, never the owner's");
+    await Assert.That(moved.Envelope.SourceServiceId).IsEqualTo(owner);
+    await Assert.That(moved.Envelope.SourceCommitSequence).IsEqualTo(0L);
+    var kept = result.Children[1];
+    await Assert.That(kept.SourceServiceId).IsEqualTo(answering)
+      .Because("a type the lookup does not name keeps the origin the bundle carries");
+    await Assert.That(kept.SourceCommitSequence).IsEqualTo(18L);
+  }
+
+  [Test]
+  public async Task TryExpand_RedeliveryBundle_WithoutAnOwnerLookup_KeepsTheBundlesOriginAsync() {
+    var streamId = Guid.CreateVersion7();
+    var answering = Guid.CreateVersion7();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      OriginServiceId = answering,
+      InnerPayloads = [JsonSerializer.Deserialize<JsonElement>("{\"v\":1}")],
+      InnerTypeNames = ["Contracts.Job.RowAddedEvent, Contracts"],
+      InnerEventIds = [Guid.CreateVersion7()],
+      InnerCommitSequences = [17],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _source(streamId), _scope());
+
+    await Assert.That(result.ReattributedChildren).IsEqualTo(0);
+    await Assert.That(result.Children.Single().SourceServiceId).IsEqualTo(answering);
+    await Assert.That(result.Children.Single().SourceCommitSequence).IsEqualTo(17L);
+  }
+
   [Test]
   public async Task TryExpand_RawBundleThatIsNotARedelivery_ChildrenTrustDeduplicationAsync() {
     var bundle = new RawBundle(("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"));
