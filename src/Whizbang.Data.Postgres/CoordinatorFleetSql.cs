@@ -60,6 +60,18 @@ internal static class CoordinatorFleetSql {
   }
 
   /// <summary>
+  /// Drops the given inbox rows still unprocessed and past <paramref name="maxAttempts"/> (<c>wh_drop_exhausted_inbox_rows</c>,
+  /// #2117) and returns how many. The caller returns before opening a connection for an empty set.
+  /// </summary>
+  internal static async Task<int> DropExhaustedInboxRowsAsync(
+      DbCommand cmd, string prefix, IReadOnlyList<Guid> messageIds, int maxAttempts, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT {prefix}wh_drop_exhausted_inbox_rows(@p_ids, @p_max)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = messageIds.ToArray() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_max", NpgsqlDbType.Integer) { Value = maxAttempts });
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
   /// Returns the instance's unprocessed inbox rows among <paramref name="messageIds"/> to unassigned
   /// (<c>release_unprocessed_inbox</c>). The caller returns before opening a connection for an empty set.
   /// </summary>

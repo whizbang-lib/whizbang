@@ -4595,6 +4595,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default)
     => await _findStuckRowsAsync(CoordinatorFleetSql.STUCK_INBOX, maxAttempts, limit, cancellationToken);
 
+  /// <inheritdoc />
+  /// <remarks>Calls <c>wh_drop_exhausted_inbox_rows</c> (migration 350, #2117). An empty set costs no round trip.</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExhaustedInboxDropSqlTests.cs</tests>
+  public async Task<int> DropExhaustedInboxRowsAsync(
+    IReadOnlyList<Guid> messageIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageIds);
+    if (messageIds.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorFleetSql.DropExhaustedInboxRowsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), messageIds, maxAttempts, cancellationToken).ConfigureAwait(false);
+  }
+
   // v0.657 slice 5c: shared shape for both sentinel methods — they only differ
   // in the SQL function name. Both use the partial indexes from migration 054
   // so the cost is O(log N) on a near-empty partial in steady state.

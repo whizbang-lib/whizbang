@@ -573,8 +573,10 @@ Whizbang:Workers:LeaseRenewal:Flusher:MaxBatchSize
 Whizbang:Workers:LeaseRenewal:Flusher:MaxFlushAttempts
 Whizbang:Workers:LeaseRenewal:LeaseSeconds
 Whizbang:Workers:Maintenance:AllowTableRewrite
+Whizbang:Workers:Maintenance:ConcludeExhaustedInboxRows
 Whizbang:Workers:Maintenance:DestructionRetryBackoffSeconds
 Whizbang:Workers:Maintenance:Enabled
+Whizbang:Workers:Maintenance:ExhaustedInboxConcludeLimit
 Whizbang:Workers:Maintenance:IntervalMinutes
 Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
