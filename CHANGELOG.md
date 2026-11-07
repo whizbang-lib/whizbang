@@ -847,6 +847,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+
+- **A stable release's version rolls up its prereleases (#2136).** For each prerelease label published since the
+  last stable (alpha, beta, rc or any label), its latest number is added to the minor: `0.2627.0-alpha.674` ships as
+  `0.3301.0`, and with `beta.5` and `rc.3` as `0.3309.0`. Start Release names the branch from GitVersion's base and
+  the cut commit's alpha number and records both in the release PR; the stable publish adds the betas and rcs
+  published from the branch, prints the sum (`alpha 674 + beta 5 + rc 3 = 682 -> 0.3309.0`) and, when the number
+  moved, repacks the tested build at it. The target component is `rollupTarget` in `.github/release-version.json`
+  (minor now, patch possible after 1.0); `major`, `minor`, `patch` and `manual` cuts and hotfixes are overrides.
+  The math is `.github/scripts/Get-ReleaseVersion.ps1`.
 - **Stream digest math has one home, and stream digests carry id lanes (#2106).** Fifteen SQL functions wrote
   `wh_stream_digests` with their own copy of the fold, so a change made in one and missed in another would silently
   corrupt the digests the integrity audit trusts. Migration 336 adds `_wh_digest_lane` (the only place an event id
