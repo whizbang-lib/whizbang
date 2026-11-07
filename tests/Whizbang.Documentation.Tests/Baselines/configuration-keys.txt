@@ -16,6 +16,7 @@ Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk
 Whizbang:Archive:AzureBlob:ServiceUri
+Whizbang:Archive:AzureBlob:VerifyLocation
 Whizbang:Archive:ReadThrough
 Whizbang:AspNet:Availability:Enabled
 Whizbang:AspNet:Availability:ExemptPaths:*

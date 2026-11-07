@@ -1416,7 +1416,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured location. The tombstone locator names only the store and the stream (`azure-blob://{stream}?...`).
   Repointing an environment (a copied or restored database, disaster recovery) is an explicit update of the one
   location row, or `AzureBlobArchiveStore.RepointLocationAsync`, which merges into an existing location. New setting
-  `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`). The offload store records no locations: its claim
+  `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`), and `Whizbang:Archive:AzureBlob:VerifyLocation` (default
+  `true`): turned off, the store uses the configured location without comparing records, giving up that safety net, and
+  still writes location rows so the check can be turned back on. The offload store records no locations: its claim
   names a provider and a key, and the provider always uses its configured container.
 - **Inbox rows the dispatcher never sees no longer retry for ever, and a consumer receives its owners' checkpoints
   (#2117, #2118).** A received event that sorts after an earlier pending event of its stream, which the instance does

@@ -43,7 +43,8 @@ namespace Whizbang.Archive.AzureBlob;
 /// <see cref="ConfiguredLocation"/> first and throw <see cref="ArchiveLocationMismatchException"/> on any difference,
 /// before a request reaches storage, and a write of a stream whose objects are recorded elsewhere is refused the same
 /// way, so a stream never spans two locations; the deletion queue is drained only for the configured location. A record
-/// never redirects an operation, and nothing is deleted outside the configured location.
+/// never redirects an operation, and nothing is deleted outside the configured location. A service can turn the check off
+/// (<see cref="AzureBlobArchiveOptions.VerifyLocation"/>); the configured location is then used without comparison.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
@@ -68,6 +69,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly PostgresTableArchiveStore _table;
   private readonly string _prefix;
   private readonly ILogger _logger;
+  private readonly bool _verifyLocation;
   private int _containerReady;
 
   // Reads, restores and deletes look the configured location up and never create it; a write creates it.
@@ -112,6 +114,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _table = new PostgresTableArchiveStore(database.Open, database.Schema);
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
+    _verifyLocation = options.VerifyLocation;
     ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
   }
 
@@ -406,10 +409,11 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   // Every row in the configured location, or the refusal naming the first that is not, before any request to storage.
+  // With VerifyLocation off, nothing is compared: the configured location is used as it is.
   private async Task _checkLocationAsync(
       NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid streamId, string operation, List<ManifestRow> objects,
       CancellationToken cancellationToken) {
-    if (objects.Count == 0) {
+    if (!_verifyLocation || objects.Count == 0) {
       return;
     }
     var configured = await _locationIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
@@ -496,30 +500,33 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
-    var due = new List<(string RelativePath, Guid StreamId)>();
-    long location;
+    var due = new List<(string RelativePath, Guid StreamId, long Location)>();
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
-      // A database that never knew the configured location (a copy, or one not yet repointed) has nothing to delete here:
-      // every queued row names another location, and stays queued, untouched.
-      if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is not { } configured) {
-        return 0;
+      // With the check on, only rows of the configured location are deleted: a database that never knew it (a copy, or
+      // one not yet repointed) has nothing to delete here, and every other row stays queued, untouched. With it off, every
+      // queued object is deleted from the configured container.
+      long? only = null;
+      if (_verifyLocation) {
+        if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is not { } configured) {
+          return 0;
+        }
+        only = configured;
       }
-      location = configured;
       await using var command = new NpgsqlCommand(
-        $"SELECT relative_path, stream_id FROM {_prefix}wh_archive_object_deletions " +
-        "WHERE location_id = $3 AND next_attempt_at <= NOW() AND ($1::uuid IS NULL OR stream_id = $1) " +
-        "ORDER BY next_attempt_at, relative_path LIMIT $2",
+        $"SELECT relative_path, stream_id, location_id FROM {_prefix}wh_archive_object_deletions " +
+        "WHERE location_id = COALESCE($3, location_id) AND relative_path IS NOT NULL AND next_attempt_at <= NOW() " +
+        "AND ($1::uuid IS NULL OR stream_id = $1) ORDER BY next_attempt_at, relative_path LIMIT $2",
         connection);
       command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)streamId ?? DBNull.Value });
       command.Parameters.AddWithValue(maxObjects);
-      command.Parameters.AddWithValue(location);
+      command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)only ?? DBNull.Value });
       await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        due.Add((reader.GetString(0), reader.GetGuid(1)));
+        due.Add((reader.GetString(0), reader.GetGuid(1), reader.GetInt64(2)));
       }
     }
     var deleted = 0;
-    foreach (var (relativePath, stream) in due) {
+    foreach (var (relativePath, stream, location) in due) {
       if (await _deleteQueuedAsync(location, relativePath, stream, cancellationToken).ConfigureAwait(false)) {
         deleted++;
       }

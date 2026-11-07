@@ -611,7 +611,7 @@ public class AzureBlobArchiveStoreTests {
   public async Task VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync() {
     var (restored, _) = await _seedAsync(3);
     var (deleted, _) = await _seedAsync(2);
-    var (written, _) = await _seedAsync(2);
+    var (written, _) = await _seedAsync(3);
     var hot = await _hotAsync(restored);
     var hotAsRead = await _hotAsReadAsync(restored);
     var source = _store(maxEventsPerChunk: 10);
