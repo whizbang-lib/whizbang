@@ -46,12 +46,24 @@ public sealed partial class IntegrityLedgerRecheckWorker(
   private readonly ILogger<IntegrityLedgerRecheckWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
+  /// <summary>
+  /// How the loop waits between ticks. Internal for deterministic tests: a test replaces it to release each tick on a
+  /// signal it controls instead of racing a clock against the loop reaching its wait.
+  /// </summary>
+  internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; set; }
+
   /// <inheritdoc />
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+  protected override Task ExecuteAsync(CancellationToken stoppingToken) => RunLoopAsync(stoppingToken);
+
+  /// <summary>
+  /// The tick loop. Internal so a test can run it directly: called directly, it runs synchronously up to its first
+  /// wait, so a test knows the loop is waiting without racing the host's start.
+  /// </summary>
+  internal async Task RunLoopAsync(CancellationToken stoppingToken) {
     var interval = TimeSpan.FromSeconds(Math.Max(1, _options.LedgerRecheckIntervalSeconds));
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        await Task.Delay(interval, _time, stoppingToken).ConfigureAwait(false);
+        await (DelayAsync ?? ((wait, token) => Task.Delay(wait, _time, token)))(interval, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
       }

@@ -154,16 +154,13 @@ public class LedgerRecheckWorkerTests {
   [Test]
   public async Task ExecuteAsync_ATickThatFails_IsLogged_AndTheNextTickRunsAsync() {
     var origin = TrackedGuid.New().Value;
-    var clock = new FakeTimeProvider(_fixedNow);
-    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 1 }, origin, clock: clock);
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 1 }, origin,
+      clock: new FakeTimeProvider(_fixedNow));
     coordinator.ThrowOnClaim.Enqueue(new InvalidOperationException("the ledger is unreachable this tick"));
+    // Every wait returns at once, so the loop runs tick after tick on its own: no clock to race against the loop.
+    worker.DelayAsync = static (_, token) => token.IsCancellationRequested ? Task.FromCanceled(token) : Task.CompletedTask;
 
     await worker.StartAsync(CancellationToken.None);
-    // Each advance releases one tick's wait; the loop is finished with a tick only once the claim it made is recorded.
-    for (var advances = 0; advances < 10_000 && !coordinator.SecondClaim.Task.IsCompleted; advances++) {
-      clock.Advance(TimeSpan.FromSeconds(1));
-      await Task.Yield();
-    }
 
     await Assert.That(async () => await coordinator.SecondClaim.Task.WaitAsync(TimeSpan.FromSeconds(30))).ThrowsNothing()
       .Because("a failed tick is logged and the next one tries again; one failure never stops the re-check");
@@ -173,15 +170,12 @@ public class LedgerRecheckWorkerTests {
   [Test]
   public async Task ExecuteAsync_ACancellationInsideATick_EndsTheLoopAsync() {
     var origin = TrackedGuid.New().Value;
-    var clock = new FakeTimeProvider(_fixedNow);
-    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 1 }, origin, clock: clock);
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 1 }, origin,
+      clock: new FakeTimeProvider(_fixedNow));
     coordinator.ThrowOnClaim.Enqueue(new OperationCanceledException("shutting down"));
+    worker.DelayAsync = static (_, token) => token.IsCancellationRequested ? Task.FromCanceled(token) : Task.CompletedTask;
 
     await worker.StartAsync(CancellationToken.None);
-    for (var advances = 0; advances < 10_000 && !worker.ExecuteTask!.IsCompleted; advances++) {
-      clock.Advance(TimeSpan.FromSeconds(1));
-      await Task.Yield();
-    }
 
     await Assert.That(async () => await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))).ThrowsNothing()
       .Because("a cancellation is how the host stops the worker, so it ends the loop rather than counting as a failure");
@@ -193,11 +187,15 @@ public class LedgerRecheckWorkerTests {
   public async Task ExecuteAsync_StoppingWhileWaiting_EndsTheLoopAsync() {
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions(), origin, clock: new FakeTimeProvider(_fixedNow));
+    using var stopping = new CancellationTokenSource();
 
-    await worker.StartAsync(CancellationToken.None);
-    await worker.StopAsync(CancellationToken.None);
+    // Called directly, the loop runs synchronously into its first wait on the fake clock, which never advances.
+    var loop = worker.RunLoopAsync(stopping.Token);
+    await Assert.That(loop.IsCompleted).IsFalse().Because("the loop is waiting out its interval");
+    await stopping.CancelAsync();
 
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue();
+    await Assert.That(async () => await loop.WaitAsync(TimeSpan.FromSeconds(30))).ThrowsNothing()
+      .Because("stopping while the loop waits ends it rather than surfacing the cancellation");
     await Assert.That(coordinator.Claims).IsEmpty().Because("the interval never elapsed, so no tick ran");
   }
 
