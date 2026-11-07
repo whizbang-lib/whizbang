@@ -41,7 +41,7 @@ public static class SupersedingEvents {
 
   // Per options instance, the JSON name each keyed type's key is written under (null when no JSON property maps to it).
   // Weak, so options built per call (the combined registered contexts) are not kept alive by the cache.
-  private static readonly ConditionalWeakTable<JsonSerializerOptions, ConcurrentDictionary<Type, string?>> _jsonNames = new();
+  private static readonly ConditionalWeakTable<JsonSerializerOptions, ConcurrentDictionary<Type, string?>> _jsonNames = [];
 
   /// <summary>Registers a superseding event type. Called by generated code; registering a type twice is harmless.</summary>
   /// <param name="eventType">The event type.</param>
@@ -179,12 +179,12 @@ public static class SupersedingEvents {
       return false;
     }
     var comparison = typeInfo.Options.PropertyNameCaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-    foreach (var property in payload.EnumerateObject()) {
-      if (string.Equals(property.Name, name, comparison)) {
-        return property.Value.ValueKind == JsonValueKind.Null;
-      }
-    }
-    return true;
+    // The first match's kind; none (no such property) or null is a missing key.
+    var kind = payload.EnumerateObject()
+      .Where(property => string.Equals(property.Name, name, comparison))
+      .Select(property => (JsonValueKind?)property.Value.ValueKind)
+      .FirstOrDefault();
+    return kind is null or JsonValueKind.Null;
   }
 
   private static string? _jsonNameOf(Registration registration, JsonTypeInfo typeInfo) =>
