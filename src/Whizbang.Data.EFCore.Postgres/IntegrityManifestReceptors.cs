@@ -260,6 +260,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ChunkCount = totalChunks,
           OriginGeneration = originGeneration,
           WindowCapped = windowCapped,
+          WindowNumber = message.WindowNumber,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -890,13 +891,37 @@ public sealed partial class IntegrityManifestReceptor(
   }
 
   /// <summary>
+  /// The type-level answer: compared (and sealed, drilled into or bulk-repaired) by <see cref="_compareTypeLevelAsync"/>,
+  /// then, when the origin capped the window (#2107), the audit walks on to the next window from where this one stopped,
+  /// verified or not, until <see cref="StreamIntegrityOptions.MaxAuditWindowsPerAudit"/> windows have been asked for. A
+  /// window that did not verify is not sealed, so the seal holds at the first such window and the next audit starts again
+  /// from there; the walk only makes sure the history behind it is still compared in this audit. Continued once per
+  /// answer: a multi-chunk answer arrives as several messages, and continuing from each would ask for the next window
+  /// once per chunk.
+  /// </summary>
+  private async Task _handleTypeLevelAsync(
+      IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
+      List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
+    var compared = await _compareTypeLevelAsync(services, options, message, types, settle, cancellationToken).ConfigureAwait(false);
+    if (!compared || !message.WindowCapped || message.ChunkCount != 1 || message.ComputedThrough is not long through) {
+      return;
+    }
+    var window = Math.Max(1, message.WindowNumber);   // 0: the audit's first window, from an asker that never numbered it
+    if (window >= options.MaxAuditWindowsPerAudit) {
+      LogAuditWindowBudgetSpent(logger, message.OriginServiceName, window, through);
+      return;
+    }
+    await _continueAfterCappedWindowAsync(services, options, message, through, window + 1, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
   /// A1c: the type-level half of the hierarchical exchange. Compares the origin's per-(tenant,
   /// type) roll-ups against this consumer's; matching roll-ups prove EVERY stream bucket of the
   /// type complete — one comparison instead of thousands. Mismatched types escalate (capped) to a
   /// DIRECTED stream-level manifest request; reports only ever come from the stream-level compare.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The type-level compare matches each type's roll-up, applies the settle window, sorts the mismatches into bulk-backfill candidates and drill-down requests, applies the repair grant cap over the candidates, and addresses each drill-down to its origin's request topic. The stages share the mismatch set they narrow.")]
-  private async Task _handleTypeLevelAsync(
+  private async Task<bool> _compareTypeLevelAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
@@ -912,7 +937,7 @@ public sealed partial class IntegrityManifestReceptor(
         cancellationToken).ConfigureAwait(false);
       if (windowedLocal is null) {
         LogWindowedCompareUnsupported(logger, message.OriginServiceName);
-        return;
+        return false;
       }
       local = windowedLocal.Digests;
     } else {
@@ -958,11 +983,8 @@ public sealed partial class IntegrityManifestReceptor(
         await coordinator.AdvanceIntegritySealAsync(message.OriginServiceId, through, cancellationToken)
           .ConfigureAwait(false);
         LogSealAdvanced(logger, message.OriginServiceName, through);
-        if (message.WindowCapped) {
-          await _continueAfterCappedWindowAsync(services, options, message, through, cancellationToken).ConfigureAwait(false);
-        }
       }
-      return;   // every type roll-up matches — the whole subscribed surface is provably complete.
+      return true;   // every type roll-up matches — the whole subscribed surface is provably complete.
     }
 
     var transport = services.GetService<ITransport>();
@@ -971,7 +993,7 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
+      return true;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
     var sender = new ControlPlaneSender(transport, serializer, instanceProvider, requester, topic);
 
@@ -1041,7 +1063,7 @@ public sealed partial class IntegrityManifestReceptor(
       .OrderBy(t => _lastDrilled.TryGetValue((message.OriginServiceId, t), out var at) ? at : DateTimeOffset.MinValue)
       .Take(Math.Max(0, options.MaxDrillDownTypesPerAudit)).ToList();
     if (drillDown.Count == 0) {
-      return;
+      return true;
     }
     var drilledAt = DateTimeOffset.UtcNow;
     foreach (var t in drillDown) {
@@ -1075,7 +1097,7 @@ public sealed partial class IntegrityManifestReceptor(
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
     if (string.IsNullOrEmpty(originRequestTopic)) {
       LogDrillDownSkippedNoOriginTopic(logger, message.OriginServiceName, drillDown.Count);
-      return;
+      return true;
     }
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
@@ -1084,17 +1106,17 @@ public sealed partial class IntegrityManifestReceptor(
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
       new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
+    return true;
   }
 
   /// <summary>
-  /// #2107: after sealing a clean window the origin capped, asks it for the next window from where that one stopped, so
-  /// the rest of the settled history is audited in bounded slices now rather than one slice per audit interval. Each
-  /// step seals before the next is asked, so the walk never repeats work, and it stops at the first window that does not
-  /// verify (the next audit resumes from the seal) or that reaches the origin's settled head. Directed or not at all,
-  /// as every integrity request: without the origin's address the next scheduled audit continues from the seal.
+  /// #2107: asks the origin for window <paramref name="window"/> of this audit, from where the capped one stopped, so the
+  /// rest of the settled history is compared in bounded slices now rather than one slice per audit interval. Directed or
+  /// not at all, as every integrity request: without the origin's address the next scheduled audit continues from the
+  /// seal.
   /// </summary>
   private async Task _continueAfterCappedWindowAsync(
-      IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message, long through,
+      IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message, long through, int window,
       CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
@@ -1120,6 +1142,7 @@ public sealed partial class IntegrityManifestReceptor(
         Level = ManifestLevel.Types,
         Windowed = true,
         SinceSequence = through,
+        WindowNumber = window,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1131,7 +1154,7 @@ public sealed partial class IntegrityManifestReceptor(
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
-    LogCappedWindowContinued(logger, message.OriginServiceName, through);
+    LogCappedWindowContinued(logger, message.OriginServiceName, through, window);
   }
 
   /// <summary>Type-level table reads, falling back to the recompute when the table has no rows: either
@@ -1315,14 +1338,19 @@ public sealed partial class IntegrityManifestReceptor(
   static partial void LogSealAdvanced(ILogger logger, string originServiceName, long through);
 
   [LoggerMessage(EventId = 68, Level = LogLevel.Information,
-    Message = "Integrity audit vs origin '{OriginServiceName}': the window it capped at sequence {Through} audited clean; " +
-              "asked for the next window from there")]
-  static partial void LogCappedWindowContinued(ILogger logger, string originServiceName, long through);
+    Message = "Integrity audit vs origin '{OriginServiceName}': the origin capped the window at sequence {Through}; " +
+              "asked for window {Window} of this audit from there")]
+  static partial void LogCappedWindowContinued(ILogger logger, string originServiceName, long through, int window);
 
   [LoggerMessage(EventId = 69, Level = LogLevel.Debug,
-    Message = "Integrity audit vs origin '{OriginServiceName}': the window it capped at sequence {Through} audited clean, " +
+    Message = "Integrity audit vs origin '{OriginServiceName}': the origin capped the window at sequence {Through}, " +
               "but its request address is not known yet; the next scheduled audit continues from the seal")]
   static partial void LogCappedWindowNotContinued(ILogger logger, string originServiceName, long through);
+
+  [LoggerMessage(EventId = 80, Level = LogLevel.Information,
+    Message = "Integrity audit vs origin '{OriginServiceName}': walked {Windows} window(s) this audit, through sequence " +
+              "{Through}, the most MaxAuditWindowsPerAudit allows; the next audit continues from the seal")]
+  static partial void LogAuditWindowBudgetSpent(ILogger logger, string originServiceName, int windows, long through);
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Information,
     Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +

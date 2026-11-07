@@ -1934,6 +1934,18 @@ public class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task ManifestReceptor_ACappedWindowThisServiceCannotFold_AsksForNoNextWindowAsync() {
+    var (coordinator, transport, receptor) = _consumer(seal: 100, local: []);
+    coordinator.WindowedTypeResult = null;   // this engine cannot fold a window: nothing was compared
+
+    await receptor.HandleAsync(_cappedAnswer(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)]));
+
+    await Assert.That(coordinator.SealAdvancedTo).IsNull();
+    await Assert.That(_requests(transport)).IsEmpty()
+      .Because("walking on is only worth it while windows are actually being compared");
+  }
+
+  [Test]
   public async Task ManifestReceptor_AMultiChunkCappedWindow_AsksForNoNextWindowAsync() {
     var (coordinator, transport, receptor) = _consumer(seal: 100, local: [_typeDigest("Contracts.TypeX", 41, 42, 5)]);
 

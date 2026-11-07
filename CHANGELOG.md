@@ -1532,9 +1532,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index on the type (`idx_event_store_type_commit_sequence` from #2092 once built, or `idx_event_store_type_tenant`),
   and the page is assembled without a nested loop over the window. An origin now answers at most
   `StreamIntegrityOptions.MaxAuditWindowSequences` commit sequences per windowed audit request (default 500,000, five
-  default digest epochs) and marks the answer `IntegrityManifest.WindowCapped`; the consumer seals a clean capped window
-  and asks for the next one from where it stopped, so history is walked in bounded slices instead of read at once or
-  skipped. A windowed type-level answer with no digests is now compared too, and seals its window when this service
+  default digest epochs) and marks the answer `IntegrityManifest.WindowCapped`; the consumer asks for the next window from where it stopped,
+  up to `MaxAuditWindowsPerAudit` windows per audit (default 5), so history is walked in bounded slices instead of read
+  at once or skipped. A window that does not verify is not sealed, so the seal stays at the first such window and the
+  next audit starts again there, but the windows after it are still compared and repaired in the same audit. A windowed type-level answer with no digests is now compared too, and seals its window when this service
   holds nothing there either, so a capped slice with nothing to audit no longer freezes the seal. The seal advances only
   over a window that starts at or below it.
 - **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
