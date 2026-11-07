@@ -1403,6 +1403,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Received events are stored under their owner, not the service that relayed them (#2116).** A redelivery bundle
+  names the service that answered it as every child's origin. A service that answered with events it had only received
+  (before #2032, and from bundles that sat in a consumer's inbox since) made consumers store another service's events
+  under its own name: the owner's lane counted short, the relay's long, and repair could never heal the bucket because
+  the owner's redelivery is skipped as a duplicate. A redelivery child of a type the consumer's ownership map gives to
+  another service is now stored under that owner with no origin sequence, and is not reconciled under the bundle's
+  origin (`MisattributedOrigin`, `FanoutResult.ReattributedChildren`, counter `redelivered_children_reattributed`).
+  History already stored under the wrong origin is corrected by a new idle-gated maintenance step
+  (`MisattributedOriginCorrectionStep`, both Postgres drivers; migration 346 `wh_integrity_origin_correction`,
+  `wh_integrity_origin_correction_window`, `wh_integrity_correct_origins`): in bounded commit-sequence batches each such
+  event takes its owner as origin with its origin sequence cleared (the owner's next redelivery fills it), its digest
+  moves lanes through the shared fold, the wrong origin's sealed epochs are refolded and both lanes' ledger buckets are
+  re-armed. Every correction is logged at Warning and counted (`misattributed_origins_corrected`); no event is deleted.
+  A changed ownership map rewalks the store; `ReattributionEnabled` switches it off with re-attribution.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them
@@ -1585,6 +1599,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
   to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
   topic keeps receiving its traffic there until it upgrades.
+- **A type-filtered digest window costs in proportion to the rows it returns, and one audit window is capped (#2107).**
+  After #2080 the windowed stream-digest read was bound by its window, but as an auto-prepared statement it settled into
+  a generic plan that found the window's rows through `idx_event_store_commit_sequence` and filtered the requested
+  types on the heap, so a wide window read every event in it (on a large store, seconds and hundreds of thousands of
+  pages per call) to return a few hundred. The read is now `wh_compute_stream_digests_window` (migration 347), planned
+  per call against its own window and types (`plan_cache_mode = force_custom_plan`), so a sparse type is read through an
+  index on the type (`idx_event_store_type_commit_sequence` from #2092 once built, or `idx_event_store_type_tenant`),
+  and the page is assembled without a nested loop over the window. An origin now answers at most
+  `StreamIntegrityOptions.MaxAuditWindowSequences` commit sequences per windowed audit request (default 500,000, five
+  default digest epochs) and marks the answer `IntegrityManifest.WindowCapped`; the consumer asks for the next window from where it stopped,
+  up to `MaxAuditWindowsPerAudit` windows per audit (default 5), so history is walked in bounded slices instead of read
+  at once or skipped. A window that does not verify is not sealed, so the seal stays at the first such window and the
+  next audit starts again there, but the windows after it are still compared and repaired in the same audit. A windowed type-level answer with no digests is now compared too, and seals its window when this service
+  holds nothing there either, so a capped slice with nothing to audit no longer freezes the seal. The seal advances only
+  over a window that starts at or below it.
+- **An idle service re-checks stale ledger rows itself instead of waiting for the daily audit (#2115).** A ledger row
+  cleared only when the audit compared its bucket again, at most once a day, so rows written under an older compare rule
+  lingered for days after an upgrade, and with automatic repair on the paced drain turned them into repair requests. The
+  new `IntegrityLedgerRecheckWorker` (on the maintainer, under the housekeeping idle gate) claims up to
+  `StreamIntegrityOptions.LedgerRecheckRowsPerTick` rows (default 500) every `LedgerRecheckIntervalSeconds` (default 60)
+  whose last report is older than `LedgerRecheckAfterMinutes` (default 120), oldest first, and asks each row's owner for a
+  stream-level answer over the row's window marked `Recheck`. The comparison removes the rows that now match or are
+  undecided exactly as the audit does, and a re-check answer never leads to a repair request. A claimed row is stamped
+  (`wh_integrity_ledger.rechecked_at`, migration 348) and waits the threshold again before its next re-check. Counted
+  by `whizbang.stream_integrity.ledger_rows_rechecked` and `ledger_rows_recheck_cleared`; turned off with
+  `LedgerRecheckEnabled`. Rows without a stamped window (pre-stamp rows and non-deficit divergences) are left to the audit.
 - **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
   the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
   (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.

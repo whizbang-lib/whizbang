@@ -2071,6 +2071,27 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
 
   /// <summary>
+  /// #2115: claims up to <paramref name="limit"/> ledger rows to re-check, oldest report first: rows of
+  /// <paramref name="originIds"/> (origins whose request topic is learned) last reported before
+  /// <paramref name="reportedBefore"/>, not looked at since then, and stamped with the window they were compared over. A
+  /// claim marks each row looked at (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a
+  /// re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
+  /// rows. Nothing is attempted and no repair is asked: a claimed row is compared again, never repaired. Empty = nothing
+  /// that old, or unsupported.
+  /// </summary>
+  /// <param name="originIds">The origins a re-check can be asked of.</param>
+  /// <param name="reportedBefore">Only rows last reported before this instant (the re-check threshold).</param>
+  /// <param name="now">The instant the claim marks the rows looked at.</param>
+  /// <param name="limit">The most rows to claim.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerRecheckSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
+    IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
+
+  /// <summary>
   /// Records that repair requests for <paramref name="keys"/> left, so neither the paced drain nor the burst grant
   /// asks again for <paramref name="timeout"/> or until a bundle answers (#2029). A key on the type lane (an empty
   /// stream id: a bulk or checkpoint request for the whole type) also covers the per-stream rows of its type whose

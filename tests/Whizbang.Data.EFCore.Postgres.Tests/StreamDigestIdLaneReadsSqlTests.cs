@@ -154,10 +154,7 @@ public class StreamDigestIdLaneReadsSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("p_until", long.MaxValue);
     cmd.Parameters.Add(new NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = DBNull.Value });
     cmd.Parameters.AddWithValue("p_limit", 10);
-    cmd.Parameters.AddWithValue("p_settle", "3600 seconds");
-    cmd.Parameters.Add(new NpgsqlParameter("p_digest_exempt", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
-    });
+    cmd.Parameters.AddWithValue("p_settle", 3600);   // #2107: the read is a function that takes the settle window in seconds
     await using var reader = await cmd.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
     var (lo, hi) = _idLanes(ids);

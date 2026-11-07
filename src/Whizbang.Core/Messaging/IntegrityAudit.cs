@@ -85,6 +85,24 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>Stream-level resume cursor from the previous answer's
   /// <see cref="IntegrityManifest.ResumeAfterStreamId"/> (null = the window's first page).</summary>
   public Guid? ResumeAfterStreamId { get; init; }
+
+  /// <summary>
+  /// #2107: which window of one audit pass this asks for, the first being 1 (0, the default and what a sender that
+  /// predates the field sends, is read as 1). The origin echoes it on its answer
+  /// (<see cref="IntegrityManifest.WindowNumber"/>), and the consumer stops asking for further windows once it reaches
+  /// <see cref="StreamIntegrityOptions.MaxAuditWindowsPerAudit"/>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
+
+  /// <summary>
+  /// #2115: a re-check of ledger rows the consumer already holds, asked by its idle re-check: the answer is compared like
+  /// any stream-level answer (a matching or undecided bucket is removed from the ledger), but it never leads to a repair
+  /// request. The origin echoes it (<see cref="IntegrityManifest.Recheck"/>). False on every other request, and from a
+  /// sender that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public bool Recheck { get; init; }
 }
 
 /// <summary>
@@ -151,6 +169,29 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// divergence WITHOUT a generation change remains damage. Null = a pre-generation origin.
   /// </summary>
   public long? OriginGeneration { get; init; }
+
+  /// <summary>
+  /// #2107: true when the origin shortened the window at its <see cref="StreamIntegrityOptions.MaxAuditWindowSequences"/>:
+  /// <see cref="ComputedThrough"/> is the end of the slice it answered, not its settled head, and more settled history
+  /// follows. A consumer that seals a clean capped window asks for the next one from <see cref="ComputedThrough"/>.
+  /// False on an uncapped answer and on an answer from an origin that predates the cap.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public bool WindowCapped { get; init; }
+
+  /// <summary>
+  /// #2107: the echo of the request's <see cref="RequestIntegrityManifest.WindowNumber"/>: which window of the asker's
+  /// audit pass this answers (0 from an origin that predates the field, read as 1).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
+
+  /// <summary>
+  /// #2115: the echo of the request's <see cref="RequestIntegrityManifest.Recheck"/>: this answer re-checks ledger rows,
+  /// so its comparison removes what now matches and never asks for a repair.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public bool Recheck { get; init; }
 }
 
 /// <summary>

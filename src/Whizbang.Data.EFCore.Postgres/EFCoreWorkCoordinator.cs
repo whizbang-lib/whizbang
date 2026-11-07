@@ -996,6 +996,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
+  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
+      IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(originIds);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = originIds.ToArray()
+    });
+    cmd.Parameters.AddWithValue("p_reported_before", reportedBefore);
+    cmd.Parameters.AddWithValue(P_NOW, now);
+    cmd.Parameters.AddWithValue(P_LIMIT, limit);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText =
+      "SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until " +
+      $"FROM {BuildSchemaQualifiedName(schema, "wh_integrity_claim_ledger_recheck")}(@p_origin_ids, @p_reported_before, @p_now, @p_limit)";
+#pragma warning restore S2077
+    var items = new List<IntegrityRepairDrainItem>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      items.Add(new IntegrityRepairDrainItem(
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+    }
+    return items;
+  }
+
+  /// <inheritdoc />
   public async Task<bool> IntegrityMarkHealedBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) =>
@@ -2367,8 +2399,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LIMIT, pageBound + 1));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      AddDigestExemptParam(cmd);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
       var rows = new List<StreamDigest>();
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
@@ -4110,50 +4141,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// The windowed stream-digest query <see cref="ComputeStreamDigestsWindowedAsync"/> runs: one page of whole streams
-  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>.
+  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>. The fold is
+  /// <c>wh_compute_stream_digests_window</c> (#2107), which plans each call against its own window and types, so a sparse
+  /// type is read through an index on the type instead of being filtered from every event in the window.
   /// </summary>
   /// <param name="schema">The validated schema name.</param>
   /// <returns>The query text.</returns>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestTypeIndexTests.cs</tests>
 #pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
-  internal static string WindowedStreamDigestSql(string schema) => $"""
-        WITH lane AS (
-          -- #2080: one branch per lane, each with the window as a direct range on its own indexed column, so the read
-          -- is the window's rows rather than the whole lane filtered through a CASE no index can serve.
-          SELECT es.*, es.commit_sequence AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE (@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-            AND es.commit_sequence >= @p_since AND es.commit_sequence < @p_until
-          UNION ALL
-          SELECT es.*, es.origin_commit_sequence AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE (@p_origin::uuid) IS NOT NULL AND es.origin_service_id = @p_origin
-            AND es.origin_commit_sequence >= @p_since AND es.origin_commit_sequence < @p_until
-        ),
-        win AS (
-          SELECT l.* FROM lane l
-          WHERE ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-            AND COALESCE(l.flags, 0) & 8 = 0
-            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-            AND l.created_at < NOW() - @p_settle::interval
-        ),
-        pick AS (
-          SELECT DISTINCT w.stream_id FROM win w
-          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
-          ORDER BY w.stream_id
-          LIMIT @p_limit
-        )
-        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
-               bit_xor({schema}._wh_digest_lane(w.event_id, 0)) AS digest_lo,
-               bit_xor({schema}._wh_digest_lane(w.event_id, 1)) AS digest_hi,
-               COUNT(*)::int,
-               bit_xor({schema}._wh_digest_lane(w.event_id, 2)) AS id_lo,
-               bit_xor({schema}._wh_digest_lane(w.event_id, 3)) AS id_hi
-        FROM win w JOIN pick p ON p.stream_id = w.stream_id
-        GROUP BY 1, 2, 3
-        ORDER BY 3, 1, 2
-        """;
+  internal static string WindowedStreamDigestSql(string schema) =>
+    "SELECT tenant, event_type, stream_id, digest_lo, digest_hi, event_count, id_lo, id_hi " +
+    $"FROM {BuildSchemaQualifiedName(schema, "wh_compute_stream_digests_window")}" +
+    "(@p_origin, @p_types, @p_since, @p_until, @p_resume, @p_limit, NOW(), @p_settle)";
 #pragma warning restore S2077, RCS1158
 
   /// <summary>
