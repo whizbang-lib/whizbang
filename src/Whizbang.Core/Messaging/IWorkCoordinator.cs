@@ -3274,6 +3274,24 @@ public interface IWorkCoordinator {
     int limit,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<StuckRow>>([]);
+
+  /// <summary>
+  /// Drops the given inbox rows that are still unprocessed and past <paramref name="maxAttempts"/>, and returns how many
+  /// (#2117). The maintenance cycle calls it for exhausted control-plane rows, which are never stored in the dead-letter
+  /// table, when no dispatcher concluded them. In debug mode a row is kept with its processed time stamped.
+  /// </summary>
+  /// <param name="messageIds">The rows to drop.</param>
+  /// <param name="maxAttempts">The attempt ceiling, re-checked so a row concluded meanwhile is left alone.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows dropped. Default: none, for engines without an inbox.</returns>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExhaustedInboxDropSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync</tests>
+  Task<int> DropExhaustedInboxRowsAsync(
+    IReadOnlyList<Guid> messageIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0);
 }
 
 /// <summary>

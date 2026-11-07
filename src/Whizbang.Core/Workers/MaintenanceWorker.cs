@@ -1453,6 +1453,23 @@ public sealed class MaintenanceWorkerOptions {
   public int StuckRowSentinelLimit { get; set; } = 50;
 
   /// <summary>
+  /// Whether each maintenance cycle concludes the inbox rows past <c>MaxInboxAttempts</c> that no dispatcher concluded
+  /// (#2117): a domain message is moved to the dead-letter store, keeping its last recorded error, and control-plane
+  /// traffic is dropped. Default <c>true</c>. The attempt ceiling is enforced where a row is dispatched, so a row the
+  /// claim keeps charging that never reaches a dispatcher is otherwise retried for ever.
+  /// </summary>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:Disabled_ConcludesNothingAsync</tests>
+  public bool ConcludeExhaustedInboxRows { get; set; } = true;
+
+  /// <summary>
+  /// The most exhausted inbox rows one maintenance cycle concludes. Default 500; the rest are concluded on later cycles.
+  /// </summary>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:ExhaustedDomainRow_IsMovedToTheDeadLetterStore_AsMaxAttemptsExceededAsync</tests>
+  public int ExhaustedInboxConcludeLimit { get; set; } = 500;
+
+  /// <summary>
   /// Backoff (seconds) before a FAILED destruction batch (a throwing <c>PreDestruction</c> hook) is retried.
   /// The batch is held for this long, so the next maintenance cycle re-offers it to the hook. Default 300 (5m).
   /// </summary>

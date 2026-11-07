@@ -834,6 +834,15 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(result).IsEqualTo(0);
   }
 
+  [Test]
+  public async Task DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.DropExhaustedInboxRowsAsync([Guid.NewGuid()], maxAttempts: 10);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
   // --- Defaults whose parameters need a real instance ------------------------
 
   [Test]
