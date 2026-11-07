@@ -228,6 +228,22 @@ public class PerspectiveModelArrayAnalyzerTests {
       + "type in it holds itself), " + RECURSIVE_ADVICE);
   }
 
+  /// <summary>A recursive model two perspectives project is reported once per property, as an array is.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ARecursiveModelTwoPerspectivesProject_IsReportedOnceAsync() {
+    var source = _source("  public Node? Tree { get; set; }", """
+      public sealed record Node { public List<Node>? Children { get; init; } }
+      """) + """
+
+      public class SecondLedgerProjection : IPerspectiveFor<LedgerModel, Noted> {
+        public LedgerModel Apply(LedgerModel currentData, Noted eventData) => currentData;
+      }
+      """;
+
+    await Assert.That(await _whiz200Async(source)).Count().IsEqualTo(1);
+  }
+
   /// <summary>The build switch that turns WHIZ200 off turns the recursive report off with it.</summary>
   [Test]
   [RequiresAssemblyFiles]

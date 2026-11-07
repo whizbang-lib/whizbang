@@ -84,7 +84,91 @@ public static class MappedPathDiscovery {
       return null;
     }
 
-    return _findUnmappable(modelType, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default), string.Empty);
+    return _findUnmappable(modelType, new Walk(), string.Empty);
+  }
+
+  /// <summary>
+  /// Every property in the model's graph whose type (or collection element) is a type the path to it is already inside:
+  /// the property that makes the graph recursive, with its path and the type it returns to.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The recursive properties, such as <c>Skeleton.Children</c> returning to <c>Node</c>, in walk order.</returns>
+  /// <remarks>
+  /// <para>
+  /// Entity Framework maps a recursive complex type one level deep: the first level of the self-reference is mapped and
+  /// everything below it is never written and reads back as null, with no error at model build, save or query (#2112).
+  /// Each property listed here alone makes the model stored opaquely, where the serializer writes the whole tree.
+  /// </para>
+  /// <para>
+  /// A type reached twice along different paths is not listed: only a return to a type on the current path is a cycle.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:RecursiveMembers_ListsEachPropertyThatClosesACycleAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:ATypeReachedTwice_IsNotRecursionAsync</tests>
+  public static IReadOnlyList<(IPropertySymbol Property, string Path, INamedTypeSymbol Recursive)> RecursiveMembers(
+      INamedTypeSymbol modelType) {
+    var found = new List<(IPropertySymbol Property, string Path, INamedTypeSymbol Recursive)>();
+    _collectRecursive(modelType, new Walk(), string.Empty, found);
+    return found;
+  }
+
+  /// <summary>Whether the type, or anything it holds, reaches a type it is already inside.</summary>
+  /// <param name="type">The type to judge, such as the element of an array.</param>
+  /// <returns><c>true</c> when the graph below the type is recursive, so it is stored opaquely in any collection shape.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:IsRecursive_AnswersForTheTypeAndWhatItHoldsAsync</tests>
+  public static bool IsRecursive(INamedTypeSymbol type) => RecursiveMembers(type).Count != 0;
+
+  /// <summary>
+  /// The state of one depth-first walk: every type already judged, and the types on the path to the current one.
+  /// </summary>
+  /// <remarks>
+  /// A type already judged is not walked again, which keeps the walk finite and linear; a type on the current path is
+  /// a cycle. Telling the two apart is the whole of #2112: one set answering both questions stopped the walk at a
+  /// recursive type and judged it mappable.
+  /// </remarks>
+  private sealed class Walk {
+    public HashSet<INamedTypeSymbol> Visited { get; } = new(SymbolEqualityComparer.Default);
+    public HashSet<INamedTypeSymbol> OnPath { get; } = new(SymbolEqualityComparer.Default);
+  }
+
+  private static void _collectRecursive(
+      INamedTypeSymbol type, Walk walk, string path,
+      List<(IPropertySymbol Property, string Path, INamedTypeSymbol Recursive)> found) {
+    if (!walk.Visited.Add(type)) {
+      return;
+    }
+    walk.OnPath.Add(type);
+
+    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
+      if (!PolymorphicModelDiscovery.IsAnalyzableProperty(property)) {
+        continue;
+      }
+      var nested = _walkedTypeOf(property);
+      if (nested is null) {
+        continue;
+      }
+      var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+      if (walk.OnPath.Contains(nested)) {
+        found.Add((property, here, nested));
+      } else {
+        _collectRecursive(nested, walk, here, found);
+      }
+    }
+
+    walk.OnPath.Remove(type);
+  }
+
+  /// <summary>
+  /// The type a walk continues into from this property: an array's or a collection's element, or the property's own
+  /// type, unless it is a primitive or not a named type.
+  /// </summary>
+  private static INamedTypeSymbol? _walkedTypeOf(IPropertySymbol property) {
+    var walked = property.Type switch {
+      IArrayTypeSymbol array => array.ElementType as INamedTypeSymbol,
+      INamedTypeSymbol named => _collectionElement(named) ?? named,
+      _ => null,
+    };
+    return walked is null || _isPrimitive(walked) ? null : walked;
   }
 
   /// <summary>
@@ -147,21 +231,23 @@ public static class MappedPathDiscovery {
     return _isPrimitive(walked) ? null : walked;
   }
 
-  private static string? _findUnmappable(
-      INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited, string path) {
-    if (!visited.Add(type)) {
+  private static string? _findUnmappable(INamedTypeSymbol type, Walk walk, string path) {
+    if (!walk.Visited.Add(type)) {
       return null;
     }
+    walk.OnPath.Add(type);
 
+    string? found = null;
     foreach (var property in type.GetMembers().OfType<IPropertySymbol>()
         .Where(PolymorphicModelDiscovery.IsAnalyzableProperty)) {
-      var found = _judgeProperty(property, visited, path);
+      found = _judgeProperty(property, walk, path);
       if (found is not null) {
-        return found;
+        break;
       }
     }
 
-    return null;
+    walk.OnPath.Remove(type);
+    return found;
   }
 
   /// <summary>The unmappable member at or below this property, or null.</summary>
@@ -170,8 +256,9 @@ public static class MappedPathDiscovery {
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfPrimitivesIsNotReportedAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AnArrayOfArraysIsReportedAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryTests.cs:AMemberThatIsNotANamedType_IsNotReportedAsync</tests>
-  private static string? _judgeProperty(
-      IPropertySymbol property, HashSet<INamedTypeSymbol> visited, string path) {
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:ACollectionOfItself_IsNamedByItsPathAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:MutualRecursion_IsNamedWhereThePathReturnsAsync</tests>
+  private static string? _judgeProperty(IPropertySymbol property, Walk walk, string path) {
     var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
 
     // An array of a complex element: Entity Framework builds a model with it, then refuses it at the first read
@@ -201,10 +288,12 @@ public static class MappedPathDiscovery {
       return null;
     }
 
-    // A nested type the mapped path cannot construct.
-    return _hasNoBindableConstructor(nested)
+    // A type the path is already inside: the mapped path maps a recursive type one level deep and drops every level
+    // below it on write, with no error anywhere (#2112), so the whole tree has to be one opaque value. A nested type
+    // the mapped path cannot construct is named the same way.
+    return walk.OnPath.Contains(nested) || _hasNoBindableConstructor(nested)
       ? here
-      : _findUnmappable(nested, visited, here);
+      : _findUnmappable(nested, walk, here);
   }
 
   /// <summary>The element type when the property is a collection, fillable or not.</summary>

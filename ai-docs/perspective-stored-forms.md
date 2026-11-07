@@ -28,6 +28,12 @@ property by property) or **opaque** (`Property().HasColumnType("jsonb")`, System
 whole document). Records, polymorphic members and members the mapped path cannot materialize are
 opaque (`MappedPathDiscovery.MustStoreOpaquely`).
 
+A recursive type (a node holding a collection of itself, or two types holding each other) is one of those members
+(#2112). Entity Framework maps it one level deep and drops every level below on write with no error anywhere, so the
+discovery walks with two sets: the types already judged (keeps the walk finite) and the types on the current path (a
+return to one is a cycle). One set answering both questions is what hid the recursion. `CollectionMemberShapeProbeTests`
+measures the one-level mapping; if a future EF maps the whole depth, it fails and the routing is re-measured.
+
 Both paths must read and write the same bytes. The pieces, and why each exists:
 
 | Piece | Path | What it does |

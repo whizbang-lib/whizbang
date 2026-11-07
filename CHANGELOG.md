@@ -1386,6 +1386,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A recursive type in a perspective model keeps every level (#2112).** A model holding a type that reaches itself (a
+  tree node with `List<TNode> Children`, `IList<TNode>`, `ImmutableList<TNode>`, or two types holding each other) was
+  stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one
+  level deep: every level below the first self-reference was dropped on write and read back as null, with no error at
+  model build, save or query. The generator now stores such a model as one opaque document (the form an array of records
+  already takes), so the whole tree round-trips at any depth, and WHIZ200 reports the recursive property, at any depth,
+  saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
+  that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
+  without recursion stays mapped. The generated message JSON context now provides metadata for `IList<T>` and
+  `ImmutableList<T>` (as it did for `IReadOnlyList<T>`), and discovers the element type behind an `ImmutableList<T>`:
+  without it, any opaque document or message holding one could not be serialized at all (`NotSupportedException`,
+  "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a
+  row an earlier release wrote reads on the new path. Such a row holds only the first level of the recursion: the rest
+  was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
+  events) writes the whole tree. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
+  as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
+  as errors sees the new WHIZ200 on a recursive model; `WhizbangOpaqueArrayWarning=false` or a suppression on the
+  property turns it off.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

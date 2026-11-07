@@ -80,30 +80,48 @@ private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> 
 #endregion
 
 #region LAZY_FIELD_IREADONLYLIST
-private JsonTypeInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>>? _IReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__;
+private JsonTypeInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>>? ___COLLECTION_NAME_____ELEMENT_UNIQUE_IDENTIFIER__;
 #endregion
 
 #region GET_TYPE_INFO_IREADONLYLIST
-if (type == typeof(global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>)) {
-  return CreateIReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__(options);
+if (type == typeof(__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>)) {
+  return Create__COLLECTION_NAME_____ELEMENT_UNIQUE_IDENTIFIER__(options);
 }
 #endregion
 
 #region IREADONLYLIST_TYPE_FACTORY
-private JsonTypeInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>> CreateIReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+private JsonTypeInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> Create__COLLECTION_NAME_____ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
   // Get element type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
   var elementInfo = TryGetOrCreateTypeInfo<__ELEMENT_TYPE__>(options)
     ?? throw new InvalidOperationException(
         "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
         "This may indicate a circular type reference. Ensure the element type is properly registered.");
-  // IReadOnlyList<T> doesn't implement IList<T>, so we can't use CreateListInfo.
-  // Use CreateIEnumerableInfo which works with any IEnumerable<T> (IReadOnlyList<T> extends it).
-  // ObjectCreator returns List<T> which implements IReadOnlyList<T> for deserialization.
-  var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>> {
+  // A collection interface (IReadOnlyList<T>, IList<T>) has no constructor of its own, so it is read as an
+  // IEnumerable<T> into a List<T>, which implements every one of them.
+  var collectionInfo = new JsonCollectionInfoValues<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> {
     ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
     ElementInfo = elementInfo
   };
-  var jsonTypeInfo = JsonMetadataServices.CreateIEnumerableInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
+  var jsonTypeInfo = JsonMetadataServices.CreateIEnumerableInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
+#region IMMUTABLE_COLLECTION_TYPE_FACTORY
+private JsonTypeInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> Create__COLLECTION_NAME_____ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  // Get element type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
+  var elementInfo = TryGetOrCreateTypeInfo<__ELEMENT_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the element type is properly registered.");
+  // An immutable collection cannot be filled one element at a time: the elements are read first and the collection
+  // is built from them in one call.
+  var collectionInfo = new JsonCollectionInfoValues<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> {
+    ElementInfo = elementInfo
+  };
+  var jsonTypeInfo = JsonMetadataServices.CreateImmutableEnumerableInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(
+    options, collectionInfo, static elements => __COLLECTION_DEFINITION__.CreateRange(elements));
   jsonTypeInfo.OriginatingResolver = this;
   return jsonTypeInfo;
 }
