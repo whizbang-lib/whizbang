@@ -566,6 +566,61 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_ASupersedingGroup_IsRegisteredWithEachTypeAsync() {
+    // #2124: [Superseding(Group = "...")] lets types supersede each other; the generator registers the group with each
+    // type, so the write paths stamp it without reflection. The name is taken as written, never derived from a type.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingCreated([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingRevised([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "profile")]
+      public record ProfileBase : IEvent;
+
+      public record ProfileReplaced : ProfileBase;
+
+      [Superseding]
+      public record ProfileRedeclared : ProfileBase;
+
+      [Superseding(Group = "")]
+      public record EmptyGroup : IEvent;
+
+      [Superseding(Group = "quo\"te")]
+      public record QuotedGroup : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    const string REGISTER = "global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof(global::MyApp.";
+    const string KEY_TEXT = "global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText";
+
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingCreated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingCreated)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingRevised), static p => {KEY_TEXT}(((global::MyApp.EmbeddingRevised)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileBase), null, null, null, \"profile\");")
+      .Because("a grouped type with no key registers the empty key's group");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileReplaced), null, null, null, \"profile\");")
+      .Because("the attribute is inherited, group and all");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileRedeclared), null);")
+      .Because("the nearest [Superseding] wins, as attribute inheritance reads it, so a redeclaration without a group has none");
+    await Assert.That(generated).Contains($"{REGISTER}EmptyGroup), null);")
+      .Because("an empty name is no group");
+    await Assert.That(generated).Contains($"{REGISTER}QuotedGroup), null, null, null, \"quo\\\"te\");")
+      .Because("a group name is arbitrary text, so it is written as an escaped literal");
+  }
+
+  [Test]
   public async Task Generator_ASupersedingTypeAnAnalyzerRefuses_IsNotRegistered_SoEveryEventIsKeptAsync() {
     // WHIZ135 (also ephemeral) and WHIZ136 (two keys) are errors, but an error can be suppressed. The generator then
     // registers nothing, so the type is never reaped as superseding: keeping events is the recoverable direction.

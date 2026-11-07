@@ -29,6 +29,9 @@ public class ReceivedInboxMessageBuilderSupersedingKeyTests {
   [Superseding]
   public sealed record ReceivedRegionAssigned([property: StreamId] Guid DocumentId, [property: SupersedingKey] Guid RegionId) : IEvent;
 
+  [Superseding(Group = "received-region")]
+  public sealed record ReceivedRegionRevised([property: StreamId] Guid DocumentId, [property: SupersedingKey] Guid RegionId) : IEvent;
+
   public sealed record ReceivedOrdinary([property: StreamId] Guid DocumentId) : IEvent;
 
   private static readonly Guid _document = Guid.Parse("0199a1b2-0000-7000-8000-000000000201");
@@ -104,5 +107,17 @@ public class ReceivedInboxMessageBuilderSupersedingKeyTests {
       .Because("a key the producer never sent is unknown, not the Guid default every such message would share");
     await Assert.That(presentDefault.Metadata!.SupersedingKey).IsEqualTo(Guid.Empty.ToString("D"))
       .Because("a default value the message does carry is a real key");
+  }
+
+  /// <summary>#2124: the receiver's copy of a grouped event is stamped with the group the producer stamped.</summary>
+  [Test]
+  public async Task Build_AReceivedGroupedEvent_CarriesItsGroup_AnUngroupedOneNoneAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var grouped = _build(new ReceivedRegionRevised(_document, Guid.Empty), typeof(ReceivedRegionRevised), options);
+    var ungrouped = _build(new ReceivedEmbedding(_document, "model-a"), typeof(ReceivedEmbedding), options);
+
+    await Assert.That(grouped.Metadata!.SupersedingGroup).IsEqualTo("received-region");
+    await Assert.That(ungrouped.Metadata!.SupersedingGroup).IsNull();
   }
 }

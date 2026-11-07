@@ -44,6 +44,18 @@ public class SupersedingEventsTests {
   [Superseding]
   public sealed record OptionalRegionAssigned([property: StreamId] Guid Id, [property: SupersedingKey] Guid? RegionId) : IEvent;
 
+  [Superseding(Group = "region-state")]
+  public sealed record RegionOpened([property: StreamId] Guid Id, [property: SupersedingKey] Guid RegionId) : IEvent;
+
+  [Superseding(Group = "region-state")]
+  public sealed record RegionRevised([property: StreamId] Guid Id, [property: SupersedingKey] Guid RegionId) : IEvent;
+
+  /// <summary>An empty group name is no group: the type is its own group, as without one.</summary>
+  [Superseding(Group = "")]
+  public sealed record EmptyGroupNamed([property: StreamId] Guid Id) : IEvent;
+
+  public sealed record GroupRegisteredByHand(string Name);
+
   /// <summary>Registered by hand through the overload code generated before #2123 calls: no key member name.</summary>
   public sealed record LegacyRegistered([property: StreamId] Guid Id, Guid Region) : IEvent;
 
@@ -213,6 +225,50 @@ public class SupersedingEventsTests {
     await Assert.That(SupersedingEvents.IsKeyMissing(empty, wireTypeName: null, options)).IsFalse();
     await Assert.That(SupersedingEvents.IsKeyMissing(JsonElement.Parse("null"), _wireName(typeof(RegionAssigned)), options)).IsFalse()
       .Because("a payload that is not an object is no key-less event; it is read as before, and a null payload has no key");
+  }
+
+  /// <summary>
+  /// #2124: a superseding group lets several types supersede each other. The generator registers each type's group, an
+  /// explicit name that is the same whatever the CLR type is called, so the write paths stamp it beside the key.
+  /// </summary>
+  [Test]
+  public async Task GroupOf_AGroupedType_IsItsDeclaredGroup_AnUngroupedOrUnregisteredTypeHasNoneAsync() {
+    await Assert.That(SupersedingEvents.GroupOf(typeof(RegionOpened))).IsEqualTo("region-state");
+    await Assert.That(SupersedingEvents.GroupOf(typeof(RegionRevised))).IsEqualTo("region-state");
+    await Assert.That(SupersedingEvents.GroupOf(typeof(EmbeddingUpdated))).IsNull()
+      .Because("without a group a type is its own group, which the store reads as its event type");
+    await Assert.That(SupersedingEvents.GroupOf(typeof(PlainEvent))).IsNull();
+    await Assert.That(SupersedingEvents.GroupOf(typeof(EmptyGroupNamed))).IsNull()
+      .Because("an empty name is no group, so it can never merge every type that leaves it empty");
+    await Assert.That(SupersedingEvents.IsSuperseding(typeof(EmptyGroupNamed))).IsTrue();
+    await Assert.That(() => SupersedingEvents.GroupOf((Type)null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var revised = new RegionRevised(_stream, _owner);
+    var json = JsonSerializer.SerializeToElement(revised, options.GetTypeInfo(typeof(RegionRevised)));
+
+    await Assert.That(SupersedingEvents.GroupOf(revised)).IsEqualTo("region-state");
+    await Assert.That(SupersedingEvents.GroupOf((object?)null)).IsNull();
+    await Assert.That(SupersedingEvents.GroupOf(new PlainEvent(_stream))).IsNull();
+    await Assert.That(SupersedingEvents.GroupOf(json, _wireName(typeof(RegionRevised)))).IsEqualTo("region-state")
+      .Because("a received payload is still JSON, so its group is found by its type name");
+    await Assert.That(SupersedingEvents.GroupOf(json, wireTypeName: null)).IsNull();
+    await Assert.That(SupersedingEvents.GroupOf(json, _wireName(typeof(PlainEvent)))).IsNull();
+    await Assert.That(SupersedingEvents.GroupOf(revised, wireTypeName: null)).IsEqualTo("region-state")
+      .Because("a typed payload is read directly, whatever name came with it");
+  }
+
+  [Test]
+  public async Task Register_WithAGroup_ByHand_KeepsTheGroup_TheOlderOverloadsRegisterNoneAsync() {
+    SupersedingEvents.Register(typeof(GroupRegisteredByHand), static p => ((GroupRegisteredByHand)p).Name, "Name", null, "by-hand");
+
+    await Assert.That(SupersedingEvents.GroupOf(typeof(GroupRegisteredByHand))).IsEqualTo("by-hand");
+    await Assert.That(SupersedingEvents.KeyOf(new GroupRegisteredByHand("n"))).IsEqualTo("n");
+    await Assert.That(SupersedingEvents.GroupOf(typeof(LegacyRegistered))).IsNull()
+      .Because("code generated before #2124 registers no group, so its types stay their own group");
   }
 
   [Test]

@@ -42,6 +42,30 @@ public sealed record DapperSupersedingProbeRegioned : IEvent {
   public required Guid RegionId { get; init; }
 }
 
+/// <summary>The first event of a document's state, in a superseding group (#2124).</summary>
+[Superseding(Group = "dapper-group-probe")]
+public sealed record DapperSupersedingProbeCreated : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public required Guid StreamId { get; init; }
+
+  /// <summary>The key.</summary>
+  [SupersedingKey]
+  public required string Model { get; init; }
+}
+
+/// <summary>A later event of the same state, in the same group.</summary>
+[Superseding(Group = "dapper-group-probe")]
+public sealed record DapperSupersedingProbeRevised : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public required Guid StreamId { get; init; }
+
+  /// <summary>The key.</summary>
+  [SupersedingKey]
+  public required string Model { get; init; }
+}
+
 /// <summary>
 /// The Dapper store's direct append stamps a superseding event's key (#1729): the adapter writes it into the stored
 /// metadata as <c>sk</c>, and <c>wh_append_event</c> copies it onto the flagged row and queues the older event of the key.
@@ -138,6 +162,34 @@ public class DapperSupersedingKeyTests : PostgresTestBase {
     await Assert.That(rows.Select(r => r.Version)).IsEquivalentTo([1, 2, 3], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(rows.All(r => (r.Flags & 128) == 128 && r.Key is null)).IsTrue()
       .Because("each is stamped superseding without a key, not with the Guid default they would all share");
+  }
+
+  /// <summary>
+  /// #2124: on the Dapper driver, as on EF Core, the adapter writes the group into the stored metadata ("sg") and
+  /// wh_append_event stamps it, so a newer event of another type in the group supersedes the older one and the reaper
+  /// keeps only the newest of the group and key.
+  /// </summary>
+  [Test]
+  public async Task AppendAsync_GroupedTypes_SupersedeEachOther_AndTheOlderIsReapedAsync() {
+    var store = _eventStore();
+    var stream = (Guid)TrackedGuid.New();
+    await store.AppendAsync(stream, new DapperSupersedingProbeCreated { StreamId = stream, Model = "m" });
+    await store.AppendAsync(stream, new DapperSupersedingProbeRevised { StreamId = stream, Model = "other" });
+    await store.AppendAsync(stream, new DapperSupersedingProbeRevised { StreamId = stream, Model = "m" });
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    var groups = (await conn.QueryAsync<string?>(
+      "SELECT supersede_group FROM wh_event_store WHERE stream_id = @stream ORDER BY version", new { stream })).ToList();
+    await Assert.That(groups.All(g => g == "dapper-group-probe")).IsTrue().Because("every grouped event carries its group");
+    _ = await conn.ExecuteAsync("SELECT stamp_pending_commit_sequences(1000)");
+    var reaped = await conn.ExecuteScalarAsync<long>(
+      "SELECT rows_affected FROM wh_reap_superseded_events(5000)");
+    var kept = (await conn.QueryAsync<int>("SELECT version FROM wh_event_store WHERE stream_id = @stream ORDER BY version", new { stream })).ToList();
+
+    await Assert.That(reaped).IsEqualTo(1L);
+    await Assert.That(kept).IsEquivalentTo([2, 3], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the Created event of key m is superseded by the newer Revised event of key m; key other is its own state");
   }
 
   private DapperPostgresEventStore _eventStore() {
