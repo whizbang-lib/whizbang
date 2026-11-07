@@ -131,7 +131,7 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
     var keyType = property.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
       ? nullable.TypeArguments[0]
       : property.Type;
-    return $"a {keyType.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString()} key";
+    return $"a {TypeNameUtilities.Display(keyType.WithNullableAnnotation(NullableAnnotation.NotAnnotated))} key";
   }
 
   private static IEnumerable<IPropertySymbol> _properties(INamedTypeSymbol type) {
