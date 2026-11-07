@@ -41,8 +41,9 @@ namespace Whizbang.Archive.AzureBlob;
 /// (<c>wh_archive_locations</c>: provider, account endpoint, logical connection name, container) by id and holds only
 /// the object's path from its stream. A read, a restore and a delete compare every row's location with
 /// <see cref="ConfiguredLocation"/> first and throw <see cref="ArchiveLocationMismatchException"/> on any difference,
-/// before a request reaches storage; the deletion queue is drained only for the configured location. A record never
-/// redirects an operation, and nothing is deleted outside the configured location.
+/// before a request reaches storage, and a write of a stream whose objects are recorded elsewhere is refused the same
+/// way, so a stream never spans two locations; the deletion queue is drained only for the configured location. A record
+/// never redirects an operation, and nothing is deleted outside the configured location.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
@@ -162,24 +163,34 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   /// <summary>
-  /// The locator a stream's tombstone records: <c>azure-blob://{container}/{stream}?codec=brotli&amp;format=1</c>. It
-  /// says which store archived the stream and is never used to find an object: each object is found by its manifest
-  /// row's location and path from the stream (#2137), in <see cref="ConfiguredLocation"/> only.
+  /// The locator a stream's tombstone records: <c>azure-blob://{stream}?codec=brotli&amp;format=1</c>. It says which
+  /// store archived the stream and names no container or account, so it never goes stale when a location is repointed:
+  /// each object is found by its manifest row's location and path from the stream (#2137), in
+  /// <see cref="ConfiguredLocation"/> only.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>The locator.</returns>
-  public ArchiveLocator LocatorFor(Guid streamId) =>
-    new(STORE_NAME, $"{_container.Name}/{streamId:D}", ArchiveCompression.Brotli);
+  public static ArchiveLocator LocatorFor(Guid streamId) =>
+    new(STORE_NAME, streamId.ToString("D"), ArchiveCompression.Brotli);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_TheUploadFails_TheStreamStaysFullyHot_AndNothingIsListedAsync</tests>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_ACrashAfterTheUploadBeforeTheCommit_IsRetriedWithoutADuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync</tests>
+  /// <exception cref="ArchiveLocationMismatchException">The stream's earlier objects are recorded in a location other
+  /// than <see cref="ConfiguredLocation"/>; nothing is written.</exception>
   public async Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(batch);
-    await _ensureContainerAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    // #2137: a stream never spans two locations. One whose objects are recorded anywhere but the configured location is
+    // refused before anything moves and before any request reaches storage, under the stream's lock (the same key
+    // wh_archive_stream takes, so a restore or delete cannot change its manifest in between).
+    await _lockStreamAsync(connection, transaction, batch.StreamId, cancellationToken).ConfigureAwait(false);
+    var recorded = await _manifestAsync(connection, transaction, batch.StreamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
+    await _checkLocationAsync(connection, transaction, batch.StreamId, "write", recorded, cancellationToken).ConfigureAwait(false);
+    await _ensureContainerAsync(cancellationToken).ConfigureAwait(false);
 
     var moved = await _moveIntoStagingAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
     if (!moved.Archived) {

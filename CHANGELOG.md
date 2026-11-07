@@ -1411,7 +1411,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each manifest row and queued deletion now holds its `location_id` plus a path that starts at its stream; existing
   locators are split into a location per container and a path, with no object moved or deleted. Before any request
   reaches storage, a read, restore and delete compare every record's location with the configured one and throw the
-  new `ArchiveLocationMismatchException` naming both; the deletion queue is drained only for the configured location.
+  new `ArchiveLocationMismatchException` naming both; a write of a stream whose objects are recorded elsewhere is refused
+  the same way and writes nothing, so a stream never spans two locations; the deletion queue is drained only for the
+  configured location. The tombstone locator names only the store and the stream (`azure-blob://{stream}?...`).
   Repointing an environment (a copied or restored database, disaster recovery) is an explicit update of the one
   location row, or `AzureBlobArchiveStore.RepointLocationAsync`, which merges into an existing location. New setting
   `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`). The offload store records no locations: its claim

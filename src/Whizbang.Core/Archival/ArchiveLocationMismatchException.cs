@@ -6,8 +6,8 @@ namespace Whizbang.Core.Archival;
 /// <summary>
 /// Thrown when an archive record's location is not the location the store is configured for (#2137): another storage
 /// endpoint, another logical connection name, another container, or no location at all. The store throws before it
-/// sends a single request to storage, so nothing is read, restored or deleted, and nothing is ever deleted outside the
-/// configured location.
+/// sends a single request to storage, so nothing is read, restored, deleted or written, nothing is ever deleted outside the
+/// configured location, and a stream's archive never spans two locations.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -40,7 +40,7 @@ public sealed class ArchiveLocationMismatchException : Exception {
 
   /// <summary>Creates the exception for one stream whose archive is recorded somewhere the store is not configured for.</summary>
   /// <param name="streamId">The archived stream.</param>
-  /// <param name="operation">What was refused: <c>read</c>, <c>restore</c> or <c>delete</c>.</param>
+  /// <param name="operation">What was refused: <c>read</c>, <c>restore</c>, <c>delete</c> or <c>write</c>.</param>
   /// <param name="recordedLocationId">The id of the record's location row, or <see langword="null"/> when it names none.</param>
   /// <param name="recorded">The record's location, or <see langword="null"/> when it names none.</param>
   /// <param name="configured">The location the store is configured for.</param>
@@ -57,7 +57,7 @@ public sealed class ArchiveLocationMismatchException : Exception {
   /// <summary>The archived stream, when known.</summary>
   public Guid? StreamId { get; }
 
-  /// <summary>What was refused (<c>read</c>, <c>restore</c> or <c>delete</c>), when known.</summary>
+  /// <summary>What was refused (<c>read</c>, <c>restore</c>, <c>delete</c> or <c>write</c>), when known.</summary>
   public string? Operation { get; }
 
   /// <summary>The id of the record's location row, to repoint; <see langword="null"/> when the record names none.</summary>

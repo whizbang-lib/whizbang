@@ -231,7 +231,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
     await Assert.That(written.EventsArchived).IsEqualTo(5L);
     await Assert.That(written.LastVersion).IsEqualTo(5L);
-    await Assert.That(written.Locator).IsEqualTo(store.LocatorFor(stream));
+    await Assert.That(written.Locator).IsEqualTo(AzureBlobArchiveStore.LocatorFor(stream));
     await Assert.That(await _readAllAsync(store, stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the archive reads back byte-identical, in version order, across every object");
     await Assert.That(await _readAllAsync(store, stream, fromVersion: 4)).IsEquivalentTo(hot[3..], TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -254,7 +254,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_archive WHERE stream_id = @s", stream)).IsEqualTo(0L)
       .Because("the staged rows leave with the commit; the events live in the objects only");
-    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{store.LocatorFor(stream)}|5"]);
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|5"]);
   }
 
   [Test]
@@ -455,7 +455,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(counter.Requests).IsEqualTo(0).Because("a mismatched record is refused before any request reaches storage");
     await Assert.That(await _objectsAsync()).IsEquivalentTo(objects);
     await Assert.That(await _manifestAsync(stream)).IsEquivalentTo(manifest).Because("a refused delete or restore changes nothing");
-    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{_store().LocatorFor(stream)}|3"]);
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|3"]);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
   }
 
