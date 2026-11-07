@@ -384,10 +384,13 @@ public class StartupParityTests {
     await Assert.That(await _ledgerAsync()).IsEqualTo(before);
   }
 
-  /// <summary>Records a release newer than this binary as the writer of one framework migration.</summary>
+  /// <summary>
+  /// Records a release newer than this binary as having applied one framework migration: a changed content hash, so the
+  /// ledger records it as the applier (#2022). A pass that only re-stamped the row would have applied nothing.
+  /// </summary>
   private async Task _recordNewerVersionAsync(string version) => await _execAsync($"""
     WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{version}') RETURNING id)
-    UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
+    UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-{version}', status = 2
       WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
     """);
 

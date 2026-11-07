@@ -21,10 +21,11 @@
 --              a newer version has migrated (the rollback gate, #2022): only when nothing was applied after its own
 --              version, since a migration cannot be reversed yet (#2122).
 --
---              Existing rows: a row whose last write was an apply (status 1 Applied, 2 Updated, 4 migrating in the
---              background) was last written by the version that applied it, so its version_id is taken. A row last
---              skipped (status 3) or failed says nothing about who applied it, and is left NULL: it never stands an
---              instance down. The backfill runs once, when the column is added, before the trigger exists.
+--              Existing rows are not rewritten (a ledger write is what a pass and its observers count as work). A row
+--              whose last write before 351 was an apply (status 1 Applied, 2 Updated, 4 migrating in the background) was
+--              written by the version that applied it, so while applied_version_id is NULL its version_id is the
+--              applier: the reader takes it, and the trigger carries it over on the row's next write. A row last skipped
+--              (status 3) or failed says nothing about who applied it: it never stands an instance down.
 --
 --              Rolling deploy: an older release writes the ledger exactly as before (it does not know the column) and
 --              the trigger records what its writes applied; it does not read the column, and its own Assess compares
@@ -38,7 +39,7 @@
 --            rule 12).
 
 -- ---------------------------------------------------------------------------------------------
--- The column, and the one-time backfill from the rows whose last write was an apply.
+-- The column.
 -- ---------------------------------------------------------------------------------------------
 DO $$
 BEGIN
@@ -49,13 +50,10 @@ BEGIN
     ALTER TABLE __SCHEMA__.wh_schema_migrations
       ADD COLUMN IF NOT EXISTS applied_version_id INTEGER REFERENCES __SCHEMA__.wh_schema_versions(id);
 
-    UPDATE __SCHEMA__.wh_schema_migrations
-       SET applied_version_id = version_id
-     WHERE status IN (1, 2, 4);
-
     COMMENT ON COLUMN __SCHEMA__.wh_schema_migrations.applied_version_id IS
       '351 (#2022): the version that last applied this change (inserted the row or changed its content hash). '
-      'version_id is rewritten by every pass; this is not. NULL when unknown (a row last skipped before 351).';
+      'version_id is rewritten by every pass; this is not. NULL on a row not written since 351: then a row last applied '
+      '(status 1, 2, 4) was applied by its version_id, and any other row by nobody known.';
   END IF;
 END $$;
 
@@ -69,13 +67,15 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF NEW.status = -1 THEN
+  IF TG_OP = 'INSERT' THEN
     -- A failed step rolled back: it applied nothing, whatever the row now says.
-    NEW.applied_version_id := CASE WHEN TG_OP = 'UPDATE' THEN OLD.applied_version_id END;
-  ELSIF TG_OP = 'INSERT' OR NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN
+    NEW.applied_version_id := CASE WHEN NEW.status <> -1 THEN NEW.version_id END;
+  ELSIF NEW.status <> -1 AND NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN
     NEW.applied_version_id := NEW.version_id;
   ELSE
-    NEW.applied_version_id := OLD.applied_version_id;
+    -- Nothing applied: the applier stays, and a row last applied before 351 carries its version_id over.
+    NEW.applied_version_id := COALESCE(OLD.applied_version_id,
+                                       CASE WHEN OLD.status IN (1, 2, 4) THEN OLD.version_id END);
   END IF;
   RETURN NEW;
 END;
@@ -83,7 +83,8 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_schema_migration_applied_by() IS
   '351 (#2022): trigger function keeping wh_schema_migrations.applied_version_id: the row''s version on an insert or '
-  'a content-hash change, unchanged on any other write, never moved by a failure (status -1).';
+  'a content-hash change, unchanged on any other write (a row last applied before 351 carrying its version_id), never '
+  'moved by a failure (status -1).';
 
 DROP TRIGGER IF EXISTS wh_schema_migrations_applied_by ON __SCHEMA__.wh_schema_migrations;
 CREATE TRIGGER wh_schema_migrations_applied_by

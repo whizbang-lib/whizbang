@@ -197,7 +197,11 @@ internal static class PostgresStartupAssessment {
       NpgsqlConnection connection, string prefix, Probe probe, CancellationToken cancellationToken) {
     // #2022: who applied each change (351), or on an older ledger the version that last stamped it. Every row is read,
     // so a ledger whose rows were all re-stamped is still a ledger; a row whose applier is unknown carries no versions.
-    var applier = probe.AppliedBy ? "m.applied_version_id" : "m.version_id";
+    // A row not written since 351 has no applied_version_id: one last applied (status 1, 2, 4) was applied by its
+    // version_id, as every row of an older ledger is taken to be.
+    var applier = probe.AppliedBy
+      ? "COALESCE(m.applied_version_id, CASE WHEN m.status IN (1, 2, 4) THEN m.version_id END)"
+      : "m.version_id";
     var application = probe.LedgerApplication ? "v.application_version" : "NULL::text";
     var (kind, notStep) = probe.Owner
       ? ("m.owner IN ('perspective', 'association')", "m.owner <> 'step'")

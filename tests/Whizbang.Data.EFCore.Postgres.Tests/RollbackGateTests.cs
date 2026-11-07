@@ -118,6 +118,45 @@ public class RollbackGateTests : EFCoreTestBase {
       .IsEqualTo(DBNull.Value).Because("a row a failure inserted records nothing applied");
   }
 
+  [Test]
+  [Timeout(60000)]
+  public async Task ARowLastAppliedBeforeTheRecord_IsTakenAsAppliedByItsVersion_ThroughLaterSkipsAsync(CancellationToken ct) {
+    // 351 rewrites no ledger row: a row whose last write before it was an apply (status 1, 2 or 4) names its applier in
+    // version_id, and the first later write carries that over. A row last skipped names nobody.
+    var first = await _versionAsync("1.0.0", "1.0.0", ct);
+    var second = await _versionAsync("2.0.0", "1.0.0", ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner)
+      VALUES ('gate:old-applied', 'a', @v, 1, 'whizbang'), ('gate:old-skipped', 'a', @v, 3, 'whizbang')
+      """, ct, ("v", first));
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
+
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, status = 3 WHERE file_name LIKE 'gate:old-%'", ct, ("v", second));
+
+    await Assert.That(await _scalarAsync<object>("SELECT applied_version_id FROM wh_schema_migrations WHERE file_name = 'gate:old-applied'", ct))
+      .IsEqualTo(first);
+    await Assert.That(await _scalarAsync<object>("SELECT applied_version_id FROM wh_schema_migrations WHERE file_name = 'gate:old-skipped'", ct))
+      .IsEqualTo(DBNull.Value);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARowLastAppliedBeforeTheRecord_AndNotWrittenSince_IsReadAsAppliedByItsVersionAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    var file = await _lastWhizbangMigrationAsync(ct);
+    var newer = await _versionAsync("1000.0.0", "unknown", ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, status = 2, applied_version_id = NULL WHERE file_name = @f",
+      ct, ("v", newer), ("f", file));
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
+
+    var assessment = await _assessor(library, null).AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"{file} (applied by library 1000.0.0, application unknown)");
+  }
+
   // ── the gate ───────────────────────────────────────────────────────
 
   [Test]

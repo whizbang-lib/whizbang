@@ -494,8 +494,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     an application or W! rollback with nothing migrated since now serves normally, where before any newer version the
     ledger named stood it down. Migration 351 records who applied each change (`wh_schema_migrations.applied_version_id`,
     kept by a trigger: set on an insert or a content-hash change, kept through skips and re-stamps, never moved by a
-    failure); rows last skipped before 351 record no applier and never block, and a ledger older than 351 takes the
-    version that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
+    failure). 351 rewrites no ledger row: a row last applied before it names its applier in `version_id` (carried over
+    on its next write), a row last skipped names nobody and never blocks, and a ledger older than 351 takes the version
+    that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
     version yet and are not gated.
   - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
     Assess) when the verdict no longer says stand down, for example when the newer instance died; before, an instance
