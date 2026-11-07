@@ -77,6 +77,8 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(metrics.DigestBucketsVerified).IsNotNull();
     await Assert.That(metrics.DigestDriftHealed).IsNotNull();
     await Assert.That(metrics.RedeliveryRequestsReceived).IsNotNull();
+    await Assert.That(metrics.RedeliveredChildrenReattributed).IsNotNull();
+    await Assert.That(metrics.MisattributedOriginsCorrected).IsNotNull();
   }
 
   [Test]
@@ -128,6 +130,9 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(observed).Contains("whizbang.stream_integrity.origins_reattributed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.origins_unattributed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.reattribution_hop_disagreements");
+    // #2116: events recorded under an origin that does not own their type, on receipt and in stored history.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.redelivered_children_reattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.misattributed_origins_corrected");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }

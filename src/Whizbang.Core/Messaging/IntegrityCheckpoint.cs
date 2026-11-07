@@ -464,6 +464,92 @@ public sealed class StreamIntegrityOptions {
   public int MaxManifestPagesPerAudit { get; set; } = 8;
 
   /// <summary>
+  /// The widest window, in commit sequences, an origin answers for one windowed audit request (default 500,000, #2107).
+  /// An audit asks from the consumer's seal to the origin's settled head; after a seal reset, on a new consumer, or
+  /// while a divergence holds the seal back, that span is most of the origin's history, and the stream-level drill-down
+  /// over it read every event in it. The origin answers at most this many sequences and marks the answer
+  /// <see cref="IntegrityManifest.WindowCapped"/>; the consumer seals a clean capped window and immediately asks for the
+  /// next one from where it stopped, so history is walked in bounded slices instead of skipped or read at once.
+  /// </summary>
+  /// <remarks>
+  /// The default is five of the default 100,000-sequence digest epochs (<c>integrity_epoch_width</c>): a window that
+  /// starts on an epoch boundary answers its type-level roll-up from sealed epochs, and the widest live fringe is two
+  /// epochs. At the 20 or so events an 8 KB page holds in a typical event store, the worst case for a drill-down into a
+  /// type dense enough to fill every page of the window is about 25,000 pages, against the hundreds of thousands an
+  /// uncapped window read on a large store. Lower it when drill-downs on a large store are still slow; raise it when a
+  /// store with little history needs fewer round trips. Applied by the origin, so a consumer always follows the
+  /// origin's setting. Must be at least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:RequestReceptor_AnOpenEndedAsk_ReadsOneCappedWindow_AndSaysItWasCappedAsync</tests>
+  public int MaxAuditWindowSequences { get; set; } = 500_000;
+
+  /// <summary>
+  /// The windows one audit pass walks against one origin, the first included (default 5, #2107). After each capped
+  /// window (<see cref="MaxAuditWindowSequences"/>) the consumer asks for the next one from where it stopped, until the
+  /// walk reaches the origin's settled head or this many windows have been asked for. Every window counts, verified or
+  /// not: a window that does not verify is not sealed, so the seal stays at the first such window and the next audit
+  /// starts again from there, but the windows after it are still compared, and their deficits recorded and repaired,
+  /// in the same audit.
+  /// </summary>
+  /// <remarks>
+  /// The trade-off is read load per audit against how much later history is checked behind a difference that has not
+  /// healed. Each window is one bounded type-level answer, plus drill-downs for the types that disagree; five windows at
+  /// the default cap compare 2.5 million sequences of history per audit, which catches a consumer up on a large store in
+  /// a few daily audits without turning one audit into a scan of the whole store. Raise it to check more history behind
+  /// a stuck difference or to catch up faster; lower it to bound an audit's load more tightly. Counted by a window
+  /// number the request carries and the origin echoes, so the bound holds without any state on the consumer. Must be at
+  /// least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_TheLastWindowTheBudgetAllows_SealsButAsksForNoMoreAsync</tests>
+  public int MaxAuditWindowsPerAudit { get; set; } = 5;
+
+  /// <summary>
+  /// #2115: when the service is idle, re-check ledger rows whose report has gone stale, oldest first, instead of waiting
+  /// for the daily audit to compare their buckets again (default true). A row clears only when its bucket is compared
+  /// again, and the routine audit compares a bucket at most once a day; rows written under an older compare rule (an
+  /// upgrade that changed the rule) otherwise linger for days, and with automatic repair on, the paced drain turns them
+  /// into repair requests. A re-check asks the owner for a stream-level answer over the row's window, compares it, and
+  /// removes the rows that now match or are undecided, exactly as the audit would; it never asks for a repair. Runs on
+  /// the maintainer instance only, under the housekeeping idle gate.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LedgerRecheckWorkerTests.cs</tests>
+  public bool LedgerRecheckEnabled { get; set; } = true;
+
+  /// <summary>
+  /// #2115: seconds between idle ledger re-check ticks (default 60). Each tick asks the idle gate first, so a busy
+  /// service spends nothing but that question. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckIntervalSeconds { get; set; } = 60;
+
+  /// <summary>
+  /// #2115: the most ledger rows one idle re-check tick claims (default 500). Rows that share an origin, type and window
+  /// are asked in one request, so a tick sends at most this many requests and usually far fewer. At the default
+  /// interval that is up to 30,000 rows an hour, which clears an upgrade's worth of stale rows within a few idle hours
+  /// without turning one tick into a burst of answers. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckRowsPerTick { get; set; } = 500;
+
+  /// <summary>
+  /// #2115: a ledger row is re-checked once its last report is older than this many minutes (default 120), and the
+  /// re-check stops when no row is that old. Twice the default <see cref="AuditSettleWindowMinutes"/>: a row reported
+  /// within the last two hours was compared recently and settled history has not moved under it since, so re-checking
+  /// it would only repeat that answer. A row a re-check finds still divergent is reported again and waits this long
+  /// before its next re-check. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckAfterMinutes { get; set; } = 120;
+
+  /// <summary>
   /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
   /// least this many events of one (tenant, type) in the window (default 1000), the consumer asks
   /// the origin for ONE state-only range-bounded backfill of the whole type instead of drilling

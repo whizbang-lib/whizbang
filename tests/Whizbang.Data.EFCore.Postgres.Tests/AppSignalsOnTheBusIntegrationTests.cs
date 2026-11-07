@@ -61,8 +61,9 @@ public class AppSignalsOnTheBusIntegrationTests : EFCoreTestBase {
 
     // Notifications dispatch on the listener's connection only when it reads from the wire.
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-    _ = listenerConn.WaitAsync(cts.Token);
+    var pump = listenerConn.WaitAsync(cts.Token);
     _ = await Task.WhenAny(receivedPayload.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    await _stopPumpAsync(cts, pump);
 
     await Assert.That(receivedPayload.Task.IsCompleted).IsTrue()
       .Because("the bus must emit pg_notify on the wh_app_<topic> channel reachable from any LISTENing connection");
@@ -102,8 +103,9 @@ public class AppSignalsOnTheBusIntegrationTests : EFCoreTestBase {
     await _newChannel().PublishAsync(topic, sentinel);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-    _ = listenerConn.WaitAsync(cts.Token);   // pump: notifications dispatch only while reading
+    var pump = listenerConn.WaitAsync(cts.Token);   // pump: notifications dispatch only while reading
     var received = await firstReceived.Task.WaitAsync(TimeSpan.FromSeconds(15), cts.Token);
+    await _stopPumpAsync(cts, pump);
 
     await Assert.That(received).IsEqualTo(sentinel)
       .Because("a channel with no connection string must drop the publish, not emit it through "
@@ -175,5 +177,18 @@ public class AppSignalsOnTheBusIntegrationTests : EFCoreTestBase {
     var resB = await b.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
     await Assert.That(resA).IsEqualTo("fanout-payload");
     await Assert.That(resB).IsEqualTo("fanout-payload");
+  }
+
+  /// <summary>
+  /// Ends the listener's read pump before the connection is disposed: disposing a connection while its wait is still
+  /// reading fails with "the connection is already in state 'Waiting'".
+  /// </summary>
+  private static async Task _stopPumpAsync(CancellationTokenSource cts, Task pump) {
+    await cts.CancelAsync();
+    try {
+      await pump;
+    } catch (OperationCanceledException) {
+      // the cancellation is how the pump ends
+    }
   }
 }

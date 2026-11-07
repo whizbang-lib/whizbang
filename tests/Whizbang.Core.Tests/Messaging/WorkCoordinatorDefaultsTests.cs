@@ -661,6 +661,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityClaimLedgerRecheckAsync_WithoutProviderSupport_ClaimsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var claimed = await coordinator.IntegrityClaimLedgerRecheckAsync([Guid.NewGuid()], DateTimeOffset.MinValue, DateTimeOffset.MinValue, 10);
+
+    await Assert.That(claimed).IsEmpty().Because("#2115: an engine without the ledger has nothing to re-check");
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
