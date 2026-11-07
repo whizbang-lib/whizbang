@@ -159,4 +159,21 @@ public class StreamIntegrityOptionsValidatorTests {
   public async Task MaxAuditWindowSequences_DefaultsToFiveEpochsAsync() =>
     await Assert.That(new StreamIntegrityOptions().MaxAuditWindowSequences).IsEqualTo(500_000)
       .Because("five of the default 100,000-sequence digest epochs: an aligned window answers from its seals");
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnAuditWindowBudgetBelowOne_FailsNamingTheKeyAsync(int windows) {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowsPerAudit = windows });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2107: an audit is at least its first window; a budget below one is a broken setting");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:MaxAuditWindowsPerAudit");
+  }
+
+  [Test]
+  public async Task MaxAuditWindowsPerAudit_DefaultsToFiveAsync() =>
+    await Assert.That(new StreamIntegrityOptions().MaxAuditWindowsPerAudit).IsEqualTo(5)
+      .Because("five capped windows is 2.5 million sequences of history compared per audit at the default cap");
 }

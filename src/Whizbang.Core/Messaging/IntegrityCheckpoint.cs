@@ -475,6 +475,28 @@ public sealed class StreamIntegrityOptions {
   public int MaxAuditWindowSequences { get; set; } = 500_000;
 
   /// <summary>
+  /// The windows one audit pass walks against one origin, the first included (default 5, #2107). After each capped
+  /// window (<see cref="MaxAuditWindowSequences"/>) the consumer asks for the next one from where it stopped, until the
+  /// walk reaches the origin's settled head or this many windows have been asked for. Every window counts, verified or
+  /// not: a window that does not verify is not sealed, so the seal stays at the first such window and the next audit
+  /// starts again from there, but the windows after it are still compared, and their deficits recorded and repaired,
+  /// in the same audit.
+  /// </summary>
+  /// <remarks>
+  /// The trade-off is read load per audit against how much later history is checked behind a difference that has not
+  /// healed. Each window is one bounded type-level answer, plus drill-downs for the types that disagree; five windows at
+  /// the default cap compare 2.5 million sequences of history per audit, which catches a consumer up on a large store in
+  /// a few daily audits without turning one audit into a scan of the whole store. Raise it to check more history behind
+  /// a stuck difference or to catch up faster; lower it to bound an audit's load more tightly. Counted by a window
+  /// number the request carries and the origin echoes, so the bound holds without any state on the consumer. Must be at
+  /// least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_TheLastWindowTheBudgetAllows_SealsButAsksForNoMoreAsync</tests>
+  public int MaxAuditWindowsPerAudit { get; set; } = 5;
+
+  /// <summary>
   /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
   /// least this many events of one (tenant, type) in the window (default 1000), the consumer asks
   /// the origin for ONE state-only range-bounded backfill of the whole type instead of drilling

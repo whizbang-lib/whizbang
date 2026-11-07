@@ -85,6 +85,15 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>Stream-level resume cursor from the previous answer's
   /// <see cref="IntegrityManifest.ResumeAfterStreamId"/> (null = the window's first page).</summary>
   public Guid? ResumeAfterStreamId { get; init; }
+
+  /// <summary>
+  /// #2107: which window of one audit pass this asks for, the first being 1 (0, the default and what a sender that
+  /// predates the field sends, is read as 1). The origin echoes it on its answer
+  /// (<see cref="IntegrityManifest.WindowNumber"/>), and the consumer stops asking for further windows once it reaches
+  /// <see cref="StreamIntegrityOptions.MaxAuditWindowsPerAudit"/>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
 }
 
 /// <summary>
@@ -160,6 +169,13 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity#windowed-manifests</docs>
   public bool WindowCapped { get; init; }
+
+  /// <summary>
+  /// #2107: the echo of the request's <see cref="RequestIntegrityManifest.WindowNumber"/>: which window of the asker's
+  /// audit pass this answers (0 from an origin that predates the field, read as 1).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
 }
 
 /// <summary>
