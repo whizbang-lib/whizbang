@@ -34,7 +34,7 @@ namespace Whizbang.Core.Lifecycle;
 /// <docs>fundamentals/events/superseding-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs</tests>
 public static class SupersedingEvents {
-  private sealed record Registration(Type EventType, Func<object, string?>? Reader, string? KeyMember, string? KeyJsonName);
+  private sealed record Registration(Type EventType, Func<object, string?>? Reader, string? KeyMember, string? KeyJsonName, string? Group);
 
   private static readonly ConcurrentDictionary<Type, Registration> _byType = new();
   private static readonly ConcurrentDictionary<string, Registration> _byName = new(StringComparer.Ordinal);
@@ -66,9 +66,28 @@ public static class SupersedingEvents {
   /// <docs>fundamentals/events/superseding-events#a-key-missing-from-the-payload</docs>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:KeyOf_ARegistrationWithoutAMappableKeyMember_ReadsThePayloadAsBeforeAsync</tests>
   [EditorBrowsable(EditorBrowsableState.Never)]
-  public static void Register(Type eventType, Func<object, string?>? keyOf, string? keyMember, string? keyJsonName) {
+  public static void Register(Type eventType, Func<object, string?>? keyOf, string? keyMember, string? keyJsonName) =>
+    Register(eventType, keyOf, keyMember, keyJsonName, null);
+
+  /// <summary>
+  /// Registers a superseding event type with its key member and its superseding group (#2124). Called by generated code;
+  /// registering a type twice is harmless.
+  /// </summary>
+  /// <param name="eventType">The event type.</param>
+  /// <param name="keyOf">Reads the key of an event of the type, or <see langword="null"/> when the type declares no
+  /// <see cref="Attributes.SupersedingKeyAttribute"/> (one key per stream).</param>
+  /// <param name="keyMember">The CLR name of the key property, or <see langword="null"/> (see
+  /// <see cref="Register(Type, Func{object, string?}?, string?, string?)"/>).</param>
+  /// <param name="keyJsonName">The key property's own <c>[JsonPropertyName]</c>, or <see langword="null"/>.</param>
+  /// <param name="group">The type's <see cref="Attributes.SupersedingAttribute.Group"/>, or <see langword="null"/> when
+  /// the type is its own group. The generator passes null for an empty name.</param>
+  /// <remarks>The first registration of a type is kept: a type's key and group are declared once, at compile time.</remarks>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:Register_WithAGroup_ByHand_KeepsTheGroup_TheOlderOverloadsRegisterNoneAsync</tests>
+  [EditorBrowsable(EditorBrowsableState.Never)]
+  public static void Register(Type eventType, Func<object, string?>? keyOf, string? keyMember, string? keyJsonName, string? group) {
     ArgumentNullException.ThrowIfNull(eventType);
-    var registration = new Registration(eventType, keyOf, keyMember, keyJsonName);
+    var registration = new Registration(eventType, keyOf, keyMember, keyJsonName, group);
     if (_byType.TryAdd(eventType, registration)) {
       // The catalog's ClrTypeName form ("Ns.Outer+Nested"), which is what a received wire type name reduces to.
       _byName.TryAdd(TypeNameFormatter.FormatClrTypeName(eventType), registration);
@@ -82,6 +101,39 @@ public static class SupersedingEvents {
     ArgumentNullException.ThrowIfNull(eventType);
     return _byType.ContainsKey(eventType);
   }
+
+  /// <summary>
+  /// The superseding group of <paramref name="eventType"/> (#2124): its <see cref="Attributes.SupersedingAttribute.Group"/>,
+  /// or <see langword="null"/> when it has none or is not superseding. The store matches an event with no group by its
+  /// event type, so an ungrouped type is its own group.
+  /// </summary>
+  /// <param name="eventType">The event type.</param>
+  /// <returns>The group name, or <see langword="null"/>.</returns>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_AGroupedType_IsItsDeclaredGroup_AnUngroupedOrUnregisteredTypeHasNoneAsync</tests>
+  public static string? GroupOf(Type eventType) {
+    ArgumentNullException.ThrowIfNull(eventType);
+    return _byType.TryGetValue(eventType, out var registration) ? registration.Group : null;
+  }
+
+  /// <summary>The superseding group a typed <paramref name="payload"/> is stored with (#2124).</summary>
+  /// <param name="payload">The payload, possibly null.</param>
+  /// <returns>Its type's group, or <see langword="null"/>.</returns>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
+  public static string? GroupOf(object? payload) => payload is null ? null : GroupOf(payload.GetType());
+
+  /// <summary>
+  /// The superseding group a received payload is stored with (#2124): a <see cref="JsonElement"/> payload's type is found
+  /// by <paramref name="wireTypeName"/>, a typed payload's directly.
+  /// </summary>
+  /// <param name="payload">The payload, typed or a <see cref="JsonElement"/>.</param>
+  /// <param name="wireTypeName">The payload's type name as the transport carried it.</param>
+  /// <returns>Its type's group, or <see langword="null"/>.</returns>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
+  public static string? GroupOf(object? payload, string? wireTypeName) =>
+    payload is JsonElement ? _registered(wireTypeName)?.Group : GroupOf(payload);
 
   /// <summary>The event types registered as superseding, as a snapshot.</summary>
   /// <returns>Every registered superseding type; the history reconcile walks the stored events of each (#2110).</returns>

@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Superseding groups: several event types supersede each other in one stream (#2124).** `[Superseding(Group =
+  "name")]` puts event types in one group, so the newest event of any of them supersedes the older events of every one
+  of them, per stream, group and key: a stream with a full-state "created" event and later full-state "updated" events
+  keeps only the newest. The name is explicit and global, never derived from a type name, and stored with every event.
+  Migration 352 adds `wh_event_store.supersede_group`, stamped beside the key by every write path (dispatch, receive,
+  direct append on both drivers) from the stored metadata's `sg`, and the queue and the reaper match on
+  `COALESCE(supersede_group, event_type)` through a new index, so an ungrouped type is its own group exactly as before
+  and no row is backfilled. A type that joins, leaves or changes a group later is walked again by the history reconcile
+  (#2110), which re-stamps its stored events under the new group. WHIZ138 (error) reports the types of a group that
+  disagree on their key: all keyless, or all keyed by the same type. `SupersedingEvents.GroupOf` reads a type's group,
+  and `EnvelopeMetadata.SupersedingGroup` carries it. Every event of every type in a group must carry the whole state for
+  its key, and a consumer that handles several of the types must need only the newest.
 - **Each perspective chooses what happens to its rows of a stream archived whole (#1739, WS-3 S10).**
   `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]` on a perspective, overridden per perspective by
   `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>`. `Keep` (the default) changes nothing; `Drop` deletes the

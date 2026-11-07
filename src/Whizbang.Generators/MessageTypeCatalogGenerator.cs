@@ -145,6 +145,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var (isSuperseding, supersedingKey) = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, (string?)null);
     // #2123: the key's [JsonPropertyName], so a JSON payload missing the key is told from one carrying a default value.
     var supersedingKeyJsonName = isSuperseding && supersedingKey is not null ? SupersedingResolver.KeyJsonName(typeSymbol, supersedingKey) : null;
+    // #2124: the superseding group, registered with the type so the write paths stamp it beside the key.
+    var supersedingGroup = isSuperseding ? SupersedingResolver.Group(typeSymbol) : null;
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -168,7 +170,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         StreamEndOfLife: kind == EVENT_KIND ? _streamEndOfLife(typeSymbol, clrTypeName) : null,
         IsSuperseding: isSuperseding,
         SupersedingKey: supersedingKey,
-        SupersedingKeyJsonName: supersedingKeyJsonName
+        SupersedingKeyJsonName: supersedingKeyJsonName,
+        SupersedingGroup: supersedingGroup
     );
   }
 
@@ -426,12 +429,25 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         ? "null"
         : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey}), " +
           $"\"{info.SupersedingKey}\", {keyJsonName}";
-      source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {registration});");
+      source.AppendLine(
+        $"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {_withGroup(registration, info)});");
     }
     source.AppendLine("  }");
     source.AppendLine("}");
 
     context.AddSource("MessageTypeCatalog.g.cs", source.ToString());
+  }
+
+  /// <summary>
+  /// The superseding registration's arguments with the type's group (#2124) appended, padding a keyless registration's
+  /// key member and JSON name with null; unchanged for an ungrouped type, so its generated call stays as it was.
+  /// </summary>
+  private static string _withGroup(string registration, MessageTypeCatalogEntryInfo info) {
+    if (info.SupersedingGroup is null) {
+      return registration;
+    }
+    var group = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingGroup, quote: true);
+    return info.SupersedingKey is null ? $"null, null, null, {group}" : $"{registration}, {group}";
   }
 
   /// <summary>
@@ -527,5 +543,6 @@ internal sealed record MessageTypeCatalogEntryInfo(
     string? StreamEndOfLife = null,
     bool IsSuperseding = false,
     string? SupersedingKey = null,
-    string? SupersedingKeyJsonName = null
+    string? SupersedingKeyJsonName = null,
+    string? SupersedingGroup = null
 );

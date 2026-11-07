@@ -36,6 +36,9 @@ public readonly record struct SupersedingHistoryReconcileResult(
 /// and each batch its own transaction, reads each unflagged event's key from its payload with the generated accessor the
 /// write paths use, and has the SQL stamp the flag and the key and queue every event a newer one of its stream, type and
 /// key supersedes. The superseded-event reaper then deletes a queued event only past every one of its gates.
+/// A type's superseding group (#2124) is stamped with its key; when the group a type declares changes, its walk starts
+/// again from the first event and re-stamps every stored event of the type whose group differs, so a type that joins a
+/// group later has its history superseded within the group.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -56,6 +59,7 @@ public readonly record struct SupersedingHistoryReconcileResult(
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryStoredBeforeTheDeclaration_IsReconciledByTheRegisteredStep_AndReapedToTheNewestAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryMissingAValueTypeKey_IsReconciledUnkeyed_AndNoneIsReapedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Reconcile_TypesThatJoinAGroupLater_AreReStamped_AndTheOlderEventOfTheGroupIsReapedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs:Reconcile_AValueTypeKeyMissingFromThePayload_IsStampedUnkeyed_KeptAndLogged_APresentDefaultIsAKeyAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema prefix is formatted in, built by SqlText.Identifier; every value is a bound parameter.")]
 public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
@@ -127,7 +131,7 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
       if (total.Batches >= _maxBatches) {
         break;
       }
-      var walk = new TypeWalk(TypeNameFormatter.Format(type), TypeNameFormatter.FormatClrTypeName(type));
+      var walk = new TypeWalk(TypeNameFormatter.Format(type), TypeNameFormatter.FormatClrTypeName(type), SupersedingEvents.GroupOf(type));
       total = await _walkAsync(database, prefix, walk, json, total, cancellationToken).ConfigureAwait(false);
     }
     if (total.EventsStamped == 0) {
@@ -136,7 +140,8 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
     return total;
   }
 
-  private readonly record struct TypeWalk(string EventType, string DefinitionName);
+  // Group (#2124): the type's superseding group, which the walk stamps; a change of group walks the type again.
+  private readonly record struct TypeWalk(string EventType, string DefinitionName, string? Group);
 
   private readonly record struct Begun(string Status, Guid? After, Guid? Through, long Scanned, long Total, long Matched);
 
@@ -147,9 +152,10 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
       PostgresArchiveConnection database, string prefix, TypeWalk walk, JsonSerializerOptions json,
       SupersedingHistoryReconcileResult total, CancellationToken cancellationToken) {
     await using (var connection = await database.Open(cancellationToken).ConfigureAwait(false)) {
-      await using var ensure = new NpgsqlCommand($"SELECT {prefix}wh_superseding_history_ensure($1, $2)", connection);
+      await using var ensure = new NpgsqlCommand($"SELECT {prefix}wh_superseding_history_ensure($1, $2, $3)", connection);
       ensure.Parameters.AddWithValue(walk.EventType);
       ensure.Parameters.AddWithValue(walk.DefinitionName);
+      ensure.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)walk.Group ?? DBNull.Value });
       _ = await ensure.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
     long stamped = 0, queued = 0, left = 0, of = 0;

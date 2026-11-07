@@ -20,7 +20,7 @@ internal static class SupersedingResolver {
   private const string SUPERSEDING_ATTRIBUTE = "global::Whizbang.Core.Attributes.SupersedingAttribute";
   private const string KEY_ATTRIBUTE = "global::Whizbang.Core.Attributes.SupersedingKeyAttribute";
 
-  /// <summary><c>[Superseding]</c> on the type or a base type (the attribute is inherited).</summary>
+  /// <summary><c>[Superseding]</c> on the type or a base type (the attribute is inherited). <see cref="Group"/> requires it.</summary>
   public static bool IsDeclared(INamedTypeSymbol type) {
     for (var level = type; level is not null; level = level.BaseType) {
       if (level.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SUPERSEDING_ATTRIBUTE))) {
@@ -28,6 +28,19 @@ internal static class SupersedingResolver {
       }
     }
     return false;
+  }
+
+  /// <summary>
+  /// The superseding group the type declares (#2124): <c>Group</c> of its nearest <c>[Superseding]</c>, on the type or a
+  /// base type (the nearest declaration wins, as attribute inheritance reads it), or null when it names none or names the
+  /// empty string. Taken as written, never derived from a type name, since it is stored with every event.
+  /// </summary>
+  public static string? Group(INamedTypeSymbol type) {
+    var declaration = _levels(type)
+      .SelectMany(level => level.GetAttributes())
+      .First(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SUPERSEDING_ATTRIBUTE));
+    var group = declaration.NamedArguments.FirstOrDefault(a => a.Key == "Group").Value.Value as string;
+    return string.IsNullOrEmpty(group) ? null : group;
   }
 
   /// <summary>
