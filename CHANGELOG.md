@@ -1400,7 +1400,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already takes), so the whole tree round-trips at any depth, and WHIZ200 reports the recursive property, at any depth,
   saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
   that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
-  without recursion stays mapped. The generated message JSON context now provides metadata for `IList<T>` and
+  without recursion stays mapped. WHIZ304 and the index advisory (WHIZ302) name a recursive member as recursive, with
+  that reason, instead of as one "the mapped path cannot construct". The generated message JSON context now provides metadata for `IList<T>` and
   `ImmutableList<T>` (as it did for `IReadOnlyList<T>`), and discovers the element type behind an `ImmutableList<T>`:
   without it, any opaque document or message holding one could not be serialized at all (`NotSupportedException`,
   "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a

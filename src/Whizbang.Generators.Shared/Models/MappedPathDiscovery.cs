@@ -88,6 +88,32 @@ public static class MappedPathDiscovery {
   }
 
   /// <summary>
+  /// Why the model is stored opaquely, for a diagnostic: the first member the mapped path cannot round-trip, and what is
+  /// wrong with it.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>
+  /// A phrase such as <c>holds 'Skeleton.Children', which is recursive (...)</c> or
+  /// <c>holds 'Tags', which the mapped path cannot construct</c>, or null when every member maps.
+  /// </returns>
+  /// <remarks>
+  /// One sentence for every analyzer that explains an opaque model, so they cannot describe the same member two ways.
+  /// A recursive member is told apart because "cannot construct" is wrong for it: the mapped path builds it and keeps
+  /// one level, and an author reading "cannot construct" goes looking for a constructor problem that is not there.
+  /// Polymorphism is the other reason a model is opaque and is the caller's to name.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MappedPathDiscoveryRecursionTests.cs:DescribeUnmappable_SaysWhyTheMemberIsOpaqueAsync</tests>
+  public static string? DescribeUnmappable(INamedTypeSymbol modelType) {
+    var member = UnmappableMember(modelType);
+    if (member is null) {
+      return null;
+    }
+    return RecursiveMembers(modelType).Any(r => r.Path == member)
+      ? $"holds '{member}', which is recursive (Entity Framework maps a self-reference only one level deep)"
+      : $"holds '{member}', which the mapped path cannot construct";
+  }
+
+  /// <summary>
   /// Every property in the model's graph whose type (or collection element) is a type the path to it is already inside:
   /// the property that makes the graph recursive, with its path and the type it returns to.
   /// </summary>
