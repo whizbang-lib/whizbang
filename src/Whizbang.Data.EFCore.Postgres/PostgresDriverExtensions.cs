@@ -345,6 +345,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#history-conversion</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
+        // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
+        // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+          SupersedingHistoryReconcileStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

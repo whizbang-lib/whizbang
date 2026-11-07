@@ -114,6 +114,20 @@ public class SupersedingEventsTests {
     }
   }
 
+  /// <summary>
+  /// #2110: the history reconcile walks the registered superseding types, so the registry lists them; an ordinary event
+  /// is never among them, and a later registration appears in the next listing.
+  /// </summary>
+  [Test]
+  public async Task Types_ListsEveryRegisteredSupersedingType_AndNoOtherAsync() {
+    var types = SupersedingEvents.Types();
+
+    await Assert.That(types).Contains(typeof(EmbeddingUpdated));
+    await Assert.That(types).Contains(typeof(PermissionsReplaced));
+    await Assert.That(types).DoesNotContain(typeof(PlainEvent)).Because("only a [Superseding] event is listed");
+    await Assert.That(types).DoesNotContain(typeof(NeverRegistered));
+  }
+
   [Test]
   public async Task NullType_ThrowsAsync() {
     await Assert.That(() => SupersedingEvents.Register(null!, null)).Throws<ArgumentNullException>();
