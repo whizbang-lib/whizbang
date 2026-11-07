@@ -419,13 +419,13 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // every path without reflection. A keyed type also registers its key member and [JsonPropertyName] (#2123), so a JSON
     // payload missing the key is read as no key rather than as the key type's default.
     foreach (var info in ordered.Where(i => i.IsSuperseding)) {
+      var keyJsonName = info.SupersedingKeyJsonName is null
+        ? "null"
+        : Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingKeyJsonName, quote: true);
       var registration = info.SupersedingKey is null
         ? "null"
         : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey}), " +
-          $"\"{info.SupersedingKey}\", " +
-          (info.SupersedingKeyJsonName is null
-            ? "null"
-            : Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingKeyJsonName, quote: true));
+          $"\"{info.SupersedingKey}\", {keyJsonName}";
       source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {registration});");
     }
     source.AppendLine("  }");
