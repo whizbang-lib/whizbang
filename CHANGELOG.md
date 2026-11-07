@@ -1403,6 +1403,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Inbox rows the dispatcher never sees no longer retry for ever, and a consumer receives its owners' checkpoints
+  (#2117, #2118).** A received event that sorts after an earlier pending event of its stream, which the instance does
+  not hold, is held back unstored, and the drain never fetches an unstored event, yet the claim re-offered its stream
+  first. Once the outstanding budget narrowed the re-offer to one stream, that stream was always the held-back one, so
+  every other row the claim acquired, received integrity checkpoints included, was charged an attempt and never
+  dispatched: it climbed attempts for days without completing or being dead-lettered, and a consumer that owns nothing
+  never learned who owns the types it consumes. Migration 349 re-offers only the held streams the drain can fetch. The
+  attempt ceiling is enforced where a row is dispatched, so the maintenance cycle now also concludes the inbox rows past
+  `MaxInboxAttempts` that no dispatcher concluded (`MaintenanceWorkerOptions.ConcludeExhaustedInboxRows`, default on,
+  `ExhaustedInboxConcludeLimit`, default 500): a domain message is moved to the dead-letter store as
+  `MaxAttemptsExceeded`, keeping its last recorded error, and control-plane traffic is dropped
+  (`IWorkCoordinator.DropExhaustedInboxRowsAsync`, migration 350).
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

@@ -382,6 +382,12 @@ public sealed partial class MaintenanceWorker(
       await _runStuckRowSentinelAsync(coordinator, ct);
     }
 
+    // #2117: the rows the sentinel reports past the dispatcher's ceiling are concluded here, since the dispatcher that
+    // enforces it never saw them.
+    if (_options.ConcludeExhaustedInboxRows) {
+      await _concludeExhaustedInboxRowsAsync(coordinator, sp, ct);
+    }
+
     // Steps other packages add. Last, so everything they read has been through this cycle's own
     // housekeeping first.
     await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
@@ -1041,6 +1047,93 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  /// <summary>
+  /// Concludes the inbox rows past <c>MaxInboxAttempts</c> that no dispatcher concluded (#2117): a domain message is
+  /// moved to the dead-letter store as <see cref="MessageFailureReason.MaxAttemptsExceeded"/>, where its last recorded
+  /// error is kept, and control-plane traffic, which is never stored (<see cref="DeadLetterDropPolicy"/>), is dropped.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The ceiling is enforced where a row is dispatched. A row the claim acquires and charges an attempt but never hands to
+  /// a dispatcher (a stream the re-offer passed over, an event held back behind its stream's unheld head) lapsed, was
+  /// taken again by the next claim, and climbed attempts for days without completing or being dead-lettered, while the
+  /// stuck-row sentinel only reported it. A row past the ceiling never runs a handler anywhere, since the dispatcher
+  /// concludes it before dispatch, so concluding it here cannot race a handler; a row its dispatcher concluded in the
+  /// meantime is found gone and left alone.
+  /// </para>
+  /// <para>
+  /// A host with no inbox dispatch, or with no ceiling, has nothing to conclude. A domain row on a host with no
+  /// dead-letter store is kept and reported. A failed move or drop is logged and retried on the next cycle; cancellation
+  /// is shutdown and propagates.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs</tests>
+  private async Task _concludeExhaustedInboxRowsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    if (sp.GetService<IOptions<InboxDispatchWorkerOptions>>()?.Value.MaxInboxAttempts is not int maxAttempts) {
+      return;
+    }
+    var exhausted = await coordinator.FindStuckInboxRowsAsync(maxAttempts, _options.ExhaustedInboxConcludeLimit, ct).ConfigureAwait(false);
+    var controlPlane = new List<Whizbang.Core.Messaging.StuckRow>();
+    var domain = new List<Whizbang.Core.Messaging.StuckRow>();
+    foreach (var row in exhausted) {
+      (DeadLetterDropPolicy.ShouldDropInsteadOfStore(row.MessageType) ? controlPlane : domain).Add(row);
+    }
+    if (controlPlane.Count > 0) {
+      await _dropExhaustedControlPlaneAsync(coordinator, controlPlane, maxAttempts, ct).ConfigureAwait(false);
+    }
+    if (domain.Count > 0) {
+      await _deadLetterExhaustedAsync(sp, domain, maxAttempts, ct).ConfigureAwait(false);
+    }
+  }
+
+  private async Task _dropExhaustedControlPlaneAsync(
+      IWorkCoordinator coordinator, List<Whizbang.Core.Messaging.StuckRow> rows, int maxAttempts, CancellationToken ct) {
+    try {
+      var dropped = await coordinator.DropExhaustedInboxRowsAsync([.. rows.Select(r => r.MessageId)], maxAttempts, ct).ConfigureAwait(false);
+      LogExhaustedControlPlaneDropped(_logger, dropped, rows.Count, maxAttempts);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogExhaustedDropFailed(_logger, rows.Count, ex);
+    }
+  }
+
+  private async Task _deadLetterExhaustedAsync(
+      IServiceProvider sp, List<Whizbang.Core.Messaging.StuckRow> rows, int maxAttempts, CancellationToken ct) {
+    var store = sp.GetService<IDeadLetterStore>();
+    if (store?.IsConfigured != true) {
+      LogExhaustedNotStored(_logger, rows.Count, maxAttempts);
+      return;
+    }
+    var instanceId = sp.GetService<IServiceInstanceProvider>()?.InstanceId ?? Guid.Empty;
+    var generation = (sp.GetService<IGenerationProvider>() ?? new DefaultGenerationProvider()).GetGeneration();
+    var dlqMetrics = sp.GetService<DeadLetterMetrics>();
+    foreach (var row in rows) {
+      var errorText = "MaintenanceWorker dead-lettered an inbox row the claim kept charging and no dispatcher concluded: "
+        + $"attempts={row.Attempts} > max={maxAttempts}";
+      try {
+        var moved = await store.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: row.MessageId,
+          failureReason: MessageFailureReason.MaxAttemptsExceeded,
+          errorText: errorText,
+          instanceId: instanceId,
+          generation: generation,
+          ct: ct).ConfigureAwait(false);
+        if (moved is null) {
+          continue;   // its dispatcher concluded it meanwhile and logged its record there
+        }
+        dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.MaxAttemptsExceeded)));
+        dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)MessageFailureReason.MaxAttemptsExceeded, errorText);
+        LogExhaustedDeadLettered(_logger, row.MessageId, row.MessageType, row.Attempts, maxAttempts);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogExhaustedMoveFailed(_logger, row.MessageId, ex);
+      }
+    }
+  }
+
   private static bool _coordinatorDebugMode(IServiceProvider sp) =>
     sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>()
       ?.Value.DebugMode ?? false;
@@ -1323,6 +1416,29 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckInboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
+
+  [LoggerMessage(EventId = 66, Level = LogLevel.Warning,
+    Message = "Exhausted inbox row {MessageId} ({MessageType}) dead-lettered by maintenance: attempts={Attempts} > max={MaxAttempts}, "
+            + "and no dispatcher concluded it; its last recorded error is kept on the dead letter")]
+  static partial void LogExhaustedDeadLettered(ILogger logger, Guid messageId, string messageType, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 67, Level = LogLevel.Warning,
+    Message = "Maintenance could not dead-letter exhausted inbox row {MessageId}; it is tried again next cycle")]
+  static partial void LogExhaustedMoveFailed(ILogger logger, Guid messageId, Exception exception);
+
+  [LoggerMessage(EventId = 68, Level = LogLevel.Warning,
+    Message = "Maintenance dropped {Dropped} of {Count} exhausted control-plane inbox row(s) past max={MaxAttempts} that no "
+            + "dispatcher concluded; control-plane traffic is never stored and its sender re-issues it")]
+  static partial void LogExhaustedControlPlaneDropped(ILogger logger, int dropped, int count, int maxAttempts);
+
+  [LoggerMessage(EventId = 69, Level = LogLevel.Warning,
+    Message = "Maintenance could not drop {Count} exhausted control-plane inbox row(s); they are tried again next cycle")]
+  static partial void LogExhaustedDropFailed(ILogger logger, int count, Exception exception);
+
+  [LoggerMessage(EventId = 70, Level = LogLevel.Warning,
+    Message = "{Count} exhausted inbox row(s) past max={MaxAttempts} were not concluded: no dead-letter store is configured, "
+            + "so they are kept and reported by the stuck-row sentinel")]
+  static partial void LogExhaustedNotStored(ILogger logger, int count, int maxAttempts);
 }
 
 /// <summary>Configuration for <see cref="MaintenanceWorker"/>.</summary>
