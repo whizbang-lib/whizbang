@@ -11,9 +11,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 // Perspectives in a context of their own whose models hold recursive types (a tree node holding its children, and a
 // branch and a leaf holding each other), so the schema pass, the model configuration and the read are all the
-// generated ones (#2112). WHIZ200 says each such model is stored as one opaque document, which is what these tests
-// read back at every depth.
-#pragma warning disable WHIZ200
+// generated ones (#2112). WHIZ200 and WHIZ202 say each such model is stored as one opaque document, which is what
+// these tests read back at every depth.
+#pragma warning disable WHIZ200, WHIZ202
 
 /// <summary>A tree node whose children are a <c>List</c> of itself.</summary>
 public sealed record ListTreeNode {

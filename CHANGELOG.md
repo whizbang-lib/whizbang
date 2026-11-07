@@ -1397,8 +1397,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one
   level deep: every level below the first self-reference was dropped on write and read back as null, with no error at
   model build, save or query. The generator now stores such a model as one opaque document (the form an array of records
-  already takes), so the whole tree round-trips at any depth, and WHIZ200 reports the recursive property, at any depth,
-  saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
+  already takes), so the whole tree round-trips at any depth, and the new WHIZ202 (Info) reports the recursive property,
+  at any depth, saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
   that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
   without recursion stays mapped. WHIZ304 and the index advisory (WHIZ302) name a recursive member as recursive, with
   that reason, instead of as one "the mapped path cannot construct". The generated message JSON context now provides metadata for `IList<T>` and
@@ -1414,7 +1414,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the migration ledger: new migration `351_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
   migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
   as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
-  as errors is not affected: WHIZ200 reports a recursive model at Info, since it is stored correctly and there is
+  as errors is not affected: WHIZ202 reports a recursive model at Info, since it is stored correctly and there is
   nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).
   **New error WHIZ201:** a perspective model whose recursive types form a circular reference cannot be saved. A tree
   (`Node.Children`), two types holding collections of each other and a linked list (`Link.Next`) are writable; a

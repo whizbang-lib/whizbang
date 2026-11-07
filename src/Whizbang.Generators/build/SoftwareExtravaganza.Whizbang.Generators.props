@@ -20,7 +20,7 @@
        WHIZ200 (an array of records stores a perspective model as one opaque document) is on by default too.
        Consumers can set WhizbangOpaqueArrayWarning=false to turn it off for a project; #pragma warning
        disable WHIZ200 or [SuppressMessage] turns it off for one property instead. The same switch turns off
-       WHIZ200's Info report of a recursive type, which also stores the model opaquely (#2112). -->
+       WHIZ202, the Info report of a recursive type, which also stores the model opaquely (#2112). -->
   <ItemGroup>
     <CompilerVisibleProperty Include="WhizbangCollectiveIndexWarning" />
     <CompilerVisibleProperty Include="WhizbangOpaqueArrayWarning" />

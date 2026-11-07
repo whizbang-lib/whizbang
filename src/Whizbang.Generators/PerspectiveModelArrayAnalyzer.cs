@@ -29,7 +29,8 @@ namespace Whizbang.Generators;
 /// every perspective interface extends, or <c>IGlobalPerspectiveFor&lt;TModel, TPartitionKey&gt;</c>). The opaque form
 /// is the Entity Framework driver's, so a compilation that does not reference it is not analyzed: the Dapper driver
 /// serializes every model whole and makes no such choice. The warning is turned off for a whole build with
-/// <c>WhizbangOpaqueArrayWarning=false</c>, and for one property with <c>#pragma warning disable WHIZ200</c> or a
+/// <c>WhizbangOpaqueArrayWarning=false</c> (which turns off WHIZ202 too), and for one property with
+/// <c>#pragma warning disable WHIZ200</c> (or WHIZ202) or a
 /// <c>[SuppressMessage]</c>, which apply because it is reported at the property.
 /// </para>
 /// </remarks>
@@ -64,20 +65,20 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       description: "Entity Framework cannot read an array of a complex element back from a mapped JSON document, so a perspective model holding one, at any depth, is stored as one serialized document, which reads and writes correctly but has no field an index can serve. List<T>, IList<T> and ImmutableList<T> keep the document mapped. Arrays of primitives are not affected. Turn the warning off for a project with WhizbangOpaqueArrayWarning=false.");
 
   /// <summary>
-  /// WHIZ200: Warning - a recursive type stores the perspective model as one opaque document (#2112).
+  /// WHIZ202: Info - a recursive type stores the perspective model as one opaque document (#2112).
   /// </summary>
   /// <remarks>
-  /// The same id as the array warning, because it is the same consequence (no field can be indexed) and the same switch
-  /// and suppressions apply. The advice differs: a recursive type stays opaque in every collection shape, because the
-  /// mapped path stores only its first level and drops every level below it with no error, so recommending a
-  /// <c>List</c> here would lead an author from a whole tree into a truncated one.
+  /// The same consequence as the array warning (no field can be indexed), reported by the same analyzer under the same
+  /// switch, with its own id because it means something else: there is nothing to change. A recursive type stays opaque
+  /// in every collection shape, because the mapped path stores only its first level and drops every level below it with
+  /// no error, so recommending a <c>List</c> here would lead an author from a whole tree into a truncated one.
   /// </remarks>
-  /// <docs>operations/diagnostics/whiz200</docs>
+  /// <docs>operations/diagnostics/whiz202</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfItself_IsReportedAsRecursive_WithoutTheListAdviceAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:ACollectionOfItself_IsReportedAsRecursiveAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:AnArrayOfARecursiveType_IsReportedAsRecursiveAsync</tests>
   public static readonly DiagnosticDescriptor RecursiveTypeInPerspectiveModel = new(
-      id: "WHIZ200",
+      id: "WHIZ202",
       title: "A recursive type stores the perspective model as one opaque document",
       messageFormat: "Property '{0}' of perspective model '{1}' holds '{2}', which is recursive (a type in it holds itself), so the model is stored as one opaque document and none of its fields can be indexed. Keep it opaque: the mapped path would store only the first level of a recursive type, in any collection shape, and drop the rest.",
       category: CATEGORY,
