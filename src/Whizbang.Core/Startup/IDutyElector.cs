@@ -78,6 +78,9 @@ public interface IDutyGrant : IAsyncDisposable {
   /// <docs>proposals/duty-role-assignment</docs>
   /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
   bool DrainRequested => false;
+
+  /// <summary>RED stub (#2140).</summary>
+  CancellationToken LostToken => CancellationToken.None;
 }
 
 /// <summary>

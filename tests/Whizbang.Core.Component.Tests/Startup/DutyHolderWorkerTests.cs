@@ -35,6 +35,8 @@ public class DutyHolderWorkerTests {
     public long? Epoch => epoch;
     public bool DrainRequested { get; set; }
     public Guid? PreviousHolderInstanceId { get; init; }
+    public CancellationTokenSource Lost { get; } = new();
+    public CancellationToken LostToken => Lost.Token;
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Task.FromResult(!Disposed && (Verifications.Count == 0 || Verifications.Dequeue()));
     public ValueTask DisposeAsync() {
@@ -666,6 +668,108 @@ public class DutyHolderWorkerTests {
 
     await Assert.That(async () => await worker.RunOnceAsync(cts.Token)).Throws<OperationCanceledException>();
     await Assert.That(worker.Holds(ROLE)).IsTrue().Because("a canceled pass releases nothing; the host's stop does");
+  }
+
+  // --- #2140: a grant that is lost stops the exclusive work running under it -----------------------
+
+  [Test]
+  public async Task AGrantLostMidAcquisitionWork_CancelsThatWork_AndTheWorkerLetsTheRoleGoAsync() {
+    // The elector learned the role is gone while the holder was inside its acquisition work: that work is canceled
+    // through the grant's token, so it never runs beside the next holder's.
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var canceled = false;
+    var onAcquired = new OnAcquired(async (_, token) => {
+      started.TrySetResult();
+      try {
+        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+      } catch (OperationCanceledException) {
+        canceled = true;
+        throw;
+      }
+    });
+    var store = new Store();
+    store.Owed.Add(_owed("Rewrite"));
+    var rewrite = _done("Rewrite");
+    var worker = _worker(elector, store, [rewrite], acquisitionHandlers: [onAcquired]);
+
+    var pass = worker.RunOnceAsync(CancellationToken.None);
+    await started.Task;
+    await grant.Lost.CancelAsync();
+    await pass;
+
+    await Assert.That(canceled).IsTrue();
+    await Assert.That(rewrite.Runs).IsEqualTo(0).Because("no exclusive work starts under a lost grant");
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+    await Assert.That(grant.Disposed).IsTrue();
+  }
+
+  [Test]
+  public async Task AGrantLostMidOwedWork_CancelsThatWork_AndRunsNoMoreAsync() {
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var first = new Handler("First", async token => {
+      started.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, token);
+      return DutyWorkResult.Done();
+    });
+    var second = _done("Second");
+    var store = new Store();
+    store.Owed.Add(_owed("First"));
+    store.Owed.Add(_owed("Second"));
+    var worker = _worker(elector, store, [first, second]);
+
+    var pass = worker.RunOnceAsync(CancellationToken.None);
+    await started.Task;
+    await grant.Lost.CancelAsync();
+    await pass;
+
+    await Assert.That(second.Runs).IsEqualTo(0);
+    await Assert.That(store.Completed).IsEmpty();
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+  }
+
+  [Test]
+  public async Task Holds_TurnsFalseTheMomentTheGrantIsLost_WithoutWaitingForAPassAsync() {
+    // MaintainerDuty asks Holds before each piece of fleet-wide work; it must not wait for the next pass to learn.
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var worker = _worker(elector, new Store(), [_done("Rewrite")]);
+    await worker.RunOnceAsync(CancellationToken.None);
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+
+    await grant.Lost.CancelAsync();
+
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+  }
+
+  [Test]
+  public async Task StoppingDuringWork_IsNotMistakenForALostGrant_AndKeepsTheRoleForTheHostsStopAsync() {
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var store = new Store();
+    store.Owed.Add(_owed("Rewrite"));
+    var worker = _worker(elector, store, [new Handler("Rewrite", async token => {
+      started.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, token);
+      return DutyWorkResult.Done();
+    })]);
+    using var stop = new CancellationTokenSource();
+
+    var pass = worker.RunOnceAsync(stop.Token);
+    await started.Task;
+    await stop.CancelAsync();
+
+    await Assert.That(async () => await pass).Throws<OperationCanceledException>();
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+    await Assert.That(grant.Disposed).IsFalse();
   }
 
   /// <summary>Grants once; the token is canceled by the time the pass reaches the drain.</summary>

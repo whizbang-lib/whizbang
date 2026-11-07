@@ -1836,6 +1836,13 @@ public interface IWorkCoordinator {
   Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
 
+  /// <summary>RED stub (#2140).</summary>
+  /// <param name="skipTablesVacuumedWithin">The window.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) =>
+    VacuumWorkTablesAsync(cancellationToken);
+
   /// <summary>
   /// Every B-tree index on the queue tables that churn to empty, with its size and the size the catalog estimates it
   /// should have (#1746). The maintenance cycle's <see cref="Whizbang.Core.Workers.QueueIndexReindexStep"/> rebuilds the
@@ -4839,7 +4846,10 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <param name="SkippedReason">Why it did not run, naming the table and the role; null when it ran.</param>
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
-public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);
+public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason) {
+  /// <summary>RED stub (#2140).</summary>
+  public bool RecentlyVacuumed { get; init; }
+}
 
 /// <summary>
 /// One B-tree index on a queue table that churns to empty, as <see cref="IWorkCoordinator.GetQueueIndexBloatAsync"/>

@@ -131,6 +131,10 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     : DutyAttempt.Lost(DutyRefusal.Halted,
       $"duty '{duty}' is not voted for: this instance's run permit is closed (paused, standing down or stopping)");
 
+#pragma warning disable CS0067, S3264 // RED stub (#2140)
+  internal event Action<string, bool>? WatchChecked;
+#pragma warning restore CS0067, S3264
+
   /// <summary>How often a holder renews; a holder's work loop wakes at least this often.</summary>
   public TimeSpan RenewInterval => _roleOptions.RenewInterval;
 

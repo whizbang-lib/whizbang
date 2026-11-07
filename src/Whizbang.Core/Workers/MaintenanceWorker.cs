@@ -1519,6 +1519,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
   public bool MaintainOnReassignment { get; set; } = true;
 
+  /// <summary>RED stub (#2140).</summary>
+  public TimeSpan SkipAcquisitionVacuumWithin { get; set; } = TimeSpan.Zero;
+
   /// <summary>
   /// Interval between maintenance runs, in minutes. Default 10.
   /// <para>

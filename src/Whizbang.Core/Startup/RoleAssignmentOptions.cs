@@ -45,6 +45,17 @@ public sealed class RoleAssignmentOptions {
   /// <summary>How many renewals in a row may be missed before the lease lapses. Default 3; at least 2.</summary>
   public int MissedRenewalsBeforeLapse { get; set; } = 3;
 
+  /// <summary>RED stub (#2140).</summary>
+  public TimeSpan ProgressWindow { get; set; } = TimeSpan.FromMinutes(2);
+
+  /// <summary>RED stub (#2140).</summary>
+  /// <param name="role">The role.</param>
+  /// <returns>The window.</returns>
+  public TimeSpan ProgressWindowFor(string role) {
+    ArgumentNullException.ThrowIfNull(role);
+    return ProgressWindow > TimeSpan.MaxValue ? ProgressWindow : TimeSpan.Zero;
+  }
+
   /// <summary>
   /// How long an instance whose assignment lapsed must wait before it can be elected again.
   /// Default 15 seconds.

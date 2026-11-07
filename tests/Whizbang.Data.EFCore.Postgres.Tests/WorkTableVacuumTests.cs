@@ -67,6 +67,25 @@ public class WorkTableVacuumTests : EFCoreTestBase {
     await _assertEachVacuumedAsync(before, await _vacuumCountsAsync(cancellationToken), by: 1);
   }
 
+  [Test]
+  [Timeout(120000)]
+  public async Task ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync(CancellationToken cancellationToken) {
+    // #2140: a hand-off shortly after a takeover finds the work tables just vacuumed (the database records when, for
+    // every instance) and does not vacuum them again; with no window, they are vacuumed as before.
+    await using var context = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(context, JsonContextRegistry.CreateCombinedOptions());
+    _ = await coordinator.VacuumWorkTablesAsync(cancellationToken);
+    var afterFirst = await _vacuumCountsAsync(cancellationToken);
+
+    var skipped = await coordinator.VacuumWorkTablesAsync(TimeSpan.FromMinutes(10), cancellationToken);
+
+    await Assert.That(skipped.All(o => !o.Vacuumed && o.RecentlyVacuumed && o.SkippedReason!.Contains("within"))).IsTrue();
+    await _assertEachVacuumedAsync(afterFirst, await _vacuumCountsAsync(cancellationToken), by: 0);
+    var again = await coordinator.VacuumWorkTablesAsync(TimeSpan.Zero, cancellationToken);
+    await Assert.That(again.All(o => o.Vacuumed && !o.RecentlyVacuumed)).IsTrue();
+    await _assertEachVacuumedAsync(afterFirst, await _vacuumCountsAsync(cancellationToken), by: 1);
+  }
+
   /// <summary>
   /// Under a data-only application role: with <c>-init</c> configured the init connection, which owns the
   /// tables, vacuums them; without it nothing is vacuumed and each table comes back with the reason, naming
