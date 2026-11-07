@@ -62,6 +62,24 @@ public class MessageJsonContextInterfaceCollectionTests {
   }
 
   /// <summary>
+  /// Every other collection interface the opaque path accepts gets its own factory too, filled through a
+  /// <c>List&lt;T&gt;</c>, which implements each of them (#2114).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("ICollection")]
+  [Arguments("IReadOnlyCollection")]
+  [Arguments("IEnumerable")]
+  public async Task ACollectionInterfaceProperty_GetsAFactoryAndATypeCheckAsync(string collection) {
+    var code = await _generatedAsync(_source(collection));
+
+    await Assert.That(code).Contains($"private JsonTypeInfo<global::System.Collections.Generic.{collection}<global::TestApp.CatalogItem>> Create{collection}_TestApp_CatalogItem(");
+    await Assert.That(code).Contains($"if (type == typeof(global::System.Collections.Generic.{collection}<global::TestApp.CatalogItem>)) {{");
+    await Assert.That(code).Contains($"JsonMetadataServices.CreateIEnumerableInfo<global::System.Collections.Generic.{collection}<global::TestApp.CatalogItem>, global::TestApp.CatalogItem>(");
+    await Assert.That(code).Contains("Create_TestApp_CatalogItem");
+  }
+
+  /// <summary>
   /// An <c>ImmutableList&lt;T&gt;</c> property gets a factory that builds the list from the elements read, and its
   /// element type is discovered through it.
   /// </summary>
