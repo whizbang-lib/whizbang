@@ -520,6 +520,9 @@ public class MessageTypeCatalogGeneratorTests {
       public record ParameterKeyed([SupersedingKey] int Slot) : IEvent;
 
       [Superseding]
+      public record RenamedKey([property: SupersedingKey, System.Text.Json.Serialization.JsonPropertyName("slot_\"no")] int Slot) : IEvent;
+
+      [Superseding]
       public record PermissionsReplaced(string[] Grants) : IEvent;
 
       [Superseding]
@@ -543,16 +546,19 @@ public class MessageTypeCatalogGeneratorTests {
       .Because("a command is never stored on a stream, so nothing can supersede it");
     await Assert.That(entry("ProfileRenamed").Contains("IsSuperseding")).IsFalse();
     await Assert.That(generated).Contains(
-      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model));")
+      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model), \"Model\", null);")
       .Because("a key on a record's positional property is read through that property");
     await Assert.That(generated).Contains(
-      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner));");
+      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner), \"Owner\", null);");
     await Assert.That(generated).Contains(
-      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner));")
+      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner), \"Owner\", null);")
       .Because("a key declared on a base type is the derived type's key");
     await Assert.That(generated).Contains(
-      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot));")
+      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot), \"Slot\", null);")
       .Because("on a primary-constructor parameter the attribute marks the property of the same name");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}RenamedKey), static p => {KEY_TEXT}(((global::MyApp.RenamedKey)p).Slot), \"Slot\", \"slot_\\\"no\");")
+      .Because("#2123: the key's member and [JsonPropertyName] are registered, so a payload missing the key is told from a default key");
     await Assert.That(generated).Contains($"{REGISTER}PermissionsReplaced), null);")
       .Because("a superseding type with no key has one key per stream");
     await Assert.That(generated.Contains($"{REGISTER}ReplaceAll)")).IsFalse();
