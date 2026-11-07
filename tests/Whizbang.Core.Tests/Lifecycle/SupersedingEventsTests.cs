@@ -142,6 +142,7 @@ public class SupersedingEventsTests {
     await Assert.That(SupersedingEvents.IsKeyMissing(explicitNull, wire, options)).IsTrue();
     await Assert.That(SupersedingEvents.IsKeyMissing(presentDefault, wire, options)).IsFalse();
     await Assert.That(SupersedingEvents.IsKeyMissing(otherCase, wire, options)).IsFalse();
+    await Assert.That(SupersedingEvents.IsKeyMissing(missing, wire, jsonOptions: null)).IsTrue();
   }
 
   [Test]

@@ -1403,6 +1403,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
+  superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
+  as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the
+  history reconcile (events stored before the key property existed) every such event of a stream shared one key and all
+  but the newest were reaped. The key is now looked for in the payload under the name the serializer writes it
+  (`[JsonPropertyName]` and the naming policy honored, read from the serializer metadata, no reflection): missing or
+  JSON `null`, the event is stamped superseding without a key and never reaped, and the reconcile logs it. A present
+  default value (`Guid.Empty`, `0`) is a real key. A typed payload dispatched in process is unchanged.
+  `SupersedingEvents.IsKeyMissing` reports the case, and the generated catalog registers the key's member and
+  `[JsonPropertyName]` through a new `SupersedingEvents.Register` overload; code generated before it keeps the old
+  behavior until rebuilt.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

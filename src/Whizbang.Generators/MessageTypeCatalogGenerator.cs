@@ -143,6 +143,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
     // #1729: only an event is stored on a stream, so only an event can supersede another.
     var (isSuperseding, supersedingKey) = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : (false, (string?)null);
+    // #2123: the key's [JsonPropertyName], so a JSON payload missing the key is told from one carrying a default value.
+    var supersedingKeyJsonName = isSuperseding && supersedingKey is not null ? SupersedingResolver.KeyJsonName(typeSymbol, supersedingKey) : null;
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -165,7 +167,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         // #1740: the end-of-life policy of the streams an event opens. Only an event opens a stream.
         StreamEndOfLife: kind == EVENT_KIND ? _streamEndOfLife(typeSymbol, clrTypeName) : null,
         IsSuperseding: isSuperseding,
-        SupersedingKey: supersedingKey
+        SupersedingKey: supersedingKey,
+        SupersedingKeyJsonName: supersedingKeyJsonName
     );
   }
 
@@ -413,12 +416,17 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       source.AppendLine($"    global::Whizbang.Core.Archival.StreamEndOfLifeDeclarations.Register(new global::Whizbang.Core.Archival.StreamEndOfLifeDeclaration({info.StreamEndOfLife}));");
     }
     // [Superseding] (#1729), with a generated accessor for its [SupersedingKey], so the flag and the key are stamped on
-    // every path without reflection.
+    // every path without reflection. A keyed type also registers its key member and [JsonPropertyName] (#2123), so a JSON
+    // payload missing the key is read as no key rather than as the key type's default.
     foreach (var info in ordered.Where(i => i.IsSuperseding)) {
-      var keyOf = info.SupersedingKey is null
+      var registration = info.SupersedingKey is null
         ? "null"
-        : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey})";
-      source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {keyOf});");
+        : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey}), " +
+          $"\"{info.SupersedingKey}\", " +
+          (info.SupersedingKeyJsonName is null
+            ? "null"
+            : Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingKeyJsonName, quote: true));
+      source.AppendLine($"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {registration});");
     }
     source.AppendLine("  }");
     source.AppendLine("}");
@@ -518,5 +526,6 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsTerminal = false,
     string? StreamEndOfLife = null,
     bool IsSuperseding = false,
-    string? SupersedingKey = null
+    string? SupersedingKey = null,
+    string? SupersedingKeyJsonName = null
 );

@@ -67,6 +67,27 @@ internal static class SupersedingResolver {
     };
   }
 
+  private const string JSON_PROPERTY_NAME_ATTRIBUTE = "global::System.Text.Json.Serialization.JsonPropertyNameAttribute";
+
+  /// <summary>
+  /// The <c>[JsonPropertyName]</c> of the key property <paramref name="key"/>, read from its nearest declaration as
+  /// System.Text.Json reads it, or null when it has none (#2123): the name the framework's generated JSON contexts write
+  /// the key under, so a payload missing the key can be told from one carrying a default value.
+  /// </summary>
+  /// <remarks><paramref name="key"/> is a name <see cref="KeyNames"/> returned, so the type or a base type declares it.</remarks>
+  public static string? KeyJsonName(INamedTypeSymbol type, string key) {
+    var property = _levels(type).SelectMany(level => level.GetMembers(key)).OfType<IPropertySymbol>().First();
+    return property.GetAttributes()
+      .FirstOrDefault(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, JSON_PROPERTY_NAME_ATTRIBUTE))
+      ?.ConstructorArguments[0].Value as string;
+  }
+
+  private static IEnumerable<INamedTypeSymbol> _levels(INamedTypeSymbol type) {
+    for (var level = type; level is not null; level = level.BaseType) {
+      yield return level;
+    }
+  }
+
   private static bool _isKey(ISymbol symbol) =>
     symbol.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, KEY_ATTRIBUTE));
 }

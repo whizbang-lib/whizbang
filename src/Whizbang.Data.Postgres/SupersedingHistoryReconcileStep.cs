@@ -55,6 +55,8 @@ public readonly record struct SupersedingHistoryReconcileResult(
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryStoredBeforeTheDeclaration_IsReconciledByTheRegisteredStep_AndReapedToTheNewestAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryMissingAValueTypeKey_IsReconciledUnkeyed_AndNoneIsReapedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs:Reconcile_AValueTypeKeyMissingFromThePayload_IsStampedUnkeyed_KeptAndLogged_APresentDefaultIsAKeyAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema prefix is formatted in, built by SqlText.Identifier; every value is a bound parameter.")]
 public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
   /// <summary>Events of the store one batch reads past a type's cursor: one transaction's worth.</summary>
@@ -246,9 +248,15 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
 
   // The key a write path would have stored for this payload: the generated accessor over the payload read as its type. A
   // payload the accessor cannot read keeps no key, so the event is stamped but never superseded, and is named in the log.
+  // So does a payload that lacks its key property or holds it as null (#2123): stored before the key existed, its key is
+  // unknown, never the key type's default.
   private string? _keyOf(Guid eventId, string eventType, string payload, JsonSerializerOptions json) {
     try {
       using var document = JsonDocument.Parse(payload);
+      if (SupersedingEvents.IsKeyMissing(document.RootElement, eventType, json)) {
+        LogMissingKey(_logger, eventId, eventType);
+        return null;
+      }
       return SupersedingEvents.KeyOf(document.RootElement, eventType, json);
     } catch (JsonException ex) {
       LogUnreadable(_logger, ex, eventId, eventType);
@@ -273,6 +281,10 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "The superseding key of event {EventId} ({EventType}) could not be read from its payload; it is stamped without a key and kept")]
   static partial void LogUnreadable(ILogger logger, Exception exception, Guid eventId, string eventType);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Event {EventId} ({EventType}) has no superseding key in its payload (the key property is missing or null); it is stamped without a key and kept")]
+  static partial void LogMissingKey(ILogger logger, Guid eventId, string eventType);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Superseding history reconcile stamped and queued nothing ({Status})")]
   static partial void LogNothing(ILogger logger, string status);
