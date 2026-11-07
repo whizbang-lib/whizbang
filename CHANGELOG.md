@@ -1396,6 +1396,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advertised the system broadcast inbox as its request and reply address, so every request to it and every answer it
   asked for was delivered to every service. Directed traffic now uses the addressee's own control inbox (#2090); only
   system commands and the backfill broadcast for types with no known owner remain on the broadcast inbox.
+- **A collective sink row this service has no handler for no longer stalls its perspective queue (#2096).** A service
+  that stores a collective event it has no `[CollectiveApplyFor]` handler for routes it to the `__collective__` sink,
+  and since #2081 that includes every collective declared in an assembly it loads. The drain could not read the row
+  (the service does not register the type), did not fail it (an unknown type is left for a newer instance, #1983) and
+  returned without completing it, so the row stayed leased, was offered on every claim and held the head of the queue
+  in front of all the perspective work behind it. The drain now completes a `__collective__` sink row whose event type
+  this service does not register, through the same completion path and `CollectivesSkipped` count as a sink row with no
+  collective to dispatch, and logs the count at Debug (EventId 80). Rows already stuck this way are completed on the
+  first drain after upgrading, with no manual cleanup. A perspective row of an unknown type is unchanged: it is still
+  left for an instance that can read it.
 - **Integrity checkpoints are no longer dead-lettered by topic fan-out, and a backlog of redelivery reconciles drains
   as a batch (#2099).** A checkpoint is published once per topic of its origin's owned types with one message id, so a
   consumer subscribed to ten of those topics observed it ten times after one processing attempt, and the durable
