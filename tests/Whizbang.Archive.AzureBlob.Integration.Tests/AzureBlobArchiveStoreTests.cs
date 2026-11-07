@@ -460,6 +460,40 @@ public class AzureBlobArchiveStoreTests {
   }
 
   [Test]
+  public async Task Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync() {
+    var (stream, _) = await _seedAsync(5);
+    var source = _store(maxEventsPerChunk: 10);
+    _ = await source.WriteAsync(ArchiveBatch.Prefix(stream, 2));
+    var manifest = await _manifestAsync(stream);
+    var tombstone = await _tombstoneAsync(stream);
+    var generation = await _generationAsync();
+    var counter = new RedirectHost(from: null, to: null);
+    var other = _store(maxEventsPerChunk: 10, fault: counter, container: $"archive-{Guid.NewGuid():N}");
+
+    var refused = await Assert.That(() => _completedAsync(other.WriteAsync(ArchiveBatch.Prefix(stream, 4)))).Throws<ArchiveLocationMismatchException>();
+    var requestsWhileRefused = counter.Requests;
+    var hotWhileRefused = await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream);
+    var manifestWhileRefused = await _manifestAsync(stream);
+    var tombstoneWhileRefused = await _tombstoneAsync(stream);
+    var generationWhileRefused = await _generationAsync();
+    _ = await other.RepointLocationAsync(refused!.RecordedLocationId!.Value);
+    var written = await other.WriteAsync(ArchiveBatch.Prefix(stream, 4));
+
+    await Assert.That(refused.Operation).IsEqualTo("write");
+    await Assert.That(refused.StreamId).IsEqualTo(stream);
+    await Assert.That(refused.Configured).IsEqualTo(other.ConfiguredLocation);
+    await Assert.That(requestsWhileRefused).IsEqualTo(0).Because("the refusal comes before any request, the container's creation included");
+    await Assert.That(hotWhileRefused).IsEqualTo(3L).Because("nothing moved: the stream stays as hot as it was");
+    await Assert.That(manifestWhileRefused).IsEquivalentTo(manifest);
+    await Assert.That(tombstoneWhileRefused).IsEquivalentTo(tombstone);
+    await Assert.That(generationWhileRefused).IsEqualTo(generation).Because("a refused write bumps no origin generation");
+    await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED)
+      .Because("once the operator repoints the location, the stream is in one location again and archives as usual");
+    await Assert.That(await _rowsAsync("SELECT DISTINCT location_id::text FROM wh_archive_manifest WHERE stream_id = @s", stream))
+      .Count().IsEqualTo(1).Because("a stream never spans two locations");
+  }
+
+  [Test]
   public async Task Read_AtAnotherAccountEndpoint_ThrowsTheMismatch_UntilTheLocationRowIsUpdatedAsync() {
     var (stream, _) = await _seedAsync(3);
     var hot = await _hotAsReadAsync(stream);

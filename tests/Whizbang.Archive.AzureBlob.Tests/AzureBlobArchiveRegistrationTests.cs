@@ -121,7 +121,8 @@ public class AzureBlobArchiveRegistrationTests {
 
     var store = (AzureBlobArchiveStore)provider.GetRequiredService<IArchiveStore>();
 
-    await Assert.That(store.LocatorFor(Guid.Empty).Address).StartsWith("whizbang-archive/");
+    await Assert.That(store.ConfiguredLocation.Endpoint).IsEqualTo("https://account.blob.core.windows.net");
+    await Assert.That(store.ConfiguredLocation.Container).IsEqualTo("whizbang-archive");
   }
 
   [Test]
@@ -317,15 +318,20 @@ public class AzureBlobArchiveRegistrationTests {
   [Test]
   [Arguments("svc")]
   [Arguments(null)]
-  public async Task LocatorFor_NamesTheStoreTheContainerAndTheStream_WithBrotliAndFormat1Async(string? schema) {
+  public async Task LocatorFor_NamesTheStoreAndTheStream_NeverTheContainer_WithBrotliAndFormat1Async(string? schema) {
     var stream = Guid.Parse("0199a1b2-0000-7000-8000-000000000001");
 
     var locator = new AzureBlobArchiveStore(_database with { Schema = schema }, _container(), new AzureBlobArchiveOptions())
       .LocatorFor(stream);
+    var elsewhere = new AzureBlobArchiveStore(_database with { Schema = schema },
+        new Azure.Storage.Blobs.BlobContainerClient(EMULATOR, "archive-elsewhere"), new AzureBlobArchiveOptions { ContainerName = "archive-elsewhere" })
+      .LocatorFor(stream);
 
     await Assert.That(locator.ToString())
-      .IsEqualTo("azure-blob://whizbang-archive/0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
-      .Because("the locator names the container, never the database schema the manifest lives in");
+      .IsEqualTo("azure-blob://0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
+      .Because("the tombstone says which store archived the stream; where it lives is the manifest's location (#2137)");
+    await Assert.That(elsewhere).IsEqualTo(locator)
+      .Because("a tombstone that named the container would go stale when its location is repointed");
   }
 
   private static Azure.Storage.Blobs.BlobContainerClient _container() =>
