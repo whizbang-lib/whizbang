@@ -5,7 +5,8 @@ namespace Whizbang.Generators;
 
 /// <summary>
 /// Value type containing information about a discovered collection interface or immutable collection type used in
-/// messages: <c>IReadOnlyList&lt;T&gt;</c>, <c>IList&lt;T&gt;</c> or <c>ImmutableList&lt;T&gt;</c>, none of which the
+/// messages: <c>IReadOnlyList&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>, <c>ICollection&lt;T&gt;</c>,
+/// <c>IReadOnlyCollection&lt;T&gt;</c>, <c>IEnumerable&lt;T&gt;</c> or <c>ImmutableList&lt;T&gt;</c>, none of which the
 /// serializer can construct without metadata of its own on the AOT path.
 /// This record uses value equality which is critical for incremental generator performance.
 /// </summary>
@@ -27,6 +28,15 @@ public sealed record ReadOnlyListTypeInfo(
 
   /// <summary>The generic definition of <c>IList&lt;T&gt;</c>.</summary>
   public const string LIST_INTERFACE = "global::System.Collections.Generic.IList";
+
+  /// <summary>The generic definition of <c>ICollection&lt;T&gt;</c>.</summary>
+  public const string COLLECTION_INTERFACE = "global::System.Collections.Generic.ICollection";
+
+  /// <summary>The generic definition of <c>IReadOnlyCollection&lt;T&gt;</c>.</summary>
+  public const string READ_ONLY_COLLECTION = "global::System.Collections.Generic.IReadOnlyCollection";
+
+  /// <summary>The generic definition of <c>IEnumerable&lt;T&gt;</c>.</summary>
+  public const string ENUMERABLE = "global::System.Collections.Generic.IEnumerable";
 
   /// <summary>The generic definition of <c>ImmutableList&lt;T&gt;</c>.</summary>
   public const string IMMUTABLE_LIST = "global::System.Collections.Immutable.ImmutableList";

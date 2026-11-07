@@ -2999,12 +2999,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The collections that need metadata of their own: IReadOnlyList and IList (interfaces the serializer cannot
-  /// construct) and ImmutableList (which cannot be filled one element at a time).
+  /// The collections that need metadata of their own: every collection interface a model or message can declare
+  /// (the serializer cannot construct an interface, and the opaque path accepts each of them, #2114) and ImmutableList
+  /// (which cannot be filled one element at a time). Each interface is read into a List, which implements all of them.
   /// </summary>
   private static readonly string[] _ownMetadataCollections = [
     ReadOnlyListTypeInfo.READ_ONLY_LIST,
     ReadOnlyListTypeInfo.LIST_INTERFACE,
+    ReadOnlyListTypeInfo.COLLECTION_INTERFACE,
+    ReadOnlyListTypeInfo.READ_ONLY_COLLECTION,
+    ReadOnlyListTypeInfo.ENUMERABLE,
     ReadOnlyListTypeInfo.IMMUTABLE_LIST,
   ];
 

@@ -1386,6 +1386,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A collection interface of records serializes on an opaque model or message (#2114).** The generated message JSON
+  context had metadata for `IReadOnlyList<T>` only among the collection interfaces, so a perspective model stored as one
+  opaque document (or any message) holding an `ICollection<T>`, `IReadOnlyCollection<T>` or `IEnumerable<T>` failed its
+  first write with `NotSupportedException` ("JsonTypeInfo metadata ... was not provided"). The mapped path cannot fill
+  those interfaces, so every perspective model declaring one of records was stored opaquely and could not be written at
+  all. The context now provides metadata for each, read back into a `List<T>`. No upgrade step and no schema change.
 - **A recursive type in a perspective model keeps every level (#2112).** A model holding a type that reaches itself (a
   tree node with `List<TNode> Children`, `IList<TNode>`, `ImmutableList<TNode>`, or two types holding each other) was
   stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one

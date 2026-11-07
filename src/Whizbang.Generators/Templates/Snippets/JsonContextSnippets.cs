@@ -96,7 +96,7 @@ private JsonTypeInfo<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> Create__COLLEC
     ?? throw new InvalidOperationException(
         "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
         "This may indicate a circular type reference. Ensure the element type is properly registered.");
-  // A collection interface (IReadOnlyList<T>, IList<T>) has no constructor of its own, so it is read as an
+  // A collection interface (IReadOnlyList<T>, IList<T>, ICollection<T>, IReadOnlyCollection<T>, IEnumerable<T>) has no constructor of its own, so it is read as an
   // IEnumerable<T> into a List<T>, which implements every one of them.
   var collectionInfo = new JsonCollectionInfoValues<__COLLECTION_DEFINITION__<__ELEMENT_TYPE__>> {
     ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
