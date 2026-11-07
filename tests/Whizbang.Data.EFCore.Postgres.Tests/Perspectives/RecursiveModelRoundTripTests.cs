@@ -227,6 +227,40 @@ public class RecursiveModelRoundTripTests {
     await Assert.That(_path(read!.Skeleton!.Single())).IsEqualTo("a>b>c>d");
   }
 
+  /// <summary>
+  /// An object cycle WHIZ201 cannot see: the model is a tree, which the analyzer accepts, but the instance adds a node
+  /// to its own children. Writing it has no end, so the write fails loudly with the serializer's cycle detection, on
+  /// both write paths, and nothing is stored. It is never truncated in silence (owner decision on #2112).
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AnObjectCycleTheAnalyzerCannotSee_FailsTheWriteLoudlyAsync(bool atomic) {
+    Guid id = TrackedGuid.New();
+    var children = new List<ListTreeNode>();
+    var loop = new ListTreeNode { Label = "a", Children = children };
+    children.Add(loop);
+
+    Exception? failure = null;
+    try {
+      await _writeAsync(LIST_TABLE, id, new ListTreeDocument { Id = id, Skeleton = [loop] }, atomic);
+    } catch (Exception ex) {
+      failure = ex;
+    }
+
+    await Assert.That(failure).IsNotNull().Because("a graph with no end cannot be written");
+    await Assert.That(_chain(failure!).OfType<System.Text.Json.JsonException>().Any()).IsTrue()
+      .Because("the serializer's own cycle detection is what stops it, and says so");
+    await Assert.That(await _readAsync<ListTreeDocument>(LIST_TABLE, id)).IsNull()
+      .Because("nothing of the cyclic document is stored");
+  }
+
+  private static IEnumerable<Exception> _chain(Exception exception) {
+    for (Exception? current = exception; current is not null; current = current.InnerException) {
+      yield return current;
+    }
+  }
+
   /// <summary>The context's own query, which is what a lens reads through, materializes every level too.</summary>
   [Test]
   public async Task TheContextQuery_ReadsBackEveryLevelAsync() {
