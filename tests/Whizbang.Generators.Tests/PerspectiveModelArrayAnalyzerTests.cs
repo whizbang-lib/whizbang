@@ -66,7 +66,8 @@ public class PerspectiveModelArrayAnalyzerTests {
     }
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelArrayAnalyzer>(
       compilation, globalOptions: MSBuildGlobalOptions.For(properties));
-    return [.. diagnostics.Where(d => d.Id == "WHIZ200")];
+    // WHIZ200 (an array of records) and WHIZ202 (a recursive type, #2112) share the analyzer, the switch and the reason.
+    return [.. diagnostics.Where(d => d.Id is "WHIZ200" or "WHIZ202")];
   }
 
   private static string _locatedAt(Diagnostic diagnostic) =>
@@ -172,6 +173,7 @@ public class PerspectiveModelArrayAnalyzerTests {
       """));
 
     await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Id).IsEqualTo("WHIZ202");
     await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info);
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("Children");
     var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
@@ -200,6 +202,8 @@ public class PerspectiveModelArrayAnalyzerTests {
       """));
 
     await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Id).IsEqualTo("WHIZ202")
+      .Because("one id, one meaning: the recursive report is not WHIZ200's array advice");
     await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info)
       .Because("a recursive model is stored correctly and there is nothing to change; the report only explains why it "
         + "has no indexes (owner decision on #2112)");
@@ -222,6 +226,7 @@ public class PerspectiveModelArrayAnalyzerTests {
       """));
 
     var messages = reported.ConvertAll(d => d.GetMessage(CultureInfo.InvariantCulture));
+    await Assert.That(reported.All(d => d.Id == "WHIZ202")).IsTrue();
     await Assert.That(messages).Count().IsEqualTo(2)
       .Because("the array is reported, and so is the property where the path returns to a type it is inside");
     await Assert.That(messages).Contains(

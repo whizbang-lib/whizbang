@@ -63,7 +63,8 @@ public class RecursivePerspectiveRebuildNoticeGenerationTests {
   private static async Task<string> _recursivePerspectivesAsync(string source) {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
     var code = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
-    var start = code.IndexOf("GetRecursivePerspectives()", StringComparison.Ordinal);
+    // The declaration, not the call the stored-form phase makes to it.
+    var start = code.IndexOf("GetRecursivePerspectives() {", StringComparison.Ordinal);
     await Assert.That(start).IsGreaterThanOrEqualTo(0).Because("the schema extension declares the list");
     return code[start..code.IndexOf("};", start, StringComparison.Ordinal)];
   }
