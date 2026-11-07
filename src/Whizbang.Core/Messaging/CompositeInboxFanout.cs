@@ -300,6 +300,7 @@ public static partial class CompositeInboxFanout {
   /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The raw path re-checks every guard the typed path checks, because a raw bundle is machine-built and any count desync between payloads, type names, ids and sequences fails the whole expansion. The guards sit in one place so the two paths can be compared line by line.")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The raw path takes exactly what the typed path takes: the composite, its name, the source envelope, the three resolvers, and the two routing questions (who consumes a type, who owns it). Grouping them would hide which resolver each guard uses.")]
   private static FanoutResult _expandRaw(
       IRawInnerComposite composite,
       string compositeTypeName,
