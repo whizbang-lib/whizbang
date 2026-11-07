@@ -172,6 +172,7 @@ public class PerspectiveModelArrayAnalyzerTests {
       """));
 
     await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info);
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("Children");
     var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
     await Assert.That(message).IsEqualTo(
@@ -199,6 +200,9 @@ public class PerspectiveModelArrayAnalyzerTests {
       """));
 
     await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info)
+      .Because("a recursive model is stored correctly and there is nothing to change; the report only explains why it "
+        + "has no indexes (owner decision on #2112)");
     await Assert.That(_locatedAt(reported[0])).IsEqualTo("Children");
     await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).IsEqualTo(
       $"Property 'Tree.Children' of perspective model 'LedgerModel' holds '{childrenType.TrimEnd('?')}', which is "
