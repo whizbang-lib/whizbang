@@ -125,6 +125,13 @@ public sealed class PostgresSchemaInitializer {
   public IServiceInstanceProvider? Instance { get; init; }
 
   /// <summary>
+  /// What this instance's registration records for the one liveness rule (#2126): its connection mode and its liveness
+  /// window, so the rule judges the row by them from the moment it exists. The default records neither.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstance_WithItsConnectionModeAndLivenessWindowAsync</tests>
+  public InstanceRegistrationLiveness RegistrationLiveness { get; init; }
+
+  /// <summary>
   /// The application version the migration ledger records beside the library version (#2027), as recorded on the
   /// instance rows; null falls back to the constructor's application version, else <c>unknown</c>.
   /// </summary>
@@ -186,7 +193,8 @@ public sealed class PostgresSchemaInitializer {
     await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
     }
     await _convergeAsync(connection, schema, cancellationToken);
   }
@@ -349,7 +357,8 @@ public sealed class PostgresSchemaInitializer {
     // reconciles, sees it running. The registration function exists now that the migrations have run.
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
     }
   }
 

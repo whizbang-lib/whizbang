@@ -310,6 +310,30 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
+  /// Records the beat of an instance that is still starting: from its registration at the end of Preflight until its
+  /// schema is ready (#2126). The heartbeat starts at registration, so a peer's reap judges a starting instance by a
+  /// heartbeat it really sends, through Elect, Migrate, Converge and Coordinate.
+  /// </summary>
+  /// <remarks>
+  /// A driver with staged startup overrides this with a beat that needs only what Preflight creates: it refreshes the
+  /// heartbeat, the connection mode and the liveness window of the instance's existing row, never inserts a row, never
+  /// writes the stage or the lifecycle phase (the stage record is their one writer), and reaps no peer. The default is
+  /// the full heartbeat, for a coordinator with no schema to wait for.
+  /// </remarks>
+  /// <param name="request">The instance and what it declares: its connection mode and liveness window.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <see langword="false"/> when this instance has been evicted and must stop heartbeating, as for
+  /// <see cref="RecordHeartbeatAsync"/>; <see langword="true"/> otherwise.
+  /// </returns>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupHeartbeatTests.cs</tests>
+  Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+    => RecordHeartbeatAsync(request, cancellationToken);
+
+  /// <summary>
   /// Wakes the appropriate per-instance NOTIFY channels for any wh_outbox or wh_inbox rows
   /// whose <c>scheduled_for</c> retry timestamp has elapsed. Called periodically by
   /// <c>ScheduledRetryWorker</c> on a low-cadence (default 10 s) cycle so retry latency stays

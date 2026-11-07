@@ -168,7 +168,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
           async ct => {
             await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
-              segmentConnectionFactory, "__SCHEMA__", currentInstance, cancellationToken: ct);
+              segmentConnectionFactory, "__SCHEMA__", currentInstance,
+              liveness: Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(serviceProvider), cancellationToken: ct);
             await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
           },
           "__SCHEMA__", logger, cancellationToken);
@@ -195,7 +196,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           var registered = await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
             async ct => {
               await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
-                segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct);
+                segmentConnectionFactory, "__SCHEMA__", instanceProvider,
+                liveness: Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(serviceProvider), cancellationToken: ct);
               // The row exists now: the stage held until it did is written.
               await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
             },

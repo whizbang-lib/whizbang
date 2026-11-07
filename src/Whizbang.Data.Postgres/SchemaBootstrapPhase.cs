@@ -503,9 +503,11 @@ public static class SchemaBootstrapPhase {
       string schema,
       IServiceInstanceProvider instance,
       int leaseSeconds = 60,
+      InstanceRegistrationLiveness liveness = default,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(instance);
+    _ = liveness;
 
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
 

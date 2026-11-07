@@ -42,6 +42,21 @@ public class WorkCoordinatorDefaultInterfaceTests {
     await Assert.That(message).Contains(nameof(MinimalWorkCoordinator));
   }
 
+  /// <summary>
+  /// #2126: a coordinator with no staged schema has no Preflight-only beat, so a starting instance's beat is the full
+  /// heartbeat; the minimal coordinator implements neither, so the call reaches the heartbeat's own default.
+  /// </summary>
+  [Test]
+  public async Task RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync() {
+    var request = new HeartbeatRequest((Guid)TrackedGuid.New(), "TestService", "test-host", 123);
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.RecordStartupHeartbeatAsync(request));
+
+    await Assert.That(message).Contains("RecordHeartbeatAsync")
+      .Because("the default startup beat delegates to the full heartbeat");
+  }
+
   [Test]
   public async Task NotifyScheduledRetryDueAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
     var message = await _captureNotImplementedMessageAsync(

@@ -49,8 +49,22 @@ public partial class HeartbeatWorker(
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
   TimeProvider? timeProvider = null,
-  InstanceLivenessMetrics? metrics = null
+  InstanceLivenessMetrics? metrics = null,
+  ISchemaReadyGate? schemaReady = null
 ) : BackgroundService {
+  /// <summary>Not yet decided (#2126).</summary>
+  public static Whizbang.Core.Startup.StartupStage StartsAt => Whizbang.Core.Startup.StartupStage.Coordinate;
+
+  /// <summary>Not yet used (#2126).</summary>
+  internal bool HasSchemaReadyGate => schemaReady is not null;
+
+  /// <summary>The wait between two plans (#2126).</summary>
+  /// <param name="wait">How long.</param>
+  /// <param name="cancellationToken">Ends the wait.</param>
+  /// <returns>The wait.</returns>
+  internal Task WaitForNextTickAsync(TimeSpan wait, CancellationToken cancellationToken) =>
+    Task.Delay(wait, timeProvider ?? TimeProvider.System, cancellationToken);
+
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -388,6 +402,8 @@ public enum HeartbeatBeatReason {
   Regular,
   /// <summary>The row's age approached the stale threshold before the cadence boundary.</summary>
   Watchdog,
+  /// <summary>Not yet used (#2126).</summary>
+  SchemaReady,
 }
 
 /// <summary>The outcome of <see cref="HeartbeatWorker.PlanNextTick"/>.</summary>
