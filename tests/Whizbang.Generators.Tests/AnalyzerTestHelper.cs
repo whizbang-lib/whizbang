@@ -40,6 +40,9 @@ public static class AnalyzerTestHelper {
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
+    // an immutable collection is judged passes without the type ever being resolved (#2112).
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
     // System.Linq.Expressions and System.Linq.Queryable so IQueryable<T> and the Queryable
     // operators resolve: a query analyzer infers the lambda parameter's type from the operator's

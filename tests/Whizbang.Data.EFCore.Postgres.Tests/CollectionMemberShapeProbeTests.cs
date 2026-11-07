@@ -54,6 +54,10 @@ public class CollectionMemberShapeProbeTests {
   public record TreeNode { public string Label { get; set; } = ""; public List<TreeNode>? Children { get; set; } }
   public class RecursiveModel { [StreamId] public Guid Id { get; init; } public List<TreeNode>? Skeleton { get; set; } }
 
+  /// <summary>A link holding the next link of its own type, a recursion through a single nested object.</summary>
+  public class ChainLink { public string Label { get; set; } = ""; public ChainLink? Next { get; set; } }
+  public class ChainModel { [StreamId] public Guid Id { get; init; } public ChainLink? Head { get; set; } }
+
   /// <summary>The document mapped property by property, which walks the whole graph.</summary>
   private sealed class MappedContext<TModel>(DbContextOptions<MappedContext<TModel>> options)
     : DbContext(options) where TModel : class {
@@ -174,5 +178,23 @@ public class CollectionMemberShapeProbeTests {
     await Assert.That(children).IsNotNull().Because("the first level of the self-reference is mapped");
     await Assert.That(children!.ComplexType.FindComplexProperty("Children")).IsNull()
       .Because("the level below it is not mapped at all, so it is never written and reads back as null");
+  }
+
+  /// <summary>
+  /// A recursion through a single nested object rather than a collection is mapped one level deep too, which is why
+  /// the discovery routes every cycle, not only a collection, to the opaque form (#2112).
+  /// </summary>
+  [Test]
+  public async Task TheMappedPathMapsARecursiveObjectOneLevelDeepAsync() {
+    await Assert.That(_mapped<ChainModel>()).IsNull();
+
+    await using var context = new MappedContext<ChainModel>(new DbContextOptionsBuilder<MappedContext<ChainModel>>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p").Options);
+    var data = context.Model.FindEntityType(typeof(PerspectiveRow<ChainModel>))!.FindComplexProperty("Data")!;
+    var head = data.ComplexType.FindComplexProperty("Head")!;
+    var next = head.ComplexType.FindComplexProperty("Next");
+
+    await Assert.That(next).IsNotNull();
+    await Assert.That(next!.ComplexType.FindComplexProperty("Next")).IsNull();
   }
 }

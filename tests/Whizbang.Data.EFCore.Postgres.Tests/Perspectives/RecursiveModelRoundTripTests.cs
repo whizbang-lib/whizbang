@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class RecursiveModelRoundTripTests {
   private const string LIST_TABLE = "wh_per_list_tree_document";
   private const string INTERFACE_TABLE = "wh_per_interface_tree_document";
+  private const string IMMUTABLE_TABLE = "wh_per_immutable_tree_document";
   private const string ARRAY_TABLE = "wh_per_array_tree_document";
   private const string MUTUAL_TABLE = "wh_per_mutual_tree_document";
 
@@ -83,6 +84,11 @@ public class RecursiveModelRoundTripTests {
     Children = depth + 1 < _labels.Length ? new List<InterfaceTreeNode> { _interfaceTree(depth + 1) } : null,
   };
 
+  private static ImmutableTreeNode _immutableTree(int depth) => new() {
+    Label = _labels[depth],
+    Children = depth + 1 < _labels.Length ? [_immutableTree(depth + 1)] : null,
+  };
+
   private static ArrayTreeNode _arrayTree(int depth) => new() {
     Label = _labels[depth],
     Children = depth + 1 < _labels.Length ? [_arrayTree(depth + 1)] : null,
@@ -106,6 +112,14 @@ public class RecursiveModelRoundTripTests {
   }
 
   private static string _path(InterfaceTreeNode? node) {
+    if (node is null) {
+      return "";
+    }
+    var below = node.Children is { Count: > 0 } c ? _path(c[0]) : "";
+    return node.Label + _below(below);
+  }
+
+  private static string _path(ImmutableTreeNode? node) {
     if (node is null) {
       return "";
     }
@@ -156,6 +170,18 @@ public class RecursiveModelRoundTripTests {
     await _writeAsync(INTERFACE_TABLE, id, new InterfaceTreeDocument { Id = id, Skeleton = [_interfaceTree(0)] }, atomic);
 
     var read = await _readAsync<InterfaceTreeDocument>(INTERFACE_TABLE, id);
+
+    await Assert.That(_path(read!.Skeleton!.Single())).IsEqualTo("a>b>c>d");
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AnImmutableListOfItself_ReadsBackEveryLevelAsync(bool atomic) {
+    Guid id = TrackedGuid.New();
+    await _writeAsync(IMMUTABLE_TABLE, id, new ImmutableTreeDocument { Id = id, Skeleton = [_immutableTree(0)] }, atomic);
+
+    var read = await _readAsync<ImmutableTreeDocument>(IMMUTABLE_TABLE, id);
 
     await Assert.That(_path(read!.Skeleton!.Single())).IsEqualTo("a>b>c>d");
   }

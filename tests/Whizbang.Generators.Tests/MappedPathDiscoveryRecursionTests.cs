@@ -39,11 +39,9 @@ public class MappedPathDiscoveryRecursionTests {
     return compilation.GetTypeByMetadataName(metadataName)!;
   }
 
-  private const string NODE_WITH = "public sealed record Node {{ public string Label {{ get; init; }} = \"\"; public {0} Children {{ get; init; }} }}";
-
-  private static string _tree(string childrenType, string skeletonType = "List<Node>") =>
-    string.Format(System.Globalization.CultureInfo.InvariantCulture, NODE_WITH, childrenType)
-    + $"\npublic class Model {{ public {skeletonType}? Skeleton {{ get; init; }} }}";
+  private static string _tree(string childrenType) =>
+    $"public sealed record Node {{ public string Label {{ get; init; }} = \"\"; public {childrenType} Children {{ get; init; }} }}\n"
+    + "public class Model { public List<Node>? Skeleton { get; init; } }";
 
   /// <summary>
   /// The case in the issue: a node holding a collection of itself, in every collection shape the mapped path otherwise

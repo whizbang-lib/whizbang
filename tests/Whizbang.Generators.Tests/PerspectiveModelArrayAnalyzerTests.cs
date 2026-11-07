@@ -217,7 +217,7 @@ public class PerspectiveModelArrayAnalyzerTests {
       public sealed class Leaf { public string Label { get; set; } = ""; public List<Branch>? Branches { get; set; } }
       """));
 
-    var messages = reported.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).ToList();
+    var messages = reported.ConvertAll(d => d.GetMessage(CultureInfo.InvariantCulture));
     await Assert.That(messages).Count().IsEqualTo(2)
       .Because("the array is reported, and so is the property where the path returns to a type it is inside");
     await Assert.That(messages).Contains(

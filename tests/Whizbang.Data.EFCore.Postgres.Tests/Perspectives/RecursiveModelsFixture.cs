@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Immutable;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
@@ -24,6 +25,12 @@ public sealed record ListTreeNode {
 public sealed record InterfaceTreeNode {
   public string Label { get; init; } = "";
   public IList<InterfaceTreeNode>? Children { get; init; }
+}
+
+/// <summary>A tree node whose children are an <c>ImmutableList</c> of itself.</summary>
+public sealed record ImmutableTreeNode {
+  public string Label { get; init; } = "";
+  public ImmutableList<ImmutableTreeNode>? Children { get; init; }
 }
 
 /// <summary>A tree node whose children are an array of itself.</summary>
@@ -56,6 +63,12 @@ public class InterfaceTreeDocument {
   public IList<InterfaceTreeNode>? Skeleton { get; set; }
 }
 
+/// <summary>A model holding a tree of <see cref="ImmutableTreeNode"/>.</summary>
+public class ImmutableTreeDocument {
+  [StreamId] public Guid Id { get; set; }
+  public ImmutableList<ImmutableTreeNode>? Skeleton { get; set; }
+}
+
 /// <summary>A model holding a tree of <see cref="ArrayTreeNode"/>.</summary>
 public class ArrayTreeDocument {
   [StreamId] public Guid Id { get; set; }
@@ -78,6 +91,11 @@ public class ListTreeProjection : IPerspectiveFor<ListTreeDocument, RecursiveTre
 [WhizbangPerspective("recursive-models")]
 public class InterfaceTreeProjection : IPerspectiveFor<InterfaceTreeDocument, RecursiveTreeNoted> {
   public InterfaceTreeDocument Apply(InterfaceTreeDocument currentData, RecursiveTreeNoted eventData) => currentData;
+}
+
+[WhizbangPerspective("recursive-models")]
+public class ImmutableTreeProjection : IPerspectiveFor<ImmutableTreeDocument, RecursiveTreeNoted> {
+  public ImmutableTreeDocument Apply(ImmutableTreeDocument currentData, RecursiveTreeNoted eventData) => currentData;
 }
 
 [WhizbangPerspective("recursive-models")]
