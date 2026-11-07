@@ -17,6 +17,12 @@ namespace Whizbang.Archive.AzureBlob;
 /// <docs>fundamentals/events/archive-store#azure-blob-configuration</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs</tests>
 public sealed class AzureBlobArchiveOptions {
+  /// <summary>RED stub (#2137).</summary>
+  public const string DEFAULT_CONNECTION_NAME = "";
+
+  /// <summary>RED stub (#2137).</summary>
+  public string ConnectionName { get; set; } = DEFAULT_CONNECTION_NAME;
+
   /// <summary>The container used when none is configured.</summary>
   public const string DEFAULT_CONTAINER_NAME = "whizbang-archive";
 

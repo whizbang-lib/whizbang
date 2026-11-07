@@ -97,6 +97,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _logger = logger ?? (ILogger)NullLogger.Instance;
   }
 
+  /// <summary>RED stub (#2137).</summary>
+  public ArchiveLocation ConfiguredLocation => new(STORE_NAME, null, null, _container.Name);
+
+  /// <summary>RED stub (#2137).</summary>
+  public Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException($"RED stub: {_container.Name} {fromLocationId} {cancellationToken.IsCancellationRequested}");
+
   /// <summary>
   /// The locator a stream's tombstone records: <c>azure-blob://{container}/{stream}?codec=brotli&amp;format=1</c>. Each
   /// object's own locator (in the manifest) adds the object's name under the stream.

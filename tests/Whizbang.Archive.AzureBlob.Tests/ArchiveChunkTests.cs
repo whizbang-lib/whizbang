@@ -159,6 +159,27 @@ public class ArchiveChunkTests {
   }
 
   [Test]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br", ArchiveCompression.Brotli)]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl", ArchiveCompression.None)]
+  public async Task TryReadCompression_ReadsTheCodecFromTheObjectNamesExtensionAsync(string relativePath, ArchiveCompression expected) {
+    var read = ArchiveChunk.TryReadCompression(relativePath, out var compression);
+
+    await Assert.That(read).IsTrue();
+    await Assert.That(compression).IsEqualTo(expected)
+      .Because("the name ObjectName wrote carries the codec, so a record needs no locator to be decoded");
+  }
+
+  [Test]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.json")]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.gz")]
+  [Arguments(null)]
+  public async Task TryReadCompression_RefusesANameThisStoreDidNotWrite_RatherThanGuessingAsync(string? relativePath) {
+    var read = ArchiveChunk.TryReadCompression(relativePath, out _);
+
+    await Assert.That(read).IsFalse();
+  }
+
+  [Test]
   public async Task ToArchivedEvent_CarriesEveryColumnTheReadReturnsAsync() {
     var line = _full(3);
 

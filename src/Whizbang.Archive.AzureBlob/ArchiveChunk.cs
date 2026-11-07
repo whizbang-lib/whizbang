@@ -133,6 +133,12 @@ internal static class ArchiveChunk {
     return true;
   }
 
+  /// <summary>RED stub (#2137).</summary>
+  public static bool TryReadCompression(string? relativePath, out ArchiveCompression compression) {
+    compression = ArchiveCompression.None;
+    return relativePath is null && relativePath is not null;
+  }
+
   private static string _extension(ArchiveCompression compression) => compression switch {
     ArchiveCompression.None => ".jsonl",
     ArchiveCompression.Brotli => ".jsonl.br",
