@@ -98,6 +98,9 @@ public partial class MigrationTransactionBoundaryGuardTests {
     ["wh_reconcile_redelivered_bundles"] =
       "335 (#2099): the batch form of 253's reconcile, with the same child lookup: it reads error from wh_inbox_state "
       + "(alias ist); wh_inbox supplies only message_id, stream_id, scope and message_type, none of which moved",
+    ["wh_drop_exhausted_inbox_rows"] =
+      "350 (#2117): reads processed_at and attempts from wh_inbox_state (alias s), and in debug mode stamps processed_at "
+      + "there; wh_inbox is only the row deleted, matched by message_id, which did not move",
   };
 
   /// <summary>
