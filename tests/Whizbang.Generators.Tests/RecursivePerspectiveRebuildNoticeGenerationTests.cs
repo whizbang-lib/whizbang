@@ -75,8 +75,8 @@ public class RecursivePerspectiveRebuildNoticeGenerationTests {
   public async Task EveryPerspectiveOverARecursiveModel_IsListedWithItsTableAsync() {
     var list = await _recursivePerspectivesAsync(SOURCE);
 
-    await Assert.That(list).Contains("(\"TestApp.TreePerspective\", \"wh_per_tree_model\"),");
-    await Assert.That(list).Contains("(\"TestApp.SecondTreePerspective\", \"wh_per_tree_model\"),")
+    await Assert.That(list).Contains("(\"TestApp.TreePerspective\", \"wh_per_tree\"),");
+    await Assert.That(list).Contains("(\"TestApp.SecondTreePerspective\", \"wh_per_tree\"),")
       .Because("each perspective over the table is named, since each is rebuilt by its own name");
     await Assert.That(list).DoesNotContain("PlainPerspective")
       .Because("a model with no recursion was never truncated");

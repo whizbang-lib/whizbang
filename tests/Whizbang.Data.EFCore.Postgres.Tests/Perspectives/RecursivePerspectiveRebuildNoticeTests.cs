@@ -10,6 +10,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Perspectives;
 using Whizbang.Testing.Containers;
