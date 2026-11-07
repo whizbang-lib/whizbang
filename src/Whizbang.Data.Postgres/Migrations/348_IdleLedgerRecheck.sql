@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 341_IdleLedgerRecheck.sql
+-- Migration: 348_IdleLedgerRecheck.sql
 -- Date: 2026-11-07
 -- Description: An idle service re-checks stale ledger rows itself instead of waiting for the daily audit (#2115).
 --
@@ -23,8 +23,8 @@
 --              No index: the ledger is bounded by the repair drain's backlog cap and the audit's report caps, and the
 --              claim runs on an idle service at most once a tick.
 --
---              Number 341: 340 is this change set's windowed digest read; 345 is on develop, and 341 to 344 were
---              assigned to this change set.
+--              Number 348: 345 is the highest on develop, 346 is taken by a change in flight, and 347 is this
+--              change set's windowed digest read.
 --
 -- Dependencies: 090 (wh_integrity_ledger), 097 (window_from, window_until)
 -- Objects: wh_integrity_ledger (rechecked_at), wh_integrity_claim_ledger_recheck
@@ -35,7 +35,7 @@ ALTER TABLE __SCHEMA__.wh_integrity_ledger
   ADD COLUMN IF NOT EXISTS rechecked_at TIMESTAMPTZ;
 
 COMMENT ON COLUMN __SCHEMA__.wh_integrity_ledger.rechecked_at IS
-'341 (#2115): when the idle ledger re-check last claimed this row and asked its owner to answer its bucket again. Claimed again only once this is older than the re-check threshold. NULL = never re-checked.';
+'348 (#2115): when the idle ledger re-check last claimed this row and asked its owner to answer its bucket again. Claimed again only once this is older than the re-check threshold. NULL = never re-checked.';
 
 -- <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerRecheckSqlTests.cs:Claim_TakesTheStalestRowsFirst_BoundedAsync</tests>
@@ -82,4 +82,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_claim_ledger_recheck(UUID[], TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-'341 (#2115): claims up to p_limit ledger rows for the idle re-check, oldest report first: rows of p_origin_ids last reported before p_reported_before and not re-checked since, with a stamped window, never the type lane. Stamps rechecked_at = p_now and nothing else (no attempt, no repair). SKIP LOCKED against a concurrent claimer.';
+'348 (#2115): claims up to p_limit ledger rows for the idle re-check, oldest report first: rows of p_origin_ids last reported before p_reported_before and not re-checked since, with a stamped window, never the type lane. Stamps rechecked_at = p_now and nothing else (no attempt, no repair). SKIP LOCKED against a concurrent claimer.';

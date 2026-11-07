@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/340_DigestWindowsReadTheirTypes.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/347_DigestWindowsReadTheirTypes.sql</code-under-test>
 /// <docs>resilience/stream-integrity#windowed-manifests</docs>
 [Category("Integration")]
 [Category("Shard5")]

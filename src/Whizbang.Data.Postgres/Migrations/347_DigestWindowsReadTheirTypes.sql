@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 340_DigestWindowsReadTheirTypes.sql
+-- Migration: 347_DigestWindowsReadTheirTypes.sql
 -- Date: 2026-11-06
 -- Description: A type-filtered windowed stream-digest read costs in proportion to the rows it returns (#2107).
 --
@@ -23,7 +23,7 @@
 --              window rows). It now keeps the window's rows up to the last picked stream id, one pass and no join.
 --              Same answer: the first p_max_streams distinct streams after p_resume_after, every event of each.
 --
---              No new index. Number 340: 335 is the highest on develop and 336-339 are taken by an open change.
+--              No new index. Number 347: 345 is the highest on develop and 346 is taken by a change in flight.
 --
 -- Dependencies: 046 (idx_event_store_commit_sequence), 155 (idx_event_store_origin_lane), 195 (idx_event_store_type_tenant),
 --               336 (_wh_digest_lane: every lane, the id lanes included, comes from the one helper), normalize_event_type

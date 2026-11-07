@@ -1589,7 +1589,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   After #2080 the windowed stream-digest read was bound by its window, but as an auto-prepared statement it settled into
   a generic plan that found the window's rows through `idx_event_store_commit_sequence` and filtered the requested
   types on the heap, so a wide window read every event in it (on a large store, seconds and hundreds of thousands of
-  pages per call) to return a few hundred. The read is now `wh_compute_stream_digests_window` (migration 340), planned
+  pages per call) to return a few hundred. The read is now `wh_compute_stream_digests_window` (migration 347), planned
   per call against its own window and types (`plan_cache_mode = force_custom_plan`), so a sparse type is read through an
   index on the type (`idx_event_store_type_commit_sequence` from #2092 once built, or `idx_event_store_type_tenant`),
   and the page is assembled without a nested loop over the window. An origin now answers at most
@@ -1608,7 +1608,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose last report is older than `LedgerRecheckAfterMinutes` (default 120), oldest first, and asks each row's owner for a
   stream-level answer over the row's window marked `Recheck`. The comparison removes the rows that now match or are
   undecided exactly as the audit does, and a re-check answer never leads to a repair request. A claimed row is stamped
-  (`wh_integrity_ledger.rechecked_at`, migration 341) and waits the threshold again before its next re-check. Counted
+  (`wh_integrity_ledger.rechecked_at`, migration 348) and waits the threshold again before its next re-check. Counted
   by `whizbang.stream_integrity.ledger_rows_rechecked` and `ledger_rows_recheck_cleared`; turned off with
   `LedgerRecheckEnabled`. Rows without a stamped window (pre-stamp rows and non-deficit divergences) are left to the audit.
 - **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and

@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// than the threshold too; it skips rows it could not ask about (another origin, no stamped window, the type lane);
 /// and it spends nothing: no repair attempt, no pending answer.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/341_IdleLedgerRecheck.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/348_IdleLedgerRecheck.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
 [Category("Integration")]

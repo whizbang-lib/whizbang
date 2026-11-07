@@ -996,7 +996,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 341) returns only rows with a stamped
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
   /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
