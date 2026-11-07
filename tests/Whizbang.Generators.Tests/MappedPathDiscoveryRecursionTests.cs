@@ -171,4 +171,25 @@ public class MappedPathDiscoveryRecursionTests {
       .Because("a type holding a recursive type is stored opaquely in any collection shape too");
     await Assert.That(MappedPathDiscovery.IsRecursive(_type(types, "TestApp.Tag"))).IsFalse();
   }
+
+  /// <summary>
+  /// The reason an analyzer gives for an opaque model names the member and says why it is opaque: recursive, or not
+  /// constructible, and nothing for a model that maps.
+  /// </summary>
+  [Test]
+  public async Task DescribeUnmappable_SaysWhyTheMemberIsOpaqueAsync() {
+    const string types = """
+      public sealed record Node { public List<Node>? Children { get; init; } }
+      public sealed record Tag(Guid TagId, string Label);
+      public class Model { public List<Node>? Skeleton { get; set; } }
+      public class Unconstructible { public IReadOnlyList<Tag> Tags { get; set; } = []; }
+      public class Plain { public string Name { get; set; } = ""; }
+      """;
+
+    await Assert.That(MappedPathDiscovery.DescribeUnmappable(_type(types))).IsEqualTo(
+      "holds 'Skeleton.Children', which is recursive (Entity Framework maps a self-reference only one level deep)");
+    await Assert.That(MappedPathDiscovery.DescribeUnmappable(_type(types, "TestApp.Unconstructible"))).IsEqualTo(
+      "holds 'Tags', which the mapped path cannot construct");
+    await Assert.That(MappedPathDiscovery.DescribeUnmappable(_type(types, "TestApp.Plain"))).IsNull();
+  }
 }
