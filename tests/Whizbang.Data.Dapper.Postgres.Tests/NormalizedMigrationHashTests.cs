@@ -280,8 +280,8 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
     foreach (var (fileName, hash) in _v0_2623_1Ledger()) {
       await _setHashAsync(fileName, hash);
     }
-    var older = LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2619_0, "dapper-public").Single(r => r.FileName == CHANGED);
-    await _setHashAsync(CHANGED, older.Hash);
+    var (_, olderHash) = LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2619_0, "dapper-public").Single(r => r.FileName == CHANGED);
+    await _setHashAsync(CHANGED, olderHash);
 
     await new PostgresSchemaInitializer(_connectionString).InitializeSchemaAsync(cancellationToken);
 

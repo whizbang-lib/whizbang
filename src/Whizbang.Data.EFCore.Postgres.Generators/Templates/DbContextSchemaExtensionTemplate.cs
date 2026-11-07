@@ -1650,7 +1650,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       Npgsql.NpgsqlConnection connection, ILogger? logger, CancellationToken ct) {
     var versionId = await _upsertVersionAsync(connection, ct);
     await Whizbang.Data.Postgres.MigrationHashUpgrade.RewriteLegacyHashesAsync(
-      connection, "__SCHEMA__", GetHashedMigrationTexts(), versionId, logger, ct);
+      connection, "__SCHEMA__", GetLegacyHashedMigrationTexts(), versionId, logger, ct);
   }
 
   /// <summary>
@@ -2235,6 +2235,14 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// </remarks>
   internal static (string Name, string Text)[] GetHashedMigrationTexts() =>
     GetMigrationScripts().Select(m => (m.Name, _transformMigrationSql(m.Sql, "__SCHEMA__"))).ToArray();
+
+  /// <summary>
+  /// Each migration's hashed text with the text releases before #1681 hashed for it, which differs for a named schema
+  /// (their qualifier reached inside comments and literals): what the hash upgrade recognizes a recorded hash by (#2125).
+  /// </summary>
+  internal static (string Name, string Text, string? EarlierReleaseText)[] GetLegacyHashedMigrationTexts() =>
+    GetMigrationScripts().Select(m => (m.Name, _transformMigrationSql(m.Sql, "__SCHEMA__"),
+      (string?)Whizbang.Data.Postgres.EarlierReleaseMigrationText.EFCore(m.Sql, "__SCHEMA__"))).ToArray();
 
   /// <summary>
   /// The marked regions of the migrations that have to exist before a migrator can be elected.

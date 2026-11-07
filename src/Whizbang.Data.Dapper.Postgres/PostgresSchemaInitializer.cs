@@ -585,8 +585,9 @@ public sealed class PostgresSchemaInitializer {
       var hash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
 
-      // A row still on the legacy hash of this file is a file that did not change: the start rewrites it and skips.
-      if (existingHash == hash || existingHash == MigrationSqlNormalizer.LegacyContentHash(migration.Sql)) {
+      // A row still on a hash an earlier release recorded for this file is a file that did not change: the start
+      // rewrites it and skips (#2125).
+      if (existingHash == hash || MigrationSqlNormalizer.IsLegacyContentHash(existingHash, migration.Sql)) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
       } else if (existingHash != null) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));

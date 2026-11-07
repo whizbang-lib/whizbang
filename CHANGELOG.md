@@ -1403,6 +1403,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **An upgrade from a release before #1681 no longer re-runs every older migration (#2125).** Releases before #1681
+  (2026-10-23) recorded each migration's ledger hash over its raw text, and #1681 added a license header to every
+  migration file in the same release that moved to normalized hashes. The step that moves those rows onto normalized
+  hashes compared them with the raw hash of today's headered text, which no earlier release recorded, so it recognized
+  none of them: the first start after the upgrade re-ran every migration that release had applied (204 from v0.2623.1),
+  including the full, single-transaction backfill in 087, which could hold a service in the migrate stage longer than its
+  restart window. The step now recognizes every form an earlier release recorded for a file that has not changed: the
+  raw hash with or without that header (on the EF Core driver, also without the indentation its generator gives the
+  line the header displaced), and on the EF Core driver for a context in a named schema, the text as the
+  earlier schema qualifier rendered it (it reached inside comments and literals; `EarlierReleaseMigrationText`). Matching
+  rows are rewritten to the normalized hash without running the migration, and the count is logged at Information. A file
+  whose content really changed still runs. The upgrade tests stand a database on the hashes v0.2623.1 recorded, captured
+  from its published packages by `scripts/Capture-LegacyMigrationLedger.ps1`. A database that has already been through
+  that re-run needs nothing: its rows already hold normalized hashes.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

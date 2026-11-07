@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
@@ -10,7 +11,6 @@ using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.TestFixtures;
 using Whizbang.Testing.Containers;
-using Microsoft.EntityFrameworkCore;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
@@ -138,8 +138,8 @@ public class NormalizedMigrationHashUpgradeTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
     await _recordLegacyHashesAsync(connection, cancellationToken);
-    var older = LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2619_0, "efcore-public").Single(r => r.FileName == CHANGED);
-    await _setHashAsync(connection, "wh_schema_migrations", CHANGED, older.Hash, cancellationToken);
+    var (_, olderHash) = LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2619_0, "efcore-public").Single(r => r.FileName == CHANGED);
+    await _setHashAsync(connection, "wh_schema_migrations", CHANGED, olderHash, cancellationToken);
 
     await using (var context = CreateDbContext()) {
       await context.EnsureWhizbangDatabaseInitializedAsync(new RecordingLogger(), cancellationToken: cancellationToken);
