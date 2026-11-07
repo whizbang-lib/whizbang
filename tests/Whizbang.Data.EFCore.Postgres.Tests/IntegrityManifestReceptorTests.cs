@@ -1826,7 +1826,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     if (originTopicKnown) {
-      tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+      tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
     }
     var sp = _provider(coordinator, transport, options, tracker: withTracker ? tracker : null, routing: routing,
       consumers: new ConsumesOnly("Contracts.TypeX"), withInstanceProvider: withInstanceProvider);

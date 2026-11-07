@@ -1047,7 +1047,7 @@ public sealed partial class IntegrityManifestReceptor(
           .ConfigureAwait(false);
         LogSealAdvanced(logger, message.OriginServiceName, through);
       }
-      return true;   // every type roll-up matches — the whole subscribed surface is provably complete.
+      return true;   // every type roll-up matches: the whole subscribed surface is provably complete.
     }
 
     var transport = services.GetService<ITransport>();
@@ -1056,7 +1056,7 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      return true;   // no drill-down infrastructure — the mismatch re-audits next cycle.
+      return true;   // no drill-down infrastructure: the mismatch re-audits next cycle.
     }
     var sender = new ControlPlaneSender(transport, serializer, instanceProvider, requester, topic);
 
