@@ -109,6 +109,8 @@ public static partial class StreamDigestIdLaneBackfill {
   private static string _text(NpgsqlDataReader reader, int ordinal) =>
     reader.IsDBNull(ordinal) ? "none" : Convert.ToString(reader.GetValue(ordinal), CultureInfo.InvariantCulture)!;
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property (bucket identity, stored and recomputed lanes and counts), so an operator can find every drifted bucket of one type or origin.")]
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "Stream digest drift corrected ({Kind}): origin {OriginServiceId}, tenant '{TenantScope}', type {EventType}, " +
               "stream {StreamId}. Stored lanes {StoredLo}/{StoredHi} over {StoredCount} event(s); its events fold to " +
