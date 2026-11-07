@@ -3632,6 +3632,125 @@ public class IntegrityManifestReceptorTests {
       .Because("an undecided bucket is not a deficit, but it is counted, so the operator sees how much the windows cannot place");
   }
 
+  // ── #2115: an idle re-check's answer clears what now matches and never repairs ───────────
+
+  private static (AuditCoordinator Coordinator, CaptureTransport Transport, IntegrityRepairLedger Ledger, IntegrityManifestReceptor Receptor, Func<long> Cleared)
+      _recheckFixture() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.LedgerRowsRecheckCleared.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    long observed = 0;
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => observed += value);
+    listener.Start();
+    var coordinator = new AuditCoordinator();
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var ledger = new IntegrityRepairLedger();
+    // Burst mode: a deficit in an ordinary answer would go straight out as a repair request.
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      tracker: tracker, ledger: ledger, metrics: metrics);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", _fixedNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    return (coordinator, transport, ledger, receptor, Cleared);
+
+    long Cleared() {
+      observed = 0;
+      listener.RecordObservableInstruments();
+      return observed;
+    }
+  }
+
+  private static async Task _reportStaleAsync(IntegrityRepairLedger ledger, Guid origin, Guid stream) =>
+    _ = await ledger.TryBeginReportBatchAsync(
+      [new IntegrityReportObservation(new IntegrityRepairLedger.DivergenceKey(origin, "tenant-a", "Contracts.TypeX", stream), 7, 7, 0, 0, IsDeficit: true)],
+      _fixedNow.AddDays(-5), TimeSpan.FromMinutes(60));
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_RemovesTheRowWhoseBucketNowMatches_AndCountsItAsync() {
+    // A row written under an older compare rule: the bucket matches under today's rule, so the re-check clears it
+    // without waiting for the daily audit to compare it again.
+    var (coordinator, _, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(0).Because("the bucket matches, so its row is removed exactly as the audit removes it");
+    await Assert.That(cleared()).IsEqualTo(1L).Because("the re-check counts the rows it cleared");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_RemovesAnUndecidedRow_AndCountsItAsync() {
+    var (coordinator, _, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+    coordinator.UnsequencedDigests = [_digest(stream, 0x4, 0x4, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)])) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(0).Because("an undecided bucket is forgotten, exactly as the audit forgets it");
+    await Assert.That(cleared()).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_WithADeficit_NeverAsksForARepairAsync() {
+    var (coordinator, transport, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)])) with { Recheck = true });
+
+    await Assert.That(_redeliveries(transport)).IsEmpty()
+      .Because("a re-check is a compare; even with burst repair on, it never sends a repair request");
+    await Assert.That(ledger.Count).IsEqualTo(1).Because("the bucket is still divergent, so its row stays and is reported again");
+    await Assert.That(cleared()).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AnOrdinaryAnswer_DoesNotCountAsARecheckAsync() {
+    var (coordinator, _, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])));
+
+    await Assert.That(ledger.Count).IsEqualTo(0).Because("the audit heals it as always");
+    await Assert.That(cleared()).IsEqualTo(0L).Because("only a re-check's answer counts on the re-check counter");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckPage_FollowsItsCursorAsARecheckAsync() {
+    var (coordinator, transport, _, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)]))
+      with { Recheck = true, ResumeAfterStreamId = stream });
+
+    var follow = transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Single(r => r is not null)!;
+    await Assert.That(follow.Recheck).IsTrue()
+      .Because("the rest of a re-check's window is a re-check too, so its pages never ask for a repair either");
+  }
+
+  [Test]
+  public async Task RequestReceptor_EchoesTheRecheckFlag_OnItsAnswerAsync() {
+    var (_, transport) = await _answerAsync(
+      _windowedAsk(since: 400, until: 900, ManifestLevel.Streams) with { Recheck = true }, computedThrough: 900);
+
+    await Assert.That(_deserializeManifest(transport.Published.Single().Envelope).Recheck).IsTrue()
+      .Because("the asker compares the answer as a re-check only when the answer says it is one");
+  }
+
   // ── #2103: one missing event is named by the id lanes ───────────────────
 
   private static StreamDigest _named(Guid stream, int count, Guid[] ids, string type = "Contracts.TypeX") {

@@ -176,4 +176,33 @@ public class StreamIntegrityOptionsValidatorTests {
   public async Task MaxAuditWindowsPerAudit_DefaultsToFiveAsync() =>
     await Assert.That(new StreamIntegrityOptions().MaxAuditWindowsPerAudit).IsEqualTo(5)
       .Because("five capped windows is 2.5 million sequences of history compared per audit at the default cap");
+
+  [Test]
+  [Arguments("LedgerRecheckIntervalSeconds")]
+  [Arguments("LedgerRecheckRowsPerTick")]
+  [Arguments("LedgerRecheckAfterMinutes")]
+  public async Task Validate_ALedgerRecheckBoundBelowOne_FailsNamingTheKeyAsync(string key) {
+    var options = key switch {
+      "LedgerRecheckIntervalSeconds" => new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 0 },
+      "LedgerRecheckRowsPerTick" => new StreamIntegrityOptions { LedgerRecheckRowsPerTick = 0 },
+      _ => new StreamIntegrityOptions { LedgerRecheckAfterMinutes = 0 },
+    };
+
+    var result = new StreamIntegrityOptionsValidator().Validate(null, options);
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2115: a re-check bound below one spins the loop, claims nothing, or re-checks a row it just reported");
+    await Assert.That(result.FailureMessage).Contains($"Whizbang:StreamIntegrity:{key}");
+  }
+
+  [Test]
+  public async Task LedgerRecheck_DefaultsAreOn_EveryMinute_FiveHundredRows_TwoHoursAsync() {
+    var options = new StreamIntegrityOptions();
+
+    await Assert.That(options.LedgerRecheckEnabled).IsTrue();
+    await Assert.That(options.LedgerRecheckIntervalSeconds).IsEqualTo(60);
+    await Assert.That(options.LedgerRecheckRowsPerTick).IsEqualTo(500);
+    await Assert.That(options.LedgerRecheckAfterMinutes).IsEqualTo(2 * options.AuditSettleWindowMinutes)
+      .Because("twice the settle window: a row reported more recently than that was compared over settled history already");
+  }
 }

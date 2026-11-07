@@ -69,6 +69,18 @@ public sealed class StreamIntegrityMetrics {
   public PassiveCounter<long> UnplacedBuckets { get; }
 
   /// <summary>
+  /// #2115: ledger rows the idle re-check claimed and asked their owner to answer again. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public PassiveCounter<long> LedgerRowsRechecked { get; }
+
+  /// <summary>
+  /// #2115: ledger rows a re-check answer removed, because their bucket now matches or is undecided. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public PassiveCounter<long> LedgerRowsRecheckCleared { get; }
+
+  /// <summary>
   /// #2106: stream digest buckets the id-lane backfill found disagreeing with their events and corrected, each also
   /// logged at Warning with its stored and recomputed values. Sustained non-zero means a write path changes digests
   /// without the shared fold. Tagged by kind (drift_updated | drift_removed | drift_added).
@@ -257,6 +269,12 @@ public sealed class StreamIntegrityMetrics {
     UnplacedBuckets = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.unplaced_buckets",
       description: "Windowed stream buckets left undecided because events are held without the origin's sequence; tagged by origin");
+    LedgerRowsRechecked = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_rows_rechecked",
+      description: "Ledger rows the idle re-check asked their owner to answer again; tagged by origin");
+    LedgerRowsRecheckCleared = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_rows_recheck_cleared",
+      description: "Ledger rows a re-check answer removed because their bucket now matches or is undecided; tagged by origin");
     StreamDigestDriftCorrected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.stream_digest_drift_corrected",
       description: "Stream digest buckets the id-lane backfill found drifted from their events and corrected; tagged by kind");

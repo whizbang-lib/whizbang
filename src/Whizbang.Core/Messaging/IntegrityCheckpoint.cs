@@ -508,6 +508,48 @@ public sealed class StreamIntegrityOptions {
   public int MaxAuditWindowsPerAudit { get; set; } = 5;
 
   /// <summary>
+  /// #2115: when the service is idle, re-check ledger rows whose report has gone stale, oldest first, instead of waiting
+  /// for the daily audit to compare their buckets again (default true). A row clears only when its bucket is compared
+  /// again, and the routine audit compares a bucket at most once a day; rows written under an older compare rule (an
+  /// upgrade that changed the rule) otherwise linger for days, and with automatic repair on, the paced drain turns them
+  /// into repair requests. A re-check asks the owner for a stream-level answer over the row's window, compares it, and
+  /// removes the rows that now match or are undecided, exactly as the audit would; it never asks for a repair. Runs on
+  /// the maintainer instance only, under the housekeeping idle gate.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LedgerRecheckWorkerTests.cs</tests>
+  public bool LedgerRecheckEnabled { get; set; } = true;
+
+  /// <summary>
+  /// #2115: seconds between idle ledger re-check ticks (default 60). Each tick asks the idle gate first, so a busy
+  /// service spends nothing but that question. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckIntervalSeconds { get; set; } = 60;
+
+  /// <summary>
+  /// #2115: the most ledger rows one idle re-check tick claims (default 500). Rows that share an origin, type and window
+  /// are asked in one request, so a tick sends at most this many requests and usually far fewer. At the default
+  /// interval that is up to 30,000 rows an hour, which clears an upgrade's worth of stale rows within a few idle hours
+  /// without turning one tick into a burst of answers. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckRowsPerTick { get; set; } = 500;
+
+  /// <summary>
+  /// #2115: a ledger row is re-checked once its last report is older than this many minutes (default 120), and the
+  /// re-check stops when no row is that old. Twice the default <see cref="AuditSettleWindowMinutes"/>: a row reported
+  /// within the last two hours was compared recently and settled history has not moved under it since, so re-checking
+  /// it would only repeat that answer. A row a re-check finds still divergent is reported again and waits this long
+  /// before its next re-check. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckAfterMinutes { get; set; } = 120;
+
+  /// <summary>
   /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
   /// least this many events of one (tenant, type) in the window (default 1000), the consumer asks
   /// the origin for ONE state-only range-bounded backfill of the whole type instead of drilling
