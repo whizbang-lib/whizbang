@@ -560,6 +560,9 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public List<(string Topic, string Subscription, bool? RequiresSession, int MaxDeliveryCount)> CreatedSubscriptions { get; } = [];
   public List<(string Topic, string Subscription)> DeletedSubscriptions { get; } = [];
   public List<RuleProperties> ExistingRules { get; init; } = [];
+  /// <summary>Rules of one named subscription; a subscription named here answers with these instead of
+  /// <see cref="ExistingRules"/> (#2089 drift classification reads a foreign subscription's rules).</summary>
+  public Dictionary<(string Topic, string Subscription), List<RuleProperties>> RulesBySubscription { get; init; } = [];
   public List<(string Topic, string Subscription, string RuleName)> DeletedRules { get; } = [];
   public List<(string Topic, string Subscription, CreateRuleOptions Options)> CreatedRules { get; } = [];
 
@@ -694,7 +697,8 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     ManagementOpCount++;
     await Task.CompletedTask;
-    foreach (var rule in ExistingRules.ToList()) {
+    var rules = RulesBySubscription.TryGetValue((topicName, subscriptionName), out var own) ? own : ExistingRules;
+    foreach (var rule in rules.ToList()) {
       yield return rule;
     }
   }

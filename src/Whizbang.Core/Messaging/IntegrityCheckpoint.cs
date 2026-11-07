@@ -328,6 +328,43 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   public bool BackfillOnSubscriptionGrowth { get; set; } = true;
 
+  /// <summary>
+  /// Events one backfill window asks an owner for (default 1,000, #2092). A grown subscription is backfilled in
+  /// windows by the owner's commit sequence, one event type and owner at a time: the next window is requested only once
+  /// the previous one is answered. The owner clamps it to its own <c>MaxEventsPerRequest</c>. Must be at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillWindowSize { get; set; } = 1_000;
+
+  /// <summary>
+  /// The backfill's pace, in events requested per minute across every type (default 6,000, #2092). Each window spends
+  /// its full size from a token bucket that refills at this rate and holds at most one minute's worth (or one window,
+  /// whichever is larger), so a store with millions of events is backfilled over hours instead of in one burst. Must be
+  /// at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillEventsPerMinute { get; set; } = 6_000;
+
+  /// <summary>
+  /// Backfill windows awaiting their answer at once, across every type and owner (default 2, #2092). Must be at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillMaxConcurrentWindows { get; set; } = 2;
+
+  /// <summary>
+  /// Times one backfill window is requested without an answer before the backfill of that type stops (default 3,
+  /// #2092). A window waits <see cref="RepairAnswerTimeoutMinutes"/> for its answer. An owner on a release that predates
+  /// windowed backfill answers the request the legacy way, with no window answer, so after this many attempts the
+  /// type's backfill ends as answered by a legacy owner and the integrity audit reports anything still missing. Must be
+  /// at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillMaxWindowAttempts { get; set; } = 3;
+
   /// <summary>Phase A/L: run the scheduled deep audit (default true).</summary>
   public bool AuditEnabled { get; set; } = true;
 

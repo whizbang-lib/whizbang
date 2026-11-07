@@ -249,6 +249,78 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([own, received]);
   }
 
+  /// <summary>
+  /// #2092: a backfill window walks one type by the owner's commit sequence from the requester's position. Rows not yet
+  /// stamped are left for a later window (they stamp above the position), and the limit takes the lowest sequences.
+  /// </summary>
+  [Test]
+  public async Task Select_ByCommitSequence_WalksStampedRowsInCommitOrderAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    const string TYPE = "Contracts.WindowedThing";
+    // Stream ids chosen so (stream, version) order is the reverse of commit order.
+    var late = Guid.Parse("00000000-0000-0000-0000-0000000000a1");
+    var early = Guid.Parse("ffffffff-0000-0000-0000-0000000000a2");
+    var floor = await _seedAsync(conn, early, version: 1, TENANT_A, TYPE);
+    var second = await _seedAsync(conn, early, version: 2, TENANT_A, TYPE);
+    var third = await _seedAsync(conn, late, version: 1, TENANT_A, TYPE);
+    await using (var unstamped = conn.CreateCommand()) {
+      unstamped.CommandText = """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence)
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, '{"t":"tenant-a"}'::jsonb, 2, NULL)
+        """;
+      unstamped.Parameters.AddWithValue("event", TrackedGuid.New().Value);
+      unstamped.Parameters.AddWithValue("stream", late);
+      unstamped.Parameters.AddWithValue("type", TYPE);
+      await unstamped.ExecuteNonQueryAsync();
+    }
+    var all = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { EventTypes = [TYPE], OrderByCommitSequence = true });
+    var floorSequence = all.Single(e => e.EventId == floor).CommitSequence;
+
+    var window = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+      EventTypes = [TYPE],
+      OrderByCommitSequence = true,
+      FromCommitSequence = floorSequence,
+    });
+    var limited = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+      EventTypes = [TYPE],
+      OrderByCommitSequence = true,
+      FromCommitSequence = floorSequence,
+      MaxEvents = 1,
+    });
+
+    await Assert.That(all.Select(e => e.EventId)).IsEquivalentTo([floor, second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("commit order, not stream order, and the unstamped row waits for its sequence");
+    await Assert.That(window.Select(e => e.EventId)).IsEquivalentTo([second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the window continues strictly after the position");
+    await Assert.That(limited.Select(e => e.EventId)).IsEquivalentTo([second]).Because("the bound keeps the lowest sequences");
+  }
+
+  [Test]
+  public async Task Select_ByCommitSequence_WithoutEventTypes_IsRefusedAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    await Assert.That(async () => await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { OrderByCommitSequence = true }))
+      .Throws<ArgumentException>().Because("a commit-sequence window reads one type's history through its index; every type at once has no such read");
+  }
+
+  [Test]
+  public async Task HeadCommitSequence_IsTheHighestStampedSequenceOfTheTypesAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadA");
+    var last = await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadA");
+    await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadB");
+    var expected = (await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { EventTypes = ["Contracts.HeadA"], OrderByCommitSequence = true }))
+      .Single(e => e.EventId == last).CommitSequence;
+
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.HeadA"])).IsEqualTo(expected);
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.HeadNone"])).IsNull();
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   /// <summary>Seeds one event: store pointer + (unless <paramref name="reapBody"/>) its body row.</summary>

@@ -1091,6 +1091,87 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2092: queues paced backfills, one per (owner, event type). Idempotent and multi-instance safe: a pair already
+  /// queued, running or ended keeps its row. Default: no-op (engines without the backfill table do not backfill).
+  /// </summary>
+  /// <param name="seeds">The pairs to queue.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task EnqueueSubscriptionBackfillsAsync(
+    IReadOnlyList<SubscriptionBackfillSeed> seeds,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>#2092: every paced backfill, running and ended. Default: empty.</summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The backfills' durable progress.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task<IReadOnlyList<SubscriptionBackfillCursor>> GetSubscriptionBackfillsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SubscriptionBackfillCursor>>([]);
+
+  /// <summary>
+  /// #2092: records that window <paramref name="window"/> of a running backfill was requested and awaits its answer
+  /// until <paramref name="answerDueBy"/>. Requesting the same window again counts one more attempt; a new window starts
+  /// its attempts at one. Default: no-op.
+  /// </summary>
+  /// <param name="backfillId">The backfill.</param>
+  /// <param name="window">The window requested.</param>
+  /// <param name="now">The request time.</param>
+  /// <param name="answerDueBy">When the window stops waiting for its answer.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task MarkSubscriptionBackfillWindowRequestedAsync(
+    Guid backfillId,
+    long window,
+    DateTimeOffset now,
+    DateTimeOffset answerDueBy,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2092: applies a window's answer to its running backfill: the position moves to where the window stopped, the
+  /// events count, and an answer with nothing more ends the backfill as complete. Applies only to the window awaiting
+  /// its answer, so a late or duplicate answer changes nothing. Default: null.
+  /// </summary>
+  /// <param name="answer">The origin's answer.</param>
+  /// <param name="now">The time the answer is applied.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The backfill's progress after the answer, or null when the answer applied to nothing.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(
+    BackfillWindowAnswer answer,
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default) => Task.FromResult<SubscriptionBackfillCursor?>(null);
+
+  /// <summary>#2092: ends a running backfill with <paramref name="outcome"/>. Default: no-op.</summary>
+  /// <param name="backfillId">The backfill.</param>
+  /// <param name="outcome">How it ended.</param>
+  /// <param name="now">The time it ended.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task EndSubscriptionBackfillAsync(
+    Guid backfillId,
+    SubscriptionBackfillOutcome outcome,
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2092: the highest stamped commit sequence among this store's events of <paramref name="eventTypes"/>, which a
+  /// windowed backfill answer carries so the requester can estimate what remains. Default: null (unknown).
+  /// </summary>
+  /// <param name="eventTypes">Stored event type names.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The head, or null when the store holds none or cannot say.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs:HeadCommitSequence_IsTheHighestStampedSequenceOfTheTypesAsync</tests>
+  Task<long?> GetRedeliveryHeadCommitSequenceAsync(
+    IReadOnlyList<string> eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Stream-integrity Phase A: computes the order-independent identity digests of this store's
   /// events per (tenant, type, stream). <paramref name="originServiceId"/> null = OWN emissions
   /// (locally-originated rows — what this service publishes as an origin); a value = events
@@ -2044,6 +2125,24 @@ public interface IWorkCoordinator {
     Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
+
+  /// <summary>
+  /// Reconciles many redelivery bundles at once (#2099), each as <see cref="AdoptRedeliveredOriginAsync"/> reconciles
+  /// one, so that a backlog of recorded reconciles drains at the cost of the bundles rather than of the sealed epochs
+  /// each one touches. Every bundle's streams are locked once, the fills are one update, and each sealed digest epoch
+  /// that holds a moved event is refolded once for the whole batch. An event two bundles of the batch name adopts once,
+  /// for the first bundle that can fill it; the other counts it present and not adopted, as a later call would.
+  /// </summary>
+  /// <param name="bundles">The bundles, in the order a sequence of single calls would have reconciled them.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Per bundle, in the order given, its buckets as <see cref="AdoptRedeliveredOriginAsync"/> returns them, with
+  /// <see cref="RedeliveredBucketPresence.OriginsFilled"/> set; null = unsupported, and the caller reconciles each bundle
+  /// on its own.</returns>
+  /// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryBatchReconcileCoordinatorTests.cs</tests>
+  Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+    IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?>(null);
 
   /// <summary>
   /// Records the domains an origin announced on its checkpoint as its claim set, replacing the claims it made before:

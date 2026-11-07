@@ -1080,6 +1080,58 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(bundles);
+    foreach (var bundle in bundles) {
+      if (bundle.EventIds.Count != bundle.CommitSequences.Count) {
+        throw new ArgumentException(
+          $"A bundle of origin {bundle.OriginServiceId} has {bundle.EventIds.Count} event ids but "
+          + $"{bundle.CommitSequences.Count} commit sequences; they pair by position.", nameof(bundles));
+      }
+    }
+    var results = new List<RedeliveredBucketPresence>[bundles.Count];
+    for (var i = 0; i < results.Length; i++) {
+      results[i] = [];
+    }
+    if (bundles.Count == 0) {
+      return results;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    // 335 (#2099): every bundle at once, each sealed epoch the batch touches refolded once.
+    var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_reconcile_redelivered_bundles");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.Select(b => b.OriginServiceId).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = bundles.Select(b => (object?)b.OriginServiceName ?? DBNull.Value).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_bundles", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = bundles.SelectMany((b, i) => b.EventIds.Select(_ => i + 1)).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.SelectMany(b => b.EventIds).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = bundles.SelectMany(b => b.CommitSequences).ToArray()
+    });
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText = $"SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_bundle_origins,@p_bundle_names,@p_event_bundles,@p_event_ids,@p_commit_sequences)";
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var tenant = reader.GetString(2);
+      results[reader.GetInt32(0) - 1].Add(new RedeliveredBucketPresence(
+        reader.GetGuid(1), tenant.Length == 0 ? null : tenant, reader.GetString(3), reader.GetInt32(4), reader.GetInt32(5),
+        reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(6)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityDomainClaim>> RecordIntegrityDomainClaimsAsync(
       Guid ownerServiceId, string ownerServiceName, string? requestTopic, IReadOnlyList<string> domains,
       CancellationToken cancellationToken = default) {
@@ -2811,18 +2863,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var schema = _resolveSchema(typeof(OutboxRecord));
 
-    var sql = $"""
-      SELECT es.event_id, es.stream_id, es.version::bigint, es.commit_sequence,
-             es.event_type, eb.event_data::text, eb.metadata::text, es.scope::text,
-             COALESCE(es.flags, 0)
-      FROM {schema}.wh_event_store es
-      JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
-      WHERE (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
-        AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
+    // Every filter but the type, shared by both orders. #2032: only events the answering service authored (no origin,
+    // and a first hop naming it or no service).
+    const string COLUMNS = """
+      es.event_id, es.stream_id, es.version::bigint AS version, es.commit_sequence,
+             es.event_type, eb.event_data::text AS event_data, eb.metadata::text AS metadata, es.scope::text AS scope,
+             COALESCE(es.flags, 0) AS flags
+      """;
+    var filters = $"""
+      (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
-        AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
-        AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
         AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
         AND (@p_authored_by::text IS NULL OR (
           es.origin_service_id IS NULL
@@ -2830,9 +2881,46 @@ public class EFCoreWorkCoordinator<TDbContext>(
                 (eb.metadata -> 'Hops') -> 0 -> 'si' ->> 'sn',
                 (eb.metadata -> 'Hops') -> 0 -> 'ServiceInstance' ->> 'ServiceName'))), ''), 'unknown')
               IN ('unknown', lower(btrim(@p_authored_by::text)))))
-      ORDER BY es.stream_id, es.version
-      LIMIT @p_max
       """;
+    var normalize = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
+    string sql;
+    if (request.OrderByCommitSequence) {
+      // #2092: one type's stamped history in commit order from the floor. Each type is read through
+      // idx_event_store_type_commit_sequence in order under the limit (a lateral per type), so a window costs its own
+      // rows however much of the type's history lies behind or ahead of it. That index is built concurrently after the
+      // migrations (ConcurrentIndexBuild); until it is valid the same read answers correctly, more slowly.
+      if (request.EventTypes is not { Count: > 0 }) {
+        throw new ArgumentException("A commit-sequence selection names its event types.", nameof(request));
+      }
+      sql = $"""
+        SELECT w.event_id, w.stream_id, w.version, w.commit_sequence, w.event_type, w.event_data, w.metadata, w.scope, w.flags
+        FROM (SELECT DISTINCT {normalize}(t) AS name FROM unnest(@p_types::text[]) AS t) AS types
+        CROSS JOIN LATERAL (
+          SELECT {COLUMNS}
+          FROM {schema}.wh_event_store es
+          JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.event_type = types.name
+            AND es.commit_sequence IS NOT NULL
+            AND es.commit_sequence > COALESCE(@p_from_seq::bigint, -1)
+            AND {filters}
+          ORDER BY es.commit_sequence
+          LIMIT @p_max) AS w
+        ORDER BY w.commit_sequence
+        LIMIT @p_max
+        """;
+    } else {
+      sql = $"""
+        SELECT {COLUMNS}
+        FROM {schema}.wh_event_store es
+        JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {normalize}(t) FROM unnest(@p_types::text[]) AS t))
+          AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
+          AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
+          AND {filters}
+        ORDER BY es.stream_id, es.version
+        LIMIT @p_max
+        """;
+    }
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3454,6 +3542,72 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       return await cmd.ExecuteNonQueryAsync(cancellationToken);
     }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public async Task EnqueueSubscriptionBackfillsAsync(
+    IReadOnlyList<SubscriptionBackfillSeed> seeds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(seeds);
+    if (seeds.Count == 0) {
+      return;
+    }
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.EnqueueAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), seeds, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<SubscriptionBackfillCursor>> GetSubscriptionBackfillsAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync((cmd, schema) => Whizbang.Data.Postgres.SubscriptionBackfillSql.ReadAllAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
+  public async Task MarkSubscriptionBackfillWindowRequestedAsync(
+    Guid backfillId, long window, DateTimeOffset now, DateTimeOffset answerDueBy, CancellationToken cancellationToken = default) =>
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.MarkRequestedAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), backfillId, window, now, answerDueBy, cancellationToken)
+        .ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(
+    BackfillWindowAnswer answer, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(answer);
+    return _withCoordinatorCommandAsync((cmd, schema) => Whizbang.Data.Postgres.SubscriptionBackfillSql.RecordAnswerAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), answer, now, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task EndSubscriptionBackfillAsync(
+    Guid backfillId, SubscriptionBackfillOutcome outcome, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.EndAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), backfillId, outcome, now, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  /// <remarks>One index probe per type (a lateral over idx_event_store_type_commit_sequence, once the concurrent
+  /// framework index build has made it valid), never a scan of the type.</remarks>
+  public Task<long?> GetRedeliveryHeadCommitSequenceAsync(IReadOnlyList<string> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    return _withCoordinatorCommandAsync<long?>(async (cmd, schema) => {
+      var normalize = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
+      cmd.CommandText =
+        "SELECT max(h.head) FROM unnest(@p_types::text[]) AS t CROSS JOIN LATERAL (" +
+        $"SELECT max(es.commit_sequence) AS head FROM {schema}.wh_event_store es " +
+        $"WHERE es.event_type = {normalize}(t) AND es.commit_sequence IS NOT NULL) AS h";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      var head = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return head is long value ? value : null;
+    }, cancellationToken);
   }
 
   /// <inheritdoc />

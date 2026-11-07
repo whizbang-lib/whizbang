@@ -169,25 +169,12 @@ public class SubscriptionExpansionWorkerCoverageTests {
       .Because("the early return must leave the already-settled registration untouched");
   }
 
-  // Target: src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs:134-136 — the
-  // "missing infrastructure" arm of _sendBackfillRequestAsync.
-  //
-  // Repair is ENABLED here (BackfillOnSubscriptionGrowth default true AND
-  // RepairMode = AutoRepairCapped), so the reconciler genuinely tries to send. What is absent is
-  // the transport and serializer — the shape of a host composed without a broker (a migration
-  // runner, a diagnostics sidecar, a misconfigured deployment).
-  //
-  // The distinguishing evidence is the LOG EVENT, not the registry status: "backfill disabled"
-  // (event 73) and "request skipped" (event 74) BOTH leave the type Pending, so asserting Pending
-  // alone is satisfied by either path and proves neither. Asserting event 74 — and the absence of
-  // 73 — pins it to the send attempt.
-  //
-  // What breaks if this regressed to throwing or to marking Requested anyway: throwing takes down
-  // a boot that had nothing wrong with it beyond having no broker; marking Requested burns the
-  // one-shot retry, so the expansion is recorded as repaired, never re-detected, and the missing
-  // history stays missing forever.
+  // Repair is ENABLED here (BackfillOnSubscriptionGrowth default true AND RepairMode = AutoRepairCapped), and the host
+  // has no transport, serializer or service identity: a migration runner, a diagnostics sidecar, a deployment whose
+  // broker is not up yet. Queuing the backfill needs only the store (#2092); the paced worker sends each window once it
+  // can. The distinguishing evidence is the LOG EVENT: "queued" (72) and never "disabled" (73).
   [Test]
-  public async Task RunOnceAsync_RepairEnabledButNoTransport_SkipsTheRequestAndLeavesTypesPendingAsync() {
+  public async Task RunOnceAsync_RepairEnabledButNoTransport_QueuesTheBackfillForThePacedWorkerAsync() {
     var coordinator = new RegistryCoordinator();
     // A prior boot's baseline: this is NOT first boot, so the new type reads as an expansion.
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
@@ -196,22 +183,17 @@ public class SubscriptionExpansionWorkerCoverageTests {
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IConsumerRegistry>(new OneTypeProvider());
-    // No ITransport, no IEnvelopeSerializer, no IServiceInstanceProvider — nothing to send with.
     var worker = _build(services,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger);
 
     await worker.RunOnceAsync(CancellationToken.None);
 
-    await Assert.That(logger.Entries.Any(e => e.EventId == 74)).IsTrue()
-      .Because("the reconciler must report that it TRIED and could not — missing infrastructure "
-             + "and a disabled repair leave the same registry state, and only this log tells an "
-             + "operator which one they are looking at");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 72)).IsTrue()
+      .Because("the backfill is queued; sending is the paced worker's job, which waits for a transport");
     await Assert.That(logger.Entries.Any(e => e.EventId == 73)).IsFalse()
       .Because("repair is enabled in this composition; reporting 'backfill disabled' would send an "
              + "operator to a setting that is already correct");
-    await Assert.That(coordinator.Registry[_probeType]).IsEqualTo(ConsumedTypeBackfillStatus.Pending)
-      .Because("a request that was never sent must not be recorded as Requested — that would burn "
-             + "the retry and leave the missing history missing for good");
+    await Assert.That(coordinator.Registry[_probeType]).IsEqualTo(ConsumedTypeBackfillStatus.Requested);
   }
 
   private sealed class CapturingLogger : ILogger<SubscriptionExpansionWorker> {

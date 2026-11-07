@@ -120,6 +120,46 @@ public sealed class RedeliveryPump(
   public TimeSpan? AnswerTimeToLive { get; init; }
 
   /// <summary>
+  /// When set, bundles span streams (#2092): events group by scope only, so a window of one type's history ships in as
+  /// few bundles as <see cref="RedeliveryPumpOptions.MaxInnerEventsPerComposite"/> and
+  /// <see cref="RedeliveryPumpOptions.MaxBytesPerComposite"/> allow instead of one per stream, each child names the
+  /// stream it is stored on, and every bundle's own stream (its broker session) is this id, so a backfill's bundles
+  /// and its window answers arrive in order. Null (the default) keeps one stream per bundle, which every receiver
+  /// understands; only a windowed backfill, whose requester is new enough to ask for it, sets it.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+  public Guid? BundleStreamId { get; init; }
+
+  /// <summary>
+  /// Publishes a backfill window's answer to <paramref name="target"/> on <paramref name="topic"/>, on the backfill's
+  /// session so it follows the window's bundles (#2092), with the same time to live and send retry as a bundle.
+  /// </summary>
+  /// <param name="answer">The answer.</param>
+  /// <param name="topic">The requester's reply topic.</param>
+  /// <param name="target">The requester's service name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+  public async Task PublishWindowAnswerAsync(BackfillWindowAnswer answer, string topic, string target, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(answer);
+    ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+    ArgumentException.ThrowIfNullOrWhiteSpace(target);
+    var envelope = new MessageEnvelope<BackfillWindowAnswer> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
+      MessageId = new MessageId(TrackedGuid.New()),
+      Payload = answer,
+      Hops = [ControlPlaneHop.Create(typeof(BackfillWindowAnswer), _instanceProvider, _time.GetUtcNow())],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      Target = target,
+    };
+    var serialized = _envelopeSerializer.SerializeEnvelope(envelope);
+    await _sendWithRetryAsync(serialized, _destination(topic, answer.BackfillId, typeof(BackfillWindowAnswer)), cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+
+  /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
   /// Returns the number of composites published.
   /// </summary>
@@ -155,11 +195,14 @@ public sealed class RedeliveryPump(
       // scopes could only be stamped with one of them — repairing one tenant's event under another
       // tenant's authority. A stream is single-tenant in practice, which makes this a no-op split
       // that costs nothing and forecloses the mis-attribution when it is not.
-      GroupKey = CompositeGroupKey.FromKey<RedeliveryEvent>(e => $"{e.StreamId}|{e.Scope}"),
+      // #2092: a windowed backfill bundles across streams (scope only); each child still names its stored stream.
+      GroupKey = BundleStreamId is null
+        ? CompositeGroupKey.FromKey<RedeliveryEvent>(e => $"{e.StreamId}|{e.Scope}")
+        : CompositeGroupKey.FromKey<RedeliveryEvent>(e => e.Scope ?? string.Empty),
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested),
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId),
     });
 
     var published = 0;
@@ -177,7 +220,8 @@ public sealed class RedeliveryPump(
   /// and the stream each event is stored on, which the receiver files it under (#1798).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
-  private static RedeliveryComposite _buildComposite(IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested) {
+  private static RedeliveryComposite _buildComposite(
+      IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -188,7 +232,7 @@ public sealed class RedeliveryPump(
       innerPayloads.Add(doc.RootElement.Clone());
     }
     return new RedeliveryComposite {
-      StreamId = chunk[0].StreamId,
+      StreamId = bundleStreamId ?? chunk[0].StreamId,
       InnerPayloads = innerPayloads,
       InnerTypeNames = [.. chunk.Select(c => c.EventType)],
       InnerEventIds = [.. chunk.Select(c => c.EventId)],
@@ -239,14 +283,26 @@ public sealed class RedeliveryPump(
     // Session-enabled subscriptions dead-letter sessionless deliveries; per-stream chunking makes
     // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
-    var destination = Transports.ControlPlaneDestination.For(topic, composite.StreamId, typeof(RedeliveryComposite));
+    await _sendWithRetryAsync(serialized, _destination(topic, composite.StreamId, typeof(RedeliveryComposite)), cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>A control-plane destination on <paramref name="sessionStreamId"/>'s session, with the answer time to live
+  /// when one is set.</summary>
+  private TransportDestination _destination(string topic, Guid sessionStreamId, Type payloadType) {
+    var destination = Transports.ControlPlaneDestination.For(topic, sessionStreamId, payloadType);
     if (AnswerTimeToLive is { } lifetime) {
       destination = Transports.ControlMessageTtl.Stamp(destination, lifetime);
     }
+    return destination;
+  }
 
-    // A broker under throttle fails sends transiently; without a bounded retry ONE failed send
-    // aborts the whole serve — every later chunk dies with it and the requester's attempt burns
-    // for nothing. Cancellation is a shutdown signal, never retried.
+  /// <summary>
+  /// A broker under throttle fails sends transiently; without a bounded retry ONE failed send aborts the whole serve,
+  /// every later chunk dies with it and the requester's attempt burns for nothing. Cancellation is a shutdown signal,
+  /// never retried.
+  /// </summary>
+  private async Task _sendWithRetryAsync(SerializedEnvelope serialized, TransportDestination destination, CancellationToken cancellationToken) {
     var attempts = Math.Max(1, _options.PublishRetryAttempts);
     var attempt = 1;
     while (true) {

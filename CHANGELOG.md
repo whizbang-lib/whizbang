@@ -1372,6 +1372,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A service receives only the commands it handles on a per-namespace command inbox (#2089).** A service that handled
+  any command of a namespace subscribed to that namespace's command inbox with a match-all filter, so handling one command
+  of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.
+  Each command inbox subscription now filters by subject to the command types the service handles. On Azure Service Bus
+  the filter is split across as many rules as the 1,024-character SQL filter limit needs, and the provisioner converges an
+  existing subscription's rules as well as a new one's. On RabbitMQ a queue that binds explicit patterns drops its legacy
+  match-all `#` binding. The ownership drift check now flags only a second subscriber that is not filtered to exact command
+  types (Service Bus); RabbitMQ, which cannot read another queue's bindings, no longer records drift.
+- **Directed integrity traffic reaches only its addressee (#2090).** Repair and redelivery requests, manifests and the
+  bundles that answer them were addressed to the service's first command inbox, which other services also read. Each
+  service now has its own control inbox, `inbox.whizbang.service.<service>`, that only it subscribes to, and advertises it
+  as its request and reply address. Senders keep answering on whatever address a receiver advertised, so a service on an
+  earlier version keeps receiving where it did.
+- **Framework control traffic a service cannot use is discarded on receipt (#2091).** A control or minted message
+  addressed to another service, or consumed by nothing on the receiving service, is now discarded at the receive
+  boundary on any entity with no inbox row, no comparison and no fan-out, and counted under its reason. Such a message
+  could previously reach dispatch, run database work and be retried until dead-lettered.
+- **Recording a redelivery bundle answer costs in proportion to the bundle (#2093).** The answer scanned the whole
+  integrity ledger under a generic plan, rewrote already-answered rows and could deadlock with a concurrent bundle.
+  Migration 333 finds the covered rows by primary key, leaves answered rows alone and locks in key order.
+- **The shared control topic no longer carries directed integrity traffic (#2094).** A service with no command inbox
+  advertised the system broadcast inbox as its request and reply address, so every request to it and every answer it
+  asked for was delivered to every service. Directed traffic now uses the addressee's own control inbox (#2090); only
+  system commands and the backfill broadcast for types with no known owner remain on the broadcast inbox.
 - **A collective sink row this service has no handler for no longer stalls its perspective queue (#2096).** A service
   that stores a collective event it has no `[CollectiveApplyFor]` handler for routes it to the `__collective__` sink,
   and since #2081 that includes every collective declared in an assembly it loads. The drain could not read the row
@@ -1382,6 +1406,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   collective to dispatch, and logs the count at Debug (EventId 80). Rows already stuck this way are completed on the
   first drain after upgrading, with no manual cleanup. A perspective row of an unknown type is unchanged: it is still
   left for an instance that can read it.
+- **Integrity checkpoints are no longer dead-lettered by topic fan-out, and a backlog of redelivery reconciles drains
+  as a batch (#2099).** A checkpoint is published once per topic of its origin's owned types with one message id, so a
+  consumer subscribed to ten of those topics observed it ten times after one processing attempt, and the durable
+  redelivery bound moved it to dead letters, taking the in-flight row from its handler: the origin was then reported as
+  not checkpointing. The receive-side poison quarantine now leaves control-plane traffic in place, as the dead-letter
+  boundary already drops it rather than storing it. Separately, the maintainer's drain reconciled each recorded
+  redelivery bundle on its own and refolded the sealed digest epochs of each, so a backlog of one-event bundles that
+  each fill one origin sequence (history re-attributed to its owner records the origin but not its sequence) cost one
+  epoch fold per bundle. Leased reconciles are now handed to `wh_reconcile_redelivered_bundles` (migration 335) together:
+  one update fills every sequence and each sealed epoch the batch touches is refolded once. The reconcile's report now
+  tells an event whose origin it filled apart from one that only took its sequence, which used to read as the same
+  origins being filled again and again.
+- **The backfill of a grown subscription is paced (#2092).** A boot that widened a service's consumed set asked each
+  owner for the whole history of every newly consumed type at once, and each owner answered with one bundle per event,
+  which flooded the transport and the shared database. The subscription-expansion reconciler now queues one backfill
+  per (owner, type) and the new `SubscriptionBackfillWorker` walks each in bounded windows by the owner's commit
+  sequence: the next window is requested only after the previous one is answered, at most
+  `BackfillMaxConcurrentWindows` (default 2) at once, paced by a token bucket of `BackfillEventsPerMinute` (default
+  6,000) with `BackfillWindowSize` events per window (default 1,000), on the maintainer under the idle gate and never in
+  report-only. Progress is durable (migration 334, `wh_subscription_backfills`), so a restart resumes and a finished
+  type stops. A window reads its type through `idx_event_store_type_commit_sequence`, which the new framework index
+  build (`ConcurrentIndexBuild`, a maintenance step on the EF Core driver) creates with `CREATE INDEX CONCURRENTLY` after
+  the migrations, so writes to the event store go on while it builds; an invalid index an interrupted build left is
+  dropped and rebuilt, and windows read without it until it is valid. Answers carry many events per bundle across streams, on the backfill's own session. An owner on an
+  earlier release answers a window the legacy way; after `BackfillMaxWindowAttempts` (default 3) unanswered requests the
+  type's backfill ends as unanswered. Metrics: `backfill_windows_requested`, `backfill_events_received`,
+  `backfills_ended`, and the gauges `backfill_windows_in_flight` and `backfill_remaining_events`.
+- **A redelivery answer that stops at its bound says so, and a backfill continues from there (#2098).** An owner capped
+  every answer at 10,000 events and stopped without a word, so a backfill of a larger type never completed. A backfill
+  window's answer (`BackfillWindowAnswer`) now reports the last commit sequence it covered and whether more remains, and
+  the requester asks for the next window from exactly that point. An ordinary request that reaches the bound with more
+  selected is counted (`redelivery_answers_capped`) and logged.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

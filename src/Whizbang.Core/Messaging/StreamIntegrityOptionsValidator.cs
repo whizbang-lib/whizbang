@@ -8,7 +8,8 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Rejects a <see cref="StreamIntegrityOptions.MaxRepairDrainBacklog"/> below one, and a
 /// <see cref="StreamIntegrityOptions.RepairAnswerTimeoutMinutes"/> below one, and a re-attribution interval, batch size
-/// or batches-per-pass bound below one (#2008), where the options are read, naming the configuration key.
+/// or batches-per-pass bound below one (#2008), and a paced backfill setting below one (#2092), where the options are read,
+/// naming the configuration key.
 /// </summary>
 /// <remarks>
 /// A bound of zero or less admits no deficit to the paced repair drain, so with auto-repair on nothing
@@ -41,6 +42,14 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       "it is the rows one re-attribution batch scans, and a batch below one walks nothing");
     _atLeastOne(failures, "MaxReattributionBatchesPerPass", options.MaxReattributionBatchesPerPass,
       "it bounds one re-attribution pass, and a bound below one runs no batch");
+    _atLeastOne(failures, "BackfillWindowSize", options.BackfillWindowSize,
+      "it is the events one backfill window asks for, and a window below one asks for nothing (#2092)");
+    _atLeastOne(failures, "BackfillEventsPerMinute", options.BackfillEventsPerMinute,
+      "it is the backfill's pace, and a pace below one never affords a window (#2092)");
+    _atLeastOne(failures, "BackfillMaxConcurrentWindows", options.BackfillMaxConcurrentWindows,
+      "it bounds the backfill windows awaiting an answer, and a bound below one requests none (#2092)");
+    _atLeastOne(failures, "BackfillMaxWindowAttempts", options.BackfillMaxWindowAttempts,
+      "it is how often an unanswered window is asked, and below one no window is ever asked (#2092)");
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 

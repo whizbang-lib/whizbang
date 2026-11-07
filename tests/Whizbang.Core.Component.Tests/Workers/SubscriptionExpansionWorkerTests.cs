@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -23,9 +22,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <summary>
 /// Stream-integrity Phase S: the startup subscription-expansion reconciler. First boot BASELINES
 /// the whole catalog (no backfill — nothing existed to miss); a type appearing on a later boot is
-/// an EXPANSION — registered Pending and repaired via ONE broadcast STATE-ONLY re-delivery request
-/// (every origin answers; duplicates converge by identity). Disabled = expansions stay Pending
-/// (the audit surface); missing infrastructure leaves them Pending for the next boot's retry.
+/// an EXPANSION: registered Pending and queued for the paced backfill (#2092), which walks each type's history in
+/// bounded windows. Disabled = expansions stay Pending (the audit surface).
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs</code-under-test>
 public class SubscriptionExpansionWorkerTests {
@@ -47,7 +45,7 @@ public class SubscriptionExpansionWorkerTests {
   }
 
   [Test]
-  public async Task Expansion_BroadcastsStateOnlyBackfillAndMarksRequestedAsync() {
+  public async Task Expansion_QueuesAPacedBackfillAndMarksRequested_SendingNothingAtOnceAsync() {
     var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;   // prior boot
     var transport = new CaptureTransport();
@@ -56,24 +54,12 @@ public class SubscriptionExpansionWorkerTests {
     await worker.RunOnceAsync(CancellationToken.None);
 
     await Assert.That(coordinator.Registry[_expandedType]).IsEqualTo(ConsumedTypeBackfillStatus.Requested)
-      .Because("the expansion registered Pending and transitioned to Requested once the broadcast went out.");
-
-    var (envelope, destination, _) = transport.Published.Single();
-    await Assert.That(destination.Address).IsEqualTo("inbox");
-    await Assert.That(envelope.Target).IsNull()
-      .Because("the request BROADCASTS — an expanding consumer cannot know which origins hold the history.");
-    var options = JsonContextRegistry.CreateCombinedOptions();
-    var command = (RequestRedeliveryCommand)JsonSerializer.Deserialize(
-      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
-      options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-    await Assert.That(command.StateOnly).IsTrue()
-      .Because("backfill builds STATE — trigger receptors must never re-run over delivered history.");
-    await Assert.That(command.EventTypes).IsEquivalentTo([_expandedWireType])
+      .Because("the expansion registered Pending and transitioned to Requested once its backfill was queued.");
+    await Assert.That(coordinator.Seeds).IsEquivalentTo([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, _expandedWireType)])
       .Because("the registry keys on the no-assembly CLR name (persisted rows must not re-baseline), " +
-               "but the ORIGIN matches event_type in the assembly-qualified wire form — a FullName-only " +
-               "request silently backfills nothing.");
-    await Assert.That(command.RequesterService).IsEqualTo("expanded-svc");
-    await Assert.That(command.Topic).IsEqualTo("inbox");
+               "but the ORIGIN matches event_type in the assembly-qualified wire form, so the queued backfill carries that form.");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("#2092: the paced backfill sends bounded windows; nothing asks for a whole history at once.");
   }
 
   [Test]
@@ -93,15 +79,16 @@ public class SubscriptionExpansionWorkerTests {
   }
 
   [Test]
-  public async Task MissingTransport_LeavesPendingForNextBootAsync() {
+  public async Task MissingTransport_StillQueuesTheBackfill_ThePacedWorkerSendsLaterAsync() {
     var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var worker = _buildWorker(coordinator, transport: null);
+    var worker = _buildWorker(coordinator, transport: null, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     await worker.RunOnceAsync(CancellationToken.None);
 
-    await Assert.That(coordinator.Registry[_expandedType]).IsEqualTo(ConsumedTypeBackfillStatus.Pending)
-      .Because("a request that cannot be sent stays Pending — the next boot retries it.");
+    await Assert.That(coordinator.Registry[_expandedType]).IsEqualTo(ConsumedTypeBackfillStatus.Requested)
+      .Because("queuing needs only the store; the paced worker sends each window once the transport is there.");
+    await Assert.That(coordinator.Seeds).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -243,6 +230,12 @@ public class SubscriptionExpansionWorkerTests {
   /// <summary>In-memory consumed-type registry with the production status semantics.</summary>
   private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
+    public List<SubscriptionBackfillSeed> Seeds { get; } = [];
+
+    public Task EnqueueSubscriptionBackfillsAsync(IReadOnlyList<SubscriptionBackfillSeed> seeds, CancellationToken cancellationToken = default) {
+      Seeds.AddRange(seeds);
+      return Task.CompletedTask;
+    }
 
     /// <summary>Set to make the registry read throw, as a database outage at startup would.</summary>
     public bool FailReads { get; set; }

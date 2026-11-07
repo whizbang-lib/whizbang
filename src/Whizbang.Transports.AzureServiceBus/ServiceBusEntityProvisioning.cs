@@ -19,8 +19,14 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_TopicAndSubscriptionMissing_CreatesBothAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 internal static class ServiceBusEntityProvisioning {
-  /// <summary>The single rule name both provisioning paths converge on.</summary>
+  /// <summary>The rule name both provisioning paths converge on (the first of the split rules, #2089).</summary>
   internal const string ROUTING_PATTERN_RULE_NAME = "RoutingPatternFilter";
+
+  /// <summary>The broker's limit on a SQL filter expression, in characters.</summary>
+  internal const int MAX_SQL_FILTER_LENGTH = 1024;
+
+  /// <summary>Joins the LIKE clauses of one rule.</summary>
+  private const string OR_SEPARATOR = " OR ";
 
   /// <summary>
   /// Ensures a topic exists — check-then-create with 409 race tolerance (another instance
@@ -108,21 +114,21 @@ internal static class ServiceBusEntityProvisioning {
       .Select(p => p.Replace(".#", ".%").Replace(".*", ".%").Replace("#", "%").Replace("*", "%"))
       .Select(p => $"sys.Label LIKE '{p}'");
 
-    var sqlExpression = string.Join(" OR ", likePatterns);
+    // #2089: a command inbox filters to each handled command type, which can be more exact subjects than one SQL filter
+    // holds (1,024 characters). The clauses are split across as many rules as they need, each within the limit; the
+    // broker delivers a message once when any rule matches. The first rule keeps the historical name.
+    var desired = SplitIntoRules(likePatterns);
 
     try {
       // Idempotency: when the subscription's rules already converge on exactly the desired
-      // SqlFilter, leave them alone. Deleting-then-recreating opens a brief no-rule window in
+      // SqlFilters, leave them alone. Deleting-then-recreating opens a brief no-rule window in
       // which published messages match nothing and are silently dropped — resubscribes (deploy,
       // connection recovery, receive-liveness watchdog) must not reopen that window for a no-op.
       var existingRules = new List<RuleProperties>();
       await foreach (var rule in adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
         existingRules.Add(rule);
       }
-      if (existingRules.Count == 1
-          && existingRules[0].Name == ROUTING_PATTERN_RULE_NAME
-          && existingRules[0].Filter is SqlRuleFilter existingFilter
-          && existingFilter.SqlExpression == sqlExpression) {
+      if (_alreadyConverged(existingRules, desired)) {
         if (logger.IsEnabled(LogLevel.Debug)) {
           logger.LogDebug(
             "[SqlFilter] Rule already correct on {TopicName}/{SubscriptionName}; skipping re-application",
@@ -139,15 +145,18 @@ internal static class ServiceBusEntityProvisioning {
         deletedRules.Add(ruleName);
       }
 
-      // Create SqlFilter rule
-      var ruleOptions = new CreateRuleOptions(ROUTING_PATTERN_RULE_NAME, new SqlRuleFilter(sqlExpression));
-      await adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
+      // Create the SqlFilter rules
+      foreach (var (name, expression) in desired) {
+        await adminClient.CreateRuleAsync(
+          topicName, subscriptionName, new CreateRuleOptions(name, new SqlRuleFilter(expression)), cancellationToken);
+      }
 
       if (logger.IsEnabled(LogLevel.Debug)) {
         logger.LogDebug(
-          "[SqlFilter] Deleted {RuleCount} existing rules and applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
+          "[SqlFilter] Deleted {RuleCount} existing rules and applied {FilterCount} SqlFilter rule(s) '{SqlExpression}' to {TopicName}/{SubscriptionName}",
           deletedRules.Count,
-          sqlExpression,
+          desired.Count,
+          string.Join(OR_SEPARATOR, desired.Select(rule => rule.Expression)),
           topicName,
           subscriptionName);
       }
@@ -160,4 +169,39 @@ internal static class ServiceBusEntityProvisioning {
       );
     }
   }
+
+  /// <summary>
+  /// Splits LIKE clauses into named rules whose expressions each stay within <see cref="MAX_SQL_FILTER_LENGTH"/>
+  /// (#2089). Order is kept; a single clause longer than the limit still gets a rule of its own (the broker refuses it,
+  /// which is logged, rather than a pattern silently disappearing).
+  /// </summary>
+  /// <param name="likeClauses">The clauses, in order.</param>
+  /// <returns>The rules: <see cref="ROUTING_PATTERN_RULE_NAME"/>, then <c>-2</c>, <c>-3</c> and so on.</returns>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternsBeyondOneFilterLimit_SplitAcrossRulesWithinTheLimitAsync</tests>
+  internal static List<(string Name, string Expression)> SplitIntoRules(IEnumerable<string> likeClauses) {
+    var expressions = new List<string>();
+    var current = new System.Text.StringBuilder();
+    foreach (var clause in likeClauses) {
+      if (current.Length > 0 && current.Length + OR_SEPARATOR.Length + clause.Length > MAX_SQL_FILTER_LENGTH) {
+        expressions.Add(current.ToString());
+        current.Clear();
+      }
+      if (current.Length > 0) {
+        current.Append(OR_SEPARATOR);
+      }
+      current.Append(clause);
+    }
+    if (current.Length > 0) {
+      expressions.Add(current.ToString());
+    }
+    return [.. expressions.Select((expression, i) => (i == 0 ? ROUTING_PATTERN_RULE_NAME : $"{ROUTING_PATTERN_RULE_NAME}-{i + 1}", expression))];
+  }
+
+  /// <summary>True when the subscription's rules are exactly the desired SqlFilter rules, and nothing else.</summary>
+  private static bool _alreadyConverged(List<RuleProperties> existingRules, List<(string Name, string Expression)> desired) =>
+    existingRules.Count == desired.Count
+    && desired.All(rule => existingRules.Exists(existing =>
+      existing.Name == rule.Name
+      && existing.Filter is SqlRuleFilter filter
+      && filter.SqlExpression == rule.Expression));
 }
