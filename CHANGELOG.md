@@ -1403,6 +1403,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Received events are stored under their owner, not the service that relayed them (#2116).** A redelivery bundle
+  names the service that answered it as every child's origin. A service that answered with events it had only received
+  (before #2032, and from bundles that sat in a consumer's inbox since) made consumers store another service's events
+  under its own name: the owner's lane counted short, the relay's long, and repair could never heal the bucket because
+  the owner's redelivery is skipped as a duplicate. A redelivery child of a type the consumer's ownership map gives to
+  another service is now stored under that owner with no origin sequence, and is not reconciled under the bundle's
+  origin (`MisattributedOrigin`, `FanoutResult.ReattributedChildren`, counter `redelivered_children_reattributed`).
+  History already stored under the wrong origin is corrected by a new idle-gated maintenance step
+  (`MisattributedOriginCorrectionStep`, both Postgres drivers; migration 346 `wh_integrity_origin_correction`,
+  `wh_integrity_origin_correction_window`, `wh_integrity_correct_origins`): in bounded commit-sequence batches each such
+  event takes its owner as origin with its origin sequence cleared (the owner's next redelivery fills it), its digest
+  moves lanes through the shared fold, the wrong origin's sealed epochs are refolded and both lanes' ledger buckets are
+  re-armed. Every correction is logged at Warning and counted (`misattributed_origins_corrected`); no event is deleted.
+  A changed ownership map rewalks the store; `ReattributionEnabled` switches it off with re-attribution.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

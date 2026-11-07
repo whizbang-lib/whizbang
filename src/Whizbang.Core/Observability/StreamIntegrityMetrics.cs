@@ -214,6 +214,16 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#redelivery-ships-only-what-the-origin-wrote</docs>
   public PassiveCounter<long> RedeliveryRequestsIgnored { get; }
 
+  /// <summary>#2116: children of a redelivery bundle stored under their type's true owner, because the origin the bundle
+  /// names does not own the type (it answered with events it had only received). Each bundle is also logged at Warning.</summary>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  public PassiveCounter<long> RedeliveredChildrenReattributed { get; }
+
+  /// <summary>#2116: stored events recorded under an origin that does not own their type, re-attributed to the owner by
+  /// the misattributed-origin correction. Each batch is also logged at Warning, per type, origin and owner.</summary>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  public PassiveCounter<long> MisattributedOriginsCorrected { get; }
+
   /// <summary>Stored events received before origins were recorded that re-attribution gave their owner as origin.</summary>
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public PassiveCounter<long> OriginsReattributed { get; }
@@ -349,6 +359,12 @@ public sealed class StreamIntegrityMetrics {
     RedeliveryRequestsIgnored = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_ignored",
       description: "Redelivery requests an origin declined to answer; tagged by reason (own_request)");
+    RedeliveredChildrenReattributed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_children_reattributed",
+      description: "Redelivery bundle children stored under their type's true owner because the bundle's origin does not own the type");
+    MisattributedOriginsCorrected = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.misattributed_origins_corrected",
+      description: "Stored events recorded under an origin that does not own their type, re-attributed to the owner");
     OriginsReattributed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_reattributed",
       description: "Stored events received before origins were recorded that re-attribution gave their owner as origin");
