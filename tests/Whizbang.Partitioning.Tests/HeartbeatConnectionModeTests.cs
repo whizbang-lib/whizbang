@@ -75,6 +75,7 @@ public class HeartbeatConnectionModeTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
+      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       timeProvider: new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1)));
 
     _ = await worker.TickForTestsAsync(CancellationToken.None);

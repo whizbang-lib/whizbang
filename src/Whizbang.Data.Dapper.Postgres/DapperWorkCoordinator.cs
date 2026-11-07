@@ -984,6 +984,12 @@ public partial class DapperWorkCoordinator(
   )]
   static partial void LogPostgresNotice(ILogger logger, string severity, string message);
 
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Startup beat of instance {InstanceId} skipped: wh_record_startup_heartbeat does not exist yet. This driver creates it in its migration pass and registers the instance after it, so there is no row to keep alive until then."
+  )]
+  static partial void LogStartupBeatBeforeItsFunction(ILogger logger, Guid instanceId);
+
   #endregion
 
   #region Phase B: focused IWorkCoordinator methods
@@ -1017,6 +1023,31 @@ public partial class DapperWorkCoordinator(
         request.ApplicationVersion
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_startup_heartbeat</c>. This driver applies no bootstrap closure and registers the
+  /// instance at the end of its pass, so on a database the pass has not reached yet (fresh, or an earlier release's) the
+  /// function does not exist and there is no row of this instance to keep: the beat is accepted and writes nothing,
+  /// rather than failing on every tick of the migration. Any other failure surfaces, for the heartbeat to log and retry.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupHeartbeatTests.cs</tests>
+  public async Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    // Not behind the work gate: a starting instance's liveness must not queue behind the startup work it reports on.
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    try {
+      return await Whizbang.Data.Postgres.StartupHeartbeatSql.RecordAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.StartupHeartbeatSql.FUNCTION_NAME, request, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction) {
+      if (_logger is { } log) {
+        LogStartupBeatBeforeItsFunction(log, request.InstanceId);
+      }
+      return true;
+    }
   }
 
   /// <inheritdoc />

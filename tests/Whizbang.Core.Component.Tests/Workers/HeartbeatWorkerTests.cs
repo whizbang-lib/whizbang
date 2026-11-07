@@ -92,7 +92,8 @@ public class HeartbeatWorkerTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -131,7 +132,8 @@ public class HeartbeatWorkerTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -162,7 +164,8 @@ public class HeartbeatWorkerTests {
         applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
         pinnedPool: NoOpPinnedConnectionPool.Instance,
         aliveLockSource: NullInstanceAliveLockSource.Instance,
-        signalBus: NullSignalBus.Instance);
+        signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     } catch (ArgumentNullException) {
       threw = true;
     }
@@ -190,7 +193,8 @@ public class HeartbeatWorkerTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

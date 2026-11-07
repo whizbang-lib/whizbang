@@ -361,6 +361,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_startup_heartbeat</c>, which Preflight's bootstrap closure creates, so it answers from
+  /// the moment the instance registers, before the main pass has created <c>record_heartbeat</c> or replaced an earlier
+  /// release's.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs</tests>
+  public async Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    // Not behind the work gate: a starting instance's liveness must not queue behind the startup work it reports on.
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), Whizbang.Data.Postgres.StartupHeartbeatSql.FUNCTION_NAME);
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    return await Whizbang.Data.Postgres.StartupHeartbeatSql.RecordAsync(scope.Connection, functionName, request, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 

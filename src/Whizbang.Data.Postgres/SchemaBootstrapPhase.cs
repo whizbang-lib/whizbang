@@ -485,6 +485,7 @@ public static class SchemaBootstrapPhase {
   /// <param name="schema">The target schema.</param>
   /// <param name="instance">Who to register.</param>
   /// <param name="leaseSeconds">How long the registration is asserted good for.</param>
+  /// <param name="liveness">The connection mode and liveness window to record (#2126); the default records neither.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <remarks>
   /// <para>
@@ -493,11 +494,19 @@ public static class SchemaBootstrapPhase {
   /// looks like.
   /// </para>
   /// <para>
-  /// This runs before the heartbeat worker exists, which is the point: the worker starts after the
-  /// schema is ready, and the election that decides who makes it ready happens now. The row this
-  /// writes is picked up and maintained by that worker as soon as it does start.
+  /// This runs before the heartbeat worker starts, which is the point: the election that decides who makes the schema
+  /// ready happens next. The heartbeat starts right after this, at Elect (#2126), and keeps the row it writes alive
+  /// through Elect, Migrate, Converge and Coordinate.
+  /// </para>
+  /// <para>
+  /// The registration also records what <paramref name="liveness"/> declares, the instance's connection mode and
+  /// liveness window (#2126), through the beat a starting instance sends (<c>wh_record_startup_heartbeat</c>, Preflight's
+  /// function), so the one liveness rule judges the row by its own window from the moment it exists rather than by the
+  /// 30 seconds it gives a row that records none. A value it leaves out keeps what the row records.
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ARegistration_RecordsTheConnectionModeAndTheLivenessWindowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AStartingInstanceHeldInMigrate_PastThirtySeconds_IsNotEvictedByALivePeersReapAsync</tests>
   public static async Task RegisterInstanceAsync(
       Func<NpgsqlConnection> connectionFactory,
       string schema,
@@ -507,7 +516,6 @@ public static class SchemaBootstrapPhase {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(instance);
-    _ = liveness;
 
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
 
@@ -534,6 +542,14 @@ public static class SchemaBootstrapPhase {
     record.Parameters.AddWithValue(instance.InstanceId);
     record.Parameters.AddWithValue(StartupStages.LifecyclePhaseOf(StartupStage.Preflight).ToString());
     await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+    // #2126: what the one liveness rule judges the row by, recorded the way every startup beat records it. Its answer
+    // (whether the instance was evicted) is the heartbeat's to act on, not the registration's.
+    _ = await StartupHeartbeatSql.RecordAsync(
+      connection, $"{_quoteIdentifier(target)}.{StartupHeartbeatSql.FUNCTION_NAME}",
+      new Whizbang.Core.Messaging.HeartbeatRequest(instance.InstanceId, instance.ServiceName, instance.HostName,
+        instance.ProcessId, StaleThresholdSeconds: liveness.LivenessWindowSeconds, ConnectionMode: liveness.ConnectionMode),
+      cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>

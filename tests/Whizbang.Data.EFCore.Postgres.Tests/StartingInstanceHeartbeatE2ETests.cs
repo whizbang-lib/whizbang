@@ -63,17 +63,17 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
     // Registered and held in Migrate for 45 seconds, before its heartbeat has started.
     await _ageHeartbeatAsync(startingId, TimeSpan.FromSeconds(45), cancellationToken);
     await peer.BeatAsync(cancellationToken);
-    var afterFortyFive = (Registered: await _isRegisteredAsync(startingId, cancellationToken),
-      Evicted: await _isEvictedAsync(startingId, cancellationToken));
+    var registeredAtFortyFive = await _isRegisteredAsync(startingId, cancellationToken);
+    var evictedAtFortyFive = await _isEvictedAsync(startingId, cancellationToken);
 
     // Held well past its own window: only a beat it really sends keeps it.
     await _ageHeartbeatAsync(startingId, TimeSpan.FromSeconds(200), cancellationToken);
     await starting.StartHeartbeatAsync(cancellationToken);
     await peer.BeatAsync(cancellationToken);
 
-    await Assert.That(afterFortyFive.Registered).IsTrue()
+    await Assert.That(registeredAtFortyFive).IsTrue()
       .Because("the registration records the instance's own window, so 45 seconds is not a death");
-    await Assert.That(afterFortyFive.Evicted).IsFalse();
+    await Assert.That(evictedAtFortyFive).IsFalse();
     await Assert.That(starting.StartupGate.IsReady).IsFalse().Because("the beat was sent while the instance was in Migrate");
     await Assert.That(await _isRegisteredAsync(startingId, cancellationToken)).IsTrue()
       .Because("the heartbeat starts at registration, so a peer's reap finds a fresh beat");
@@ -190,9 +190,8 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
         _services.GetRequiredService<IServiceScopeFactory>(), Instance, Options.Create(new HeartbeatWorkerOptions()),
         NullLogger<HeartbeatWorker>.Instance, new AnnouncesRunning(), new LibraryVersionProvider("999.9.9"),
         new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown),
-        NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance,
-        timeProvider: new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)),
-        schemaReady: StartupGate);
+        NoOpPinnedConnectionPool.Instance, NullInstanceAliveLockSource.Instance, NullSignalBus.Instance, StartupGate,
+        timeProvider: new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
       _heartbeat.OnHeartbeatRecorded += () => _firstBeat.TrySetResult();
       _hosted = new StartupStageGatedService<HeartbeatWorker>(_heartbeat, HeartbeatWorker.StartsAt, stageGate, StartupGate);
     }

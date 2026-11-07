@@ -113,7 +113,8 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: bus);
+      signalBus: bus,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   [Test]
@@ -176,7 +177,8 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: bus);
+      signalBus: bus,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, coord, bus);
   }
 

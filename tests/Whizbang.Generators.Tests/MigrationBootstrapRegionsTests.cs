@@ -50,6 +50,7 @@ public class MigrationBootstrapRegionsTests {
     "316_OneDurableInstanceRecord.sql", // the one liveness rule the migrator reads before the pass, and the record's columns (#2027)
     "326_EveryDutyIsARoleAssignment.sql", // the vote, renewal and bridge expiry with no lock read: every duty is a role (#2044)
     "330_CoordinationOnTheSignalBus.sql", // redefines 184's wh_release_role to publish on the signal bus, and what it calls (#2046)
+    "353_TheHeartbeatStartsAtRegistration.sql", // the startup beat, which a starting instance sends from registration (#2126)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

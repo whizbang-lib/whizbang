@@ -608,11 +608,12 @@ public static class WorkerPipelineExtensions {
     // be spawned. Singleton construction is the side-effect we want — StartAsync just
     // resolves the singleton from DI and returns.
     services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
-    // Each worker is hosted with the point it starts at (#1636); none holds a gate of its own. The heartbeat starts when
-    // the schema-ready gate opens, so the instance is alive while it is not yet eligible for work; the data plane starts
+    // Each worker is hosted with the point it starts at (#1636); none holds a gate of its own. The heartbeat starts at
+    // registration (#2126): at Elect, right after Preflight registers the instance, so a starting instance is alive by
+    // beats it really sends through a long Elect or Migrate while it is not yet eligible for work; the data plane starts
     // at Accept commands, once the instance's row records that it is eligible, so nothing claims, drains, flushes or
     // sweeps before then.
-    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<HeartbeatWorker>());
+    services.AddWhizbangWorker(HeartbeatWorker.StartsAt, sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<ClaimWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());

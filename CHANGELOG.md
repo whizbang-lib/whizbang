@@ -1417,6 +1417,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose content really changed still runs. The upgrade tests stand a database on the hashes v0.2623.1 recorded, captured
   from its published packages by `scripts/Capture-LegacyMigrationLedger.ps1`. A database that has already been through
   that re-run needs nothing: its rows already hold normalized hashes.
+- **A starting instance is no longer evicted during a long Elect or Migrate (#2126).** An instance registers at the end
+  of Preflight, but its heartbeat started only once its schema was ready, and the registration recorded no liveness
+  window, so the one liveness rule judged it by 30 seconds and any live peer's reap evicted an instance still electing
+  or migrating. The heartbeat now starts at registration: the worker pipeline hosts it at Elect
+  (`HeartbeatWorker.StartsAt`), and a test fails if it moves later. Until the schema-ready gate opens, a beat goes
+  through `IWorkCoordinator.RecordStartupHeartbeatAsync` (migration 353, `wh_record_startup_heartbeat`, in the bootstrap
+  closure so it exists from Preflight on), which refreshes the heartbeat, the connection mode and the liveness window of
+  the instance's existing row and nothing else: it never inserts a row, never writes the stage or the lifecycle phase
+  (the stage record stays their one writer), reaps no peer and refuses an evicted instance. The first beat after the
+  gate opens is due at once and is the full heartbeat, which registers, reaps and announces the join as before. The
+  registration itself records the connection mode and the liveness window (`InstanceRegistrationLiveness`), so the rule
+  judges the row by its own window from the moment it exists. Readiness is unchanged: a starting instance stays out of
+  the claim ranking and the partition assignment, holds no role but the migrator, and reads as migrating in the fleet
+  status, until it records Accept commands. On the Dapper driver, which applies no bootstrap closure and registers after
+  its pass, a startup beat before the pass has created the function is accepted and writes nothing.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

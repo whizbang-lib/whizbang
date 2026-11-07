@@ -101,14 +101,20 @@ public class HeartbeatWorkerStartupBeatTests {
   }
 
   [Test]
-  public async Task WithNoSchemaReadyGate_EveryBeatIsTheFullHeartbeatAsync() {
-    var fixture = new Fixture(gate: null);
+  public async Task WithAnOpenGate_EveryBeatIsTheFullHeartbeatAsync() {
+    var fixture = new Fixture(SchemaReadyGate.AlreadyReady());
 
     await fixture.Worker.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(fixture.Coordinator.FullBeats).IsEqualTo(1);
     await Assert.That(fixture.Coordinator.StartupRequests).IsEmpty()
-      .Because("a host with no schema to wait for is ready from the start");
+      .Because("a host with no schema to wait for passes an open gate and is ready from the start");
+  }
+
+  [Test]
+  public async Task WithNoSchemaReadyGate_TheWorkerIsNotConstructedAsync() {
+    await Assert.That(() => new Fixture(gate: null!)).Throws<ArgumentNullException>()
+      .Because("a missing gate would silently read as ready; a host with nothing to wait for says so with an open gate");
   }
 
   [Test]
@@ -145,10 +151,8 @@ public class HeartbeatWorkerStartupBeatTests {
   }
 
   [Test]
-  [Arguments(true)]
-  [Arguments(false)]
-  public async Task TheWait_OnceTheGateIsOpenOrWithNone_IsTheCadenceAsync(bool withAnOpenGate) {
-    var fixture = new Fixture(withAnOpenGate ? SchemaReadyGate.AlreadyReady() : null);
+  public async Task TheWait_OnceTheGateIsOpen_IsTheCadenceAsync() {
+    var fixture = new Fixture(SchemaReadyGate.AlreadyReady());
 
     var wait = fixture.Worker.WaitForNextTickAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
     fixture.Time.Advance(TimeSpan.FromSeconds(29));
@@ -173,7 +177,7 @@ public class HeartbeatWorkerStartupBeatTests {
   private sealed class Fixture {
     public static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    public Fixture(ISchemaReadyGate? gate, bool startupAccepted = true) {
+    public Fixture(ISchemaReadyGate gate, bool startupAccepted = true) {
       Coordinator = new BeatCoordinator(startupAccepted);
       var services = new ServiceCollection();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
@@ -192,8 +196,8 @@ public class HeartbeatWorkerStartupBeatTests {
         pinnedPool: NoOpPinnedConnectionPool.Instance,
         aliveLockSource: NullInstanceAliveLockSource.Instance,
         signalBus: Bus,
-        timeProvider: Time,
-        schemaReady: gate);
+        schemaReady: gate,
+        timeProvider: Time);
     }
 
     public BeatCoordinator Coordinator { get; }

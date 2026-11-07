@@ -72,6 +72,7 @@ public class HeartbeatWorkerWatchdogBeatTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
+      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       timeProvider: clock);
     return (worker, logger, coordinator);
   }
