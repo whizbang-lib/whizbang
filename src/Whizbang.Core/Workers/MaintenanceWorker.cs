@@ -1519,8 +1519,18 @@ public sealed class MaintenanceWorkerOptions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
   public bool MaintainOnReassignment { get; set; } = true;
 
-  /// <summary>RED stub (#2140).</summary>
-  public TimeSpan SkipAcquisitionVacuumWithin { get; set; } = TimeSpan.Zero;
+  /// <summary>
+  /// A work table vacuumed (by any instance, or by autovacuum) within this long is not vacuumed again when an instance
+  /// acquires the maintainer duty (#2140). Default 10 minutes; <see cref="TimeSpan.Zero"/> vacuums on every acquisition.
+  /// </summary>
+  /// <remarks>
+  /// A restart can move the duty more than once in a minute; each acquisition used to vacuum every work table again. The
+  /// database records when each table was last vacuumed, for the whole fleet, so a hand-off that follows a takeover
+  /// finds the tables just vacuumed and leaves them.
+  /// </remarks>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs:SkipAcquisitionVacuumWithin_DefaultsToTenMinutesAsync</tests>
+  public TimeSpan SkipAcquisitionVacuumWithin { get; set; } = TimeSpan.FromMinutes(10);
 
   /// <summary>
   /// Interval between maintenance runs, in minutes. Default 10.

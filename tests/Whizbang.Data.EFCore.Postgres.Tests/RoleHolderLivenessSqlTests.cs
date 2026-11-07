@@ -277,7 +277,7 @@ public class RoleHolderLivenessSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT outcome, epoch FROM wh_vote_role(@role, @id, @lease, @cooldown, NULL, NULL, NULL)";
     cmd.Parameters.AddWithValue("role", ROLE);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("lease", _lease);
     cmd.Parameters.AddWithValue("cooldown", _cooldown);
     await using var reader = await cmd.ExecuteReaderAsync(ct);

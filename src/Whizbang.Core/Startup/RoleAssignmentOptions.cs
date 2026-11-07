@@ -13,11 +13,14 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// <para>
 /// The lease is <see cref="RenewInterval"/> times <see cref="MissedRenewalsBeforeLapse"/>, so one
-/// slow renewal never costs the role: a holder lapses only after several renewals in a row fail to
-/// arrive. A holder renews from its own work loop, never from a timer, so a holder that is stuck
-/// stops renewing and lapses. After an involuntary lapse, that instance may not win the role back
-/// for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A graceful
-/// release carries no cool-down.
+/// slow renewal never costs the role. A holder renews from its own work loop, never from a timer.
+/// Past its lease, a holder is judged by the one liveness rule, the same rule every other reader of
+/// instance liveness asks (#2140): it keeps the role while the rule calls it live and it renewed
+/// inside its <see cref="ProgressWindow"/>, so a holder busy with startup or one long unit of work
+/// keeps its role, and a holder that is connected but stuck loses it within the window. A holder the
+/// rule calls dead lapses at its lease. After an involuntary lapse, that instance may not win the
+/// role back for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A
+/// graceful release carries no cool-down.
 /// </para>
 /// <para>
 /// The migrator is held by assignment too: its vote is part of the schema bootstrap, so it exists
@@ -45,15 +48,35 @@ public sealed class RoleAssignmentOptions {
   /// <summary>How many renewals in a row may be missed before the lease lapses. Default 3; at least 2.</summary>
   public int MissedRenewalsBeforeLapse { get; set; } = 3;
 
-  /// <summary>RED stub (#2140).</summary>
+  /// <summary>
+  /// How long a holder the one liveness rule calls live may go without renewing (verifying from its
+  /// work loop) before it loses the role: the role's progress check (#2140). Default 2 minutes.
+  /// <see cref="TimeSpan.Zero"/> turns it off, and the lease alone decides, as before.
+  /// </summary>
+  /// <remarks>
+  /// The window bounds how long a holder that is connected but stuck keeps its role. Inside it, a
+  /// holder busy with a slow startup or one long unit of exclusive work keeps the role instead of
+  /// lapsing at its lease and handing the role to another instance mid-work. A holder whose instance
+  /// the rule calls dead (crashed, stopped, cut off from the database) lapses at its lease whatever
+  /// the window. The window a holder declares is never shorter than its role's lease.
+  /// </remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindow_DefaultsToTwoMinutesAsync</tests>
   public TimeSpan ProgressWindow { get; set; } = TimeSpan.FromMinutes(2);
 
-  /// <summary>RED stub (#2140).</summary>
+  /// <summary>
+  /// The progress window <paramref name="role"/>'s holder declares: <see cref="TimeSpan.Zero"/> when
+  /// <see cref="ProgressWindow"/> is off, else the longer of it and the role's lease (<see cref="LeaseFor"/>).
+  /// </summary>
   /// <param name="role">The role.</param>
-  /// <returns>The window.</returns>
+  /// <returns>The window; zero declares none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindowFor_IsNeverShorterThanTheRolesLease_AndZeroTurnsItOffAsync</tests>
   public TimeSpan ProgressWindowFor(string role) {
-    ArgumentNullException.ThrowIfNull(role);
-    return ProgressWindow > TimeSpan.MaxValue ? ProgressWindow : TimeSpan.Zero;
+    if (ProgressWindow <= TimeSpan.Zero) {
+      return TimeSpan.Zero;
+    }
+    var lease = LeaseFor(role);
+    return lease > ProgressWindow ? lease : ProgressWindow;
   }
 
   /// <summary>
@@ -118,8 +141,8 @@ public sealed class RoleAssignmentOptions {
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two
-  /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, or a
-  /// non-positive retry base.</exception>
+  /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, a negative
+  /// progress window, or a non-positive retry base.</exception>
   public void Validate() {
     if (RenewInterval <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(RenewInterval), RenewInterval, "The renew interval must be positive.");
@@ -130,6 +153,9 @@ public sealed class RoleAssignmentOptions {
     }
     if (CooldownAfterLapse < TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(CooldownAfterLapse), CooldownAfterLapse, "The cool-down cannot be negative.");
+    }
+    if (ProgressWindow < TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(ProgressWindow), ProgressWindow, "The progress window cannot be negative; zero turns it off.");
     }
     if (OwedWorkRetryBase <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(OwedWorkRetryBase), OwedWorkRetryBase, "The retry base must be positive.");

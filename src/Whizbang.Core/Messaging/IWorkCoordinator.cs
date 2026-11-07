@@ -1836,10 +1836,16 @@ public interface IWorkCoordinator {
   Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
 
-  /// <summary>RED stub (#2140).</summary>
-  /// <param name="skipTablesVacuumedWithin">The window.</param>
+  /// <summary>
+  /// <see cref="VacuumWorkTablesAsync(CancellationToken)"/>, leaving alone a table the database records as vacuumed
+  /// (manually or by autovacuum, from any instance) within <paramref name="skipTablesVacuumedWithin"/>: it comes back
+  /// with <see cref="WorkTableVacuum.RecentlyVacuumed"/> set (#2140). Default: the vacuum without a window.
+  /// </summary>
+  /// <param name="skipTablesVacuumedWithin">How recent a vacuum makes another unnecessary; zero vacuums every table.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One outcome per work table.</returns>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs:ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync</tests>
   Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) =>
     VacuumWorkTablesAsync(cancellationToken);
 
@@ -4847,7 +4853,10 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
 public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason) {
-  /// <summary>RED stub (#2140).</summary>
+  /// <summary>
+  /// True when the table was not vacuumed because the database records a vacuum of it inside the caller's window
+  /// (#2140); <see cref="SkippedReason"/> then says how long ago. Not a failure: nothing was left undone.
+  /// </summary>
   public bool RecentlyVacuumed { get; init; }
 }
 

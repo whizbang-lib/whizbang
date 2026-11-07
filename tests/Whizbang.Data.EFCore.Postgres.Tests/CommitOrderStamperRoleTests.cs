@@ -29,6 +29,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// woken by the role's release. Waits are on the worker's own events; the renew throttle runs on a
 /// fake clock, so a leader's view of its role changes only when a test says so.
 /// </summary>
+/// <remarks>
+/// These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.
+/// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgCommitOrderStamperWorker.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
@@ -64,7 +69,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     new() { DirectConnectionString = connectionString ?? ConnectionString, SignalingMode = WorkSignalingMode.ListenNotify };
 
   private PgRoleElector _electorFor(Pod pod, string? version = null, TimeProvider? time = null, string? connectionString = null) {
-    var options = new RoleAssignmentOptions();
+    var options = new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
     options.Roles.Add(ROLE);
     return new PgRoleElector(Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod,
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version), timeProvider: time);

@@ -79,7 +79,16 @@ public interface IDutyGrant : IAsyncDisposable {
   /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
   bool DrainRequested => false;
 
-  /// <summary>RED stub (#2140).</summary>
+  /// <summary>
+  /// Canceled the moment this grant stops holding the duty: the elector observed it was lost (a
+  /// role-assignment grant checks once per renew interval, without waiting for a
+  /// <see cref="VerifyStillHeldAsync"/>), or it was released or disposed (#2140). Exclusive work links
+  /// its token to this one, so it stops before another holder's work could overlap it.
+  /// </summary>
+  /// <remarks>A default member: a grant that cannot observe a loss on its own offers a token that is never canceled.</remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs:LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleHolderLivenessE2ETests.cs:TheOldHolder_ObservesItsLossWithinOneRenewInterval_SoExclusiveWorkNeverOverlapsAsync</tests>
   CancellationToken LostToken => CancellationToken.None;
 }
 

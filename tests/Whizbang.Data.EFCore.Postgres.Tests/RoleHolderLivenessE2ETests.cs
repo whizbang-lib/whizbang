@@ -57,15 +57,22 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();
-    await _heartbeatAsync(pod, ct);
+    await _registerAsync(pod, ct);
     return pod;
   }
 
-  private async Task _heartbeatAsync(Pod pod, CancellationToken ct) {
+  private async Task _registerAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), ct);
   }
+
+  /// <summary>
+  /// The pod's heartbeat, written straight to its row: a recorded beat would also reap the peers the rule calls dead,
+  /// which these tests keep registered.
+  /// </summary>
+  private Task _heartbeatAsync(Pod pod, CancellationToken ct) =>
+    _executeAsync("UPDATE wh_service_instances SET last_heartbeat_at = now() WHERE instance_id = @id", ct, ("id", pod.InstanceId));
 
   private async Task _executeAsync(string sql, CancellationToken ct, params (string Name, object Value)[] args) {
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -182,7 +189,7 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     var elector = _electorFor(a, time);
     var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     var lost = _lostAsync(grant);
-    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool>();
+    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
     elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
     await _executeAsync("""
       CREATE OR REPLACE FUNCTION wh_role_is_held(p_role TEXT, p_instance_id UUID, p_epoch BIGINT) RETURNS BOOLEAN
@@ -255,5 +262,83 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     foreach (var attempt in attempts) {
       await attempt.Grant!.DisposeAsync();
     }
+  }
+  [Test]
+  [Timeout(120000)]
+  public async Task OnASchemaWithoutTheWatch_TheGrantKeepsItsRole_AndStopsWatchingAsync(CancellationToken cancellationToken) {
+    // A database that has not applied 355 has no wh_role_is_held: the grant is judged by its lease, as before, and its
+    // watch stops instead of fencing on a check that can never succeed.
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a, time);
+    var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
+    elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
+    await _executeAsync("SELECT drop_all_overloads('wh_role_is_held')", cancellationToken);
+
+    time.Advance(_defaults.RenewInterval);
+    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsNull();
+    for (var tick = 0; tick < _defaults.MissedRenewalsBeforeLapse; tick++) {
+      time.Advance(_defaults.RenewInterval);
+    }
+
+    await Assert.That(checks.Reader.TryRead(out _)).IsFalse().Because("the watch stopped after the schema said it has none");
+    await Assert.That(grant.LostToken.IsCancellationRequested).IsFalse();
+    await grant.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task AWatchCheck_ConfirmsTheRole_AndADeclarationThatFails_LeavesTheGrantHeldAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    await _executeAsync("SELECT drop_all_overloads('wh_declare_role_progress_window')", cancellationToken);
+    var elector = _electorFor(a, time);
+    var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
+    elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
+
+    time.Advance(_defaults.RenewInterval);
+
+    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsTrue();
+    await Assert.That(grant.LostToken.IsCancellationRequested).IsFalse();
+    await grant.DisposeAsync();
+  }
+  [Test]
+  [Timeout(120000)]
+  public async Task AWatchTickBehindARelease_FindsTheTenureEnded_AndAsksNothingAsync(CancellationToken cancellationToken) {
+    // The tick fires while the release holds the tenure: it waits for it, sees the role was let go, and asks the
+    // database nothing, so a released grant is never reported lost by its own watch.
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a, time);
+    var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
+    elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
+
+    var release = grant.DisposeAsync().AsTask();
+    time.Advance(_defaults.RenewInterval);
+    await release;
+
+    // The release's round trip to the database yields, so the tick fired while the release held the tenure.
+    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsNull();
+    await Assert.That(grant.LostToken.IsCancellationRequested).IsTrue();
+  }
+  [Test]
+  [Timeout(120000)]
+  public async Task ATickWhileTheLastCheckIsStillRunning_Skips_SoChecksNeverPileUpAsync(CancellationToken cancellationToken) {
+    // Two renew intervals pass at once: the second tick finds the first check still waiting on the database and skips.
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a, time);
+    var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
+    elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
+
+    time.Advance(_defaults.RenewInterval * 2);
+
+    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsTrue();
+    await Assert.That(checks.Reader.TryRead(out _)).IsFalse().Because("the overlapping tick asked nothing and reported nothing");
+    await grant.DisposeAsync();
   }
 }
