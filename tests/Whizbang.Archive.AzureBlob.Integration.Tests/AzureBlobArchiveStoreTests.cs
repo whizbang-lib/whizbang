@@ -82,7 +82,8 @@ public class AzureBlobArchiveStoreTests {
   // account looks like to the store, while every request still lands on the one emulator (see RedirectHost).
   private (string ConnectionString, RedirectHost Redirect) _anotherEndpoint() {
     var endpoint = new Uri(_setting("BlobEndpoint"));
-    const string OTHER = "archive-copy.invalid";
+    // Another IP literal, so the SDK still reads the emulator's path-style address (account in the path); never dialed.
+    const string OTHER = "127.0.0.2";
     return (_azurite.Replace($"BlobEndpoint={endpoint.Scheme}://{endpoint.Authority}", $"BlobEndpoint={endpoint.Scheme}://{OTHER}:{endpoint.Port}",
       StringComparison.Ordinal), new RedirectHost(OTHER, endpoint.Host));
   }

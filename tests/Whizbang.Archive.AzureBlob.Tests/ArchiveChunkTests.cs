@@ -132,33 +132,6 @@ public class ArchiveChunkTests {
   }
 
   [Test]
-  public async Task TryReadObjectLocator_ReadsContainerNameAndCodec_FromALocatorThisStoreWroteAsync() {
-    var read = ArchiveChunk.TryReadObjectLocator(
-      "azure-blob://archive-a/0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br?codec=brotli&format=1",
-      out var container, out var name, out var compression);
-
-    await Assert.That(read).IsTrue();
-    await Assert.That(container).IsEqualTo("archive-a");
-    await Assert.That(name).IsEqualTo("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br")
-      .Because("only the first slash separates the container; the name keeps the stream prefix");
-    await Assert.That(compression).IsEqualTo(ArchiveCompression.Brotli);
-  }
-
-  [Test]
-  [Arguments("not a locator")]
-  [Arguments("postgres-table://archive-a/x?codec=none&format=1")]
-  [Arguments("azure-blob://archive-a/x?codec=brotli&format=2")]
-  [Arguments("azure-blob://archive-a?codec=brotli&format=1")]
-  [Arguments("azure-blob:///x?codec=brotli&format=1")]
-  [Arguments("azure-blob://archive-a/?codec=brotli&format=1")]
-  public async Task TryReadObjectLocator_RefusesWhatThisStoreDidNotWrite_RatherThanGuessingAsync(string text) {
-    var read = ArchiveChunk.TryReadObjectLocator(text, out _, out _, out _);
-
-    await Assert.That(read).IsFalse()
-      .Because("another store, a format this release does not write, or an address without a container and a name");
-  }
-
-  [Test]
   [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br", ArchiveCompression.Brotli)]
   [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl", ArchiveCompression.None)]
   public async Task TryReadCompression_ReadsTheCodecFromTheObjectNamesExtensionAsync(string relativePath, ArchiveCompression expected) {

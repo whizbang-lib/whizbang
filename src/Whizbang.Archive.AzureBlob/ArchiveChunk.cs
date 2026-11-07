@@ -109,35 +109,27 @@ internal static class ArchiveChunk {
       $"{streamId:D}/{firstVersion:D10}-{lastVersion:D10}-{sha256}{_extension(compression)}");
 
   /// <summary>
-  /// Reads an object's locator (<c>azure-blob://{container}/{name}?codec=..&amp;format=..</c>) into the container, the
-  /// object name and the codec.
+  /// Reads the codec of an object from the extension <see cref="ObjectName"/> gave its name (<c>.jsonl.br</c> Brotli,
+  /// <c>.jsonl</c> none), so a record that holds only its location and path can be decoded (#2137).
   /// </summary>
-  /// <returns>False when the text is not a locator this store wrote: another store, an unknown codec or format, or an
-  /// address without a container and a name.</returns>
-  public static bool TryReadObjectLocator(string? text, out string container, out string name, out ArchiveCompression compression) {
-    container = string.Empty;
-    name = string.Empty;
+  /// <param name="relativePath">The object's path from its stream, as its record holds it.</param>
+  /// <param name="compression">The codec, when the name is one this store wrote.</param>
+  /// <returns>False for a name this store did not write.</returns>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveChunkTests.cs:TryReadCompression_ReadsTheCodecFromTheObjectNamesExtensionAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveChunkTests.cs:TryReadCompression_RefusesANameThisStoreDidNotWrite_RatherThanGuessingAsync</tests>
+  public static bool TryReadCompression(string? relativePath, out ArchiveCompression compression) {
+    foreach (var candidate in _codecs) {
+      if (relativePath?.EndsWith(_extension(candidate), StringComparison.Ordinal) == true) {
+        compression = candidate;
+        return true;
+      }
+    }
     compression = ArchiveCompression.None;
-    if (!ArchiveLocator.TryParse(text, out var locator)
-        || !string.Equals(locator.Store, AzureBlobArchiveStore.STORE_NAME, StringComparison.Ordinal)
-        || locator.Format != ArchiveLocator.CURRENT_FORMAT) {
-      return false;
-    }
-    var slash = locator.Address.IndexOf('/', StringComparison.Ordinal);
-    if (slash <= 0 || slash == locator.Address.Length - 1) {
-      return false;
-    }
-    container = locator.Address[..slash];
-    name = locator.Address[(slash + 1)..];
-    compression = locator.Compression;
-    return true;
+    return false;
   }
 
-  /// <summary>RED stub (#2137).</summary>
-  public static bool TryReadCompression(string? relativePath, out ArchiveCompression compression) {
-    compression = ArchiveCompression.None;
-    return relativePath is null && relativePath is not null;
-  }
+  // The codecs whose object names this store writes.
+  private static readonly ArchiveCompression[] _codecs = [ArchiveCompression.Brotli, ArchiveCompression.None];
 
   private static string _extension(ArchiveCompression compression) => compression switch {
     ArchiveCompression.None => ".jsonl",

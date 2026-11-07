@@ -51,7 +51,7 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
 
   /// <summary>
   /// Registers the Azure Blob store as the <see cref="IArchiveStore"/>, with settings read from
-  /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>,
+  /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>, <c>ConnectionName</c>,
   /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -79,6 +79,15 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
     var containerName = section[nameof(AzureBlobArchiveOptions.ContainerName)];
     if (!string.IsNullOrWhiteSpace(containerName)) {
       options.ContainerName = containerName;
+    }
+    var connectionName = section[nameof(AzureBlobArchiveOptions.ConnectionName)];
+    if (!string.IsNullOrWhiteSpace(connectionName)) {
+      // Never echoed: a value that looks like a connection string may be one.
+      options.ConnectionName = AzureBlobArchiveOptions.IsLogicalName(connectionName)
+        ? connectionName
+        : throw new InvalidOperationException(
+          $"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.ConnectionName)} is a logical name, not a connection string: " +
+          "it may not contain ';' or '='.");
     }
     options.CompressionLevel = _int(section, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);

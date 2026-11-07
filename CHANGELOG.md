@@ -1403,6 +1403,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **An archive record never redirects a read, restore or delete to another container; archive locations are stored
+  normalized and checked against configuration (#2137).** The Azure Blob archive store opened the container named in
+  a manifest record whenever it differed from its configured one, so a database copied to another environment read,
+  restored and, through retention and purge, deleted the source environment's objects. Migration 353 adds
+  `wh_archive_locations` (provider, storage account endpoint, logical connection name, container; never a secret), and
+  each manifest row and queued deletion now holds its `location_id` plus a path that starts at its stream; existing
+  locators are split into a location per container and a path, with no object moved or deleted. Before any request
+  reaches storage, a read, restore and delete compare every record's location with the configured one and throw the
+  new `ArchiveLocationMismatchException` naming both; the deletion queue is drained only for the configured location.
+  Repointing an environment (a copied or restored database, disaster recovery) is an explicit update of the one
+  location row, or `AzureBlobArchiveStore.RepointLocationAsync`, which merges into an existing location. New setting
+  `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`). The offload store records no locations: its claim
+  names a provider and a key, and the provider always uses its configured container.
 - **Inbox rows the dispatcher never sees no longer retry for ever, and a consumer receives its owners' checkpoints
   (#2117, #2118).** A received event that sorts after an earlier pending event of its stream, which the instance does
   not hold, is held back unstored, and the drain never fetches an unstored event, yet the claim re-offered its stream

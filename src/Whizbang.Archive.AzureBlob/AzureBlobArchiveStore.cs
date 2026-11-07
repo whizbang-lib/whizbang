@@ -6,7 +6,6 @@ using Azure;
 using Azure.Storage;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
-using Azure.Storage.Blobs.Specialized;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -37,6 +36,14 @@ namespace Whizbang.Archive.AzureBlob;
 /// before this store was registered stay readable, restorable and deletable: the store reads them from
 /// <c>wh_event_archive</c> alongside its own objects, and the next write of the stream moves them into an object.
 /// </para>
+/// <para>
+/// Configuration drives every operation (#2137, migration 353). Each manifest row names its location
+/// (<c>wh_archive_locations</c>: provider, account endpoint, logical connection name, container) by id and holds only
+/// the object's path from its stream. A read, a restore and a delete compare every row's location with
+/// <see cref="ConfiguredLocation"/> first and throw <see cref="ArchiveLocationMismatchException"/> on any difference,
+/// before a request reaches storage; the deletion queue is drained only for the configured location. A record never
+/// redirects an operation, and nothing is deleted outside the configured location.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
@@ -62,6 +69,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly ILogger _logger;
   private int _containerReady;
 
+  // Reads, restores and deletes look the configured location up and never create it; a write creates it.
+  private const bool CREATE = true;
+  private const bool LOOK_UP = false;
+
   /// <summary>Creates the store.</summary>
   /// <param name="database">The service's database, where the manifest and the staged rows live.</param>
   /// <param name="container">The container the objects are written to.</param>
@@ -69,6 +80,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="logger">Logs each outcome, and each object a restore or delete could not remove.</param>
   /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, or the access
   /// tier is not Hot, Cool or Cold.</exception>
+  /// <exception cref="ArgumentException">The connection name is empty or contains <c>;</c> or <c>=</c>.</exception>
   public AzureBlobArchiveStore(
       PostgresArchiveConnection database,
       BlobContainerClient container,
@@ -87,6 +99,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
       throw new ArgumentOutOfRangeException(nameof(options), options.AccessTier, refusal);
     }
+    if (!AzureBlobArchiveOptions.IsLogicalName(options.ConnectionName)) {
+      // Never echoed: a value that looks like a connection string may be one.
+      throw new ArgumentException("ConnectionName is a logical name: not empty, and without ';' or '='.", nameof(options));
+    }
     _database = database;
     _container = container;
     _quality = options.CompressionLevel;
@@ -95,18 +111,60 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _table = new PostgresTableArchiveStore(database.Open, database.Schema);
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
+    ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
   }
 
-  /// <summary>RED stub (#2137).</summary>
-  public ArchiveLocation ConfiguredLocation => new(STORE_NAME, null, null, _container.Name);
-
-  /// <summary>RED stub (#2137).</summary>
-  public Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException($"RED stub: {_container.Name} {fromLocationId} {cancellationToken.IsCancellationRequested}");
+  /// <summary>
+  /// The location this store reads, restores, deletes and writes in, from its configuration: the account endpoint of
+  /// its container client (never a key, a signature or a connection string), the logical connection name and the
+  /// container. Every archive record is checked against it.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#archive-locations</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs</tests>
+  public ArchiveLocation ConfiguredLocation { get; }
 
   /// <summary>
-  /// The locator a stream's tombstone records: <c>azure-blob://{container}/{stream}?codec=brotli&amp;format=1</c>. Each
-  /// object's own locator (in the manifest) adds the object's name under the stream.
+  /// Acknowledges that the objects of a location now live where this store is configured (a database copied or
+  /// restored to another environment, disaster recovery to another account, a container renamed): the location row
+  /// <paramref name="fromLocationId"/> is updated to <see cref="ConfiguredLocation"/>, or, when that location already
+  /// exists, its records join it. No record's path is rewritten and no object is moved or deleted; copy the objects
+  /// first if they are not there yet.
+  /// </summary>
+  /// <param name="fromLocationId">The location to repoint: <see cref="ArchiveLocationMismatchException.RecordedLocationId"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The id of the location the records now name.</returns>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="fromLocationId"/> is below 1.</exception>
+  /// <exception cref="ArgumentException">No location has the id <paramref name="fromLocationId"/>.</exception>
+  /// <docs>fundamentals/events/archive-store#repointing-an-environment</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:RepointLocation_RefusesAnIdThatCannotNameARowAsync</tests>
+  public async Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) {
+    ArgumentOutOfRangeException.ThrowIfLessThan(fromLocationId, 1);
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand($"SELECT {_prefix}wh_repoint_archive_location($1, $2, $3, $4, $5)", connection);
+    command.Parameters.AddWithValue(fromLocationId);
+    _addLocation(command, ConfiguredLocation);
+    var location = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as long?
+      ?? throw new ArgumentException($"No archive location {fromLocationId} exists to repoint.", nameof(fromLocationId));
+    LogRepoint(_logger, fromLocationId, location, ConfiguredLocation.ToString());
+    return location;
+  }
+
+  /// <summary>
+  /// The storage account endpoint a container client reaches: scheme, host, port and any account path segment (an
+  /// emulator's), without the container, the query (where a signature sits) or user information.
+  /// </summary>
+  internal static string EndpointOf(BlobContainerClient container) {
+    var uri = container.Uri;
+    var path = uri.AbsolutePath.TrimEnd('/');
+    return uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped) + path[..path.LastIndexOf('/')];
+  }
+
+  /// <summary>
+  /// The locator a stream's tombstone records: <c>azure-blob://{container}/{stream}?codec=brotli&amp;format=1</c>. It
+  /// says which store archived the stream and is never used to find an object: each object is found by its manifest
+  /// row's location and path from the stream (#2137), in <see cref="ConfiguredLocation"/> only.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>The locator.</returns>
@@ -130,8 +188,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       return moved;
     }
 
+    var location = (long)(await _locationScalarAsync(connection, transaction, CREATE, cancellationToken).ConfigureAwait(false))!;
     var objects = await _uploadStagedAsync(connection, transaction, batch.StreamId, cancellationToken).ConfigureAwait(false);
-    await _recordManifestAsync(connection, transaction, batch.StreamId, objects, moved.OriginGeneration, cancellationToken)
+    await _recordManifestAsync(connection, transaction, batch.StreamId, location, objects, moved.OriginGeneration, cancellationToken)
       .ConfigureAwait(false);
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
@@ -166,6 +225,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
       await _lockStreamAsync(connection, transaction, streamId, cancellationToken).ConfigureAwait(false);
       objects = await _manifestAsync(connection, transaction, streamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
+      await _checkLocationAsync(connection, transaction, streamId, "restore", objects, cancellationToken).ConfigureAwait(false);
       foreach (var row in objects) {
         var lines = await _downloadAsync(streamId, row, cancellationToken).ConfigureAwait(false);
         await _stageAsync(connection, transaction, lines, cancellationToken).ConfigureAwait(false);
@@ -196,6 +256,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
       await _lockStreamAsync(connection, transaction, streamId, cancellationToken).ConfigureAwait(false);
       objects = await _manifestAsync(connection, transaction, streamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
+      await _checkLocationAsync(connection, transaction, streamId, "delete", objects, cancellationToken).ConfigureAwait(false);
       await _executeAsync(connection, transaction, $"DELETE FROM {_prefix}wh_archive_manifest WHERE stream_id = $1", streamId,
         cancellationToken).ConfigureAwait(false);
       await using (var command = new NpgsqlCommand($"SELECT {_prefix}wh_delete_stream_archive($1)", connection, transaction)) {
@@ -275,28 +336,29 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       AccessTier = _accessTier,
     };
     _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
-    var locator = new ArchiveLocator(STORE_NAME, $"{_container.Name}/{name}", ArchiveCompression.Brotli);
-    return new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, locator.ToString(), bytes.LongLength, sha256);
+    return new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
   }
 
+  // One row per object: its location and its path from the stream (353), never a locator naming a container.
   private async Task _recordManifestAsync(
-      NpgsqlConnection connection, NpgsqlTransaction transaction, Guid streamId, List<ManifestRow> objects, long originGeneration,
-      CancellationToken cancellationToken) {
+      NpgsqlConnection connection, NpgsqlTransaction transaction, Guid streamId, long location, List<ManifestRow> objects,
+      long originGeneration, CancellationToken cancellationToken) {
     await using (var command = new NpgsqlCommand(
         $"INSERT INTO {_prefix}wh_archive_manifest " +
-        "(stream_id, first_version, last_version, event_count, locator, byte_length, sha256, origin_generation) " +
-        "SELECT $1, m.first_version, m.last_version, m.event_count, m.locator, m.byte_length, m.sha256, $8 " +
+        "(stream_id, first_version, last_version, event_count, location_id, relative_path, byte_length, sha256, origin_generation) " +
+        "SELECT $1, m.first_version, m.last_version, m.event_count, $9, m.relative_path, m.byte_length, m.sha256, $8 " +
         "FROM unnest($2::bigint[], $3::bigint[], $4::int[], $5::text[], $6::bigint[], $7::text[]) " +
-        "AS m(first_version, last_version, event_count, locator, byte_length, sha256)",
+        "AS m(first_version, last_version, event_count, relative_path, byte_length, sha256)",
         connection, transaction)) {
       command.Parameters.AddWithValue(streamId);
       command.Parameters.AddWithValue(objects.Select(o => o.FirstVersion).ToArray());
       command.Parameters.AddWithValue(objects.Select(o => o.LastVersion).ToArray());
       command.Parameters.AddWithValue(objects.Select(o => o.EventCount).ToArray());
-      command.Parameters.AddWithValue(objects.Select(o => o.Locator).ToArray());
+      command.Parameters.AddWithValue(objects.Select(o => o.RelativePath).ToArray());
       command.Parameters.AddWithValue(objects.Select(o => o.ByteLength).ToArray());
       command.Parameters.AddWithValue(objects.Select(o => o.Sha256).ToArray());
       command.Parameters.AddWithValue(originGeneration);
+      command.Parameters.AddWithValue(location);
       _ = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
     await _executeAsync(connection, transaction, $"DELETE FROM {_prefix}wh_event_archive WHERE stream_id = $1", streamId,
@@ -304,9 +366,46 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     // The same events archived again write the same object names. An earlier restore may have queued those names for
     // deletion; they are live again, so they leave the queue in this transaction, under the stream's lock.
     await using var dequeue = new NpgsqlCommand(
-      $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE locator = ANY($1)", connection, transaction);
-    dequeue.Parameters.AddWithValue(objects.Select(o => o.Locator).ToArray());
+      $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE location_id = $1 AND relative_path = ANY($2)", connection, transaction);
+    dequeue.Parameters.AddWithValue(location);
+    dequeue.Parameters.AddWithValue(objects.Select(o => o.RelativePath).ToArray());
     _ = await dequeue.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  // ── Locations (#2137) ────────────────────────────────────────────────────────────────────────────────
+
+  // The configured location's id (353's wh_archive_location_id): created by a write, only looked up otherwise, so a read,
+  // restore or delete in a database that never knew this location finds none and refuses every record.
+  private async Task<long?> _locationIdAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) =>
+    await _locationScalarAsync(connection, transaction, LOOK_UP, cancellationToken).ConfigureAwait(false) as long?;
+
+  private async Task<object?> _locationScalarAsync(
+      NpgsqlConnection connection, NpgsqlTransaction? transaction, bool create, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand($"SELECT {_prefix}wh_archive_location_id($1, $2, $3, $4, $5)", connection, transaction);
+    _addLocation(command, ConfiguredLocation);
+    command.Parameters.AddWithValue(create);
+    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  private static void _addLocation(NpgsqlCommand command, ArchiveLocation location) {
+    command.Parameters.AddWithValue(location.Provider);
+    command.Parameters.AddWithValue(location.Endpoint!);
+    command.Parameters.AddWithValue(location.ConnectionName!);
+    command.Parameters.AddWithValue(location.Container);
+  }
+
+  // Every row in the configured location, or the refusal naming the first that is not, before any request to storage.
+  private async Task _checkLocationAsync(
+      NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid streamId, string operation, List<ManifestRow> objects,
+      CancellationToken cancellationToken) {
+    if (objects.Count == 0) {
+      return;
+    }
+    var configured = await _locationIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+    var mismatch = objects.Find(o => o.LocationId is null || o.LocationId != configured);
+    if (mismatch is not null) {
+      throw new ArchiveLocationMismatchException(streamId, operation, mismatch.LocationId, mismatch.Recorded, ConfiguredLocation);
+    }
   }
 
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────
@@ -316,6 +415,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     List<ManifestRow> objects;
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
       objects = await _manifestAsync(connection, transaction: null, streamId, fromVersion, cancellationToken).ConfigureAwait(false);
+      await _checkLocationAsync(connection, transaction: null, streamId, "read", objects, cancellationToken).ConfigureAwait(false);
     }
     foreach (var row in objects) {
       foreach (var line in await _downloadAsync(streamId, row, cancellationToken).ConfigureAwait(false)) {
@@ -330,39 +430,37 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid streamId, long fromVersion, CancellationToken cancellationToken) {
     var rows = new List<ManifestRow>();
     await using var command = new NpgsqlCommand(
-      "SELECT first_version, last_version, event_count, locator, byte_length, sha256 " +
-      $"FROM {_prefix}wh_archive_manifest WHERE stream_id = $1 AND last_version >= $2 ORDER BY first_version",
+      "SELECT m.first_version, m.last_version, m.event_count, m.relative_path, m.byte_length, m.sha256, m.location_id, " +
+      "       l.provider, l.account_endpoint, l.connection_name, l.container " +
+      $"FROM {_prefix}wh_archive_manifest m LEFT JOIN {_prefix}wh_archive_locations l ON l.location_id = m.location_id " +
+      "WHERE m.stream_id = $1 AND m.last_version >= $2 ORDER BY m.first_version",
       connection, transaction);
     command.Parameters.AddWithValue(streamId);
     command.Parameters.AddWithValue(fromVersion);
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var provider = _textOrNull(reader, 7);
       rows.Add(new ManifestRow(
-        reader.GetInt64(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3), reader.GetInt64(4), reader.GetString(5)));
+        reader.GetInt64(0), reader.GetInt64(1), reader.GetInt32(2), _textOrNull(reader, 3), reader.GetInt64(4), reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetInt64(6),
+        provider is null ? null : new ArchiveLocation(provider, _textOrNull(reader, 8), _textOrNull(reader, 9), reader.GetString(10))));
     }
     return rows;
   }
 
-  // The object, checked against its manifest row before a byte of it is decoded.
+  // The object, in the configured container only (its row passed the location check), checked against its manifest row
+  // before a byte of it is decoded.
   private async Task<IReadOnlyList<ArchiveChunkLine>> _downloadAsync(Guid streamId, ManifestRow row, CancellationToken cancellationToken) {
-    var (client, compression) = _objectClient(row.Locator);
-    var bytes = (await client.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
+    if (!ArchiveChunk.TryReadCompression(row.RelativePath, out var compression)) {
+      throw new InvalidDataException($"The archive manifest names '{row.RelativePath}', which is not an object this store wrote.");
+    }
+    var bytes = (await _container.GetBlobClient(row.RelativePath).DownloadContentAsync(cancellationToken).ConfigureAwait(false))
+      .Value.Content.ToArray();
     var sha256 = ArchiveChunk.Sha256(bytes);
     if (bytes.LongLength != row.ByteLength || !string.Equals(sha256, row.Sha256, StringComparison.Ordinal)) {
-      throw new ArchiveObjectCorruptedException(streamId, row.Locator, row.ByteLength, bytes.LongLength, row.Sha256, sha256);
+      throw new ArchiveObjectCorruptedException(streamId, row.RelativePath!, row.ByteLength, bytes.LongLength, row.Sha256, sha256);
     }
     return ArchiveChunk.Decode(bytes, compression);
-  }
-
-  // An object in this store's container, or in the container its locator names (the setting may have changed since).
-  private (BlobClient Client, ArchiveCompression Compression) _objectClient(string locator) {
-    if (!ArchiveChunk.TryReadObjectLocator(locator, out var container, out var name, out var compression)) {
-      throw new InvalidDataException($"The archive manifest names '{locator}', which is not an object this store wrote.");
-    }
-    var containerClient = string.Equals(container, _container.Name, StringComparison.Ordinal)
-      ? _container
-      : _container.GetParentBlobServiceClient().GetBlobContainerClient(container);
-    return (containerClient.GetBlobClient(name), compression);
   }
 
   // ── Deleting objects no manifest row names ───────────────────────────────────────────────────────
@@ -372,7 +470,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// migration 269): objects a restore, a delete or a stream purge stopped naming. A row goes once storage confirms the
   /// object is gone (a missing object counts); a failed delete stays queued, counts the attempt and waits one minute,
   /// doubling to at most an hour, before the next try. An object whose stream is being archived right now is left for a
-  /// later run.
+  /// later run. Only objects queued in <see cref="ConfiguredLocation"/> are deleted: a row of any other location (a
+  /// database copied from another environment, or not yet repointed) stays queued, untouched.
   /// </summary>
   /// <param name="maxObjects">The most objects this call deletes.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -386,22 +485,31 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
-    var due = new List<(string Locator, Guid StreamId)>();
+    var due = new List<(string RelativePath, Guid StreamId)>();
+    long location;
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
+      // A database that never knew the configured location (a copy, or one not yet repointed) has nothing to delete here:
+      // every queued row names another location, and stays queued, untouched.
+      if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is not { } configured) {
+        return 0;
+      }
+      location = configured;
       await using var command = new NpgsqlCommand(
-        $"SELECT locator, stream_id FROM {_prefix}wh_archive_object_deletions " +
-        "WHERE next_attempt_at <= NOW() AND ($1::uuid IS NULL OR stream_id = $1) ORDER BY next_attempt_at, locator LIMIT $2",
+        $"SELECT relative_path, stream_id FROM {_prefix}wh_archive_object_deletions " +
+        "WHERE location_id = $3 AND next_attempt_at <= NOW() AND ($1::uuid IS NULL OR stream_id = $1) " +
+        "ORDER BY next_attempt_at, relative_path LIMIT $2",
         connection);
       command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)streamId ?? DBNull.Value });
       command.Parameters.AddWithValue(maxObjects);
+      command.Parameters.AddWithValue(location);
       await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         due.Add((reader.GetString(0), reader.GetGuid(1)));
       }
     }
     var deleted = 0;
-    foreach (var (locator, stream) in due) {
-      if (await _deleteQueuedAsync(locator, stream, cancellationToken).ConfigureAwait(false)) {
+    foreach (var (relativePath, stream) in due) {
+      if (await _deleteQueuedAsync(location, relativePath, stream, cancellationToken).ConfigureAwait(false)) {
         deleted++;
       }
     }
@@ -411,14 +519,16 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   // One queued object, under its stream's lock: a write that uploads an object of the same name holds that lock until its
   // manifest row (and the dequeue) commit, so a live object is never deleted. A busy lock, or a row a write already took
   // back, leaves the object for a later run without counting an attempt.
-  private async Task<bool> _deleteQueuedAsync(string locator, Guid streamId, CancellationToken cancellationToken) {
+  private async Task<bool> _deleteQueuedAsync(long location, string relativePath, Guid streamId, CancellationToken cancellationToken) {
     await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
     await using (var claim = new NpgsqlCommand(
         "SELECT pg_try_advisory_xact_lock(hashtext($2)) " +
-        $"AND EXISTS (SELECT 1 FROM {_prefix}wh_archive_object_deletions WHERE locator = $1)", connection, transaction)) {
-      claim.Parameters.AddWithValue(locator);
+        $"AND EXISTS (SELECT 1 FROM {_prefix}wh_archive_object_deletions WHERE location_id = $3 AND relative_path = $1)",
+        connection, transaction)) {
+      claim.Parameters.AddWithValue(relativePath);
       claim.Parameters.AddWithValue(STREAM_LOCK_PREFIX + streamId.ToString("D"));
+      claim.Parameters.AddWithValue(location);
       if (!(bool)(await claim.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) {
         return false;
       }
@@ -428,17 +538,19 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     string? error = null;
     try {
       // DeleteIfExists: an object that is already gone counts as deleted.
-      _ = await _objectClient(locator).Client.DeleteIfExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      _ = await _container.GetBlobClient(relativePath).DeleteIfExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
       confirmed = true;
-      sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE locator = $1";
+      sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE relative_path = $1 AND location_id = $2";
     } catch (RequestFailedException ex) {
       error = ex.Message;
-      LogObjectNotDeleted(_logger, ex, locator, streamId);
-      sql = $"UPDATE {_prefix}wh_archive_object_deletions SET attempts = attempts + 1, last_error = $2, " +
-        "next_attempt_at = NOW() + LEAST(interval '1 minute' * power(2, attempts), interval '1 hour') WHERE locator = $1";
+      LogObjectNotDeleted(_logger, ex, relativePath, streamId);
+      sql = $"UPDATE {_prefix}wh_archive_object_deletions SET attempts = attempts + 1, last_error = $3, " +
+        "next_attempt_at = NOW() + LEAST(interval '1 minute' * power(2, attempts), interval '1 hour') " +
+        "WHERE relative_path = $1 AND location_id = $2";
     }
     await using (var record = new NpgsqlCommand(sql, connection, transaction)) {
-      record.Parameters.AddWithValue(locator);
+      record.Parameters.AddWithValue(relativePath);
+      record.Parameters.AddWithValue(location);
       if (error is not null) {
         record.Parameters.AddWithValue(error);
       }
@@ -528,8 +640,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   private static string? _textOrNull(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
-  /// <summary>One manifest row: an object, its version range and event count, and what its bytes must hash to.</summary>
-  private sealed record ManifestRow(long FirstVersion, long LastVersion, int EventCount, string Locator, long ByteLength, string Sha256);
+  /// <summary>
+  /// One manifest row: an object's path from its stream, its version range and event count, what its bytes must hash to,
+  /// and its location (id and description), when it names one.
+  /// </summary>
+  private sealed record ManifestRow(
+    long FirstVersion, long LastVersion, int EventCount, string? RelativePath, long ByteLength, string Sha256, long? LocationId,
+    ArchiveLocation? Recorded);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Archive of stream {StreamId} to Azure Blob (through version {ThroughVersion}; none = the whole stream): {Status}, {EventsArchived} event(s) moved in {Objects} object(s)")]
@@ -544,6 +661,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   static partial void LogDelete(ILogger logger, Guid streamId, long eventsDeleted, int objects);
 
   [LoggerMessage(Level = LogLevel.Warning,
-    Message = "Archive object {Locator} of stream {StreamId} could not be deleted; it stays queued and is retried after a backoff")]
-  static partial void LogObjectNotDeleted(ILogger logger, Exception exception, string locator, Guid streamId);
+    Message = "Archive object {RelativePath} of stream {StreamId} could not be deleted; it stays queued and is retried after a backoff")]
+  static partial void LogObjectNotDeleted(ILogger logger, Exception exception, string relativePath, Guid streamId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive location {FromLocationId} repointed by an operator to {Configured}; its records now name location {LocationId}")]
+  static partial void LogRepoint(ILogger logger, long fromLocationId, long locationId, string configured);
 }
