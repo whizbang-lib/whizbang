@@ -38,9 +38,11 @@ public readonly record struct IntegrityReportObservation(
 /// when the row predates window stamping — dispatch then derives a coarser range per origin).
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
+/// <param name="MissingEventId">#2103: the one event the bucket is missing, when its comparison could name it (the
+/// origin held exactly one event more and both sides carried id lanes); null asks for the stream over the window.</param>
 public readonly record struct IntegrityRepairDrainItem(
   Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId,
-  long? WindowFrom, long? WindowUntil);
+  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null);
 
 /// <summary>
 /// What a manifest comparison needs to know before it adds deficit buckets to the paced repair

@@ -182,7 +182,7 @@ public class WindowedDigestTypeIndexTests : EFCoreTestBase {
       using var document = JsonDocument.Parse(notice[notice.IndexOf('{', StringComparison.Ordinal)..]);
       var root = document.RootElement;
       // The digest fold's statements, not the settled-max probe that clamps the window first.
-      if (!root.GetProperty("Query Text").GetString()!.Contains("hashtextextended", StringComparison.Ordinal)) {
+      if (!root.GetProperty("Query Text").GetString()!.Contains("_wh_digest_lane", StringComparison.Ordinal)) {
         continue;
       }
       _collectScans(root.GetProperty("Plan"), scans);

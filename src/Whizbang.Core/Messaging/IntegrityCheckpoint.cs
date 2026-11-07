@@ -211,6 +211,17 @@ public sealed record StreamDigest {
   /// <summary>Events folded into the digest.</summary>
   public required int EventCount { get; init; }
 
+  /// <summary>
+  /// #2103: XOR of the first 64 bits (big-endian) of every folded event id, or null when not computed (an older peer,
+  /// or a stored bucket not yet backfilled). With <see cref="IdHi"/>, names the one event a bucket is missing.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public long? IdLo { get; init; }
+
+  /// <summary>#2103: XOR of the last 64 bits of every folded event id, or null when not computed.</summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public long? IdHi { get; init; }
+
   /// <summary>When the bucket last changed (table reads only; null on recomputed rows). Both
   /// audit sides skip comparing buckets updated inside the settle window — the incremental
   /// equivalent of the recompute's created-at settle filter.</summary>

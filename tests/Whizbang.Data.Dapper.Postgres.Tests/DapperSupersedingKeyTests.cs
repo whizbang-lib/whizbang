@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -12,6 +13,8 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Data;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -52,6 +55,39 @@ public class DapperSupersedingKeyTests : PostgresTestBase {
       "SELECT count(*) FROM wh_superseded_events q JOIN wh_event_store es ON es.event_id = q.event_id " +
       "WHERE es.stream_id = @stream AND es.version = 1", new { stream });
     await Assert.That(queued).IsEqualTo(1L).Because("the first event of the key is superseded by the third");
+  }
+
+  /// <summary>
+  /// #2110: on the Dapper driver too, events stored before their type was declared superseding are stamped and queued by
+  /// the registered maintenance step, and the reaper then keeps only the newest of each key once they are consumed.
+  /// </summary>
+  [Test]
+  public async Task HistoryStoredBeforeTheDeclaration_IsReconciledByTheRegisteredStep_AndReapedToTheNewestAsync() {
+    var store = _eventStore();
+    var stream = (Guid)TrackedGuid.New();
+    await store.AppendAsync(stream, new DapperSupersedingProbeEmbedded { StreamId = stream, Model = "model-a" });
+    await store.AppendAsync(stream, new DapperSupersedingProbeEmbedded { StreamId = stream, Model = "model-a" });
+    await store.AppendAsync(stream, new DapperSupersedingProbeEmbedded { StreamId = stream, Model = "model-b" });
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    // As the rows were stored before the declaration: no flag, no key, nothing queued.
+    _ = await conn.ExecuteAsync("UPDATE wh_event_store SET flags = flags & ~128, supersede_key = NULL WHERE stream_id = @stream", new { stream });
+    _ = await conn.ExecuteAsync("DELETE FROM wh_superseded_events");
+    var services = new ServiceCollection().AddWhizbangPostgres(
+      ConnectionString, Whizbang.Data.Dapper.Postgres.Tests.Generated.WhizbangJsonContext.CreateOptions(), false, (string?)null, null);
+    services.AddLogging();
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+
+    var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<SupersedingHistoryReconcileStep>().ToList();
+    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
+    _ = await conn.ExecuteAsync("SELECT stamp_pending_commit_sequences(1000)");
+    var reaped = await conn.ExecuteScalarAsync<long>("SELECT rows_affected FROM wh_reap_superseded_events(5000)");
+
+    var kept = (await conn.QueryAsync<int>("SELECT version FROM wh_event_store WHERE stream_id = @stream ORDER BY version", new { stream })).ToList();
+    await Assert.That(reaped).IsEqualTo(1L);
+    await Assert.That(kept).IsEquivalentTo([2, 3], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the older event of key model-a goes; the newest of each key stays");
   }
 
   private DapperPostgresEventStore _eventStore() {

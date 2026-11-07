@@ -210,6 +210,10 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       .Because("the origin's lane now holds exactly the adopted events, as a recompute would fold them");
     await Assert.That(await _bucketsMatchingTheStoreAsync(conn, _zeroLane, stream)).IsEqualTo(1L)
       .Because("the local lane keeps exactly the event that was never received");
+    // #2106: the origin's new bucket was folded from scratch, so it carries its id lanes; the hand-seeded local one
+    // keeps NULL.
+    _ = await StoredDigestInvariant.AssertHashLanesAgreeAsync(conn, stream);
+    await StoredDigestInvariant.AssertIdLanesAgreeAsync(conn, filled: 1, stream);
   }
 
   [Test]

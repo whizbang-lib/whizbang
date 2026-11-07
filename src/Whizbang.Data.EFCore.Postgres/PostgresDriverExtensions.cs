@@ -209,6 +209,12 @@ public static class PostgresDriverExtensions {
                 dbContextType,
                 sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
 
+        // TURNKEY: the maintenance step that fills the id lanes of stream digests stored before migration 336 (#2106),
+        // reporting any drift it corrects. Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamDigestIdLaneBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamDigestIdLaneBackfillMaintenanceStep>>()));
         // TURNKEY: the maintenance step that builds the framework indexes a migration must not build, concurrently and
         // outside any transaction, so writes to the indexed table go on during the build (#2092). Idle once each is valid.
         selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
@@ -345,6 +351,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#history-conversion</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
+        // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
+        // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+          SupersedingHistoryReconcileStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

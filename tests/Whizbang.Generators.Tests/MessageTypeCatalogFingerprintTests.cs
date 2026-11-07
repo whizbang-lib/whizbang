@@ -105,4 +105,30 @@ public class MessageTypeCatalogFingerprintTests {
     await Assert.That(sourcedB).IsEqualTo(sourcedA).Because("Two Sourced types share the same settings hash ('sourced').");
     await Assert.That(ephemeral).IsNotEqualTo(sourcedA).Because("An ephemeral type's settings hash differs from a Sourced one.");
   }
+  /// <summary>
+  /// #2110: declaring a type [Superseding] is a settings change, so the type-definition registry records a new definition
+  /// and the superseding-history reconcile can tell that the type's earlier events were stored under other settings. A type
+  /// that is not superseding keeps exactly the hash it had, so no other type drifts on upgrade.
+  /// </summary>
+  [Test]
+  public async Task SettingsHash_ChangesWhenATypeBecomesSuperseding_AndASourcedTypeKeepsItsHashAsync() {
+    var code = await _generateAsync("""
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      namespace MyApp;
+      public record OrderPlaced(int OrderId) : IEvent;
+      [Superseding]
+      public record ProfileReplaced(int UserId) : IEvent;
+""");
+    var sourced = _extract(code, "MyApp.OrderPlaced", "SettingsHash");
+    var superseding = _extract(code, "MyApp.ProfileReplaced", "SettingsHash");
+
+    await Assert.That(superseding).IsNotEqualTo(sourced).Because("becoming superseding is a settings change the registry must see");
+    await Assert.That(sourced).IsEqualTo(_sha256Hex("sourced"))
+      .Because("a type that is not superseding hashes exactly as before, so upgrading registers no new definition for it");
+    await Assert.That(superseding).IsEqualTo(_sha256Hex("sourced;superseding"));
+  }
+
+  private static string _sha256Hex(string canonical) =>
+    System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
 }

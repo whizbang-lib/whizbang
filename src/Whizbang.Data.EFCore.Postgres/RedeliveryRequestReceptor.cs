@@ -136,46 +136,84 @@ public sealed partial class RedeliveryRequestReceptor(
   /// </summary>
   private async Task<(int Shipped, int Composites)> _serveOrdinaryAsync(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
-    var totalSelected = 0;
-    var totalShipped = 0;
-    var totalComposites = 0;
+    var tally = new OrdinaryTally();
+    if (message.EventIds is { Count: > 0 } named) {
+      // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
+      // this store does not hold (the requester's id lanes named no event it wrote) is answered over the window instead.
+      var reached = await _shipSelectionAsync(message, serve, message.StreamIds, named, tally, cancellationToken)
+        .ConfigureAwait(false);
+      var unreached = message.StreamIds?.Where(s => !reached.Contains(s)).ToList();
+      if (unreached is { Count: > 0 }) {
+        _ = await _shipSelectionAsync(message, serve, unreached, null, tally, cancellationToken).ConfigureAwait(false);
+      }
+    } else {
+      _ = await _shipSelectionAsync(message, serve, message.StreamIds, null, tally, cancellationToken).ConfigureAwait(false);
+    }
+    return (tally.Shipped, tally.Composites);
+  }
+
+  /// <summary>What an ordinary request has selected and shipped so far, across its selections.</summary>
+  private sealed class OrdinaryTally {
+    public int Selected { get; set; }
+    public int Shipped { get; set; }
+    public int Composites { get; set; }
+    public bool Capped { get; set; }
+  }
+
+  /// <summary>
+  /// Selects and publishes one selection in keyset pages, within what is left of the request's bound, and returns the
+  /// streams it reached. An answer that stops at the bound with more selected is counted and logged once (#2098).
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "One selection of an ordinary request: the request, the serve, the selection's streams and named events, the running tally and cancellation.")]
+  private async Task<HashSet<Guid>> _shipSelectionAsync(
+      RequestRedeliveryCommand message, Serve serve, IReadOnlyList<Guid>? streams, IReadOnlyList<Guid>? eventIds,
+      OrdinaryTally tally, CancellationToken cancellationToken) {
+    var reached = new HashSet<Guid>();
     Guid? afterStream = null;
     long? afterVersion = null;
-    while (totalSelected < serve.MaxEvents) {
+    while (tally.Selected < serve.MaxEvents) {
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(
-        _ordinaryRequest(message, serve, Math.Min(serve.PageSize, serve.MaxEvents - totalSelected), afterStream, afterVersion),
+        _ordinaryRequest(message, serve, streams, eventIds, Math.Min(serve.PageSize, serve.MaxEvents - tally.Selected),
+          afterStream, afterVersion),
         cancellationToken).ConfigureAwait(false);
       if (page.Count == 0) {
         break;
       }
       var owned = _owned(page, serve);
       if (owned.Count > 0) {
-        totalComposites += await serve.Pump
+        tally.Composites += await serve.Pump
           .PublishAsync(owned, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
           .ConfigureAwait(false);
       }
-      totalShipped += owned.Count;
-      totalSelected += page.Count;
+      tally.Shipped += owned.Count;
+      tally.Selected += page.Count;
+      reached.UnionWith(page.Select(e => e.StreamId));
       var last = page[page.Count - 1];
       afterStream = last.StreamId;
       afterVersion = last.Version;
     }
-    if (totalSelected >= serve.MaxEvents) {
+    if (tally.Selected >= serve.MaxEvents && !tally.Capped) {
       var beyond = await serve.Coordinator.SelectRedeliveryEventsAsync(
-        _ordinaryRequest(message, serve, 1, afterStream, afterVersion), cancellationToken).ConfigureAwait(false);
+        _ordinaryRequest(message, serve, streams, eventIds, 1, afterStream, afterVersion), cancellationToken).ConfigureAwait(false);
       if (beyond.Count > 0) {
+        tally.Capped = true;
         serve.Metrics?.RedeliveryAnswersCapped.Add(1, new KeyValuePair<string, object?>("kind", "ordinary"));
         LogOrdinaryAnswerCapped(logger, serve.MaxEvents, message.RequesterService);
       }
     }
-    return (totalShipped, totalComposites);
+    return reached;
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "Builds one page's selection: the request, the serve, the selection's streams and named events, the page bound and keyset position.")]
   private static RedeliveryRequest _ordinaryRequest(
-      RequestRedeliveryCommand message, Serve serve, int maxEvents, Guid? afterStream, long? afterVersion) => new() {
+      RequestRedeliveryCommand message, Serve serve, IReadOnlyList<Guid>? streams, IReadOnlyList<Guid>? eventIds, int maxEvents,
+      Guid? afterStream, long? afterVersion) => new() {
         TenantScope = message.TenantScope,
         EventTypes = message.EventTypes,
-        StreamIds = message.StreamIds,
+        StreamIds = streams,
+        EventIds = eventIds,
         FromCommitSequence = message.FromCommitSequence,
         ToCommitSequence = message.ToCommitSequence,
         MaxEvents = maxEvents,

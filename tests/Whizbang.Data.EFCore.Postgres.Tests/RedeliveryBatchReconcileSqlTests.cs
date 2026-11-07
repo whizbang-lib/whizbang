@@ -246,6 +246,9 @@ public class RedeliveryBatchReconcileSqlTests : EFCoreTestBase {
     await Assert.That(await _bucketsMatchingTheStoreAsync(conn, _zeroLane, stream)).IsEqualTo(1L)
       .Because("the event no bundle named stays in the local lane, and its digest with it");
     await Assert.That(await _originOfAsync(conn, stays)).IsEqualTo(((Guid?)null, (long?)null));
+    // #2106: the origin's new bucket carries its id lanes; the hand-seeded local one keeps NULL.
+    _ = await StoredDigestInvariant.AssertHashLanesAgreeAsync(conn, stream);
+    await StoredDigestInvariant.AssertIdLanesAgreeAsync(conn, filled: 1, stream);
   }
 
   [Test]

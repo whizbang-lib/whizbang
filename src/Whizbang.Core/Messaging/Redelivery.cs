@@ -34,6 +34,13 @@ public sealed record RedeliveryRequest {
   /// <summary>Stream filter; null = all streams matching the other criteria.</summary>
   public IReadOnlyList<Guid>? StreamIds { get; init; }
 
+  /// <summary>
+  /// #2103: event filter; null = every event matching the other criteria. A repair that could name the one event a
+  /// bucket is missing selects only it; the other criteria still apply.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public IReadOnlyList<Guid>? EventIds { get; init; }
+
   /// <summary>Exclusive commit-sequence floor; null = from the beginning.</summary>
   public long? FromCommitSequence { get; init; }
 
@@ -129,7 +136,7 @@ public sealed record RedeliveryEvent {
 [PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
 [SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
 public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, Audit.IBoundedCommandAudit {
-  private static readonly string[] _idLists = [nameof(StreamIds)];
+  private static readonly string[] _idLists = [nameof(StreamIds), nameof(EventIds)];
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
@@ -144,6 +151,16 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
 
   /// <summary>Optional stream filter; null = all streams.</summary>
   public IReadOnlyList<Guid>? StreamIds { get; init; }
+
+  /// <summary>
+  /// #2103: the events the requester is missing, when its comparison could name them: per stream in
+  /// <see cref="StreamIds"/>, the one event the origin holds and it does not. The owner ships exactly those, and for a
+  /// stream whose named event it does not hold, answers the stream over the window instead. Null asks for the streams
+  /// over the window. An owner that predates the field ignores it and answers the streams over the window, which is
+  /// why the streams and window always ride along.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public IReadOnlyList<Guid>? EventIds { get; init; }
 
   /// <summary>Exclusive commit-sequence floor; null = from the beginning.</summary>
   public long? FromCommitSequence { get; init; }

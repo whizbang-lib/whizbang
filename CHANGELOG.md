@@ -238,6 +238,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either refuses is not registered. The flag-name parser learns `Superseding`. New API: `SupersedingAttribute`,
   `SupersedingKeyAttribute`, `SupersedingEvents`, `EventFlags.Superseding`, `MessageTypeCatalogEntry.IsSuperseding`,
   `EnvelopeMetadata.SupersedingKey`.
+- **Declaring an event type `[Superseding]` now reclaims the history stored before the declaration (#2110).** Until
+  now only events stored after the declaration carried the flag and key, so adopting `[Superseding]` on a type with
+  history stopped growth but recovered none of the space already used. A new maintenance step,
+  `superseding-history-reconcile`, walks each superseding type's stored events (idle-gated, under the maintainer turn,
+  5,000 events of the store per batch, 20 batches per cycle, one instance per type, resumable after a crash), reads each
+  key from the stored payload with the same generated accessor the write paths use, stamps the flag and key, and queues
+  every event but the newest of each stream, type and key in `wh_superseded_events`. The reaper then deletes them past
+  all of its gates (consumed, no cursor or snapshot on it, no destruction hold, stamped, not debug mode); the step
+  itself deletes nothing. A null key stays unkeyed and is never superseded; a payload whose key cannot be read is kept
+  and logged. Each service reconciles its own store, received copies included. The walk restarts when the
+  type-definition registry records a newer definition of the type, and the generator's settings hash now includes
+  `[Superseding]`, so becoming superseding is recorded as a definition change (every other type keeps its hash).
+  Migration 345 adds `wh_superseding_history` and its functions; no new index. New API: `SupersedingOptions`,
+  `SupersedingEvents.Types()`, `SupersedingHistoryReconcileStep`. **Upgrade note:** this is on by default. After
+  upgrading, a type already declared `[Superseding]` that has history from before its declaration has that history
+  reclaimed down to the newest event of each key once consumed, and every such type registers one new type definition
+  on its first boot (logged as drift once). Set `Whizbang:Superseding:ReconcileHistory` to `false` to keep that history.
 - **The Azure Blob archive store writes its objects at a chosen access tier (#1897).** `AzureBlobArchiveOptions.AccessTier`
   (`Whizbang:Archive:AzureBlob:AccessTier`) takes `Hot`, `Cool` or `Cold` in any case; unset, objects take the storage
   account's default tier as before. `Archive` and every other value are refused when the setting is bound, when the
@@ -830,6 +847,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Stream digest math has one home, and stream digests carry id lanes (#2106).** Fifteen SQL functions wrote
+  `wh_stream_digests` with their own copy of the fold, so a change made in one and missed in another would silently
+  corrupt the digests the integrity audit trusts. Migration 336 adds `_wh_digest_lane` (the only place an event id
+  becomes a digest lane, inlined by the planner), `_wh_fold_stream_digests` (folds, takes out or seeds a set of events,
+  every lane together) and `_wh_heal_stream_digests` (recomputes buckets and rewrites drift, returning each changed
+  bucket with its stored and recomputed values); every writer, the epoch folds, the C# live folds and the sweep's
+  verification now go through them, with the hash lanes and counts they store unchanged. `wh_stream_digests` gains
+  `id_lo`/`id_hi`, the XOR of each folded event id's two 64-bit halves; NULL until computed, and a fold keeps NULL as
+  NULL. A guard test fails when any function or C# SQL writes digest lanes or hashes an event id outside the helpers.
+  Buckets stored before 336 get their id lanes from a bounded, idle-gated maintenance step
+  (`StreamDigestIdLaneBackfillMaintenanceStep`, migration 337's `wh_backfill_stream_digest_id_lanes_batch`): batches
+  of streams under their append locks, resumable from a cursor, done once. A bucket it finds drifted from its events is
+  logged at Warning with its stored and recomputed values and counted on
+  `whizbang.stream_integrity.stream_digest_drift_corrected` before it is corrected.
 - **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
   (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
   claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,
@@ -1372,6 +1403,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
+  so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
+  their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them
+  (`wh_integrity_known_origins`, written per recorded checkpoint as a heap-only update; `wh_integrity_pending_gaps`,
+  replaced only when a checkpoint changes an origin's pending set), and a new process loads both once before the tracker
+  is first read (`IntegrityGapTracker.EnsureHydratedAsync`, `IWorkCoordinator.IntegrityLoadGapTrackerStateAsync`). What
+  the process already learned from a live checkpoint wins, and a failed load is retried rather than latched.
+- **A repair asks for the one event a stream is missing instead of re-sending the stream (#2103).** A
+  `RequestRedeliveryCommand` could name only types, streams and a range, so one missing event cost the stream's whole
+  history in transport and processing. Stream digests carry id lanes (#2106), and every stream-level digest a
+  comparison reads now carries them (`StreamDigest.IdLo`/`IdHi`). When the origin's bucket holds exactly one event more
+  than the consumer's, origin XOR local is that event's id
+  (`IntegrityDigestMath.SingleMissingEventId`): the burst path sends it as `RequestRedeliveryCommand.EventIds` (at most
+  500 per request; a larger set is paged), and the paced drain records it on the deficit's ledger row
+  (`IntegrityRecordMissingEventsAsync`, migration 338's `wh_integrity_ledger.missing_event_id`) and sends it from there.
+  The owner ships exactly the named events (`RedeliveryRequest.EventIds`), and answers a named stream whose event it
+  does not hold over the window. Streams and window always ride along, so an owner that predates the field answers the
+  range as before; a bucket without id lanes, or missing more than one event, syncs whole. Buckets stay per (origin,
+  tenant, type, stream), so a consumer that keeps only some of a stream's types compares and repairs only those.
+- **The integrity audit no longer reports deficits for events a consumer holds without the origin's commit sequence
+  (#2102).** Windowed comparisons counted a consumer's events by the origin's commit sequence, so an event that carries
+  the origin but not the sequence (history re-attributed to its owner) was counted in no window, and its bucket read short
+  on every audit: a false deficit, and a pointless redelivery with repair on. A windowed stream or type comparison, and a
+  checkpoint count that reads short, now also fold the events held from that origin without a sequence
+  (`IWorkCoordinator.ComputeUnsequencedReceivedDigestsAsync`, bounded by the disagreeing streams or by the origin's
+  sequence-less rows) and place them by identity (`IntegrityDigestMath.PlaceHeld`): the bucket matches when they complete
+  the window, is a deficit only when the origin counts more events than are held placed and sequence-less together, and
+  is otherwise left undecided (not recorded or repaired, counted by `whizbang.stream_integrity.unplaced_buckets`; the
+  full-history comparison, whose folds include every held event, decides those streams). A recorded deficit keeps the
+  sequence-less events in its local digest. Existing false deficit rows clear on the next comparison, and a bulk
+  backfill is sized by what is missing beyond the held events.
 - **A service receives only the commands it handles on a per-namespace command inbox (#2089).** A service that handled
   any command of a namespace subscribed to that namespace's command inbox with a match-all filter, so handling one command
   of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.

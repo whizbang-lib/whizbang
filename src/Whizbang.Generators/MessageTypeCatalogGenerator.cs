@@ -153,7 +153,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         EphemeralStorage: ephemeral?.Storage,
         EphemeralRewindGraceSeconds: rewindGrace,
         EphemeralTtlSeconds: ttlSeconds,
-        SettingsHash: _computeSettingsHash(ephemeral),
+        SettingsHash: _computeSettingsHash(ephemeral, isSuperseding),
         SchemaHash: _computeSchemaHash(typeSymbol),
         IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
         IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
@@ -270,12 +270,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // load-bearing: identical definitions MUST hash identically across builds/machines, so every input is
   // canonically ordered and fully-qualified.
 
-  /// <summary>Hash of the type's behavioral settings — its Sourced/Ephemeral mode + destruction/storage.</summary>
-  private static string _computeSettingsHash((string Destruction, string Storage)? ephemeral) {
+  /// <summary>
+  /// Hash of the type's behavioral settings: its Sourced/Ephemeral mode + destruction/storage, and whether it is
+  /// superseding (#2110). The superseding part is appended only for a superseding type, so every other type keeps the
+  /// hash it had and drifts on no upgrade, while a type that becomes superseding registers a new definition.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogFingerprintTests.cs:SettingsHash_ChangesWhenATypeBecomesSuperseding_AndASourcedTypeKeepsItsHashAsync</tests>
+  private static string _computeSettingsHash((string Destruction, string Storage)? ephemeral, bool isSuperseding) {
     var canonical = ephemeral is { } e
       ? $"ephemeral;destruction={e.Destruction};storage={e.Storage}"
       : "sourced";
-    return _sha256Hex(canonical);
+    return _sha256Hex(isSuperseding ? canonical + ";superseding" : canonical);
   }
 
   /// <summary>

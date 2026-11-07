@@ -1973,6 +1973,62 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
   /// <summary>
+  /// #2104: what the store keeps of the integrity gap tracker (known origins, pending gaps), read once by a new process.
+  /// Null = unsupported: the tracker starts empty, as before, and learns from the next checkpoints.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The kept state, or null.</returns>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityGapTrackerState?>(null);
+
+  /// <summary>
+  /// #2104: keeps an origin's checkpoint (its name, its request address, and the time) so a restarted process knows
+  /// the origin and its liveness. A null <paramref name="requestTopic"/> keeps the address already known. No-op =
+  /// unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="originServiceName">Its logical name.</param>
+  /// <param name="requestTopic">Its announced request address, or null.</param>
+  /// <param name="checkpointAt">When the checkpoint was recorded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityRecordOriginCheckpointAsync(
+    Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2104: replaces the kept pending gaps of one origin with <paramref name="pending"/> (empty = none), so a gap seen
+  /// before a restart is confirmed by the first checkpoint after it. No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="pending">The origin's pending gaps after this checkpoint.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityReplacePendingGapsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2103: records, per keyed ledger row, the one event its bucket is missing (or null when the comparison could not
+  /// name one), so the paced repair drain asks the owner for that event instead of the stream. Pairs by position with
+  /// <paramref name="keys"/>; a null clears an id recorded by an earlier comparison. No-op = unsupported, and the drain
+  /// asks for the streams over their windows as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the keys belong to.</param>
+  /// <param name="keys">The deficit buckets this comparison recorded.</param>
+  /// <param name="missingEventIds">Per key, the one missing event, or null.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordMissingEvents_TheClaimCarriesEachRowsNamedEvent_OrNoneAsync</tests>
+  Task IntegrityRecordMissingEventsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
   /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
   /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.
@@ -2405,6 +2461,29 @@ public interface IWorkCoordinator {
     long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<StreamDigest>?>(null);
+
+  /// <summary>
+  /// #2102: the digests of the events this store holds from <paramref name="originServiceId"/> WITHOUT the origin's
+  /// commit sequence (re-attributed history, whose origin is recorded and whose sequence is not). A fold over an
+  /// origin-sequence window leaves these events out, so a windowed comparison places them with
+  /// <see cref="IntegrityDigestMath.PlaceHeld"/> instead of reading their bucket as short. Folded under the same
+  /// predicates as every digest fold (not ephemeral, not at-most-once, not exempt, older than the settle window).
+  /// With <paramref name="streamIds"/>, one row per (tenant, type, stream) of those streams; without, one row per
+  /// (tenant, type) with <see cref="StreamDigest.StreamId"/> = <see cref="Guid.Empty"/>. The default returns nothing:
+  /// a store that cannot tell holds no such events as far as a comparison knows, and compares as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the events were received from.</param>
+  /// <param name="eventTypes">The stored event types to fold.</param>
+  /// <param name="streamIds">The streams to fold, one row per stream; null for one row per (tenant, type).</param>
+  /// <param name="settleWindow">Only events older than this count, matching the windowed folds.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The folds; empty when there are none, or the store cannot tell.</returns>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+    Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<StreamDigest>>([]);
 
   /// <summary>
   /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved

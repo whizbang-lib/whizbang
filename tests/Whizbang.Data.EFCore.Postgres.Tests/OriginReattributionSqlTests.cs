@@ -233,6 +233,9 @@ public class OriginReattributionSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync<long>(conn,
       "SELECT count(*) FROM wh_stream_digests WHERE origin_service_id = $1 AND event_type = $2", _zeroLane, BILLING_TYPE))
       .IsEqualTo(0L).Because("the emptied local bucket is removed, not left at zero");
+    // #2106: the owner's new bucket carries its id lanes; the hand-seeded local one keeps NULL.
+    _ = await StoredDigestInvariant.AssertHashLanesAgreeAsync(conn, stream);
+    await StoredDigestInvariant.AssertIdLanesAgreeAsync(conn, filled: 1, stream);
   }
 
   [Test]

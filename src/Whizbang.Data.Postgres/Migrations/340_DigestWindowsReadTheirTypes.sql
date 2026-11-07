@@ -26,7 +26,7 @@
 --              No new index. Number 340: 335 is the highest on develop and 336-339 are taken by an open change.
 --
 -- Dependencies: 046 (idx_event_store_commit_sequence), 155 (idx_event_store_origin_lane), 195 (idx_event_store_type_tenant),
---               normalize_event_type
+--               336 (_wh_digest_lane: every lane, the id lanes included, comes from the one helper), normalize_event_type
 -- Objects: wh_compute_stream_digests_window
 -- Constants: the double-underscore tokens in this file (for example __DIGEST_EXEMPT_TYPES__) are substituted from
 --            Migrations/constants.txt at apply time (README rule 12).
@@ -45,7 +45,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_compute_stream_digests_window(
   p_max_streams    INTEGER,       -- whole streams on this page
   p_now            TIMESTAMPTZ,
   p_settle_seconds INTEGER
-) RETURNS TABLE (tenant TEXT, event_type TEXT, stream_id UUID, digest_lo BIGINT, digest_hi BIGINT, event_count INTEGER)
+) RETURNS TABLE (tenant TEXT, event_type TEXT, stream_id UUID, digest_lo BIGINT, digest_hi BIGINT, event_count INTEGER,
+                id_lo BIGINT, id_hi BIGINT)
 LANGUAGE plpgsql STABLE
 SET plan_cache_mode = force_custom_plan
 AS $$
@@ -94,9 +95,11 @@ BEGIN
     LIMIT 1
   )
   SELECT w.w_tenant, w.w_type, w.w_stream,
-         bit_xor(hashtextextended(w.w_event::text, 0)),
-         bit_xor(hashtextextended(w.w_event::text, 1)),
-         COUNT(*)::int
+         bit_xor(__SCHEMA__._wh_digest_lane(w.w_event, 0)),
+         bit_xor(__SCHEMA__._wh_digest_lane(w.w_event, 1)),
+         COUNT(*)::int,
+         bit_xor(__SCHEMA__._wh_digest_lane(w.w_event, 2)),
+         bit_xor(__SCHEMA__._wh_digest_lane(w.w_event, 3))
   FROM win w
   WHERE w.w_stream <= (SELECT lp.w_stream FROM last_picked lp)
   GROUP BY 1, 2, 3
@@ -105,4 +108,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_compute_stream_digests_window(UUID, TEXT[], BIGINT, BIGINT, UUID, INTEGER, TIMESTAMPTZ, INTEGER) IS
-'Windowed stream-level fold [p_since, p_until), one page of whole streams after p_resume_after (#2107). Caller pre-clamps p_until at integrity_settled_max and asks for one stream past its page bound as the sentinel. Plans each call against its own window and types (force_custom_plan), so a sparse type is read through an index on the type rather than filtered from every event in the window. Leaves out ephemeral (flags & 8) and at-most-once (flags & 32) events and audit records.';
+'Windowed stream-level fold, every lane from _wh_digest_lane (336) [p_since, p_until), one page of whole streams after p_resume_after (#2107). Caller pre-clamps p_until at integrity_settled_max and asks for one stream past its page bound as the sentinel. Plans each call against its own window and types (force_custom_plan), so a sparse type is read through an index on the type rather than filtered from every event in the window. Leaves out ephemeral (flags & 8) and at-most-once (flags & 32) events and audit records.';
