@@ -38,6 +38,21 @@ public sealed record SupersedingHistoryProbeProfile : IEvent {
   public int Revision { get; init; }
 }
 
+/// <summary>A superseding event type keyed by a value type, whose older events may lack the key (#2123).</summary>
+[Superseding]
+public sealed record SupersedingHistoryProbeRegioned : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public Guid DocumentId { get; init; }
+
+  /// <summary>The key: a value type, so a missing key would otherwise read as <see cref="Guid.Empty"/>.</summary>
+  [SupersedingKey]
+  public Guid RegionId { get; init; }
+
+  /// <summary>Which revision this is.</summary>
+  public int Revision { get; init; }
+}
+
 /// <summary>An ordinary event type: never superseding.</summary>
 public sealed record SupersedingHistoryProbePlain : IEvent {
   /// <summary>The stream.</summary>
@@ -366,6 +381,39 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await Assert.That(await _keyAsync(conn, unreadable)).IsNull();
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning && e.Message.Contains("could not be read", StringComparison.Ordinal)))
       .IsEqualTo(2).Because("a payload whose key cannot be read is named in the log, never skipped silently");
+  }
+
+  /// <summary>
+  /// #2123: events stored before a value-type key property existed lack it. Read as their type's default they would share
+  /// one key and all but the newest be reaped; instead each is stamped without a key, kept, and named in the log. Events
+  /// that carry the default value are keyed by it, so the older of those is queued.
+  /// </summary>
+  [Test]
+  public async Task Reconcile_AValueTypeKeyMissingFromThePayload_IsStampedUnkeyed_KeptAndLogged_APresentDefaultIsAKeyAsync() {
+    await using var conn = await _openAsync();
+    var regioned = TypeNameFormatter.Format(typeof(SupersedingHistoryProbeRegioned));
+    var stream = (Guid)TrackedGuid.New();
+    var missing1 = await _historicAsync(conn, stream, $$"""{"DocumentId":"{{stream}}","Revision":1}""", regioned);
+    var missing2 = await _historicAsync(conn, stream, $$"""{"DocumentId":"{{stream}}","Revision":2}""", regioned);
+    var explicitNull = await _historicAsync(conn, stream, $$"""{"DocumentId":"{{stream}}","RegionId":null,"Revision":3}""", regioned);
+    var empty1 = await _historicAsync(conn, stream, $$"""{"DocumentId":"{{stream}}","RegionId":"{{Guid.Empty}}","Revision":4}""", regioned);
+    var empty2 = await _historicAsync(conn, stream, $$"""{"DocumentId":"{{stream}}","RegionId":"{{Guid.Empty}}","Revision":5}""", regioned);
+    var logger = new ListLogger();
+
+    await new SupersedingHistoryReconcileStep(logger, 100, 10, () => [typeof(SupersedingHistoryProbeRegioned)])
+      .ReconcileAsync(_services(), CancellationToken.None);
+
+    foreach (var unkeyed in new[] { missing1, missing2, explicitNull }) {
+      await Assert.That(await _flagsAsync(conn, unkeyed)).IsEqualTo((long)SUPERSEDING).Because("a missing key is stamped, so it is not read again");
+      await Assert.That(await _keyAsync(conn, unkeyed)).IsNull()
+        .Because("a key the payload does not carry is unknown, never the Guid default the other keyless events would share");
+    }
+    await Assert.That(await _keyAsync(conn, empty1)).IsEqualTo(Guid.Empty.ToString("D")).Because("a present default is a real key");
+    await Assert.That(await _queuedAsync(conn)).IsEquivalentTo([empty1])
+      .Because("only the older event of the present default key is superseded; every event missing its key is kept");
+    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Information && e.Message.Contains("has no superseding key", StringComparison.Ordinal)))
+      .IsEqualTo(3).Because("each event whose payload lacks its key is named in the log");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains(empty2.ToString(), StringComparison.Ordinal))).IsFalse();
   }
 
   [Test]

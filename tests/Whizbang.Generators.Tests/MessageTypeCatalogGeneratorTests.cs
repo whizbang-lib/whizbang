@@ -520,6 +520,9 @@ public class MessageTypeCatalogGeneratorTests {
       public record ParameterKeyed([SupersedingKey] int Slot) : IEvent;
 
       [Superseding]
+      public record RenamedKey([property: SupersedingKey, System.Text.Json.Serialization.JsonPropertyName("slot_\"no")] int Slot) : IEvent;
+
+      [Superseding]
       public record PermissionsReplaced(string[] Grants) : IEvent;
 
       [Superseding]
@@ -543,20 +546,78 @@ public class MessageTypeCatalogGeneratorTests {
       .Because("a command is never stored on a stream, so nothing can supersede it");
     await Assert.That(entry("ProfileRenamed").Contains("IsSuperseding")).IsFalse();
     await Assert.That(generated).Contains(
-      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model));")
+      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model), \"Model\", null);")
       .Because("a key on a record's positional property is read through that property");
     await Assert.That(generated).Contains(
-      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner));");
+      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner), \"Owner\", null);");
     await Assert.That(generated).Contains(
-      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner));")
+      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner), \"Owner\", null);")
       .Because("a key declared on a base type is the derived type's key");
     await Assert.That(generated).Contains(
-      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot));")
+      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot), \"Slot\", null);")
       .Because("on a primary-constructor parameter the attribute marks the property of the same name");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}RenamedKey), static p => {KEY_TEXT}(((global::MyApp.RenamedKey)p).Slot), \"Slot\", \"slot_\\\"no\");")
+      .Because("#2123: the key's member and [JsonPropertyName] are registered, so a payload missing the key is told from a default key");
     await Assert.That(generated).Contains($"{REGISTER}PermissionsReplaced), null);")
       .Because("a superseding type with no key has one key per stream");
     await Assert.That(generated.Contains($"{REGISTER}ReplaceAll)")).IsFalse();
     await Assert.That(generated.Contains($"{REGISTER}ProfileRenamed)")).IsFalse();
+  }
+
+  [Test]
+  public async Task Generator_ASupersedingGroup_IsRegisteredWithEachTypeAsync() {
+    // #2124: [Superseding(Group = "...")] lets types supersede each other; the generator registers the group with each
+    // type, so the write paths stamp it without reflection. The name is taken as written, never derived from a type.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingCreated([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingRevised([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "profile")]
+      public record ProfileBase : IEvent;
+
+      public record ProfileReplaced : ProfileBase;
+
+      [Superseding]
+      public record ProfileRedeclared : ProfileBase;
+
+      [Superseding(Group = "")]
+      public record EmptyGroup : IEvent;
+
+      [Superseding(Group = "quo\"te")]
+      public record QuotedGroup : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    const string REGISTER = "global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof(global::MyApp.";
+    const string KEY_TEXT = "global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText";
+
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingCreated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingCreated)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingRevised), static p => {KEY_TEXT}(((global::MyApp.EmbeddingRevised)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileBase), null, null, null, \"profile\");")
+      .Because("a grouped type with no key registers the empty key's group");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileReplaced), null, null, null, \"profile\");")
+      .Because("the attribute is inherited, group and all");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileRedeclared), null);")
+      .Because("the nearest [Superseding] wins, as attribute inheritance reads it, so a redeclaration without a group has none");
+    await Assert.That(generated).Contains($"{REGISTER}EmptyGroup), null);")
+      .Because("an empty name is no group");
+    await Assert.That(generated).Contains($"{REGISTER}QuotedGroup), null, null, null, \"quo\\\"te\");")
+      .Because("a group name is arbitrary text, so it is written as an escaped literal");
   }
 
   [Test]

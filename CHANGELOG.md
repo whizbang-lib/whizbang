@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Superseding groups: several event types supersede each other in one stream (#2124).** `[Superseding(Group =
+  "name")]` puts event types in one group, so the newest event of any of them supersedes the older events of every one
+  of them, per stream, group and key: a stream with a full-state "created" event and later full-state "updated" events
+  keeps only the newest. The name is explicit and global, never derived from a type name, and stored with every event.
+  Migration 352 adds `wh_event_store.supersede_group`, stamped beside the key by every write path (dispatch, receive,
+  direct append on both drivers) from the stored metadata's `sg`, and the queue and the reaper match on
+  `COALESCE(supersede_group, event_type)` through a new index, so an ungrouped type is its own group exactly as before
+  and no row is backfilled. A type that joins, leaves or changes a group later is walked again by the history reconcile
+  (#2110), which re-stamps its stored events under the new group. WHIZ138 (error) reports the types of a group that
+  disagree on their key: all keyless, or all keyed by the same type. `SupersedingEvents.GroupOf` reads a type's group,
+  and `EnvelopeMetadata.SupersedingGroup` carries it. Every event of every type in a group must carry the whole state for
+  its key, and a consumer that handles several of the types must need only the newest.
 - **Each perspective chooses what happens to its rows of a stream archived whole (#1739, WS-3 S10).**
   `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]` on a perspective, overridden per perspective by
   `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>`. `Keep` (the default) changes nothing; `Drop` deletes the
@@ -1412,6 +1424,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
+  superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
+  as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the
+  history reconcile (events stored before the key property existed) every such event of a stream shared one key and all
+  but the newest were reaped. The key is now looked for in the payload under the name the serializer writes it
+  (`[JsonPropertyName]` and the naming policy honored, read from the serializer metadata, no reflection): missing or
+  JSON `null`, the event is stamped superseding without a key and never reaped, and the reconcile logs it. A present
+  default value (`Guid.Empty`, `0`) is a real key. A typed payload dispatched in process is unchanged.
+  `SupersedingEvents.IsKeyMissing` reports the case, and the generated catalog registers the key's member and
+  `[JsonPropertyName]` through a new `SupersedingEvents.Register` overload; code generated before it keeps the old
+  behavior until rebuilt.
 - **Inbox rows the dispatcher never sees no longer retry for ever, and a consumer receives its owners' checkpoints
   (#2117, #2118).** A received event that sorts after an earlier pending event of its stream, which the instance does
   not hold, is held back unstored, and the drain never fetches an unstored event, yet the claim re-offered its stream

@@ -63,7 +63,8 @@ internal static class EFCoreEventStoreRows {
     new() {
       MessageId = envelope.MessageId,
       Hops = envelope.Hops?.ToList() ?? [],
-      // #1729: wh_append_event stamps a superseding event's key from the metadata it stores.
-      SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(envelope.Payload)
+      // #1729: wh_append_event stamps a superseding event's key from the metadata it stores, and (#2124) its group.
+      SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(envelope.Payload),
+      SupersedingGroup = Whizbang.Core.Lifecycle.SupersedingEvents.GroupOf(envelope.Payload)
     };
 }
