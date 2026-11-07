@@ -112,8 +112,11 @@ public static class SupersedingEvents {
     if (payload is not JsonElement json) {
       return KeyOf(payload);
     }
-    if (_keyed(wireTypeName) is not { } registration) {
-      return _registered(wireTypeName) is null ? null : string.Empty;
+    if (_registered(wireTypeName) is not { } registration) {
+      return null;
+    }
+    if (registration.Reader is not { } reader) {
+      return string.Empty;
     }
     // Read only for a superseding type with a key: the one place a received payload is deserialized before its handler.
     var options = jsonOptions ?? JsonContextRegistry.CreateCombinedOptions();
@@ -122,7 +125,7 @@ public static class SupersedingEvents {
       return null;
     }
     var typed = json.Deserialize(typeInfo);
-    return typed is null ? null : registration.Reader!(typed);
+    return typed is null ? null : reader(typed);
   }
 
   /// <summary>
@@ -139,7 +142,7 @@ public static class SupersedingEvents {
   /// <docs>fundamentals/events/superseding-events#a-key-missing-from-the-payload</docs>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:IsKeyMissing_IsFalse_WhereThereIsNoKeyToMissAsync</tests>
   public static bool IsKeyMissing(JsonElement payload, string? wireTypeName, JsonSerializerOptions? jsonOptions) {
-    if (_keyed(wireTypeName) is not { } registration) {
+    if (_registered(wireTypeName) is not { Reader: not null } registration) {
       return false;
     }
     var options = jsonOptions ?? JsonContextRegistry.CreateCombinedOptions();
@@ -168,10 +171,6 @@ public static class SupersedingEvents {
     EventFlagsDeriver.ToClrTypeName(wireTypeName) is { } clrTypeName && _byName.TryGetValue(clrTypeName, out var registration)
       ? registration
       : null;
-
-  // The registration a wire type name names when its type has a key property.
-  private static Registration? _keyed(string? wireTypeName) =>
-    _registered(wireTypeName) is { Reader: not null } registration ? registration : null;
 
   // Whether an object payload lacks its key property or holds it as null. Undecidable (not an object, or no JSON property
   // maps to the key member) reads as present, so the key is read by deserializing as before.
