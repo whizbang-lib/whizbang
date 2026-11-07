@@ -134,4 +134,75 @@ public class StreamIntegrityOptionsValidatorTests {
 
     await Assert.That(result.Succeeded).IsTrue();
   }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnAuditWindowBelowOneSequence_FailsNamingTheKeyAsync(int sequences) {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowSequences = sequences });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2107: a window below one sequence covers nothing, so no audit could ever advance its seal");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:MaxAuditWindowSequences");
+  }
+
+  [Test]
+  public async Task Validate_AnAuditWindowOfOneSequence_SucceedsAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowSequences = 1 });
+
+    await Assert.That(result.Succeeded).IsTrue();
+  }
+
+  [Test]
+  public async Task MaxAuditWindowSequences_DefaultsToFiveEpochsAsync() =>
+    await Assert.That(new StreamIntegrityOptions().MaxAuditWindowSequences).IsEqualTo(500_000)
+      .Because("five of the default 100,000-sequence digest epochs: an aligned window answers from its seals");
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnAuditWindowBudgetBelowOne_FailsNamingTheKeyAsync(int windows) {
+    var result = new StreamIntegrityOptionsValidator().Validate(
+      null, new StreamIntegrityOptions { MaxAuditWindowsPerAudit = windows });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2107: an audit is at least its first window; a budget below one is a broken setting");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:MaxAuditWindowsPerAudit");
+  }
+
+  [Test]
+  public async Task MaxAuditWindowsPerAudit_DefaultsToFiveAsync() =>
+    await Assert.That(new StreamIntegrityOptions().MaxAuditWindowsPerAudit).IsEqualTo(5)
+      .Because("five capped windows is 2.5 million sequences of history compared per audit at the default cap");
+
+  [Test]
+  [Arguments("LedgerRecheckIntervalSeconds")]
+  [Arguments("LedgerRecheckRowsPerTick")]
+  [Arguments("LedgerRecheckAfterMinutes")]
+  public async Task Validate_ALedgerRecheckBoundBelowOne_FailsNamingTheKeyAsync(string key) {
+    var options = key switch {
+      "LedgerRecheckIntervalSeconds" => new StreamIntegrityOptions { LedgerRecheckIntervalSeconds = 0 },
+      "LedgerRecheckRowsPerTick" => new StreamIntegrityOptions { LedgerRecheckRowsPerTick = 0 },
+      _ => new StreamIntegrityOptions { LedgerRecheckAfterMinutes = 0 },
+    };
+
+    var result = new StreamIntegrityOptionsValidator().Validate(null, options);
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("#2115: a re-check bound below one spins the loop, claims nothing, or re-checks a row it just reported");
+    await Assert.That(result.FailureMessage).Contains($"Whizbang:StreamIntegrity:{key}");
+  }
+
+  [Test]
+  public async Task LedgerRecheck_DefaultsAreOn_EveryMinute_FiveHundredRows_TwoHoursAsync() {
+    var options = new StreamIntegrityOptions();
+
+    await Assert.That(options.LedgerRecheckEnabled).IsTrue();
+    await Assert.That(options.LedgerRecheckIntervalSeconds).IsEqualTo(60);
+    await Assert.That(options.LedgerRecheckRowsPerTick).IsEqualTo(500);
+    await Assert.That(options.LedgerRecheckAfterMinutes).IsEqualTo(2 * options.AuditSettleWindowMinutes)
+      .Because("twice the settle window: a row reported more recently than that was compared over settled history already");
+  }
 }

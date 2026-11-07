@@ -48,8 +48,7 @@ public class WindowedDigestLaneReadTests : EFCoreTestBase {
       cmd.Parameters.AddWithValue("p_until", UNTIL);
       cmd.Parameters.Add(new NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = DBNull.Value });
       cmd.Parameters.AddWithValue("p_limit", 501);
-      cmd.Parameters.AddWithValue("p_settle", "0 seconds");
-      EFCoreWorkCoordinator<WorkCoordinationDbContext>.AddDigestExemptParam(cmd);
+      cmd.Parameters.AddWithValue("p_settle", 0);
     });
 
     await Assert.That(read).IsLessThan(MOST_ROWS_A_WINDOW_READ_MAY_TOUCH)

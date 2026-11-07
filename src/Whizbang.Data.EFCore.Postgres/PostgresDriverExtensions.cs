@@ -356,6 +356,11 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
           SupersedingHistoryReconcileStep.FromServices));
+        // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
+        // type to their owner (#2116), under the maintainer duty, idle-gated.
+        // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+          MisattributedOriginCorrectionStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

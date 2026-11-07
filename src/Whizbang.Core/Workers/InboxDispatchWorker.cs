@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -920,7 +921,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   private static (CompositeInboxFanout.FanoutResult Result, bool FannedOut) _expandComposite(
       ICompositeEvent composite, InboxWork work, IServiceProvider scopeProvider, FanoutDirective? directive,
-      string? compositeTypeName, Func<string, bool>? hasConsumer) {
+      string? compositeTypeName, Func<string, bool>? hasConsumer, Func<string, Guid?>? ownerOf) {
     CompositeInboxFanout.FanoutResult Empty() =>
       new(CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName);
     var result = directive switch {
@@ -928,11 +929,43 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       { Kind: FanoutDirectiveKind.ReplaceWith } replace =>
         CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, replace.Replacement, hasConsumer),
       _ when composite.FanoutMode == FanoutMode.Manual => Empty(),
-      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer, ownerOf: ownerOf),
     };
     var fannedOut = directive?.Kind != FanoutDirectiveKind.Skip
       && (directive?.Kind == FanoutDirectiveKind.ReplaceWith || composite.FanoutMode != FanoutMode.Manual);
     return (result, fannedOut);
+  }
+
+  /// <summary>
+  /// The true-owner lookup for a redelivery bundle's children (#2116): a child of a type this receiver's ownership map
+  /// gives to a service other than the origin the bundle names is stored under that owner. The map is read from the
+  /// store once per bundle (repair traffic, not the ordinary path). Null when the bundle names no origin, the map knows no
+  /// owner, or the map cannot be read: then every child keeps the bundle's origin, as before, and a record stored under
+  /// the wrong origin is left for the misattributed-origin correction.
+  /// </summary>
+  private async Task<Func<string, Guid?>?> _bundleOwnersAsync(
+      RedeliveryComposite bundle, IServiceProvider scopeProvider, CancellationToken ct) {
+    if (bundle.OriginServiceId == Guid.Empty || scopeProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
+      return null;
+    }
+    try {
+      var claims = await coordinator.GetIntegrityDomainClaimsAsync(ct).ConfigureAwait(false);
+      var ownedDomains = scopeProvider.GetOptionsValue<RoutingOptions>()?.OwnedDomains ?? new HashSet<string>();
+      return MisattributedOrigin.ForBundle(bundle.OriginServiceId, new IntegrityDomainOwnership(claims), ownedDomains);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogBundleOwnershipUnavailable(_logger, bundle.OriginServiceId, ex);
+      return null;
+    }
+  }
+
+  /// <summary>Reports the children of a redelivery bundle stored under their type's true owner (#2116).</summary>
+  private void _recordReattributed(
+      CompositeInboxFanout.FanoutResult result, RedeliveryComposite bundle, InboxWork work, IServiceProvider scopeProvider) {
+    if (result.ReattributedChildren == 0) {
+      return;
+    }
+    scopeProvider.GetService<StreamIntegrityMetrics>()?.RedeliveredChildrenReattributed.Add(result.ReattributedChildren);
+    LogRedeliveredChildrenReattributed(_logger, result.ReattributedChildren, work.MessageId, bundle.OriginServiceId);
   }
 
   /// <summary>The expansion meters (#738); an empty result from Skip or Manual is not an expansion.</summary>
@@ -964,8 +997,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       newInboxMessages: children, newOutboxMessages: preFanoutOutbox);
     var committed = await _commitCompositeAsync(commitRequest, children.Count, scopeProvider, ct).ConfigureAwait(false);
     if (committed && composite is RedeliveryComposite redelivery) {
+      // #2116: a child stored under its type's true owner is not the bundle origin's to reconcile: a held copy of it
+      // must not adopt the origin the bundle names.
       _ = await RedeliveryReconciler.ReconcileAsync(
-        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(),
+        redelivery, [.. children.Where(c => c.SourceServiceId == redelivery.OriginServiceId)], scopeProvider, _logger, _timeProvider.GetUtcNow(),
         RedeliveryReconciler.OriginServiceNameOf(work.Envelope), ct).ConfigureAwait(false);
     }
   }
@@ -999,9 +1034,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var preFanoutOutbox = pre.Outbox;
 
     var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
-    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer);
+    var ownerOf = composite is RedeliveryComposite bundle
+      ? await _bundleOwnersAsync(bundle, scopeProvider, ct).ConfigureAwait(false)
+      : null;
+    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer, ownerOf);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
       _recordExpansion(result, fannedOut);
+      if (composite is RedeliveryComposite redelivered) {
+        _recordReattributed(result, redelivered, work, scopeProvider);
+      }
       // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
       // thousand inner events simply declares a cap that large and passes. The consumer had no say,
       // and expansion happens after admission control has already accepted the message — so one
@@ -1431,6 +1472,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             + "rows and cannot see it coming.")]
   static partial void LogCompositeExceedsConsumerBudget(
     ILogger logger, string compositeType, int childCount, int budget, int chunks);
+
+  [LoggerMessage(EventId = 86, Level = LogLevel.Warning,
+    Message = "Redelivery bundle {CompositeMessageId} names origin {BundleOrigin}, which does not own the type of {Count} of its " +
+              "event(s); they are stored under their owner with no origin sequence, and are not reconciled under {BundleOrigin} (#2116)")]
+  static partial void LogRedeliveredChildrenReattributed(ILogger logger, int count, Guid compositeMessageId, Guid bundleOrigin);
+
+  [LoggerMessage(EventId = 87, Level = LogLevel.Warning,
+    Message = "Redelivery bundle from origin {BundleOrigin}: the ownership map could not be read, so every child keeps the " +
+              "bundle's origin; one stored under the wrong origin is corrected later by the misattributed-origin correction")]
+  static partial void LogBundleOwnershipUnavailable(ILogger logger, Guid bundleOrigin, Exception exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "InboxDispatchWorker started: maxInboxAttempts={MaxInboxAttempts}")]

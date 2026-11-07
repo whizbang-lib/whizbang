@@ -529,6 +529,9 @@ public static class ServiceCollectionExtensions {
     // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
       SupersedingHistoryReconcileStep.FromServices));
+    // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+      MisattributedOriginCorrectionStep.FromServices));
     // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
       new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
