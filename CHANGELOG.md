@@ -1409,8 +1409,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
   events) writes the whole tree. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
   as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
-  as errors sees the new WHIZ200 on a recursive model; `WhizbangOpaqueArrayWarning=false` or a suppression on the
-  property turns it off.
+  as errors is not affected: WHIZ200 reports a recursive model at Info, since it is stored correctly and there is
+  nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).
+  **New error WHIZ201:** a perspective model whose recursive types form a circular reference cannot be saved. A tree
+  (`Node.Children`), two types holding collections of each other and a linked list (`Link.Next`) are writable; a
+  recursion that stores a collection and also a single-valued reference back up the document (`Node.Children` with
+  `Node.Parent`, `Order.Lines` with `Line.Order`, or deeper, `Order.Lines`, `Line.Detail`, `Detail.Order`) lets an
+  element reach its container, and is now a build error at the back-reference. Leave the reference out of the stored
+  model (`[JsonIgnore]`) and restore it after reading, or store the container's identifier. An object cycle the
+  analyzer cannot see (`Next` with `Prev`, a node placed among its own descendants) fails the write with the
+  serializer's cycle detection and stores nothing; it is never truncated in silence.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

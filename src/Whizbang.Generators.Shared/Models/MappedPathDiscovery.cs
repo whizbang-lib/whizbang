@@ -185,6 +185,16 @@ public static class MappedPathDiscovery {
   }
 
   /// <summary>
+  /// The type a stored member holds and whether it holds a collection of it: an array's or a collection's element, or
+  /// the property's own type, with <c>null</c> for a primitive or a member that is not a named type.
+  /// </summary>
+  /// <param name="property">The member.</param>
+  /// <returns>The type and whether it is held as a collection.</returns>
+  internal static (INamedTypeSymbol? Type, bool IsCollection) StoredTargetOf(IPropertySymbol property) =>
+    (_walkedTypeOf(property), property.Type is IArrayTypeSymbol
+      || (property.Type is INamedTypeSymbol named && _collectionElement(named) is not null));
+
+  /// <summary>
   /// The type a walk continues into from this property: an array's or a collection's element, or the property's own
   /// type, unless it is a primitive or not a named type.
   /// </summary>

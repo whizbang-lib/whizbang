@@ -196,7 +196,7 @@ description: "A receptor implementation was discovered and will be registered."
 | WHIZ100-108 | Perspective purity and the current model (Apply methods) |
 | WHIZ110-122 | Pinned type identity and the pinned-type ledger |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
-| WHIZ200 | Perspective model shape |
+| WHIZ200-201 | Perspective model shape: opaque storage, circular references |
 | WHIZ300-309 | Perspective model consistency and indexes |
 | WHIZ400-402 | Lens queries (EF Core) |
 | WHIZ500-501 | Dependency injection |

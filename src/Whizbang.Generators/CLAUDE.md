@@ -462,7 +462,7 @@ internal static class DiagnosticDescriptors {
 | WHIZ113-117 | The perspective contract: misspelled Apply, hidden explicit Apply, undeclared Apply return, collective Apply shape, events only a marker interface lists |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
 | WHIZ180 | Audit settings the generator cannot register |
-| WHIZ200 | Perspective model shape |
+| WHIZ200-201 | Perspective model shape: opaque storage, circular references |
 | WHIZ300-309 | Perspective model consistency and indexes |
 | WHIZ400-402 | Lens queries (EF Core) |
 | WHIZ500-501 | Dependency injection |
