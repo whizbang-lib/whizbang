@@ -996,6 +996,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 341) returns only rows with a stamped
+  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
+      IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(originIds);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = originIds.ToArray()
+    });
+    cmd.Parameters.AddWithValue("p_reported_before", reportedBefore);
+    cmd.Parameters.AddWithValue(P_NOW, now);
+    cmd.Parameters.AddWithValue(P_LIMIT, limit);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText =
+      "SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until " +
+      $"FROM {BuildSchemaQualifiedName(schema, "wh_integrity_claim_ledger_recheck")}(@p_origin_ids, @p_reported_before, @p_now, @p_limit)";
+#pragma warning restore S2077
+    var items = new List<IntegrityRepairDrainItem>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      items.Add(new IntegrityRepairDrainItem(
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+    }
+    return items;
+  }
+
+  /// <inheritdoc />
   public async Task<bool> IntegrityMarkHealedBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       CancellationToken cancellationToken = default) =>

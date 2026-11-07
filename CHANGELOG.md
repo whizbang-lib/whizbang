@@ -1600,6 +1600,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next audit starts again there, but the windows after it are still compared and repaired in the same audit. A windowed type-level answer with no digests is now compared too, and seals its window when this service
   holds nothing there either, so a capped slice with nothing to audit no longer freezes the seal. The seal advances only
   over a window that starts at or below it.
+- **An idle service re-checks stale ledger rows itself instead of waiting for the daily audit (#2115).** A ledger row
+  cleared only when the audit compared its bucket again, at most once a day, so rows written under an older compare rule
+  lingered for days after an upgrade, and with automatic repair on the paced drain turned them into repair requests. The
+  new `IntegrityLedgerRecheckWorker` (on the maintainer, under the housekeeping idle gate) claims up to
+  `StreamIntegrityOptions.LedgerRecheckRowsPerTick` rows (default 500) every `LedgerRecheckIntervalSeconds` (default 60)
+  whose last report is older than `LedgerRecheckAfterMinutes` (default 120), oldest first, and asks each row's owner for a
+  stream-level answer over the row's window marked `Recheck`. The comparison removes the rows that now match or are
+  undecided exactly as the audit does, and a re-check answer never leads to a repair request. A claimed row is stamped
+  (`wh_integrity_ledger.rechecked_at`, migration 341) and waits the threshold again before its next re-check. Counted
+  by `whizbang.stream_integrity.ledger_rows_rechecked` and `ledger_rows_recheck_cleared`; turned off with
+  `LedgerRecheckEnabled`. Rows without a stamped window (pre-stamp rows and non-deficit divergences) are left to the audit.
 - **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
   the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
   (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.

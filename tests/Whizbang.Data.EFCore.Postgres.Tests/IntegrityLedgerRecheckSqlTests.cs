@@ -96,8 +96,22 @@ public class IntegrityLedgerRecheckSqlTests : EFCoreTestBase {
     await Assert.That(reader.GetFieldValue<DateTimeOffset>(2)).IsEqualTo(now);
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator() =>
-    new(CreateDbContext(), Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+  [Test]
+  public async Task Claim_ThroughTheThroughputGate_AnswersTheSameAsync() {
+    using var gate = new WorkCoordinatorGate(4, Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    var coordinator = _coordinator(gate);
+    var origin = TrackedGuid.New().Value;
+    var stale = await _staleRowAsync(coordinator, origin, reportedAt: _t0);
+    var now = _t0.AddDays(1);
+
+    var claimed = await _claimAsync(coordinator, origin, now, 10);
+
+    await Assert.That(claimed.Single().StreamId).IsEqualTo(stale)
+      .Because("the gate bounds how many coordinator calls run at once; it does not change the answer");
+  }
+
+  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinatorGate? gate = null) =>
+    new(CreateDbContext(), Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
 
   // Through the interface, as the re-check worker calls it.
   private static Task<IReadOnlyList<IntegrityRepairDrainItem>> _claimAsync(

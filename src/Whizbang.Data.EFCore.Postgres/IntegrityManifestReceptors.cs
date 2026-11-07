@@ -261,6 +261,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
+          Recheck = message.Recheck,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -574,9 +575,13 @@ public sealed partial class IntegrityManifestReceptor(
       divergent.Add((origin, mine, isDeficit, reason));
     }
 
+    // #2115: the rows this comparison removed, which a re-check's answer counts (a ledger that cannot say what it removed
+    // counts nothing, never a guess).
+    var rowsCleared = 0;
     if (undecidedKeys.Count > 0) {
-      // Forgotten without a heal age: the bucket did not heal, it stopped being a confirmed deficit.
-      await ledger.MarkHealedBatchAsync(undecidedKeys, cancellationToken).ConfigureAwait(false);
+      // Forgotten without a heal age: the bucket did not heal, it stopped being a confirmed deficit. Only the number of
+      // rows removed is read back, for the re-check's count.
+      rowsCleared += (await ledger.MarkHealedBatchWithAgesAsync(undecidedKeys, cancellationToken).ConfigureAwait(false)).Count;
       metrics?.UnplacedBuckets.Add(undecidedKeys.Count,
         new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       LogUnplacedBuckets(logger, undecidedKeys.Count, message.OriginServiceName);
@@ -588,6 +593,11 @@ public sealed partial class IntegrityManifestReceptor(
       foreach (var age in healAges) {
         metrics?.BucketHealSeconds.Record(age);
       }
+      rowsCleared += healAges.Count;
+    }
+    if (message.Recheck) {
+      metrics?.LedgerRowsRecheckCleared.Add(rowsCleared,
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     }
     // #1792: with the paced drain dispatching, a ledger row IS a queued repair, so the caps have to
     // bound which deficits get a row. Runs after the heals, so the backlog it reads is current.
@@ -635,8 +645,9 @@ public sealed partial class IntegrityManifestReceptor(
         deficitIndexes.ConvertAll(i => IntegrityDigestMath.SingleMissingEventId(divergent[i].Origin, divergent[i].Mine)),
         cancellationToken).ConfigureAwait(false);
     }
+    // #2115: a re-check's answer is a compare, never a repair request.
     var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
-      && !options.RepairDrainEnabled;
+      && !options.RepairDrainEnabled && !message.Recheck;
     IReadOnlyList<bool> repairFlags = [];
     if (repairEligible && deficitIndexes.Count > 0) {
       var deficitKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
@@ -918,6 +929,8 @@ public sealed partial class IntegrityManifestReceptor(
         UntilSequence = through,
         MaxDigests = options.MaxDigestsPerManifest,
         ResumeAfterStreamId = cursor,
+        // #2115: the rest of a re-check's window is a re-check too.
+        Recheck = message.Recheck,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)

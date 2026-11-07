@@ -415,6 +415,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<SubscriptionExpansionWorker>();
     services.TryAddSingleton<IntegrityAuditWorker>();
     services.TryAddSingleton<RepairDrainWorker>();
+    // #2115: re-checks stale ledger rows on the maintainer, under the idle gate.
+    services.TryAddSingleton<IntegrityLedgerRecheckWorker>();
     // #2092: walks each grown subscription's backfill in paced windows, on the maintainer under the idle gate.
     services.TryAddSingleton<SubscriptionBackfillWorker>();
     // #2008: re-attributes pre-origin history to its owners, on the maintainer under the idle gate.
@@ -626,6 +628,7 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<RepairDrainWorker>());
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityLedgerRecheckWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<SubscriptionBackfillWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OriginReattributionWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<IntegrityDeliveryWorker>());

@@ -69,12 +69,12 @@ public class LedgerRecheckWorkerTests {
 
     await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
 
-    var claim = coordinator.Claims.Single();
-    await Assert.That(claim.Limit).IsEqualTo(7).Because("one tick never claims more than its bound");
-    await Assert.That(claim.ReportedBefore).IsEqualTo(_fixedNow.AddMinutes(-30))
+    var (origins, reportedBefore, now, limit) = coordinator.Claims.Single();
+    await Assert.That(limit).IsEqualTo(7).Because("one tick never claims more than its bound");
+    await Assert.That(reportedBefore).IsEqualTo(_fixedNow.AddMinutes(-30))
       .Because("only rows whose report is older than the threshold are re-checked");
-    await Assert.That(claim.Now).IsEqualTo(_fixedNow);
-    await Assert.That(claim.Origins).IsEquivalentTo([origin])
+    await Assert.That(now).IsEqualTo(_fixedNow);
+    await Assert.That(origins).IsEquivalentTo([origin])
       .Because("only an origin whose request topic is known can be asked");
   }
 
@@ -202,6 +202,46 @@ public class LedgerRecheckWorkerTests {
   }
 
   [Test]
+  public async Task RecheckTick_WithoutAServiceIdentity_ClaimsNothingAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions(), origin, withInstanceProvider: false);
+
+    await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.Claims).IsEmpty().Because("without a service name there is no return address for the answer");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task RecheckTick_WithoutMetrics_StillAsksAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions(), origin, withMetrics: false);
+    coordinator.Stale.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("counting is optional; the re-check is not");
+  }
+
+  [Test]
+  public async Task Constructor_RejectsMissingOptions_AndDefaultsTheClockAsync() {
+    var scopeFactory = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+    await Assert.That(() => new IntegrityLedgerRecheckWorker(scopeFactory, null!, NullLogger<IntegrityLedgerRecheckWorker>.Instance))
+      .Throws<ArgumentNullException>();
+    await Assert.That(() => new IntegrityLedgerRecheckWorker(scopeFactory, new NullValueOptions(), NullLogger<IntegrityLedgerRecheckWorker>.Instance))
+      .Throws<ArgumentNullException>();
+    var worker = new IntegrityLedgerRecheckWorker(
+      scopeFactory, Options.Create(new StreamIntegrityOptions { LedgerRecheckEnabled = false }), NullLogger<IntegrityLedgerRecheckWorker>.Instance);
+    await Assert.That(async () => await worker.RecheckTickAsync(_fixedNow, CancellationToken.None)).ThrowsNothing()
+      .Because("without a clock of its own the worker uses the system clock");
+  }
+
+  private sealed class NullValueOptions : IOptions<StreamIntegrityOptions> {
+    public StreamIntegrityOptions Value => null!;
+  }
+
+  [Test]
   public async Task TheWorker_IsRegisteredWithTheIntegrityWorkersAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangWorkers();
@@ -214,7 +254,7 @@ public class LedgerRecheckWorkerTests {
 
   private static (IntegrityLedgerRecheckWorker Worker, RecheckCoordinator Coordinator, CaptureTransport Transport, MetricsProbe Metrics) _build(
       StreamIntegrityOptions options, Guid origin, bool learnTopic = true, HousekeepingCoordinator? housekeeping = null,
-      FakeTimeProvider? clock = null) {
+      FakeTimeProvider? clock = null, bool withInstanceProvider = true, bool withMetrics = true) {
     var coordinator = new RecheckCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -223,12 +263,16 @@ public class LedgerRecheckWorkerTests {
     services.TryAddWhizbangDefaults();
     services.AddMetrics();
     services.AddSingleton(sp => new WhizbangMetrics(meterFactory: sp.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
-    services.AddSingleton<StreamIntegrityMetrics>();
+    if (withMetrics) {
+      services.AddSingleton<StreamIntegrityMetrics>();
+    }
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("rechecker-svc"));
+    if (withInstanceProvider) {
+      services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("rechecker-svc"));
+    }
     if (housekeeping is not null) {
       services.AddSingleton(housekeeping);
     }
@@ -236,7 +280,8 @@ public class LedgerRecheckWorkerTests {
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
-    var probe = new MetricsProbe(sp.GetRequiredService<StreamIntegrityMetrics>());
+    var probe = new MetricsProbe(sp.GetService<StreamIntegrityMetrics>()
+      ?? new StreamIntegrityMetrics(sp.GetRequiredService<WhizbangMetrics>()));
     var worker = new IntegrityLedgerRecheckWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options),

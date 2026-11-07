@@ -3613,7 +3613,8 @@ public class IntegrityManifestReceptorTests {
     long unplaced = 0;
     using var listener = new System.Diagnostics.Metrics.MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (instrument.Name == "whizbang.stream_integrity.unplaced_buckets") {
+        // This metrics instance only: another test's instance publishes an instrument of the same name.
+        if (ReferenceEquals(instrument, metrics.UnplacedBuckets.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       },
@@ -3713,6 +3714,19 @@ public class IntegrityManifestReceptorTests {
       .Because("a re-check is a compare; even with burst repair on, it never sends a repair request");
     await Assert.That(ledger.Count).IsEqualTo(1).Because("the bucket is still divergent, so its row stays and is reported again");
     await Assert.That(cleared()).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_WithoutMetrics_StillComparesAsync() {
+    var (coordinator, transport, ledger, receptor) = _heldFixture();
+    var stream = TrackedGuid.New().Value;
+    coordinator.ReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])) with { Recheck = true });
+
+    await Assert.That(ledger.Forgotten).Contains(new IntegrityRepairLedger.DivergenceKey(coordinator.OriginId, "tenant-a", "Contracts.TypeX", stream))
+      .Because("counting is optional; the matching bucket is still removed");
+    await Assert.That(_redeliveries(transport)).IsEmpty();
   }
 
   [Test]
