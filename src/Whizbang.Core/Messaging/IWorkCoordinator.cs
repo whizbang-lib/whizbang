@@ -1837,6 +1837,19 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
 
   /// <summary>
+  /// <see cref="VacuumWorkTablesAsync(CancellationToken)"/>, leaving alone a table the database records as vacuumed
+  /// (manually or by autovacuum, from any instance) within <paramref name="skipTablesVacuumedWithin"/>: it comes back
+  /// with <see cref="WorkTableVacuum.RecentlyVacuumed"/> set (#2140). Default: the vacuum without a window.
+  /// </summary>
+  /// <param name="skipTablesVacuumedWithin">How recent a vacuum makes another unnecessary; zero vacuums every table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs:ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync</tests>
+  Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) =>
+    VacuumWorkTablesAsync(cancellationToken);
+
+  /// <summary>
   /// Every B-tree index on the queue tables that churn to empty, with its size and the size the catalog estimates it
   /// should have (#1746). The maintenance cycle's <see cref="Whizbang.Core.Workers.QueueIndexReindexStep"/> rebuilds the
   /// most bloated one and drops what an interrupted rebuild left behind.
@@ -4881,7 +4894,13 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <param name="SkippedReason">Why it did not run, naming the table and the role; null when it ran.</param>
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
-public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);
+public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason) {
+  /// <summary>
+  /// True when the table was not vacuumed because the database records a vacuum of it inside the caller's window
+  /// (#2140); <see cref="SkippedReason"/> then says how long ago. Not a failure: nothing was left undone.
+  /// </summary>
+  public bool RecentlyVacuumed { get; init; }
+}
 
 /// <summary>
 /// One B-tree index on a queue table that churns to empty, as <see cref="IWorkCoordinator.GetQueueIndexBloatAsync"/>

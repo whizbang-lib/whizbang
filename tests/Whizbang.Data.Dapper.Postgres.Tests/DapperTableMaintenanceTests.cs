@@ -195,6 +195,17 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task VacuumWorkTables_LeavesATableVacuumedWithinTheWindow_AndReportsItAsRecentAsync() {
+    // #2140, parity with the EF Core coordinator: the shared vacuum skips what the database says was just vacuumed.
+    _ = await _coordinator().VacuumWorkTablesAsync();
+
+    var skipped = await _coordinator().VacuumWorkTablesAsync(TimeSpan.FromMinutes(10));
+
+    await Assert.That(skipped.Select(o => o.TableName)).IsEquivalentTo(_workTables);
+    await Assert.That(skipped.All(o => !o.Vacuumed && o.RecentlyVacuumed)).IsTrue();
+  }
+
+  [Test]
   public async Task UnderARoleThatOwnsNoTable_NothingIsVacuumedRewrittenOrRebuilt_AndEachIsReportedAsync() {
     var role = $"wh_app_{Guid.NewGuid():N}"[..30];
     await _executeAsync($"""

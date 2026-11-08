@@ -100,6 +100,20 @@ public partial class CoordinationSourceGuardTests {
     ["stamp_pending_commit_sequences"] = "the visibility fence reads in-flight transaction ids; it judges no instance",
   };
 
+  /// <summary>
+  /// SQL functions (by their last definition) that may compare a lease's expiry (#2140). A role holder's lease is never a
+  /// liveness verdict on its own: past it, the holder is judged by the one rule (<c>_role_holder_kept_live</c>).
+  /// </summary>
+  private static readonly Dictionary<string, string> _sqlLeaseAllowlist = new(StringComparer.Ordinal) {
+    ["_role_lapse_reason"] = "the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["wh_assert_role_epoch"] = "the fence: the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["_role_lapse_is_fleet_wide"] = "bounds the window a lapse is classified in (fleet-wide or the holder's own); it judges no holder live",
+    ["_role_void_reason"] = "173's phase-1 lapse helper, which no current function calls; its callers were redefined by 184",
+    ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "
+      + "is judged by the rule",
+    ["wh_claim_multi_stream_work"] = "the partition assignment's lease, as claim_work reads it",
+  };
+
   /// <summary>SQL functions (by their last definition) that may take a SESSION advisory lock.</summary>
   private static readonly Dictionary<string, string> _sqlSessionLockAllowlist = new(StringComparer.Ordinal) {
     ["claim_instance_alive_lock"] = "the alive-lock: the lock half of the liveness rule, held by the instance's own LISTEN session",
@@ -236,6 +250,9 @@ public partial class CoordinationSourceGuardTests {
   [GeneratedRegex(@"last_heartbeat_at\s*[<>]|[<>]=?\s*(?:\w+\.)?last_heartbeat_at|LastHeartbeatAt\s*[<>]|-\s*(?:\w+\.)*LastHeartbeatAt|is_instance_alive\s*\(|pg_stat_activity|pg_locks")]
   private static partial Regex _liveness();
 
+  [GeneratedRegex(@"lease_expires_at\s*(?:<=|>=|<|>)|(?:<=|>=|<|>)\s*(?:\w+\.)?lease_expires_at|lease_expires_at\s+IS\s+NULL")]
+  private static partial Regex _leaseVerdict();
+
   [GeneratedRegex(@"CREATE OR REPLACE FUNCTION\s+__SCHEMA__\.(\w+)\s*\(.*?\$\$(.*?)\$\$", RegexOptions.Singleline)]
   private static partial Regex _sqlFunction();
 
@@ -287,6 +304,25 @@ public partial class CoordinationSourceGuardTests {
     await _assertSqlOnlyAllowedAsync(_liveness(), _sqlLivenessAllowlist, "judges liveness without the one rule (wh_instance_liveness)");
 
   [Test]
+  public async Task SqlLeaseVerdicts_AppearOnlyInTheAllowlistedFunctionsAsync() =>
+    // #2140: the role lease used to be a liveness rule of its own, and lapsed holders the rule called live.
+    await _assertSqlOnlyAllowedAsync(_leaseVerdict(), _sqlLeaseAllowlist,
+      "judges a holder by its lease alone; past the lease, ask the one rule through _role_holder_kept_live");
+
+  [Test]
+  public async Task ARoleHolder_IsJudgedPastItsLeaseByTheOneLivenessRuleAsync() {
+    // #2140: the vote, the renewal, the status and the fence all decide through _role_lapse_reason or the fence, and both
+    // ask _role_holder_kept_live, which asks wh_instance_is_live: the role keeps only its epoch and its progress window.
+    var sql = _latestSqlFunctions();
+
+    await Assert.That(sql["_role_lapse_reason"]).Contains("_role_holder_kept_live(");
+    await Assert.That(sql["wh_assert_role_epoch"]).Contains("_role_holder_kept_live(");
+    await Assert.That(sql["_role_holder_kept_live"]).Contains("wh_instance_is_live(");
+    await Assert.That(_leaseVerdict().IsMatch(sql["_role_holder_kept_live"])).IsFalse()
+      .Because("the progress window is measured from the last renewal, never from the lease");
+  }
+
+  [Test]
   public async Task SqlSessionAdvisoryLocks_AppearOnlyInTheAllowlistedFunctionsAsync() =>
     await _assertSqlOnlyAllowedAsync(_sessionAdvisory(), _sqlSessionLockAllowlist, "takes a session advisory lock: a duty held outside the role table");
 
@@ -304,7 +340,7 @@ public partial class CoordinationSourceGuardTests {
         (_rawSubscriptionAllowlist, _rawSubscription()), (_coordinationChannelAllowlist, _coordinationChannel()) }) {
       stale.AddRange(allowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !pattern.IsMatch(code)));
     }
-    foreach (var (allowlist, pattern) in new[] { (_sqlLivenessAllowlist, _liveness()), (_sqlSessionLockAllowlist, _sessionAdvisory()), (_sqlNotifyAllowlist, _notify()) }) {
+    foreach (var (allowlist, pattern) in new[] { (_sqlLivenessAllowlist, _liveness()), (_sqlSessionLockAllowlist, _sessionAdvisory()), (_sqlNotifyAllowlist, _notify()), (_sqlLeaseAllowlist, _leaseVerdict()) }) {
       stale.AddRange(allowlist.Keys.Where(name => !sql.TryGetValue(name, out var body) || !pattern.IsMatch(body)));
     }
 
@@ -350,6 +386,10 @@ public partial class CoordinationSourceGuardTests {
     await Assert.That(_advisory().IsMatch(csharp["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"])).IsTrue();
     await Assert.That(_liveness().IsMatch(sql["wh_instance_liveness"])).IsTrue();
     await Assert.That(_liveness().IsMatch("SELECT 1 FROM t WHERE last_heartbeat_at > now() - interval '1 minute'")).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch(sql["_role_lapse_reason"])).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch("WHERE r.lease_expires_at > clock_timestamp()")).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch("SELECT r.lease_expires_at - now()")).IsFalse()
+      .Because("reporting the time left on a lease is not a verdict");
     await Assert.That(sql.ContainsKey("_advisory_lock_held_elsewhere")).IsFalse()
       .Because("a function dropped after its last definition (#2044) is not run by any database, so it is not scanned");
     await Assert.That(sql.ContainsKey("wh_role_assignment_status")).IsTrue()
