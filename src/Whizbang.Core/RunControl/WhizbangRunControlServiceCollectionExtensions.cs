@@ -75,7 +75,9 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetService<IWhizbangRunController>(),
       sp.GetRequiredService<IProcessExitCode>(),
       sp.GetService<TimeProvider>(),
-      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>()));
+      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>(),
+      // #2126: a crash on any thread takes the exit path too; a test registers its own events instead of crashing.
+      sp.GetService<IProcessCrashEvents>()));
     return services;
   }
 

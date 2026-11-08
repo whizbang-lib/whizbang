@@ -37,6 +37,15 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
   /// <summary>The event id of the one entry an exit writes.</summary>
   public static readonly EventId ExitEventId = new(1, "InstanceExit");
 
+  /// <summary>The event id of the entry a faulted task nobody observed writes; it does not end the process.</summary>
+  public static readonly EventId UnobservedTaskEventId = new(2, "UnobservedTaskException");
+
+  /// <summary>
+  /// How long a crash on any thread may spend on its exit before the dying process is let go: the halt, the durable row
+  /// and the entry are attempted within it, and whatever has not finished by then is abandoned.
+  /// </summary>
+  public static readonly TimeSpan CrashExitBudget = TimeSpan.FromSeconds(5);
+
   private readonly IServiceProvider _services;
   private readonly IWhizbangRunController? _runControl;
   private readonly IProcessExitCode _exitCode;
@@ -59,12 +68,18 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
   /// <param name="exitCode">Sets the process exit code.</param>
   /// <param name="timeProvider">The clock uptime and heartbeat age are measured on; the system clock when null.</param>
   /// <param name="logger">Where the exit's entry is written.</param>
+  /// <param name="crashEvents">
+  /// The process's failure events, subscribed to when the host starts; <see cref="ProcessCrashEvents.Instance"/> when
+  /// null.
+  /// </param>
   public WhizbangInstanceExit(
       IServiceProvider services,
       IWhizbangRunController? runControl,
       IProcessExitCode exitCode,
       TimeProvider? timeProvider,
-      ILogger<WhizbangInstanceExit> logger) {
+      ILogger<WhizbangInstanceExit> logger,
+      IProcessCrashEvents? crashEvents = null) {
+    _ = crashEvents;
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(exitCode);
     ArgumentNullException.ThrowIfNull(logger);
