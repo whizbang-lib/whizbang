@@ -357,10 +357,13 @@ public class WhizbangInstanceExitTests {
     var codes = new RecordingExitCode();
     var logger = NullLogger<WhizbangInstanceExit>.Instance;
 
-    await Assert.That(() => new WhizbangInstanceExit(null!, run, codes, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new WhizbangInstanceExit(services, run, null!, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, null!)).Throws<ArgumentNullException>();
-    await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, logger).RequestExit(null!))
+    var events = new WhizbangInstanceExitCrashTests.FakeCrashEvents();
+
+    await Assert.That(() => new WhizbangInstanceExit(null!, run, codes, null, logger, events)).Throws<ArgumentNullException>();
+    await Assert.That(() => new WhizbangInstanceExit(services, run, null!, null, logger, events)).Throws<ArgumentNullException>();
+    await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, null!, events)).Throws<ArgumentNullException>();
+    await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, logger, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, logger, events).RequestExit(null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -442,7 +445,7 @@ public class WhizbangInstanceExitTests {
           NullLogger<WhizbangRunController>.Instance);
       }
       Exit = new WhizbangInstanceExit(provider, (IWhizbangRunController?)RealRunControl ?? RunControl, ExitCodes, Time,
-        provider.GetRequiredService<ILogger<WhizbangInstanceExit>>());
+        provider.GetRequiredService<ILogger<WhizbangInstanceExit>>(), new WhizbangInstanceExitCrashTests.FakeCrashEvents());
     }
 
     public FakeTimeProvider Time { get; } = new(_start);

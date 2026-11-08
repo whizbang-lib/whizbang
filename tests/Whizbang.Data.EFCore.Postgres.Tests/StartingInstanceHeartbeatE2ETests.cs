@@ -257,7 +257,7 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
       Exit = new WhizbangInstanceExit(_services,
         new WhizbangRunController(new WhizbangRunPermit(), new AnnouncesRunning(), [], [], lifecycleOptions, null,
           NullLogger<WhizbangRunController>.Instance),
-        ExitCodes, null, NullLogger<WhizbangInstanceExit>.Instance);
+        ExitCodes, null, NullLogger<WhizbangInstanceExit>.Instance, new NoCrashEvents());
       Stages = _services.GetRequiredService<IStartupStageReporter>();
       _heartbeat = new HeartbeatWorker(
         _services.GetRequiredService<IServiceScopeFactory>(), Instance, Options.Create(new HeartbeatWorkerOptions()),
@@ -474,5 +474,18 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
       partitions.Add(reader.GetInt32(0));
     }
     return partitions;
+  }
+
+  /// <summary>Process failure events nothing raises: a pod here never crashes for real.</summary>
+  private sealed class NoCrashEvents : IProcessCrashEvents {
+    public event UnhandledExceptionEventHandler UnhandledException {
+      add => _ = value;
+      remove => _ = value;
+    }
+
+    public event EventHandler<UnobservedTaskExceptionEventArgs> UnobservedTaskException {
+      add => _ = value;
+      remove => _ = value;
+    }
   }
 }

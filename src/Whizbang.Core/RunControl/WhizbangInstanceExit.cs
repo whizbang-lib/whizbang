@@ -72,8 +72,8 @@ public sealed partial class WhizbangInstanceExit : IWhizbangInstanceExit {
   /// <param name="timeProvider">The clock uptime and heartbeat age are measured on; the system clock when null.</param>
   /// <param name="logger">Where the exit's entry is written.</param>
   /// <param name="crashEvents">
-  /// The process's failure events, subscribed to when the host starts; <see cref="ProcessCrashEvents.Instance"/> when
-  /// null.
+  /// The process's failure events, subscribed to when the host starts: <see cref="ProcessCrashEvents.Instance"/>, which
+  /// the registration supplies unless a test registers its own.
   /// </param>
   public WhizbangInstanceExit(
       IServiceProvider services,
@@ -81,16 +81,17 @@ public sealed partial class WhizbangInstanceExit : IWhizbangInstanceExit {
       IProcessExitCode exitCode,
       TimeProvider? timeProvider,
       ILogger<WhizbangInstanceExit> logger,
-      IProcessCrashEvents? crashEvents = null) {
+      IProcessCrashEvents crashEvents) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(exitCode);
     ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(crashEvents);
     _services = services;
     _runControl = runControl;
     _exitCode = exitCode;
     _time = timeProvider ?? TimeProvider.System;
     _logger = logger;
-    _crashEvents = crashEvents ?? ProcessCrashEvents.Instance;
+    _crashEvents = crashEvents;
   }
 
   /// <inheritdoc />

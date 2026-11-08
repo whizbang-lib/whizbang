@@ -238,8 +238,12 @@ public class WhizbangInstanceExitCrashTests {
 
   [Test]
   public async Task TheProcessEvents_AreTheRuntimesOwnAsync() {
-    UnhandledExceptionEventHandler unhandled = (_, _) => { };
-    EventHandler<UnobservedTaskExceptionEventArgs> unobserved = (_, _) => { };
+    static void unhandled(object? sender, UnhandledExceptionEventArgs e) {
+      // nothing: the test only adds and removes the handler
+    }
+    static void unobserved(object? sender, UnobservedTaskExceptionEventArgs e) {
+      // nothing: the test only adds and removes the handler
+    }
 
     ProcessCrashEvents.Instance.UnhandledException += unhandled;
     ProcessCrashEvents.Instance.UnobservedTaskException += unobserved;

@@ -70,14 +70,15 @@ public static class WhizbangRunControlServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     // A test host registers its own IProcessExitCode first so the test process keeps its own exit code.
     services.TryAddSingleton<IProcessExitCode>(ProcessExitCode.Instance);
+    // #2126: a crash on any thread takes the exit path too; a test registers its own events instead of crashing.
+    services.TryAddSingleton<IProcessCrashEvents>(ProcessCrashEvents.Instance);
     services.TryAddSingleton<IWhizbangInstanceExit>(static sp => new WhizbangInstanceExit(
       sp,
       sp.GetService<IWhizbangRunController>(),
       sp.GetRequiredService<IProcessExitCode>(),
       sp.GetService<TimeProvider>(),
       sp.GetLoggerOrNullLogger<WhizbangInstanceExit>(),
-      // #2126: a crash on any thread takes the exit path too; a test registers its own events instead of crashing.
-      sp.GetService<IProcessCrashEvents>()));
+      sp.GetRequiredService<IProcessCrashEvents>()));
     return services;
   }
 

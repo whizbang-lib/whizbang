@@ -49,7 +49,7 @@ public class WhizbangKillswitchTests {
     // #2126: the stop is the one exit path's, which halts through the same controller; outside a host it completes itself.
     var exit = new WhizbangInstanceExit(
       Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceCollection()), controller, new DiscardedExitCode(), null,
-      NullLogger<WhizbangInstanceExit>.Instance);
+      NullLogger<WhizbangInstanceExit>.Instance, new NoCrashEvents());
     return (new WhizbangKillswitch(controller, lifecycle, coordinator, exit), lifecycle, workers, transport, permit);
   }
 
@@ -132,5 +132,18 @@ public class WhizbangKillswitchTests {
     // Clearing returns it to the current system phase.
     await killswitch.ClearComponentOverrideAsync("transport");
     await Assert.That(transport.Last).IsEqualTo(LifecyclePhase.Migrating);
+  }
+
+  /// <summary>Process failure events nothing raises: the killswitch tests never start a host.</summary>
+  private sealed class NoCrashEvents : IProcessCrashEvents {
+    public event UnhandledExceptionEventHandler UnhandledException {
+      add => _ = value;
+      remove => _ = value;
+    }
+
+    public event EventHandler<UnobservedTaskExceptionEventArgs> UnobservedTaskException {
+      add => _ = value;
+      remove => _ = value;
+    }
   }
 }
