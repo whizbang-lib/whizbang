@@ -157,6 +157,66 @@ public class RedeliveryWindowAnswerTests {
   }
 
   [Test]
+  [Arguments(3L, 9L)]
+  [Arguments(null, null)]
+  public async Task OrdinaryRequest_EveryBundleEchoesTheRequestedWindowAsync(long? from, long? to) {
+    // #2143: the receiver marks a bucket unchangeable only when the answer covered its deficit, so it must know the window.
+    var coordinator = new WindowCoordinator { Events = [_evt(_s1, 1, 4), _evt(_s2, 1, 5), _evt(_s3, 1, 6)] };
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RequesterService = "damaged-svc",
+      Topic = "inbox",
+      FromCommitSequence = from,
+      ToCommitSequence = to,
+    });
+
+    await Assert.That(serializer.Composites).Count().IsEqualTo(3).Because("precondition: one bundle per stream");
+    foreach (var bundle in serializer.Composites) {
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(from, to));
+    }
+  }
+
+  [Test]
+  public async Task OrdinaryRequest_NamingEvents_EchoesTheRequestedWindowOnTheNamedAndTheFallbackBundlesAsync() {
+    var named = _evt(_s1, 1, 4);
+    var coordinator = new WindowCoordinator { Events = [named, _evt(_s2, 1, 5)] };
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RequesterService = "damaged-svc",
+      Topic = "inbox",
+      StreamIds = [_s1, _s2],
+      EventIds = [named.EventId],
+      FromCommitSequence = 2,
+      ToCommitSequence = 8,
+    });
+
+    await Assert.That(serializer.Composites).IsNotEmpty();
+    foreach (var bundle in serializer.Composites) {
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
+    }
+  }
+
+  [Test]
+  public async Task Window_EachPagesBundlesEchoTheSequencesThatPageCoveredAsync() {
+    // A backfill window's pages walk the type by commit sequence: a full page covers through its last event, and the page
+    // that ran out covers through the window's ceiling.
+    var coordinator = new WindowCoordinator {
+      Events = [_evt(_s1, 1, 1), _evt(_s2, 1, 2), _evt(_s3, 1, 3), _evt(_s1, 2, 4), _evt(_s2, 2, 5)],
+    };
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, new CaptureTransport(), serializer, new RedeliveryPumpOptions { SelectPageSize = 2 });
+
+    await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
+
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow))
+      .IsEquivalentTo(new RedeliveryAnswerWindow?[] { new(null, 2), new(2, 4), new(4, null) });
+  }
+
+  [Test]
   public async Task OrdinaryRequest_StoppedAtTheBoundWithMoreLeft_IsCountedAsCappedAsync() {
     // An ordinary request has no window to continue from, so stopping at the bound with more selected is reported, never
     // silent.

@@ -35,6 +35,8 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
       return Task.FromResult(keys.Count);
     }
 
+    public (RedeliveryAnswerWindow Window, IReadOnlyList<Guid> EventIds)? WindowedMark { get; private set; }
+
     public IReadOnlyList<IntegrityRepairLedger.DivergenceKey>? Answer { get; set; }
     public Exception? Failure { get; set; }
     public int Calls { get; private set; }
@@ -48,6 +50,13 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
       return Failure is not null
         ? Task.FromException<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>(Failure)
         : Task.FromResult(Answer);
+    }
+
+    public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+        IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      WindowedMark = (answeredWindow, answeredEventIds);
+      return IntegrityMarkUnhealableBatchAsync(originServiceId, keys, now, cancellationToken);
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -94,6 +103,23 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
     await Assert.That(result).IsEquivalentTo([marked]);
     await Assert.That(coordinator.Calls).IsEqualTo(1);
     await Assert.That(coordinator.Origin).IsEqualTo(origin);
+  }
+
+  [Test]
+  public async Task MarkUnhealable_WithAWindow_GivesTheStoreTheWindowAndTheEventsAsync() {
+    var origin = TrackedGuid.New().Value;
+    var marked = _key(origin);
+    var carried = TrackedGuid.New().Value;
+    var coordinator = new MarkingCoordinator { Answer = [marked] };
+    var (ledger, _, sp) = _build(coordinator);
+    await using var owned = sp;
+
+    var result = await ledger.MarkUnhealableBatchAsync([marked], new RedeliveryAnswerWindow(3, 9), [carried], _now);
+
+    await Assert.That(result).IsEquivalentTo([marked]);
+    await Assert.That(coordinator.WindowedMark!.Value.Window).IsEqualTo(new RedeliveryAnswerWindow(3, 9))
+      .Because("the store judges which rows the answer covered (#2143)");
+    await Assert.That(coordinator.WindowedMark!.Value.EventIds).IsEquivalentTo([carried]);
   }
 
   [Test]

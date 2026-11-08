@@ -1107,6 +1107,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    _ = (answeredWindow, answeredEventIds);
+    return IntegrityMarkUnhealableBatchAsync(originServiceId, keys, now, cancellationToken);
+  }
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a prune that cannot reach the ledger is logged and answers 0; the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetUnconsumedEventTypesAsync(
       IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
@@ -1232,6 +1240,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore CA1848
       return null;
     }
+  }
+
+  /// <inheritdoc />
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    _ = answeredWindow;
+    return IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, now, cancellationToken);
   }
 
   /// <inheritdoc />

@@ -272,6 +272,14 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     return ValueTask.FromResult<IReadOnlyList<DivergenceKey>>(marked);
   }
 
+  /// <inheritdoc />
+  public ValueTask<IReadOnlyList<DivergenceKey>> MarkUnhealableBatchAsync(
+      IReadOnlyList<DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow, IReadOnlyList<Guid> answeredEventIds,
+      DateTimeOffset now, CancellationToken cancellationToken = default) {
+    _ = (answeredWindow, answeredEventIds);
+    return MarkUnhealableBatchAsync(keys, now, cancellationToken);
+  }
+
   private Entry _getOrAdd(DivergenceKey key, DateTimeOffset now) {
     if (_entries.TryGetValue(key, out var entry)) {
       return entry;

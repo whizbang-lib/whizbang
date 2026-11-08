@@ -119,6 +119,9 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
 
   public Exception? BundleAnswerFailure { get; set; }
 
+  /// <summary>The window each window-aware commit-time record was given (#2143).</summary>
+  public List<RedeliveryAnswerWindow?> BundleAnswerWindows { get; } = [];
+
   /// <summary>Every commit-time record the reconcile asked for.</summary>
   public List<(Guid Origin, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> Sequences, DateTimeOffset Now)> BundleAnswers { get; } = [];
 
@@ -129,6 +132,13 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
     return BundleAnswerFailure is { } failure
       ? Task.FromException<IntegrityBundleAnswer?>(failure)
       : Task.FromResult(BundleAnswer);
+  }
+
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    BundleAnswerWindows.Add(answeredWindow);
+    return IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, now, cancellationToken);
   }
 
   public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

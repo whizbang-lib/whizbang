@@ -159,6 +159,15 @@ public sealed class RedeliveryPump(
   }
 
 
+  /// <summary>RED scaffold: echoes nothing yet.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "scaffold")]
+  public Task<int> PublishAnswerAsync(
+      IReadOnlyList<RedeliveryEvent> events, RedeliveryAnswerWindow answeredWindow, string topic, string? target,
+      Guid originServiceId = default, bool stateOnly = false, CancellationToken cancellationToken = default) {
+    _ = answeredWindow;
+    return PublishAsync(events, topic, target, originServiceId, stateOnly, cancellationToken);
+  }
+
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
   /// Returns the number of composites published.

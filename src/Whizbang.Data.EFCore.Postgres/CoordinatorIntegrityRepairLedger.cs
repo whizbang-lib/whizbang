@@ -209,6 +209,14 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      System.Collections.Generic.IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    _ = (answeredWindow, answeredEventIds);
+    return MarkUnhealableBatchAsync(keys, now, cancellationToken);
+  }
+
+  /// <inheritdoc />
   /// <remarks>One store round trip per origin. Best-effort: a mark that cannot reach the store is logged and answers 0,
   /// and the requested buckets wait out their backoff only.</remarks>
   public async ValueTask<int> MarkAnswerPendingAsync(
