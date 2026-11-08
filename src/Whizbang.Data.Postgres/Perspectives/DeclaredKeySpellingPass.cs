@@ -73,6 +73,21 @@ public static class DeclaredKeySpellingPass {
     await SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, logger, cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>Rewrites, then settles, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <param name="connectionFactory">Produces the connections the pass uses.</param>
+  /// <param name="schema">The schema the tables live in, unquoted.</param>
+  /// <param name="tables">The tables and what their readers declare.</param>
+  /// <param name="commandTimeoutSeconds">The timeout of each statement.</param>
+  /// <param name="timeProvider">The clock the progress lines are paced on.</param>
+  /// <param name="logger">Where the pass reports what it changed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  public static Task ApplyAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
+      int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    return ApplyAsync(connectionFactory, schema, tables, commandTimeoutSeconds, logger, cancellationToken);
+  }
+
   /// <summary>
   /// Rewrites every stored key in another case than its declared name, table by table, skipping a table that does not
   /// exist yet or that a pass has settled.
@@ -89,6 +104,27 @@ public static class DeclaredKeySpellingPass {
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
     RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, logger, cancellationToken);
+
+  /// <summary>Rewrites, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <param name="connectionFactory">Produces the connections the pass uses.</param>
+  /// <param name="schema">The schema the tables live in, unquoted.</param>
+  /// <param name="tables">The tables and what their readers declare.</param>
+  /// <param name="commandTimeoutSeconds">The timeout of each statement.</param>
+  /// <param name="timeProvider">The clock the progress lines are paced on.</param>
+  /// <param name="logger">Where the pass reports what it changed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The tables scanned.</returns>
+  public static Task<DeclaredKeySpellingResult> RewriteAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
+      int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) =>
+    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger, cancellationToken);
+
+  internal static Task<DeclaredKeySpellingResult> RewriteAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
+      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    return RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, batchSize, logger, cancellationToken);
+  }
 
   internal static async Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
@@ -135,6 +171,26 @@ public static class DeclaredKeySpellingPass {
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
     SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, logger, cancellationToken);
+
+  /// <summary>Settles, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <param name="connectionFactory">Produces the connections the pass uses.</param>
+  /// <param name="schema">The schema the tables live in, unquoted.</param>
+  /// <param name="result">What the rewrite found.</param>
+  /// <param name="commandTimeoutSeconds">The timeout of each statement.</param>
+  /// <param name="timeProvider">The clock the progress lines are paced on.</param>
+  /// <param name="logger">Where the pass reports what is missing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  public static Task SettleAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
+      int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) =>
+    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger, cancellationToken);
+
+  internal static Task SettleAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
+      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    return SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, batchSize, logger, cancellationToken);
+  }
 
   internal static async Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
