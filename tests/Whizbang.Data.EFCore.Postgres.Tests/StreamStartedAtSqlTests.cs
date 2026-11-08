@@ -144,7 +144,7 @@ public class StreamStartedAtSqlTests : EFCoreTestBase {
       """, ("s", stream));
 
     var firstAppended = await _timeAsync(conn, "SELECT first_appended_at FROM wh_stream_lifecycle WHERE stream_id = @s", ("s", stream));
-    await Assert.That(firstAppended).IsNotNull();
+    await Assert.That(firstAppended.HasValue).IsTrue();
     await Assert.That(await _startedAtAsync(conn, stream)).IsEqualTo(firstAppended)
       .Because("with no recorded business time, the time the first event was stored is the closest start the ledger knows");
   }
