@@ -57,6 +57,36 @@ public class ListenConnectionLifetimeTests {
       .Because("a delivery that threw or returned no longer holds the lifetime open");
   }
 
+  // A stop that finds a delivery running must not leave: the wait returns as soon as the callback
+  // does, so the stop waits for the wait and never finishes in the middle of a delivery. A connection
+  // test cannot time a stop into a delivery, so the delivery is held open here instead.
+  [Test]
+  public async Task AwaitWaitOrStop_AStopDuringADelivery_WaitsForTheWaitAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var release = new SemaphoreSlim(0);
+    var lifetime = new ListenConnectionLifetime(new RecordingDisposable(), (_, _) => {
+      entered.TrySetResult();
+      release.Wait();
+    });
+    var delivery = Task.Run(() => lifetime.Deliver("wh_channel", "outbox"));
+    await entered.Task;
+    var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var stopped = new CancellationTokenSource();
+    await stopped.CancelAsync();
+
+    var stop = PgSharedNotifyConnection.AwaitWaitOrStopAsync(wait.Task, lifetime, stopped.Token);
+    var leftDuringDelivery = stop.IsCompleted;
+    release.Release();
+    await delivery;
+    wait.SetResult();
+    await stop;
+
+    await Assert.That(leftDuringDelivery).IsFalse()
+      .Because("a stop that finds a delivery running waits for the wait instead of leaving mid-delivery");
+    await Assert.That(lifetime.TryClose()).IsTrue()
+      .Because("the refused close left the lifetime open, and the finished delivery no longer holds it");
+  }
+
   [Test]
   public async Task Deliver_TheDispatchThrows_StillReleasesTheLifetimeForCloseAsync() {
     var lifetime = new ListenConnectionLifetime(

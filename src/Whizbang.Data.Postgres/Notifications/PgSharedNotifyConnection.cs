@@ -601,7 +601,7 @@ public sealed partial class PgSharedNotifyConnection(
     try {
       var wait = WaitForMessageAsync(conn, combined.Token);
       lifetime.PendingWait = wait;
-      await _awaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false);
+      await AwaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false);
       // Notification arrived (or backend message) — handler ran synchronously inside
       // WaitAsync. Loop again to wait for the next one.
     } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested && combined.Token.IsCancellationRequested) {
@@ -637,7 +637,9 @@ public sealed partial class PgSharedNotifyConnection(
   /// close, and then the wait is awaited: it returns as soon as the callback does, so a stop never
   /// finishes in the middle of a delivery, and the loop leaves through its own guard.
   /// </remarks>
-  private static async Task _awaitWaitOrStopAsync(
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Stop_WhileTheWaitMissesItsCancellation_StillCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ListenConnectionLifetimeTests.cs:AwaitWaitOrStop_AStopDuringADelivery_WaitsForTheWaitAsync</tests>
+  internal static async Task AwaitWaitOrStopAsync(
       Task wait, ListenConnectionLifetime lifetime, CancellationToken stoppingToken) {
     try {
       await wait.WaitAsync(stoppingToken).ConfigureAwait(false);
