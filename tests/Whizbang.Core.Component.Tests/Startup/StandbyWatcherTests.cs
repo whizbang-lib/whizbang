@@ -487,12 +487,13 @@ public class StandbyWatcherTests {
   }
 
   [Test]
-  public async Task OnceStoodDown_FurtherTicksDoNothingAsync() {
-    // Alive but not ready and reapable: replacing it is the orchestrator's decision, and
-    // re-advancing the phase every tick would churn the lifecycle for no reason.
+  public async Task OnceStoodDown_FurtherTicksInsideTheSlowCadence_DoNothingAsync() {
+    // Alive but not ready: re-advancing the phase every tick would churn the lifecycle for no reason, and reading the
+    // ledger every poll would cost a query per instance. #2022: a stood-down instance still asks again on the slow
+    // cadence (or a signal), so it resumes when nothing newer remains; StandbyWatcherUpgradeStandDownTests covers that.
     var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
     using var h = _harness(request: null, assessor: assessor,
-      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) });
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
     var callsAfterFirst = assessor.Calls;
     h.Lifecycle.Advanced.Clear();
@@ -501,7 +502,21 @@ public class StandbyWatcherTests {
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
     await Assert.That(assessor.Calls).IsEqualTo(callsAfterFirst)
-      .Because("a stood-down instance waits for the orchestrator, it does not keep re-assessing");
+      .Because("inside the slow cadence, with nothing signaled, a stood-down instance does not re-assess");
+  }
+
+  [Test]
+  public async Task OnceStoodDown_AVerdictThatStillSaysStandDown_ChangesNothingAsync() {
+    var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Lifecycle.Advanced).IsEmpty().Because("the schema stays newer than this binary: the instance stays down");
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
   }
 
   [Test]

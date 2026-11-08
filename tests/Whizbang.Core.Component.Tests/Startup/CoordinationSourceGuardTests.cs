@@ -126,6 +126,69 @@ public partial class CoordinationSourceGuardTests {
     ["wh_publish_signal"] = "the signal bus's SQL publish: notifies at commit, and records a decision in the durable log (#2046)",
   };
 
+  /// <summary>
+  /// C# files that may order versions (#2022): the one rule, and the two version types it orders by. Startup's Assess,
+  /// the running instance's re-assessment, the newer instance's announcement, the standby handshake and the migration
+  /// guard all ask the rule, so a stand-down can never be decided by a second comparison that disagrees with it.
+  /// </summary>
+  private static readonly Dictionary<string, string> _versionOrderAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "THE rule: orders versions and finds a newer one recorded or online",
+    ["src/Whizbang.Core/Versioning/SemanticVersion.cs"] = "the SemVer parser and precedence the rule orders library versions by",
+    ["src/Whizbang.Core/Versioning/ApplicationVersion.cs"] = "the application version's schemes and order, which the rule orders "
+      + "application versions by",
+  };
+
+  [GeneratedRegex(@"\bSemanticVersion\b|ApplicationVersion\??\)?\.CompareTo\(")]
+  private static partial Regex _versionOrder();
+
+  [Test]
+  public async Task VersionOrdering_AppearsOnlyInTheOneRuleAsync() =>
+    await _assertOnlyAllowedAsync(_versionOrder(), _versionOrderAllowlist,
+      "a version comparison outside the one rule; ask UpgradeOrder (FindNewer, OlderThan, CompareLibrary) instead");
+
+  [Test]
+  public async Task TheVersionScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_versionOrder().IsMatch(csharp["src/Whizbang.Core/Versioning/UpgradeOrder.cs"])).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("if (!SemanticVersion.TryParse(request.RequestedVersion, out var requested)) {")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var order = provider.ApplicationVersion.CompareTo(theirs);")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var found = UpgradeOrder.FindNewer(own, seen);")).IsFalse()
+      .Because("asking the rule is the way to compare");
+    var stale = _versionOrderAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_versionOrder().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
+  /// <summary>
+  /// C# files that may read or honor the incompatibility override (#2022): the setting is read where the rule lives, the
+  /// drivers hand it to their assessor, and only the one verdict turns an incompatibility into a start. Anything else
+  /// that read it could start an instance the verdict refused.
+  /// </summary>
+  private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
+    ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
+    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
+    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
+  };
+
+  [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]
+  private static partial Regex _incompatibilityOverride();
+
+  [Test]
+  public async Task TheIncompatibilityOverride_IsHonoredOnlyByTheOneVerdictAsync() =>
+    await _assertOnlyAllowedAsync(_incompatibilityOverride(), _overrideAllowlist,
+      "the incompatibility override read or honored outside the one verdict; read StartupAssessment.OverriddenReason instead");
+
+  [Test]
+  public async Task TheOverrideScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_incompatibilityOverride().IsMatch("var on = UpgradeOrder.IsIncompatibilityOverridden(configuration);")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("return verdict with { OverriddenReason = reason };")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("if (assessment.OverriddenReason is { } reason) {")).IsFalse()
+      .Because("reading the verdict's record of an override is how everything else learns of it");
+    var stale = _overrideAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_incompatibilityOverride().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
   private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
     + "closed run permit denies (#2045)";
   private const string STORE = "the store that implements the claim; its callers obey the run permit";

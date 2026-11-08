@@ -98,9 +98,15 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     }
 
     var versionProvider = new LibraryVersionProvider(version);
-    // The one writer of the row's stage, phase and version (#1636): the pod is Running, as the stage record says.
+    // The one writer of the row's stage, phase and version (#1636): an older pod is Running, as the stage record says;
+    // the newer pod is the migrator, still in Migrate while it runs the handshake. #2022: a newer instance that serves is
+    // online and stands the older ones down by itself; a migrator mid-handshake does not serve yet.
     var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance, versionProvider);
-    await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    if (version == NEW_VERSION) {
+      await stages.EnterAsync(StartupStage.Migrate, "applying the breaking migration under the standby handshake", ct);
+    } else {
+      await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    }
     await stages.InstanceRegisteredAsync(ct);
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(

@@ -150,10 +150,135 @@ public class DapperStartupAssessorTests {
     await _startAsync();
     await _execAsync($"""
       WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{_newerThanThisBinary()}') RETURNING id)
-      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-a-newer-release', status = 2
         WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
       """);
 
     await Assert.That(await _verdictAsync()).IsEqualTo(StartupVerdict.StandDown);
+  }
+
+  // ── #2022: a newer version online, read as the EF Core driver reads it ──
+
+  private ServiceProvider _composeAt(string applicationVersion) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IApplicationVersionProvider>(new ApplicationVersionProvider(ApplicationVersion.FromRecorded(applicationVersion)));
+    services.AddLogging();
+    services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
+    services.AddWhizbangPostgres(_database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries,
+      managedObjects: null);
+    return services.BuildServiceProvider();
+  }
+
+  private async Task<Guid> _onlineAsync(string application, string phase = "Running") {
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await db.ExecuteScalarAsync("""
+      SELECT record_heartbeat(@id, 'svc', 'host', 1, '{}'::jsonb, @phase, @library, 90, 'pooled', @application)
+      """, new { id, phase, library = BuildInfo.Version, application });
+    return id;
+  }
+
+  [Test]
+  public async Task ANewerApplicationVersionOnline_StandsAnOlderInstanceDown_AsTheEFCoreDriverDoesAsync() {
+    await _startAsync();
+    var newer = await _onlineAsync("2.0.0");
+
+    await using var provider = _composeAt("1.0.0");
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"instance {newer} is online with application version 2.0.0");
+  }
+
+  [Test]
+  public async Task AnEqualOrOlderVersionOnline_OrOneNotYetServing_StandsNothingDownAsync() {
+    await _startAsync();
+    await _onlineAsync("1.0.0");
+    await _onlineAsync("0.9.0");
+    await _onlineAsync("2.0.0", "Migrating");
+
+    await using var provider = _composeAt("1.0.0");
+    var assessment = await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Current).Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task TheOnlineVersions_AreReadForTheAnnouncementAsync() {
+    await _startAsync();
+    var running = await _onlineAsync("2.0.0");
+    await _onlineAsync("2.0.0", "Migrating");
+
+    await using var provider = _composeAt("1.0.0");
+    var online = await provider.GetRequiredService<IOnlineVersionReader>().ReadOnlineAsync(CancellationToken.None);
+
+    await Assert.That(online).IsEquivalentTo([new VersionSighting(BuildInfo.Version, "2.0.0", running)]);
+  }
+
+  // ── #2022: the rollback gate, as the EF Core driver applies it ──
+
+  private async Task<int> _versionAsync(string library, string application) {
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    return await db.ExecuteScalarAsync<int>("""
+      INSERT INTO wh_schema_versions (library_version, application_version) VALUES (@library, @application)
+      ON CONFLICT (library_version, application_version) DO UPDATE SET notes = wh_schema_versions.notes
+      RETURNING id
+      """, new { library, application });
+  }
+
+  private async Task<StartupAssessment> _assessAtAsync(string applicationVersion) {
+    await using var provider = _composeAt(applicationVersion);
+    return await provider.GetRequiredService<IStartupAssessor>().AssessAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task AnApplicationRollback_WithNothingMigratedSince_ServesAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(BuildInfo.Version, "2.0.0");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, status = 3");
+
+    var assessment = await _assessAtAsync("1.9.0");
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task AnApplicationRollback_AfterAnApplicationSchemaChange_StandsDown_NamingItAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(BuildInfo.Version, "2.0.0");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, content_hash = 'new-columns', status = 2 WHERE file_name = 'perspective:AssessProbe'");
+
+    var assessment = await _assessAtAsync("1.9.0");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      "1 schema change(s) were applied by a newer version that this version did not make, and a migration cannot be "
+      + "reversed yet (down migrations: whizbang-lib/whizbang#2122): perspective:AssessProbe (applied by library "
+      + $"{BuildInfo.Version}, application 2.0.0)");
+  }
+
+  [Test]
+  public async Task AWizbangRollback_AfterAWizbangMigration_StandsDown_AndOneThatOnlyReStamped_ServesAsync() {
+    await _startAsync();
+    var newer = await _versionAsync(_newerThanThisBinary(), "unknown");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {newer}, status = 3");
+    await Assert.That((await _assessAtAsync("1.0.0")).Verdict).IsNotEqualTo(StartupVerdict.StandDown)
+      .Because("a newer library whose passes changed nothing left nothing this binary cannot serve");
+
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-release', status = 2 WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]')");
+    var assessment = await _assessAtAsync("1.0.0");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"(applied by library {_newerThanThisBinary()}, application unknown)");
+  }
+
+  [Test]
+  public async Task ServingAsItIs_WithNoInstanceIdentity_TouchesNothingAsync() {
+    // No identity, no row to record the override on: it returns without opening a connection (this one goes nowhere).
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
+
+    await initializer.ServeAsItIsAsync("the reason", CancellationToken.None);
+
+    await Assert.That(async () => await initializer.ServeAsItIsAsync(" ", CancellationToken.None)).Throws<ArgumentException>();
   }
 }

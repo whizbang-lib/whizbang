@@ -27,6 +27,12 @@ public class CoordinationSignalsTests {
     await Assert.That(PartitionAssignmentPublishedSignal.DeliveryClass).IsEqualTo(SignalDeliveryClass.Durable)
       .Because("a published assignment is a decision: an instance that missed the notification must still hear it");
     await Assert.That(PartitionAssignmentPublishedSignal.Targeting).IsEqualTo(SignalTargeting.Broadcast);
+    // #2022: a newer version online is a decision too. An older instance that missed the notification while running is
+    // told by its tail; one that starts later learns from the durable record (the online instance rows) at Assess.
+    await Assert.That(NewerVersionOnlineSignal.DeliveryClass).IsEqualTo(SignalDeliveryClass.Durable)
+      .Because("a newer version online is a decision: an older instance that missed the notification must still hear it");
+    await Assert.That(NewerVersionOnlineSignal.Targeting).IsEqualTo(SignalTargeting.Broadcast)
+      .Because("every older instance stands down, not one");
   }
 
   [Test]
@@ -66,6 +72,7 @@ public class CoordinationSignalsTests {
       // The two payloads the work channel already carries: the transport routes them by these names.
       (typeof(WorkOrphanedSignal), "orphan"),
       (typeof(DeadLetterReadySignal), "deadletter"),
+      (typeof(NewerVersionOnlineSignal), "newer-version-online"),
     ];
     foreach (var (type, wire) in expected) {
       var entry = all.SingleOrDefault(e => e.SignalType == type);

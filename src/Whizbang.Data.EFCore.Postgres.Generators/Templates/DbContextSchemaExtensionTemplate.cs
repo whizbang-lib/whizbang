@@ -93,8 +93,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // record: a stand-down is refused before anything is applied (a direct call on a stood-down host fails loudly), and
     // a Current schema skips the bootstrap, the election, the stored-form rewrite and the pass, so no schema lock is
     // taken. Converge still runs.
-    var schemaIsCurrent = Whizbang.Data.Postgres.StartupVerdictBinding.IsCurrent(
-      await Whizbang.Data.Postgres.StartupVerdictBinding.ReadAsync(serviceProvider, cancellationToken));
+    var assessment = await Whizbang.Data.Postgres.StartupVerdictBinding.ReadAsync(serviceProvider, cancellationToken);
+    var schemaIsCurrent = Whizbang.Data.Postgres.StartupVerdictBinding.IsCurrent(assessment);
+    // #2022: the incompatibility override let this build start on a schema it did not create. It serves the schema as it
+    // is: nothing is bootstrapped, elected, migrated or converged, and the instance's row records the override.
+    var incompatibilityOverride = assessment?.OverriddenReason;
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -169,6 +172,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           async ct => {
             await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
               segmentConnectionFactory, "__SCHEMA__", currentInstance, cancellationToken: ct);
+            if (incompatibilityOverride is not null) {
+              await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+                segmentConnectionFactory, "__SCHEMA__", currentInstance.InstanceId, incompatibilityOverride, ct);
+            }
             await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
           },
           "__SCHEMA__", logger, cancellationToken);
@@ -662,6 +669,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
     // never fatal: a table left unanalyzed is found by the maintenance step.
     await Whizbang.Data.Postgres.SchemaInitializationStages.ConvergingAsync(serviceProvider, cancellationToken);
+    if (incompatibilityOverride is not null) {
+      // #2022: a build serving past an incompatibility verdict changes nothing: no analyze, no reconcile, no settings.
+      return;
+    }
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
 
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -201,6 +203,38 @@ public class StartupAssessmentSourceTests {
     await Assert.That(verdict).IsSameReferenceAs(_serve);
     await Assert.That(assessor.Calls).IsEqualTo(1)
       .Because("the Assess step and the schema initializer read one verdict: the step reads it through the source");
+  }
+
+  [Test]
+  public async Task AnOverriddenIncompatibility_IsLoggedLoudly_OncePerStart_WithTheVerdictAndItsFullReasonAsync() {
+    // Owner decision (#2022): a host that turned the override on is told, at every start, that it runs past an
+    // incompatibility verdict, and why, in the same words the stand-down would have used.
+    const string REASON = "since this instance's version (library 1.0.0, application 1.9.0), 1 schema change(s) were applied";
+    var overridden = new StartupAssessment(StartupVerdict.Current, "running past it") { OverriddenReason = REASON };
+    var logger = new FakeLogger<StartupAssessmentSource>();
+    var source = new StartupAssessmentSource(new CountingAssessor(_ => Task.FromResult(overridden)), NullStartupStageReporter.Instance,
+      new FakeTimeProvider(), logger);
+
+    await source.AssessAsync(CancellationToken.None);
+    await source.AssessAsync(CancellationToken.None);
+
+    var line = logger.Collector.GetSnapshot().Single();
+    await Assert.That(line.Id.Id).IsEqualTo(3);
+    await Assert.That(line.Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(line.Message).Contains("Whizbang:Startup:OverrideIncompatibility");
+    await Assert.That(line.Message).Contains("StandDown");
+    await Assert.That(line.Message).Contains(REASON);
+  }
+
+  [Test]
+  public async Task ACompatibleVerdict_LogsNoOverrideAsync() {
+    var logger = new FakeLogger<StartupAssessmentSource>();
+    var source = new StartupAssessmentSource(new CountingAssessor(_ => Task.FromResult(_serve)), NullStartupStageReporter.Instance,
+      new FakeTimeProvider(), logger);
+
+    await source.AssessAsync(CancellationToken.None);
+
+    await Assert.That(logger.Collector.GetSnapshot()).IsEmpty();
   }
 
   private static StartupAssessmentSource _source(IStartupAssessor assessor) =>

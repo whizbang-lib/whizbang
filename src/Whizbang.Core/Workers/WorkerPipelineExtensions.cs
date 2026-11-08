@@ -346,7 +346,15 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
       sp.GetRequiredService<TimeProvider>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
-      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
+      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()) {
+      // #2022: the cluster-wide stand-down. A newer version online (and an instance that died or left) asks the verdict
+      // again at once; once serving, a newer instance announces itself to the older ones online.
+      Signals = sp.GetService<Whizbang.Core.Signals.ISignalBus>(),
+      OnlineVersions = sp.GetService<Whizbang.Core.Versioning.IOnlineVersionReader>(),
+      ApplicationVersion = sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
+      Lifecycle = sp.GetService<IWhizbangLifecycleState>(),
+      Stages = sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>(),
+    });
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.

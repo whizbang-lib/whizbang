@@ -535,6 +535,42 @@ public static class SchemaBootstrapPhase {
   }
 
   /// <summary>
+  /// Records on this instance's row that the incompatibility override let it start (#2022), with the reason the verdict
+  /// would have stood it down, so operators and peers see it without reading its logs. Written once the row exists.
+  /// </summary>
+  /// <param name="connectionFactory">Produces the connection to write over.</param>
+  /// <param name="schema">The target schema.</param>
+  /// <param name="instanceId">This instance.</param>
+  /// <param name="reason">The overridden verdict's reason (<see cref="Whizbang.Core.Startup.StartupAssessment.OverriddenReason"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether it was recorded: false on a schema whose instance table has no place for it (older than 356).</returns>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
+  public static async Task<bool> RecordIncompatibilityOverrideAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, Guid instanceId, string reason,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
+    ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+    var target = _quoteIdentifier(string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty));
+
+    await using var connection = connectionFactory();
+    await connection.OpenAsync(cancellationToken);
+    await using (var probe = new NpgsqlCommand(
+      "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'incompatibility_override' "
+      + "AND NOT attisdropped)", connection)) {
+      probe.Parameters.AddWithValue(target + ".wh_service_instances");
+      if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
+        return false;
+      }
+    }
+    await using var command = new NpgsqlCommand(
+      $"UPDATE {target}.wh_service_instances SET incompatibility_override = $2 WHERE instance_id = $1", connection);
+    command.Parameters.AddWithValue(instanceId);
+    command.Parameters.AddWithValue(reason);
+    return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
+  }
+
+  /// <summary>
   /// The hash that identifies a closure: SHA-256 over every script's name and text, in order.
   /// </summary>
   /// <param name="scripts">The scripts, in the order they apply.</param>
