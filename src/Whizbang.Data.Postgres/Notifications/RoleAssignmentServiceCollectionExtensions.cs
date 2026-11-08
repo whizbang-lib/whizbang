@@ -140,8 +140,8 @@ public static class RoleAssignmentServiceCollectionExtensions {
 
 /// <summary>
 /// AOT-safe binding of <see cref="RoleAssignmentOptions"/> from <c>Whizbang:Database:RoleAssignment</c>:
-/// <c>RenewInterval</c>, <c>MissedRenewalsBeforeLapse</c>, <c>CooldownAfterLapse</c> and
-/// <c>OwedWorkRetryBase</c>, so an operator can tune the lease without a code change.
+/// <c>RenewInterval</c>, <c>MissedRenewalsBeforeLapse</c>, <c>CooldownAfterLapse</c>, <c>OwedWorkRetryBase</c> and
+/// <c>ProgressWindow</c> (#2140), so an operator can tune the lease without a code change.
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentRegistrationTests.cs</tests>
@@ -160,6 +160,9 @@ internal sealed class ConfigureRoleAssignmentOptionsFromConfiguration(IConfigura
     }
     if (TimeSpan.TryParse(section["OwedWorkRetryBase"], CultureInfo.InvariantCulture, out var retry)) {
       options.OwedWorkRetryBase = retry;
+    }
+    if (TimeSpan.TryParse(section["ProgressWindow"], CultureInfo.InvariantCulture, out var progress)) {
+      options.ProgressWindow = progress;
     }
   }
 }

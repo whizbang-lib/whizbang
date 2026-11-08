@@ -47,8 +47,14 @@ public class WorkTableVacuumOnAcquisitionTests {
     public int Vacuums { get; private set; }
     public IReadOnlyList<WorkTableVacuum> Outcome { get; init; } = [new("wh_outbox", true, null)];
 
-    public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
+    public List<TimeSpan> Windows { get; } = [];
+
+    public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
+      throw new InvalidOperationException("the handler asks with its skip window");
+
+    public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) {
       Vacuums++;
+      Windows.Add(skipTablesVacuumedWithin);
       return Task.FromResult(Outcome);
     }
 
@@ -65,7 +71,7 @@ public class WorkTableVacuumOnAcquisitionTests {
   }
 
   private static (WorkTableVacuumOnAcquisition Handler, FakeLogger<WorkTableVacuumOnAcquisition> Logger) _handlerOver(
-      VacuumCoordinator? coordinator, bool maintainOnReassignment = true) {
+      VacuumCoordinator? coordinator, bool maintainOnReassignment = true, TimeSpan? skipWithin = null) {
     var services = new ServiceCollection();
     if (coordinator is not null) {
       services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -74,7 +80,10 @@ public class WorkTableVacuumOnAcquisitionTests {
     var logger = new FakeLogger<WorkTableVacuumOnAcquisition>();
     var handler = new WorkTableVacuumOnAcquisition(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { MaintainOnReassignment = maintainOnReassignment }),
+      Options.Create(new MaintenanceWorkerOptions {
+        MaintainOnReassignment = maintainOnReassignment,
+        SkipAcquisitionVacuumWithin = skipWithin ?? new MaintenanceWorkerOptions().SkipAcquisitionVacuumWithin,
+      }),
       new Instance(),
       logger);
     return (handler, logger);
@@ -208,5 +217,71 @@ public class WorkTableVacuumOnAcquisitionTests {
     var (handler, _) = _handlerOver(new VacuumCoordinator());
 
     await Assert.That(async () => await handler.OnAcquiredAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
+  }
+  // --- #2140: a hand-off shortly after a takeover does not vacuum again ------------------------------
+
+  [Test]
+  public async Task SkipAcquisitionVacuumWithin_DefaultsToTenMinutesAsync() =>
+    await Assert.That(new MaintenanceWorkerOptions().SkipAcquisitionVacuumWithin).IsEqualTo(TimeSpan.FromMinutes(10));
+
+  [Test]
+  public async Task EveryAcquisition_AsksTheCoordinatorToSkipTablesVacuumedWithinTheWindowAsync() {
+    // The window is fleet-wide memory: the database records when each table was last vacuumed, by any instance, so a
+    // hand-off that follows a takeover finds the tables just vacuumed and leaves them.
+    var coordinator = new VacuumCoordinator();
+    var (handler, _) = _handlerOver(coordinator, skipWithin: TimeSpan.FromMinutes(3));
+
+    await handler.OnAcquiredAsync(new Grant(previous: null), CancellationToken.None);
+    await handler.OnAcquiredAsync(new Grant(previous: _other), CancellationToken.None);
+
+    await Assert.That(coordinator.Windows).IsEquivalentTo([TimeSpan.FromMinutes(3), TimeSpan.FromMinutes(3)]);
+  }
+
+  [Test]
+  public async Task ATableVacuumedWithinTheWindow_IsCountedAsRecent_NotWarnedAboutAsync() {
+    var coordinator = new VacuumCoordinator {
+      Outcome = [
+        new("wh_outbox", false, "vacuumed 18 s ago, within the 600 s window") { RecentlyVacuumed = true },
+        new("wh_inbox", true, null),
+      ],
+    };
+    var (handler, logger) = _handlerOver(coordinator);
+
+    await handler.OnAcquiredAsync(new Grant(previous: _other), CancellationToken.None);
+
+    await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Level >= LogLevel.Warning)).IsFalse();
+    var summary = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Information);
+    await Assert.That(summary.Message).Contains("vacuumed 1 of 2");
+    await Assert.That(summary.Message).Contains("1 already vacuumed within");
+  }
+  /// <summary>A coordinator from before the window: it implements only the plain vacuum.</summary>
+  private sealed class WindowlessCoordinator : IWorkCoordinator {
+    public int Vacuums { get; private set; }
+
+    public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
+      Vacuums++;
+      return Task.FromResult<IReadOnlyList<WorkTableVacuum>>([new("wh_outbox", true, null)]);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
+  }
+
+  [Test]
+  public async Task ACoordinatorWithoutTheWindow_VacuumsEveryTable_AsBeforeAsync() {
+    // The window overload's default asks the plain vacuum, so a coordinator that predates it keeps vacuuming.
+    IWorkCoordinator coordinator = new WindowlessCoordinator();
+
+    var outcomes = await coordinator.VacuumWorkTablesAsync(TimeSpan.FromMinutes(10), CancellationToken.None);
+
+    await Assert.That(((WindowlessCoordinator)coordinator).Vacuums).IsEqualTo(1);
+    await Assert.That(outcomes.Single().Vacuumed).IsTrue();
   }
 }

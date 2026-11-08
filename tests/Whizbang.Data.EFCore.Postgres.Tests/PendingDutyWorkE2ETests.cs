@@ -25,6 +25,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the interrupted holder can neither write under its stale epoch nor mark the work done. Nothing
 /// here sleeps: database time is advanced by shifting stored instants back.
 /// </summary>
+/// <remarks>
+/// These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.
+/// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgPendingDutyWorkStore.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/DutyHolderWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/173_RoleAssignments.sql</code-under-test>
@@ -73,14 +78,14 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
   private static IConfiguration _config() => new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
   private PgRoleElector _electorFor(Pod pod) => new(
-    _notification(), Options.Create(new RoleAssignmentOptions()), _config(), pod,
+    _notification(), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), _config(), pod,
     NullLogger<PgRoleElector>.Instance, libraryVersion: null);
 
   private PgPendingDutyWorkStore _storeFor(Pod pod) =>
-    new(_notification(), Options.Create(new RoleAssignmentOptions()), _config(), pod);
+    new(_notification(), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), _config(), pod);
 
   private DutyHolderWorker _workerFor(Pod pod, IDutyElector elector, params IDutyWorkHandler[] handlers) => new(
-    elector, _storeFor(pod), handlers, [], Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance, signalBus: null);
+    elector, _storeFor(pod), handlers, [], Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();
@@ -250,7 +255,7 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
       .Throws<ArgumentNullException>();
 
     var options = _notification();
-    var roles = Options.Create(new RoleAssignmentOptions());
+    var roles = Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero });
     var config = _config();
     await Assert.That(() => new PgPendingDutyWorkStore(null!, roles, config, pod)).Throws<ArgumentNullException>();
     await Assert.That(() => new PgPendingDutyWorkStore(options, null!, config, pod)).Throws<ArgumentNullException>();

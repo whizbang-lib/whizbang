@@ -27,6 +27,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// shifting the stored instants back, and the grant's renew throttle runs on a fake clock, so
 /// nothing here sleeps and nothing retries.
 /// </summary>
+/// <remarks>
+/// These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.
+/// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/173_RoleAssignments.sql</code-under-test>
 [Category("Integration")]
@@ -52,7 +57,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null) => new(
     Options.Create(_notificationOptions()),
-    Options.Create(new RoleAssignmentOptions()),
+    Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgRoleElector>.Instance,
@@ -396,7 +401,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
       NullLogger<Whizbang.Core.RunControl.WhizbangRunController>.Instance);
     var elector = new PgRoleElector(
       Options.Create(new WhizbangNotificationOptions()),
-      Options.Create(new RoleAssignmentOptions()),
+      Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       new Pod(),
       NullLogger<PgRoleElector>.Instance,
@@ -427,7 +432,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var pod = new Pod();
     var elector = new PgRoleElector(
       Options.Create(new WhizbangNotificationOptions()),
-      Options.Create(new RoleAssignmentOptions()),
+      Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       pod,
       NullLogger<PgRoleElector>.Instance,
@@ -518,7 +523,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
     PgRoleElector withMetrics(Pod pod) => new(
-      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions()),
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(), pod,
       NullLogger<PgRoleElector>.Instance, libraryVersion: null, timeProvider: time, metrics: metrics);
 
@@ -577,7 +582,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var pod = new Pod();
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var notification = Options.Create(new WhizbangNotificationOptions());
-    var roles = Options.Create(new RoleAssignmentOptions());
+    var roles = Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero });
     var logger = NullLogger<PgRoleElector>.Instance;
     var bad = new RoleAssignmentOptions { MissedRenewalsBeforeLapse = 1 };
 

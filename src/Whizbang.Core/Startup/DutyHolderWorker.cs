@@ -41,6 +41,11 @@ namespace Whizbang.Core.Startup;
 /// #1351: the maintainer's vacuum) runs once on the pass that wins the role, before its owed work.
 /// </para>
 /// <para>
+/// A grant that observes it was lost (<see cref="IDutyGrant.LostToken"/>, #2140) cancels the acquisition and owed work
+/// running under it at once, and <see cref="Holds"/> answers false from that moment, so exclusive work never runs on
+/// two instances because this one had not reached its next verify.
+/// </para>
+/// <para>
 /// A newer-version instance can ask this holder to drain (<see cref="IDutyGrant.DrainRequested"/>):
 /// the loop finishes the piece of work it is on, then releases the role so the newer release takes
 /// it over at once. The migrator is never held here: it is held for one migration at a time.
@@ -117,10 +122,14 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <summary>The roles this worker holds work for.</summary>
   public IReadOnlyList<string> Roles => _roles;
 
-  /// <summary>Whether this instance currently holds <paramref name="role"/>, as of the last pass.</summary>
+  /// <summary>
+  /// Whether this instance currently holds <paramref name="role"/>: won on a pass and not lost since, which a grant that
+  /// observes its loss reports at once (#2140), without waiting for the next pass.
+  /// </summary>
   /// <param name="role">The role.</param>
   /// <returns>True when held.</returns>
-  public bool Holds(string role) => _held.ContainsKey(role);
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:Holds_TurnsFalseTheMomentTheGrantIsLost_WithoutWaitingForAPassAsync</tests>
+  public bool Holds(string role) => _held.TryGetValue(role, out var grant) && !grant.LostToken.IsCancellationRequested;
 
   /// <summary>
   /// Raised when this instance wins a role, with the role, once it is recorded as held: from then on
@@ -164,11 +173,8 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       }
       var won = await _voteAsync(unheld, cancellationToken).ConfigureAwait(false);
       foreach (var role in _roles) {
-        if (_held.TryGetValue(role, out var grant)) {
-          if (won.Contains(role)) {
-            await _runOnAcquiredAsync(role, grant, cancellationToken).ConfigureAwait(false);
-          }
-          await _runOwedAsync(role, grant, cancellationToken).ConfigureAwait(false);
+        if (_held.TryGetValue(role, out var grant)
+            && await _runUnderAsync(role, grant, won.Contains(role), cancellationToken).ConfigureAwait(false)) {
           await _drainIfAskedAsync(role, cancellationToken).ConfigureAwait(false);
         }
       }
@@ -267,6 +273,28 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       }
     }
     return won;
+  }
+
+  /// <summary>
+  /// Runs a held role's acquisition work (when this pass won it) and its owed work, under a token the grant's loss
+  /// cancels (#2140). False when the grant was lost meanwhile: the work stopped, and the role is let go.
+  /// </summary>
+  private async Task<bool> _runUnderAsync(string role, IDutyGrant grant, bool won, CancellationToken cancellationToken) {
+    using var work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, grant.LostToken);
+    try {
+      if (won) {
+        await _runOnAcquiredAsync(role, grant, work.Token).ConfigureAwait(false);
+      }
+      await _runOwedAsync(role, grant, work.Token).ConfigureAwait(false);
+      return true;
+      // Every other cancellation inside is caught and logged by the work itself, so one that reaches here while the
+      // host is not stopping is the grant's loss.
+    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      _ = _held.Remove(role);
+      await grant.DisposeAsync().ConfigureAwait(false);
+      LogLostDuringWork(_logger, role, grant.Epoch);
+      return false;
+    }
   }
 
   /// <summary>Runs the work that belongs to winning <paramref name="role"/>; a failure is logged, and the role kept.</summary>
@@ -436,4 +464,8 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
     Message = "DutyHolderWorker: {Handler} failed on acquiring role '{Role}'; the role is kept, and it runs again the next time the role is acquired")]
   static partial void LogAcquisitionHandlerFailed(ILogger logger, string handler, string role, Exception ex);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "DutyHolderWorker: role '{Role}' (epoch {Epoch}) was lost while its work ran; that work was stopped so it cannot overlap the next holder's, and the next pass votes again")]
+  static partial void LogLostDuringWork(ILogger logger, string role, long? epoch);
 }
