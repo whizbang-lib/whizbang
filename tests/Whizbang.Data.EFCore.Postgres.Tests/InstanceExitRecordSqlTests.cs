@@ -149,6 +149,32 @@ public class InstanceExitRecordSqlTests : EFCoreTestBase {
       .IsEqualTo(1L);
   }
 
+  /// <summary>
+  /// The window is the operator's (#2126): <c>wh_settings.instance_exit_retention_days</c>, published from
+  /// <c>Whizbang:Workers:Maintenance:Retention:InstanceExitDays</c>, decides which rows the next write removes.
+  /// </summary>
+  [Test]
+  public async Task AWrite_RemovesRowsOlderThanTheConfiguredRetentionAsync(CancellationToken cancellationToken) {
+    await _executeAsync(
+      "INSERT INTO wh_settings (setting_key, setting_value, value_type, description) "
+      + "VALUES ('instance_exit_retention_days', '7', 'integer', 'test') "
+      + "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value", cancellationToken);
+    var old = (Guid)TrackedGuid.New();
+    var recent = (Guid)TrackedGuid.New();
+    foreach (var (id, age) in new[] { (old, "8 days"), (recent, "6 days") }) {
+      await _executeAsync(
+        "INSERT INTO wh_instance_exits (instance_id, service_name, host_name, process_id, exit_cause, exit_code, intended, reason, exited_at) "
+        + $"VALUES ('{id}', 'svc', 'host', 1, 'HostShutdown', 0, TRUE, 'stop', NOW() - INTERVAL '{age}')", cancellationToken);
+    }
+
+    _ = await _recordAsync(_exit((Guid)TrackedGuid.New(), ExitCause.HostShutdown), cancellationToken);
+
+    await Assert.That(await _scalarAsync<long>($"SELECT count(*) FROM wh_instance_exits WHERE instance_id = '{old}'", cancellationToken))
+      .IsEqualTo(0L).Because("a row past the configured seven days is removed by the next write");
+    await Assert.That(await _scalarAsync<long>($"SELECT count(*) FROM wh_instance_exits WHERE instance_id = '{recent}'", cancellationToken))
+      .IsEqualTo(1L);
+  }
+
   [Test]
   public async Task APeersReap_RecordsTheReaper_AndTheHeartbeatAndWindowItJudgedAsync(CancellationToken cancellationToken) {
     var victim = (Guid)TrackedGuid.New();
