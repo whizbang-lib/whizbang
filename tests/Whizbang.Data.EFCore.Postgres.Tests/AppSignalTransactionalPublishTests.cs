@@ -307,4 +307,45 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
     await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo(SENTINEL)
       .Because("the refused publish sent nothing");
   }
+
+  [Test]
+  public async Task AnOversizePayload_InsideADbContextTransaction_FailsThePublishAndTheTransactionAsync(CancellationToken cancellationToken) {
+    // Sent inside the caller's transaction, a payload PostgreSQL rejects (8000 bytes or more) is rejected by the statement
+    // that runs in that transaction, so it aborts it: the publish throws, and the caller's own work in that transaction is
+    // lost even if it goes on to commit. Nothing is delivered.
+    await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
+    using var transport = _transport();
+    await using var provider = _host(transport);
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await using var create = new NpgsqlCommand("CREATE TABLE app_signal_oversize_work (id int PRIMARY KEY)", setup);
+      _ = await create.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using var scope = provider.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+    await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+    _ = await db.Database.ExecuteSqlRawAsync("INSERT INTO app_signal_oversize_work (id) VALUES (1)", cancellationToken);
+
+    var oversize = new string('x', 8000);
+    var thrown = await Assert.That(async () =>
+        await scope.ServiceProvider.GetRequiredService<IAppSignalChannel>().PublishAsync(TOPIC, oversize, cancellationToken))
+      .Throws<PostgresException>();
+    await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue)
+      .Because("PostgreSQL rejects a NOTIFY payload of 8000 bytes or more");
+    var next = await Assert.That(async () => await db.Database.ExecuteSqlRawAsync("SELECT 1", cancellationToken))
+      .Throws<PostgresException>();
+    await Assert.That(next!.SqlState).IsEqualTo(PostgresErrorCodes.InFailedSqlTransaction)
+      .Because("the rejected statement aborted the caller's transaction");
+    await tx.CommitAsync(cancellationToken);
+
+    await using (var check = new NpgsqlConnection(ConnectionString)) {
+      await check.OpenAsync(cancellationToken);
+      await using var count = new NpgsqlCommand("SELECT count(*) FROM app_signal_oversize_work", check);
+      await Assert.That((long)(await count.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(0L)
+        .Because("a commit of an aborted transaction rolls it back, so the caller's work in it is lost");
+    }
+    await probe.SendSentinelAsync(SENTINEL, cancellationToken);
+    await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo(SENTINEL)
+      .Because("the rejected notification was never sent");
+  }
 }
