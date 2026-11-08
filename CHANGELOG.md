@@ -1424,6 +1424,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A redelivery answer marks a bucket unhealable only when it covered the bucket's deficit (#2143).** Audit-driven
+  repairs and bulk backfills ask the origin for the compared window, and an answer for a recent window carries only the
+  stream's recent events. When the consumer already held those, the answer stored nothing and every bucket it touched
+  was marked as one repair cannot change, including buckets whose missing events are older than the window (most of
+  them whole-history deficits that never had a repair request of their own), so repair stopped on real gaps. The origin
+  now echoes the window it answered on every bundle (`RedeliveryComposite.AnswersWindow`, `AnsweredFromCommitSequence`,
+  `AnsweredToCommitSequence`; `RedeliveryPump.PublishAnswerAsync`), and a bucket is marked only when that window
+  includes the bucket's compared window (a whole-history bucket needs a whole-history answer) or the answer carried the
+  bucket's named missing event; any other bucket is recorded as answered and stays repairable. A bundle from an origin
+  that predates the fields marks as before. Migration 357 carries the check (`wh_integrity_record_bundle_answer` gains
+  trailing defaulted parameters, so calls from an older release still resolve, and the reconcile marks through the new
+  `wh_integrity_mark_unhealable_covered_batch`) and re-arms, once per database, the whole-history rows already marked with
+  no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
+  an idle service, and a service whose repair stalled this way may never be idle.
+
+- **Stopping the shared LISTEN connection no longer hangs when the stop lands as its wait begins.** Npgsql's
+  `WaitAsync` checks its token and then re-arms the read's own cancellation source, which discards a cancellation
+  delivered in between (Npgsql 10.0.1), so a stop arriving as the dispatch loop parked was never seen and
+  `StopAsync`, which waited for the loop, could hang a host's shutdown. The loop now ends on the stopping token itself;
+  a stop with no delivery running returns at once, no subscriber is called after it, and the connection is disposed
+  only once the abandoned wait ends, never under a read in flight. A stop during a delivery still waits for it.
+
 - **A role holder is judged by the one liveness rule, learns of a loss within one renew interval, and quick hand-offs
   vacuum once (#2140).** A freshly elected holder busy with startup, or inside one long unit of work, lapsed 15 seconds
   after its last renewal although it was live, so a restart could move the maintainer role back and forth, and the old

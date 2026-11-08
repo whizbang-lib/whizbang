@@ -171,14 +171,16 @@ public static partial class RedeliveryReconciler {
     long?[] sequences = [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)];
     // #2033: the answer is recorded now, while the store still shows what the bundle found (its own children are not
     // stored yet), and it is small: the buckets stop waiting, and a bundle that changed nothing is marked at once.
+    // #2143: the window the bundle answers; a bucket whose deficit it did not cover is answered but not marked.
+    var window = composite.AnsweredWindow;
     var answer = await _recordAnswerAsync(
-        coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, AllPresentAtCommit: null), services,
+        coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, AllPresentAtCommit: null, window), services,
         logger, now, cancellationToken)
       .ConfigureAwait(false);
     var markedAtCommit = answer is null ? 0 : answer.MarkedRefusedTruncated.Count + answer.MarkedUnchanged.Count;
     if (services.GetService<IntegrityDeliveryRegistry>() is not null) {
       try {
-        var payload = _writeDeferred(origin, originServiceName, eventIds, sequences, answer?.AllPresent);
+        var payload = _writeDeferred(new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent, window));
         var recorded = await coordinator.EnqueueIntegrityDeliveryAsync(
           IntegrityDeliveryId.For(DELIVERY_TYPE, payload), DELIVERY_TYPE, Encoding.UTF8.GetString(payload), cancellationToken)
           .ConfigureAwait(false);
@@ -197,7 +199,7 @@ public static partial class RedeliveryReconciler {
       }
     }
     var reconciled = await _reconcileCoreAsync(
-      coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent), services, logger,
+      coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent, window), services, logger,
       now, cancellationToken).ConfigureAwait(false);
     return reconciled with { MarkedUnhealable = reconciled.MarkedUnhealable + markedAtCommit };
   }
@@ -210,10 +212,10 @@ public static partial class RedeliveryReconciler {
   private static async Task<IntegrityBundleAnswer?> _recordAnswerAsync(
       IWorkCoordinator coordinator, BundleAdoption bundle, IServiceProvider services, ILogger logger, DateTimeOffset now,
       CancellationToken cancellationToken) {
-    var (origin, _, eventIds, sequences, _) = bundle;
+    var (origin, _, eventIds, sequences, _, window) = bundle;
     IntegrityBundleAnswer? answer;
     try {
-      answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, eventIds, sequences, now, cancellationToken)
+      answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, eventIds, sequences, window, now, cancellationToken)
         .ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
@@ -260,8 +262,8 @@ public static partial class RedeliveryReconciler {
   }
 
   // The deferred form, written by hand so Core needs no serializer context for it.
-  private static byte[] _writeDeferred(
-      Guid origin, string? originServiceName, Guid[] eventIds, long?[] sequences, bool? allPresentAtCommit) {
+  private static byte[] _writeDeferred(BundleAdoption bundle) {
+    var (origin, originServiceName, eventIds, sequences, allPresentAtCommit, window) = bundle;
     using var buffer = new MemoryStream();
     using (var writer = new Utf8JsonWriter(buffer)) {
       writer.WriteStartObject();
@@ -287,16 +289,38 @@ public static partial class RedeliveryReconciler {
       } else {
         writer.WriteNull("allPresentAtCommit");
       }
+      // #2143: the window the bundle answers; absent when the origin did not say (and on a reconcile recorded before).
+      if (window is { } answered) {
+        writer.WriteStartObject("answeredWindow");
+        _writeBound(writer, "from", answered.FromCommitSequence);
+        _writeBound(writer, "to", answered.ToCommitSequence);
+        writer.WriteEndObject();
+      }
       writer.WriteEndObject();
     }
     return buffer.ToArray();
   }
 
+  private static void _writeBound(Utf8JsonWriter writer, string name, long? bound) {
+    if (bound is { } value) {
+      writer.WriteNumber(name, value);
+    } else {
+      writer.WriteNull(name);
+    }
+  }
+
+  private static long? _readBound(JsonElement window, string name) {
+    var bound = window.GetProperty(name);
+    return bound.ValueKind == JsonValueKind.Null ? null : bound.GetInt64();
+  }
+
   /// <summary>What one bundle asks the store to adopt: its origin, the origin's service name, and its events with their
   /// origin sequences, paired by position; and whether every event was already stored when the bundle committed (null
-  /// when unknown: a store that could not say, or a reconcile recorded before the commit-time answer existed).</summary>
+  /// when unknown: a store that could not say, or a reconcile recorded before the commit-time answer existed); and the
+  /// window the bundle answers (#2143), null when the origin did not say.</summary>
   private readonly record struct BundleAdoption(
-    Guid Origin, string? OriginServiceName, Guid[] EventIds, long?[] Sequences, bool? AllPresentAtCommit);
+    Guid Origin, string? OriginServiceName, Guid[] EventIds, long?[] Sequences, bool? AllPresentAtCommit,
+    RedeliveryAnswerWindow? Window);
 
   private static BundleAdoption _readDeferred(string payload) {
     using var document = JsonDocument.Parse(payload);
@@ -308,13 +332,17 @@ public static partial class RedeliveryReconciler {
     bool? allPresent = root.TryGetProperty("allPresentAtCommit", out var flag) && flag.ValueKind != JsonValueKind.Null
       ? flag.GetBoolean()
       : null;
+    RedeliveryAnswerWindow? window = root.TryGetProperty("answeredWindow", out var answered)
+      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to"))
+      : null;
     return new BundleAdoption(
       root.GetProperty("originServiceId").GetGuid(),
       name.ValueKind == JsonValueKind.Null ? null : name.GetString(),
       [.. root.GetProperty("eventIds").EnumerateArray().Select(e => e.GetGuid())],
       [.. root.GetProperty("commitSequences").EnumerateArray()
         .Select(e => e.ValueKind == JsonValueKind.Null ? (long?)null : e.GetInt64())],
-      allPresent);
+      allPresent,
+      window);
   }
 
   /// <summary>
@@ -388,7 +416,7 @@ public static partial class RedeliveryReconciler {
   private static async Task<RedeliveryReconciliation> _concludeAsync(
       BundleAdoption bundle, IReadOnlyList<RedeliveredBucketPresence> buckets, IServiceProvider services, ILogger logger,
       DateTimeOffset now, CancellationToken cancellationToken) {
-    var (origin, originServiceName, eventIds, _, allPresentAtCommit) = bundle;
+    var (origin, originServiceName, eventIds, _, allPresentAtCommit, window) = bundle;
     var childCount = eventIds.Length;
     var present = buckets.Sum(b => b.Present);
     var adopted = buckets.Sum(b => b.Adopted);
@@ -420,10 +448,12 @@ public static partial class RedeliveryReconciler {
       return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
     }
     var marked = await _markAsync(ledger, origin, refusedBuckets, now,
-        key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), coverage: null,
+        cancellationToken)
       .ConfigureAwait(false);
     marked += await _markAsync(ledger, origin, unchanged, now,
-        key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
+        key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin),
+        window is { } answered ? (answered, eventIds) : null, cancellationToken)
       .ConfigureAwait(false);
     if (marked > 0) {
       metrics?.RepairsUnhealable.Add(marked);
@@ -454,13 +484,17 @@ public static partial class RedeliveryReconciler {
   /// <summary>Marks the buckets as ones repair cannot change and reports each newly marked one once.</summary>
   private static async Task<int> _markAsync(
       IIntegrityRepairLedger ledger, Guid origin, List<RedeliveredBucketPresence> buckets, DateTimeOffset now,
-      Action<IntegrityRepairLedger.DivergenceKey> report, CancellationToken cancellationToken) {
+      Action<IntegrityRepairLedger.DivergenceKey> report, (RedeliveryAnswerWindow Window, Guid[] EventIds)? coverage,
+      CancellationToken cancellationToken) {
     if (buckets.Count == 0) {
       return 0;
     }
-    var marked = await ledger.MarkUnhealableBatchAsync(
-      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
-      now, cancellationToken).ConfigureAwait(false);
+    List<IntegrityRepairLedger.DivergenceKey> keys =
+      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))];
+    // #2143: with the answered window known, the ledger marks only the buckets whose deficit the answer covered.
+    var marked = coverage is { } covered
+      ? await ledger.MarkUnhealableBatchAsync(keys, covered.Window, covered.EventIds, now, cancellationToken).ConfigureAwait(false)
+      : await ledger.MarkUnhealableBatchAsync(keys, now, cancellationToken).ConfigureAwait(false);
     foreach (var key in marked) {
       report(key);
     }

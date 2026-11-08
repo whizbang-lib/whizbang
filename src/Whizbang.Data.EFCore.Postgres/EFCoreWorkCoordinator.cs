@@ -1071,20 +1071,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Null on any failure: a mark that cannot reach the ledger leaves repair on its terminal cadence, the
   /// harmless direction. The returned keys speak the caller's form, an absent tenant as null.</remarks>
-  public async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+  public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _markUnhealableBatchAsync(originServiceId, keys, null, [], now, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>The store marks only the rows whose deficit the answer covered (357, #2143).</remarks>
+  public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _markUnhealableBatchAsync(originServiceId, keys, answeredWindow, answeredEventIds, now, cancellationToken);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "The mark's keys, the answer's window and events, the clock and cancellation.")]
+  private async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> _markUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow? answeredWindow,
+      IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_unhealable_batch");
+      // 357 (#2143): an answer whose window is known marks through the coverage-checking function.
+      var qualified = BuildSchemaQualifiedName(schema,
+        answeredWindow is null ? "wh_integrity_mark_unhealable_batch" : "wh_integrity_mark_unhealable_covered_batch");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
       cmd.Parameters.AddWithValue(P_NOW, now);
+      var arguments = "@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now";
+      if (answeredWindow is not null) {
+        _bindAnsweredWindow(cmd, answeredWindow);
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = answeredEventIds.ToArray()
+        });
+        arguments += ",@p_answer_from,@p_answer_to,@p_event_ids";
+      }
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now)";
+      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}({arguments})";
 #pragma warning restore S2077
       var marked = new List<IntegrityRepairLedger.DivergenceKey>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1104,6 +1128,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore CA1848
       return null;
     }
+  }
+
+  /// <summary>
+  /// Binds the window a redelivery answered (#2143): its exclusive floor and inclusive ceiling (NULL = unbounded, and
+  /// both NULL when the window is not known).
+  /// </summary>
+  private static void _bindAnsweredWindow(Npgsql.NpgsqlCommand cmd, RedeliveryAnswerWindow? window) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_from", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = window is { FromCommitSequence: { } from } ? (object)from : DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_to", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = window is { ToCommitSequence: { } to } ? (object)to : DBNull.Value
+    });
   }
 
   /// <inheritdoc />
@@ -1177,9 +1214,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Null on any failure (logged): the reconcile then judges the bundle as it did before, and its buckets wait
   /// out their answer timeout. The returned keys speak the caller's form, an absent tenant as null.</remarks>
-  public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
       Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, null, now, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143).</remarks>
+  public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     ArgumentNullException.ThrowIfNull(commitSequences);
     if (eventIds.Count != commitSequences.Count) {
@@ -1200,8 +1244,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = commitSequences.ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
+      // An unknown window marks as before 357.
+      cmd.Parameters.AddWithValue("p_answer_window_known", answeredWindow is not null);
+      _bindAnsweredWindow(cmd, answeredWindow);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now)";
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to)";
 #pragma warning restore S2077
       int present = 0, absent = 0, refused = 0, adoptable = 0;
       var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();

@@ -182,8 +182,10 @@ public sealed partial class RedeliveryRequestReceptor(
       }
       var owned = _owned(page, serve);
       if (owned.Count > 0) {
+        // #2143: every bundle says the window it answers, so the receiver marks only the buckets it covered.
         tally.Composites += await serve.Pump
-          .PublishAsync(owned, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
+          .PublishAnswerAsync(owned, new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence),
+            message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
           .ConfigureAwait(false);
       }
       tally.Shipped += owned.Count;
@@ -254,12 +256,16 @@ public sealed partial class RedeliveryRequestReceptor(
       }, cancellationToken).ConfigureAwait(false);
       if (page.Count > 0) {
         first ??= page[0].CommitSequence;
+        // #2143: the page covers the type's events after the previous floor through its last event, or through the
+        // window's ceiling when it ran out.
+        var covered = new RedeliveryAnswerWindow(floor, page.Count < want ? message.ToCommitSequence : page[page.Count - 1].CommitSequence);
         floor = page[page.Count - 1].CommitSequence;
         // The receiver's fan-out takes each stream's events in version order.
         var owned = _owned(page, serve).OrderBy(e => e.StreamId).ThenBy(e => e.Version).ToList();
         if (owned.Count > 0) {
           composites += await serve.Pump
-            .PublishAsync(owned, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
+            .PublishAnswerAsync(owned, covered, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly,
+              cancellationToken)
             .ConfigureAwait(false);
         }
         shipped += owned.Count;
