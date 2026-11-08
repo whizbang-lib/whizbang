@@ -52,6 +52,7 @@ public class MigrationBootstrapRegionsTests {
     "330_CoordinationOnTheSignalBus.sql", // redefines 184's wh_release_role to publish on the signal bus, and what it calls (#2046)
     "353_TheHeartbeatStartsAtRegistration.sql", // the startup beat, which a starting instance sends from registration (#2126)
     "354_EveryExitIsRecorded.sql", // the exit record and the tombstone's columns: an instance evicted while starting exits too (#2126)
+    "356_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 354's function (#2126)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>
