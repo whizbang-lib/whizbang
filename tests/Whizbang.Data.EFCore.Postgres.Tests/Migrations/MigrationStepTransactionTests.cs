@@ -247,6 +247,89 @@ public partial class MigrationStepTransactionTests {
     await Assert.That(await _outstandingStepsAsync()).IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A step that finds the schema lock taken by another instance's step waits for it, and when the lock comes free
+  /// between that instance's steps the wait says so at Debug: not that the other instance is gone, and not that this one
+  /// is taking the work over (#2127).
+  /// </summary>
+  /// <remarks>
+  /// The other instance's step is a side session holding the schema lock in an open transaction, taken right after
+  /// this instance committed a step, so the next step contends for it. It is released as soon as this instance
+  /// reports the contention, which is when its step-level wait begins.
+  /// </remarks>
+  [Test]
+  [Timeout(300000)]
+  public async Task AStepWaitingOutAnotherInstancesStep_IsNotReportedAsATakeoverAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken: cancellationToken);
+    var drifted = _driftableFiles();
+    object driftedNames = drifted.ToArray();
+    await _executeAsync(
+      "UPDATE public.wh_schema_migrations SET content_hash = 'an-earlier-release' WHERE file_name = ANY($1)", driftedNames);
+
+    await using var otherInstance = new NpgsqlConnection(_database.ConnectionString);
+    await otherInstance.OpenAsync(cancellationToken);
+    var observer = new StepLockInterleaver(otherInstance, drifted[1]);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(observer);
+    await using var provider = services.BuildServiceProvider();
+    var logger = new LeveledLines();
+
+    await _initializeAsync(provider, logger, cancellationToken);
+
+    await Assert.That(observer.Contended).IsTrue()
+      .Because("precondition: a step of this instance found the lock taken by the other instance's step");
+    await Assert.That(logger.Lines).DoesNotContain(l => l.Contains(" gone", StringComparison.Ordinal))
+      .Because("an instance between two steps is not gone");
+    await Assert.That(logger.Lines).DoesNotContain(l => l.StartsWith("Information Another instance is migrating", StringComparison.Ordinal));
+    await Assert.That(logger.Lines).Contains(l => l.StartsWith("Debug ", StringComparison.Ordinal) && l.Contains("between", StringComparison.Ordinal));
+    await Assert.That(await _outstandingStepsAsync()).IsEqualTo(0L);
+  }
+
+  /// <summary>Takes the schema lock in a side transaction after <paramref name="step"/>, and gives it back on contention.</summary>
+  private sealed class StepLockInterleaver(NpgsqlConnection otherInstance, string step) : ISchemaInitializationObserver {
+    private NpgsqlTransaction? _held;
+
+    public bool Contended { get; private set; }
+
+    public async ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      if (stepName != step || _held is not null) {
+        return;
+      }
+      _held = await otherInstance.BeginTransactionAsync(cancellationToken);
+      await using var take = new NpgsqlCommand(
+        $"SELECT pg_advisory_xact_lock({Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("public")})", otherInstance, _held);
+      await take.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      if (_held is { } held && !Contended) {
+        Contended = true;
+        await held.RollbackAsync(cancellationToken);
+      }
+    }
+  }
+
+  /// <summary>Every line, prefixed with its level.</summary>
+  private sealed class LeveledLines : ILogger {
+    private readonly List<string> _lines = [];
+    public List<string> Lines {
+      get {
+        lock (_lines) {
+          return [.. _lines];
+        }
+      }
+    }
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lines) {
+        _lines.Add($"{logLevel} {formatter(state, exception)}");
+      }
+    }
+    private sealed class Scope : IDisposable { public void Dispose() { } }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   /// <summary>Holds the instance that reports <paramref name="step"/> committed until released.</summary>

@@ -26,8 +26,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// it renewed inside the progress window it declared for its epoch
 /// (<see cref="RoleAssignmentOptions.ProgressWindow"/>). Progress comes from the holder's own work loop:
 /// <see cref="IDutyGrant.VerifyStillHeldAsync"/>, which a holder calls before each unit of exclusive work,
-/// renews. There is no renewal timer, so a holder that is connected but stuck loses its role within its
-/// window, and a holder the rule calls dead lapses at its lease. Renewals are throttled to one per
+/// renews. The elector runs no renewal timer, so a holder that is connected but stuck loses its role within
+/// its window, and a holder the rule calls dead lapses at its lease. The one holder that keeps a timer is schema
+/// initialization, whose migrator runs phases longer than the lease with nothing in them that could verify: it
+/// keeps its grant alive with a <see cref="DutyGrantKeepalive"/> on the grant's
+/// <see cref="IDutyGrant.RenewInterval"/> from the election until it returns (#2127). Renewals are throttled to one per
 /// <see cref="RoleAssignmentOptions.RenewInterval"/>, measured on the monotonic clock from the moment the
 /// last successful renewal was sent. The database computed that lease from a later instant, so answering
 /// from memory inside the interval is safe, and it never lets a write through anyway: writes are fenced in
@@ -268,6 +271,10 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
 #pragma warning restore CA1031, RCS1075
     }
   }
+
+  /// <summary>The roles this elector holds a tenure of right now, for the exit's account of what it held (#2126).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs:ReleaseAll_OnShutdown_ReleasesEveryOutstandingGrantAsync</tests>
+  public IReadOnlyCollection<string> HeldRoles => [.. _tenures.Keys.Order(StringComparer.Ordinal)];
 
   /// <summary>
   /// Releases every role this elector still holds, so a stand-down, a pause or a stop hands each one off at once: the
@@ -532,6 +539,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public Guid? PreviousHolder => grant.PreviousHolder;
     public bool DrainRequested => _drainRequested;
     public CancellationToken LostToken => _lost.Token;
+    public TimeSpan RenewInterval => elector._roleOptions.RenewInterval;
 
     /// <summary>
     /// Starts the watch that observes a loss within one renew interval (#2140). Called once, as the tenure is created and
@@ -740,6 +748,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public Guid? PreviousHolderInstanceId => tenure.PreviousHolder;
     public bool DrainRequested => tenure.DrainRequested;
     public CancellationToken LostToken => tenure.LostToken;
+    public TimeSpan? RenewInterval => tenure.RenewInterval;
 
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Volatile.Read(ref _disposed) == 1 ? Task.FromResult(false) : tenure.VerifyAsync(cancellationToken);

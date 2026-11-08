@@ -136,6 +136,8 @@ public static class ServiceCollectionExtensions {
         ManagedObjectSettings = ManagedSchemaSettings.Read(sp.GetService<IConfiguration>()),
         Logger = sp.GetRequiredService<ILogger<PostgresSchemaInitializer>>(),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
         LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
@@ -299,6 +301,8 @@ public static class ServiceCollectionExtensions {
         DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
           Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
         LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });

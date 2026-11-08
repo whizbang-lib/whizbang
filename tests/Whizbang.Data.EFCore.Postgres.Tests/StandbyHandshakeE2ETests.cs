@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -49,12 +48,10 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     };
   }
 
-  private sealed class StubHostLifetime : IHostApplicationLifetime {
-    public bool StopRequested { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopRequested = true;
+  /// <summary>The exit path as the watcher sees it: whether it asked to exit (#2126).</summary>
+  private sealed class StubHostLifetime {
+    public Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit { get; } = new();
+    public bool StopRequested => Exit.Cause == Whizbang.Core.RunControl.ExitCause.UpgradeStandDown;
   }
 
   private sealed class CountingStep : IStartupStep {
@@ -121,7 +118,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var watcher = new StandbyWatcher(
       scopeFactory: scopeFactory,
       runControl: runControl,
-      hostLifetime: hostLifetime,
+      instanceExit: hostLifetime.Exit,
       instanceProvider: pod,
       versionProvider: versionProvider,
       assessor: assessor,

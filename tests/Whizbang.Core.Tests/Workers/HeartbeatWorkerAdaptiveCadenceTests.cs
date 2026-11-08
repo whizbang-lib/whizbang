@@ -139,7 +139,8 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: source ?? NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
   }
 
   private sealed class ToggleableLockSource(bool initialHeld) : IInstanceAliveLockSource {

@@ -596,6 +596,7 @@ Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays
 Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
 Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours
+Whizbang:Workers:Maintenance:Retention:InstanceExitDays
 Whizbang:Workers:Maintenance:Retention:IntegrityLedgerMaxEntries
 Whizbang:Workers:Maintenance:Retention:LogDays
 Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours

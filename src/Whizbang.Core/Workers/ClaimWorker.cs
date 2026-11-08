@@ -882,6 +882,12 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
     LogReleasedHeldWork(_logger, released.InboxReleased, released.PerspectiveReleased);
   }
 
+  /// <summary>The streams of the last claim this instance still holds leased, for the exit's account (#2126).</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerRunPermitTests.cs:ReleaseHeldWork_ReleasesTheLastClaimsStreamsThatNoDrainHasStartedAsync</tests>
+  public int HeldLeases => Volatile.Read(ref _lastClaimed) is { } held
+    ? held.InboxStreamIds.Count + held.PerspectiveStreamIds.Count
+    : 0;
+
   [LoggerMessage(EventId = 21, Level = LogLevel.Information,
     Message = "Run control: released {InboxReleased} inbox and {PerspectiveReleased} perspective rows this instance had leased and not started, so a peer takes them over")]
   private static partial void LogReleasedHeldWork(ILogger logger, int inboxReleased, int perspectiveReleased);
@@ -1215,14 +1221,21 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// The registration: this instance's identity through <c>record_heartbeat</c>, with the phase it announces (#1638).
   /// A row it inserts records that phase rather than none, which would read as an older build. A row that records a
   /// phase keeps it (#1636): the stage record is its only writer. Without a lifecycle nothing is said of the phase.
+  /// A registration the registry refuses means the fleet evicted this instance: it exits through the one exit path
+  /// (#2126) so its host restarts it under a new instance id, rather than claiming on as an instance nobody counts.
   /// </summary>
-  private Task<bool> _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) =>
-    coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+  private async Task _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) {
+    var accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId,
       LifecyclePhase: _announcedPhase(services)), ct);
+    if (!accepted) {
+      services.GetService<IWhizbangInstanceExit>()?.RequestExit(new InstanceExitRequest(ExitCause.ClusterEviction,
+        "the claim worker's registration was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)"));
+    }
+  }
 
   /// <summary>
   /// The phase this instance announces (<see cref="IWhizbangLifecycleState.AnnouncedPhase"/>), resolved from the

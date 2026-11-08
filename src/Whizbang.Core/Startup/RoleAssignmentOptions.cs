@@ -13,14 +13,16 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// <para>
 /// The lease is <see cref="RenewInterval"/> times <see cref="MissedRenewalsBeforeLapse"/>, so one
-/// slow renewal never costs the role. A holder renews from its own work loop, never from a timer.
-/// Past its lease, a holder is judged by the one liveness rule, the same rule every other reader of
-/// instance liveness asks (#2140): it keeps the role while the rule calls it live and it renewed
-/// inside its <see cref="ProgressWindow"/>, so a holder busy with startup or one long unit of work
-/// keeps its role, and a holder that is connected but stuck loses it within the window. A holder the
-/// rule calls dead lapses at its lease. After an involuntary lapse, that instance may not win the
-/// role back for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A
-/// graceful release carries no cool-down.
+/// slow renewal never costs the role. A holder renews from its own work loop, so a holder that is
+/// stuck stops renewing; the migrator, whose startup phases can each outlast the lease, renews on a
+/// keepalive timer from its election until schema initialization returns (#2127). Past its lease, a
+/// holder is judged by the one liveness rule, the same rule every other reader of instance liveness
+/// asks (#2140): it keeps the role while the rule calls it live and it renewed inside its
+/// <see cref="ProgressWindow"/>, so a holder busy with startup or one long unit of work keeps its
+/// role, and a holder that is connected but stuck loses it within the window. A holder the rule
+/// calls dead lapses at its lease. After an involuntary lapse, that instance may not win the role
+/// back for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A graceful
+/// release carries no cool-down.
 /// </para>
 /// <para>
 /// The migrator is held by assignment too: its vote is part of the schema bootstrap, so it exists

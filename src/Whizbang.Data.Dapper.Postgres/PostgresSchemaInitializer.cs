@@ -125,6 +125,13 @@ public sealed class PostgresSchemaInitializer {
   public IServiceInstanceProvider? Instance { get; init; }
 
   /// <summary>
+  /// What this instance's registration records for the one liveness rule (#2126): its connection mode and its liveness
+  /// window, so the rule judges the row by them from the moment it exists. The default records neither.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstance_WithItsConnectionModeAndLivenessWindowAsync</tests>
+  public InstanceRegistrationLiveness RegistrationLiveness { get; init; }
+
+  /// <summary>
   /// The application version the migration ledger records beside the library version (#2027), as recorded on the
   /// instance rows; null falls back to the constructor's application version, else <c>unknown</c>.
   /// </summary>
@@ -186,7 +193,8 @@ public sealed class PostgresSchemaInitializer {
     await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
     }
     await _convergeAsync(connection, schema, cancellationToken);
   }
@@ -372,7 +380,8 @@ public sealed class PostgresSchemaInitializer {
     // reconciles, sees it running. The registration function exists now that the migrations have run.
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
     }
   }
 
@@ -608,8 +617,9 @@ public sealed class PostgresSchemaInitializer {
       var hash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
 
-      // A row still on the legacy hash of this file is a file that did not change: the start rewrites it and skips.
-      if (existingHash == hash || existingHash == MigrationSqlNormalizer.LegacyContentHash(migration.Sql)) {
+      // A row still on a hash an earlier release recorded for this file is a file that did not change: the start
+      // rewrites it and skips (#2125).
+      if (existingHash == hash || MigrationSqlNormalizer.IsLegacyContentHash(existingHash, migration.Sql)) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
       } else if (existingHash != null) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));
@@ -818,7 +828,7 @@ public sealed class PostgresSchemaInitializer {
   /// Applies one migration file and its ledger row in a transaction of its own; on a failure, rolls it back and returns
   /// the failure without recording it, so the caller decides between a retry and a recorded failure.
   /// </summary>
-  private static async Task<Exception?> _applyMigrationFileAsync(
+  private async Task<Exception?> _applyMigrationFileAsync(
       NpgsqlConnection connection, Core.Data.MigrationScript migration, string hash, string? existingHash, int versionId,
       int executionOrder, CancellationToken cancellationToken) {
     var isUpdate = existingHash != null;
@@ -856,7 +866,7 @@ public sealed class PostgresSchemaInitializer {
           await cmd.ExecuteNonQueryAsync(cancellationToken);
         } else {
           cmd.CommandText = segment.Sql;
-          await _runBatchedRegionAsync(cmd, migration.Name, cancellationToken);
+          await _runBatchedRegionAsync(cmd, migration.Name, segment.BatchSize, Logger, cancellationToken);
         }
       }
 
@@ -889,7 +899,10 @@ public sealed class PostgresSchemaInitializer {
   /// Runs a batched region's command repeatedly until it reports no rows, failing once it has run more passes than
   /// <see cref="MaxBatchPasses"/> allows.
   /// </summary>
-  private static async Task _runBatchedRegionAsync(NpgsqlCommand cmd, string migrationName, CancellationToken cancellationToken) {
+  private static async Task _runBatchedRegionAsync(
+      NpgsqlCommand cmd, string migrationName, int batchSize, ILogger? logger, CancellationToken cancellationToken) {
+    // #2128: the batch it is on, the rows moved and the time elapsed, at Information on a steady cadence, then its totals.
+    var progress = new MigrationBatchProgress(migrationName, batchSize, TimeProvider.System, logger);
     var passes = 0;
     while (true) {
       var reported = await cmd.ExecuteScalarAsync(cancellationToken);
@@ -906,7 +919,9 @@ public sealed class PostgresSchemaInitializer {
           + "region has to exclude the rows it already handled, or it reports the same rows "
           + "forever.");
       }
+      progress.Batch(rows);
     }
+    progress.Finish();
   }
 
   /// <summary>

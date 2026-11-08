@@ -199,7 +199,7 @@ public class DeclaredNameSpellingIntegrationTests {
   /// <summary>
   /// A required member missing from a stored row. The mapped reader cannot refuse it (Entity Framework reads a
   /// missing key as the default), so the startup pass reports it at Error, naming the table, the path and the row
-  /// count, and leaves the table unsettled so every start says so until the rows are fixed.
+  /// count, once: the table is settled, so the next start neither scans it nor says it again (#2128).
   /// </summary>
   [Test]
   public async Task ARequiredMemberMissingFromAMappedRow_IsReportedAtErrorAsync() {
@@ -212,7 +212,12 @@ public class DeclaredNameSpellingIntegrationTests {
     var error = log.Entries.FirstOrDefault(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal)).Message;
     await Assert.That(error).IsNotNull();
     await Assert.That(error).Contains("$.Objects[*].Points[*].y").And.Contains("1 row(s)");
-    await Assert.That(await _journalAsync(PICTURE)).IsEqualTo("open");
+    await Assert.That(await _journalAsync(PICTURE)).IsEqualTo("settled");
+
+    var again = new ListLogger();
+    await _startAsync(again);
+    await Assert.That(again.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains(PICTURE, StringComparison.Ordinal))).IsFalse()
+      .Because("the rows were reported once; the table is not scanned again until its declarations change");
   }
 
   /// <summary>On the opaque path the reader itself refuses the row, with a <see cref="JsonException"/>.</summary>

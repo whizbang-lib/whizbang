@@ -339,7 +339,7 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorkerAtSchemaReady(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangRunController>(),
-      sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+      sp.GetRequiredService<IWhizbangInstanceExit>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
@@ -370,6 +370,8 @@ public static class WorkerPipelineExtensions {
     // #2027: the application version beside the library version, resolved once per process.
     Whizbang.Core.Versioning.ApplicationVersionRegistration.TryAddWhizbangApplicationVersion(services);
     services.TryAddSingleton<HeartbeatWorker>();
+    // #2126: the exit path reads when the last beat was accepted, from the heartbeat itself.
+    services.TryAddSingleton<ILastAcceptedHeartbeat>(sp => sp.GetRequiredService<HeartbeatWorker>());
     // The claim window's churn signal lives here: the claim returns stream ids and never sees a
     // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the
     // registration in AddWhizbang; present here so a host wiring only the worker pipeline still
@@ -618,11 +620,12 @@ public static class WorkerPipelineExtensions {
     // be spawned. Singleton construction is the side-effect we want — StartAsync just
     // resolves the singleton from DI and returns.
     services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
-    // Each worker is hosted with the point it starts at (#1636); none holds a gate of its own. The heartbeat starts when
-    // the schema-ready gate opens, so the instance is alive while it is not yet eligible for work; the data plane starts
+    // Each worker is hosted with the point it starts at (#1636); none holds a gate of its own. The heartbeat starts at
+    // registration (#2126): at Elect, right after Preflight registers the instance, so a starting instance is alive by
+    // beats it really sends through a long Elect or Migrate while it is not yet eligible for work; the data plane starts
     // at Accept commands, once the instance's row records that it is eligible, so nothing claims, drains, flushes or
     // sweeps before then.
-    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<HeartbeatWorker>());
+    services.AddWhizbangWorker(HeartbeatWorker.StartsAt, sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<ClaimWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());

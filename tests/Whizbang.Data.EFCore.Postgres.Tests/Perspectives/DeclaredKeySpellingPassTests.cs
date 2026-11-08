@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -170,7 +171,7 @@ public class DeclaredKeySpellingPassTests {
   }
 
   [Test]
-  public async Task MissingRequiredMembers_AreReported_WithABoundedSample_AndTheTableStaysOpenAsync() {
+  public async Task MissingRequiredMembers_AreReported_WithABoundedSample_AndTheTableIsSettledAsync() {
     await _journalAsync();
     for (var i = 0; i < 4; i++) {
       await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"y.z":1}]}""", metadata: null);
@@ -181,9 +182,10 @@ public class DeclaredKeySpellingPassTests {
 
     await Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning)).IsEmpty();
     var error = log.Entries.Single(e => e.Level == LogLevel.Error).Message;
-    await Assert.That(error).Contains("data $.pts[*].x in 4 row(s) (for example ");
+    await Assert.That(error).Contains("data $.pts[*].x in 4 row(s) (for example ").And.StartsWith("4 stored document(s) in ");
     await Assert.That(error.Split("for example ")[1].Split(')')[0].Split(", ").Length).IsEqualTo(3);
-    await Assert.That(await _scalarAsync("SELECT coalesce(settled_at::text, 'open') FROM wh_stored_form_migrations")).IsEqualTo("open");
+    await Assert.That(await _scalarAsync("SELECT coalesce(settled_at::text, 'open') FROM wh_stored_form_migrations")).IsNotEqualTo("open")
+      .Because("#2128: rows nothing at startup can repair are reported once, not rescanned at every start");
   }
 
   [Test]
@@ -196,6 +198,149 @@ public class DeclaredKeySpellingPassTests {
       .Throws<OperationCanceledException>().Because("a stopping host is not a table that could not be checked");
     await Assert.That(() => DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, cancellationToken: canceled.Token))
       .Throws<OperationCanceledException>();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // #2128: progress at Information on a steady cadence, and unrepairable rows reported once.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// <summary>A clock each reading of which is one cadence later than the last, so every check finds a line due.</summary>
+  private sealed class OneCadencePerReading : TimeProvider {
+    private long _ticks;
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    public override long GetTimestamp() => Interlocked.Add(ref _ticks, StartupProgress.Cadence.Ticks);
+  }
+
+  private static string[] _information(ListLogger log) =>
+    [.. log.Entries.Where(e => e.Level == LogLevel.Information).Select(e => e.Message)];
+
+  /// <summary>
+  /// Both scans say when they start, which table of how many they are on and how many rows they have read each time a
+  /// line is due, and their totals when they finish; with a line due at every chunk, every chunk says so.
+  /// </summary>
+  [Test]
+  public async Task BothScans_SayWhereTheyAre_AtInformation_EachTimeALineIsDueAsync() {
+    await _journalAsync();
+    for (var i = 0; i < 5; i++) {
+      await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"x":1}]}""", metadata: null);
+    }
+    var log = new ListLogger();
+    var clock = new OneCadencePerReading();
+
+    var result = await DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+    await DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+
+    var lines = _information(log);
+    string[] expected = [
+      "The declared-key spelling scan of public started: 1 perspective table(s) to look at",
+      $"The declared-key spelling scan of public: table 1 of 1 (public.{TABLE}), 2 row(s) read in it, 2 in all, ",
+      $"The declared-key spelling scan of public: table 1 of 1 (public.{TABLE}), 4 row(s) read in it, 4 in all, ",
+      $"The declared-key spelling scan of public: table 1 of 1 (public.{TABLE}), 5 row(s) read in it, 5 in all, ",
+      "The declared-key spelling scan of public finished: 1 table(s) scanned, 5 row(s) read, 0 row(s) rewritten, in ",
+      "The required-member check of public started: 1 perspective table(s) to look at",
+      $"The required-member check of public: table 1 of 1 (public.{TABLE}), 2 row(s) read in it, 2 in all, ",
+      $"The required-member check of public: table 1 of 1 (public.{TABLE}), 4 row(s) read in it, 4 in all, ",
+      $"The required-member check of public: table 1 of 1 (public.{TABLE}), 5 row(s) read in it, 5 in all, ",
+      "The required-member check of public finished: 1 table(s) checked, 5 row(s) read, 0 row(s) lacking a required member, in ",
+    ];
+    await Assert.That(lines.Length).IsEqualTo(expected.Length);
+    for (var i = 0; i < expected.Length; i++) {
+      await Assert.That(lines[i]).StartsWith(expected[i]);
+    }
+  }
+
+  /// <summary>Before a cadence has passed, a scan says only that it started and that it finished.</summary>
+  [Test]
+  public async Task AScanShorterThanTheCadence_SaysOnlyItsFirstAndLastLinesAsync() {
+    await _journalAsync();
+    for (var i = 0; i < 5; i++) {
+      await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"x":1}]}""", metadata: null);
+    }
+    var log = new ListLogger();
+    var clock = new FakeTimeProvider();
+
+    var result = await DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+    await DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+
+    await Assert.That(string.Join("\n", _information(log))).IsEqualTo(string.Join("\n",
+      "The declared-key spelling scan of public started: 1 perspective table(s) to look at",
+      "The declared-key spelling scan of public finished: 1 table(s) scanned, 5 row(s) read, 0 row(s) rewritten, in 0s",
+      "The required-member check of public started: 1 perspective table(s) to look at",
+      "The required-member check of public finished: 1 table(s) checked, 5 row(s) read, 0 row(s) lacking a required member, in 0s"));
+  }
+
+  /// <summary>A start on which every table is settled says nothing at Information.</summary>
+  [Test]
+  public async Task AStartWithEveryTableSettled_SaysNothingAsync() {
+    await _journalAsync();
+    await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"x":1}]}""", metadata: null);
+    // With no logger, a line due on every reading has nowhere to go and is skipped.
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, new OneCadencePerReading());
+    var log = new ListLogger();
+
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, new FakeTimeProvider(), log);
+
+    await Assert.That(_information(log)).IsEmpty();
+  }
+
+  /// <summary>
+  /// Rows missing a required member, which nothing at startup can repair, are reported once with their count and the
+  /// table, and the table is recorded as checked: the next start does not scan it, and does not say it again (#2128).
+  /// </summary>
+  [Test]
+  public async Task UnrepairableRows_AreReportedOnce_AndTheirTableIsNotScannedAgainAsync() {
+    await _journalAsync();
+    for (var i = 0; i < 4; i++) {
+      await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"y.z":1}]}""", metadata: null);
+    }
+    var first = new ListLogger();
+    var second = new ListLogger();
+
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, first);
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, second);
+
+    var error = first.Entries.Single(e => e.Level == LogLevel.Error).Message;
+    await Assert.That(error).StartsWith($"4 stored document(s) in public.{TABLE} lack a required member")
+      .And.Contains("said once");
+    await Assert.That(await _scalarAsync("SELECT coalesce(settled_at::text, 'open') FROM wh_stored_form_migrations")).IsNotEqualTo("open")
+      .Because("rows a start cannot repair are no reason to scan the table at every start");
+    await Assert.That(second.Entries.Where(e => e.Level >= LogLevel.Information)).IsEmpty()
+      .Because("the rows were reported once; the second start skips the table with one lookup");
+    await Assert.That(second.Entries).Contains(e => e.Message == $"public.{TABLE}: settled, skipped; every stored key is in its declared spelling");
+  }
+
+  /// <summary>
+  /// A table whose keys were rewritten on this start stays open, so the next start scans it once more; that start
+  /// checks for missing members, reports them once, and settles it.
+  /// </summary>
+  [Test]
+  public async Task ATableRewrittenThisStart_ReportsItsMissingRowsOnTheNextStart_OnceAsync() {
+    await _journalAsync();
+    await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"X":1}]}""", metadata: null);
+    await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"y.z":1}]}""", metadata: null);
+    var starts = new[] { new ListLogger(), new ListLogger(), new ListLogger() };
+    var journal = new List<string>();
+
+    foreach (var log in starts) {
+      await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, log);
+      journal.Add(await _scalarAsync("SELECT CASE WHEN settled_at IS NULL THEN 'open' ELSE 'settled' END FROM wh_stored_form_migrations"));
+    }
+
+    await Assert.That(starts[0].Entries.Where(e => e.Level == LogLevel.Error)).IsEmpty()
+      .Because("rows just rewritten are checked on the scan that follows, not twice");
+    await Assert.That(starts[1].Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(1);
+    await Assert.That(starts[1].Entries.Single(e => e.Level == LogLevel.Error).Message).StartsWith($"1 stored document(s) in public.{TABLE}");
+    await Assert.That(starts[2].Entries.Where(e => e.Level >= LogLevel.Information)).IsEmpty();
+    await Assert.That(string.Join(",", journal)).IsEqualTo("open,settled,settled");
+  }
+
+  [Test]
+  public async Task NoClock_IsRefusedAsync() {
+    await Assert.That(() => (Task)DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS, (TimeProvider)null!))
+      .Throws<ArgumentNullException>();
+    var result = await DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS);
+    await Assert.That(() => DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, (TimeProvider)null!))
+      .Throws<ArgumentNullException>();
   }
 
   private NpgsqlConnection _factory() => new(_connectionString);

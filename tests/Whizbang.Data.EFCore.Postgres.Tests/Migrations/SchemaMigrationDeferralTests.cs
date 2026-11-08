@@ -387,4 +387,77 @@ public class SchemaMigrationDeferralTests {
     await Assert.That(outcomes.All(o => o == SchemaDeferralOutcome.AnotherInstanceMigrated)).IsTrue()
       .Because("not one of them may conclude the migrator died while it was working");
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // #2127: the wait between two steps of a pass is its own outcome, said at Debug.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// <summary>A logger that keeps each line with its level.</summary>
+  private sealed class LeveledLogger : ILogger {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+      Entries.Add((logLevel, formatter(state, exception)));
+    private sealed class Scope : IDisposable { public void Dispose() { } }
+  }
+
+  private static async Task<SchemaDeferralOutcome> _waitBetweenStepsAsync(
+      Func<CancellationToken, Task<bool>> isClean, Func<CancellationToken, Task<bool>> isHeld, ILogger logger) {
+    var time = new FakeTimeProvider();
+    var run = SchemaMigrationDeferral.WaitBetweenStepsAsync(isClean, isHeld, time, SCHEMA, logger);
+    while (!run.IsCompleted) {
+      time.Advance(TimeSpan.FromMilliseconds(1));
+      await Task.Yield();
+    }
+    return await run;
+  }
+
+  /// <summary>
+  /// A lock free between two of another instance's steps ends the step-level wait as free between steps, said at
+  /// Debug: the other instance is not gone, and a pass two instances take turns through is not a takeover per step.
+  /// </summary>
+  [Test]
+  public async Task WaitBetweenSteps_ALockHeldThenFree_EndsFreeBetweenSteps_SaidOnlyAtDebugAsync() {
+    var logger = new LeveledLogger();
+    var held = new Queue<bool>([true, true, false]);
+
+    var outcome = await _waitBetweenStepsAsync(_ => Task.FromResult(false), _ => Task.FromResult(held.Dequeue()), logger);
+
+    await Assert.That(outcome).IsEqualTo(SchemaDeferralOutcome.FreeBetweenSteps);
+    await Assert.That(logger.Entries.Where(e => e.Level > LogLevel.Debug)).IsEmpty()
+      .Because("neither 'another instance is migrating' nor 'taking the work over' is true of a lock between two steps");
+    await Assert.That(logger.Entries).Contains(e => e.Level == LogLevel.Debug && e.Message.Contains("between"));
+    await Assert.That(logger.Entries).DoesNotContain(e => e.Message.Contains("gone"));
+  }
+
+  [Test]
+  public async Task WaitBetweenSteps_ACurrentSchema_IsAnotherInstanceFinishingAsync() {
+    var outcome = await _waitBetweenStepsAsync(_ => Task.FromResult(true), _ => Task.FromResult(true), new LeveledLogger());
+
+    await Assert.That(outcome).IsEqualTo(SchemaDeferralOutcome.AnotherInstanceMigrated);
+  }
+
+  [Test]
+  public async Task WaitBetweenSteps_AFailedLockProbe_ContendsForTheNextStepAsync() {
+    var logger = new LeveledLogger();
+
+    var outcome = await _waitBetweenStepsAsync(
+      _ => Task.FromResult(false), _ => throw new InvalidOperationException("probe failed"), logger);
+
+    await Assert.That(outcome).IsEqualTo(SchemaDeferralOutcome.FreeBetweenSteps);
+    await Assert.That(logger.Entries).Contains(e => e.Level == LogLevel.Warning);
+  }
+
+  [Test]
+  public async Task Defer_TheMigrationLevelWait_StillNamesAMigratorThatIsGoneAsync() {
+    var logger = new LeveledLogger();
+    var time = new FakeTimeProvider();
+
+    var outcome = await _deferAsync(_ => Task.FromResult(false), _ => Task.FromResult(false), time, logger);
+
+    await Assert.That(outcome).IsEqualTo(SchemaDeferralOutcome.MigratingInstanceGone);
+    await Assert.That(logger.Entries).Contains(e => e.Level == LogLevel.Warning && e.Message.Contains("gone"));
+  }
 }

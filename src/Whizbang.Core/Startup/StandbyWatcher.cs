@@ -40,7 +40,8 @@ public sealed class StandbyWatcherOptions {
 /// <remarks>
 /// <para>
 /// <b>Migration committed</b> (the ledger now records a newer version — the re-assessment says
-/// StandDown): the instance shuts down, as the handshake promises. <b>Request withdrawn</b> (the
+/// StandDown): the instance exits through the one exit path (#2126) as an intended
+/// <see cref="ExitCause.UpgradeStandDown"/> (exit code 0), as the handshake promises. <b>Request withdrawn</b> (the
 /// migrator rolled back and cleared) or <b>migrator died</b> (its heartbeat lapsed — the request
 /// is void, peers must not be stranded): revival — re-enter the startup pipeline at <c>Assess</c>
 /// by re-running the re-entrant runner, then resume. Every path out of standby is bounded.
@@ -77,7 +78,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private readonly ILibraryVersionProvider _versionProvider;
   private readonly IWhizbangRunController _runControl;
   private readonly IStartupAssessor _assessor;
-  private readonly IHostApplicationLifetime _hostLifetime;
+  private readonly IWhizbangInstanceExit _instanceExit;
   private readonly StartupPipelineRunner? _pipelineRunner;
   private readonly StandbyWatcherOptions _options;
   private readonly ILogger<StandbyWatcher> _logger;
@@ -93,7 +94,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   /// <summary>Creates the watcher. Inert without an instance identity or a coordinator.</summary>
   /// <param name="scopeFactory">Scopes the work coordinator the standby ledger is read through.</param>
   /// <param name="runControl">The run-control path that stands the instance down and resumes it.</param>
-  /// <param name="hostLifetime">Stopped when a migration commits beneath this instance.</param>
+  /// <param name="instanceExit">The one exit path, taken when a migration commits beneath this instance (#2126).</param>
   /// <param name="instanceProvider">This instance's identity; the watcher is inert without it.</param>
   /// <param name="versionProvider">This binary's version, ranked against a requester's.</param>
   /// <param name="assessor">Re-assesses this instance's verdict.</param>
@@ -106,7 +107,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   public StandbyWatcher(
       IServiceScopeFactory scopeFactory,
       IWhizbangRunController runControl,
-      IHostApplicationLifetime hostLifetime,
+      IWhizbangInstanceExit instanceExit,
       IServiceInstanceProvider instanceProvider,
       ILibraryVersionProvider versionProvider,
       IStartupAssessor assessor,
@@ -116,11 +117,11 @@ public sealed partial class StandbyWatcher : BackgroundService {
       StandbyWatcherOptions? options = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(runControl);
-    ArgumentNullException.ThrowIfNull(hostLifetime);
+    ArgumentNullException.ThrowIfNull(instanceExit);
     ArgumentNullException.ThrowIfNull(timeProvider);
     _scopeFactory = scopeFactory;
     _runControl = runControl;
-    _hostLifetime = hostLifetime;
+    _instanceExit = instanceExit;
     _instanceProvider = instanceProvider;
     _versionProvider = versionProvider;
     _assessor = assessor;
@@ -323,8 +324,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
     if (verdict == StartupVerdict.StandDown) {
       // The migration committed: the schema moved beneath this binary. Shut down, as the
       // handshake promises — the orchestrator restarts or replaces us.
-      LogShuttingDownAfterCommit(_logger, reason);
-      _hostLifetime.StopApplication();
+      // #2126: through the one exit path, as an intended exit (code 0); its entry states the reason.
+      _instanceExit.RequestExit(new InstanceExitRequest(ExitCause.UpgradeStandDown,
+        "the newer version's migration committed beneath this stood-down instance, so it exits as the standby handshake promises: " + reason));
       return;
     }
 
@@ -358,9 +360,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     Message = "Standing down as obsolete: {Reason}")]
   static partial void LogStandingDownAsObsolete(ILogger logger, string reason);
 
-  [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
-    Message = "Standby outcome: migration committed — shutting down as the handshake promises ({Reason})")]
-  static partial void LogShuttingDownAfterCommit(ILogger logger, string reason);
+  // EventId 4 was the shutdown's own entry; since #2126 the exit's one entry (WhizbangInstanceExit) states it.
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Standby outcome: reviving — re-entering the pipeline at Assess ({Reason})")]

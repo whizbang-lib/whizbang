@@ -211,6 +211,72 @@ public class SchemaInitializationRunnersTests {
     await Assert.That(gate.IsReady).IsFalse();
   }
 
+  /// <summary>
+  /// #2126: in blocking mode a failure is an exit, not an exception out of host start (which would end the process as an
+  /// unhandled crash, saying nothing of why): the instance exits through the one exit path, a startup failure (code 4),
+  /// and the gate stays closed.
+  /// </summary>
+  [Test]
+  public async Task Blocking_AnUnreadableVersionRecord_ExitsAsAStartupFailure_WithTheGateClosedAsync() {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<Whizbang.Core.RunControl.IWhizbangInstanceExit>(exit);
+    services.AddSingleton<IStartupAssessor>(new ThrowingAssessor(new InvalidOperationException("permission denied")));
+    var service = _bound(services.BuildServiceProvider(), gate, new RecordingRunner("runner", order, gate));
+
+    await service.StartAsync(CancellationToken.None);
+
+    var request = exit.Requests.Single();
+    await Assert.That(request.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure);
+    await Assert.That(request.Exception).IsTypeOf<StartupAssessmentException>();
+    await Assert.That(request.Reason).StartsWith("schema initialization failed, and with NonBlockingSchemaInit = false");
+    await Assert.That(order).IsEmpty();
+    await Assert.That(gate.IsReady).IsFalse();
+  }
+
+  [Test]
+  public async Task Blocking_ASchemaNewerThanThisBinary_ExitsAsSchemaIncompatibleAsync() {
+    var gate = new SchemaReadyGate();
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<Whizbang.Core.RunControl.IWhizbangInstanceExit>(exit);
+    var refused = new RecordingRunner("runner", [], gate, new SchemaStandDownException("the schema is at 2.0.0, this binary is 1.0.0"));
+    var service = _bound(services.BuildServiceProvider(), gate, refused);
+
+    await service.StartAsync(CancellationToken.None);
+
+    var request = exit.Requests.Single();
+    await Assert.That(request.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.SchemaIncompatible);
+    await Assert.That(Whizbang.Core.RunControl.ExitCauses.ExitCodeOf(request.Cause)).IsEqualTo(5);
+    await Assert.That(request.Reason).Contains("the schema is at 2.0.0, this binary is 1.0.0");
+    await Assert.That(gate.IsReady).IsFalse();
+  }
+
+  [Test]
+  public async Task Blocking_ACanceledHostStart_IsNotAnExit_ButACancellationThatIsNotTheHosts_IsAsync() {
+    var gate = new SchemaReadyGate();
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<Whizbang.Core.RunControl.IWhizbangInstanceExit>(exit);
+    var provider = services.BuildServiceProvider();
+    using var start = new CancellationTokenSource();
+    await start.CancelAsync();
+    var hostsOwn = _bound(provider, gate, new RecordingRunner("runner", [], gate, new OperationCanceledException(start.Token)));
+    var aTimeout = _bound(provider, gate, new RecordingRunner("runner", [], gate, new OperationCanceledException("a command timed out")));
+
+    await Assert.That(async () => await hostsOwn.StartAsync(start.Token)).Throws<OperationCanceledException>();
+    var exitsAfterTheHostsCancellation = exit.Requests.Count;
+    await aTimeout.StartAsync(CancellationToken.None);
+
+    await Assert.That(exitsAfterTheHostsCancellation).IsEqualTo(0).Because("the host canceling its own start is not a failure");
+    await Assert.That(exit.Requests.Single().Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure);
+  }
+
   private static WhizbangDatabaseInitializerService _standingDown(
       ISchemaReadyGate gate, StartupAssessment assessment, BeatingCoordinator coordinator, StageLog stages,
       params ISchemaInitializationRunner[] runners) {

@@ -42,10 +42,12 @@ public enum SchemaStepOutcome {
 /// The lock is <c>pg_try_advisory_xact_lock</c> on the schema key, the same key and the same transaction scope as
 /// before, so it is released by the step's commit or rollback on whatever backend the step ran on and cannot leak
 /// through a pooler. Losing it means another instance is inside a step: this one gives its backend up and waits
-/// through <see cref="SchemaMigrationDeferral"/>, exactly as a pass that lost the old single lock did. The wait ends
-/// one of two ways. The schema is current: the other instance finished the whole pass, so this one stops, and every
-/// later step it is handed does nothing. The lock is free with work still outstanding: the holder failed, died, or is
-/// simply between two of its steps; this instance takes the step after a short backoff, and the re-check under the
+/// through <see cref="SchemaMigrationDeferral.WaitBetweenStepsAsync"/>, which says what it is doing at Debug, because
+/// two instances taking turns through a pass meet this wait at every step (#2127). The wait ends one of two ways. The
+/// schema is current: the other instance finished the whole pass, so this one stops, and every later step it is handed
+/// does nothing. The lock is free with work still outstanding (<see cref="SchemaDeferralOutcome.FreeBetweenSteps"/>):
+/// the holder is between two of its steps, or failed or died after one; this instance takes the step after a short
+/// backoff, and the re-check under the
 /// lock is what keeps it from applying anything the other instance already committed. Two instances can therefore
 /// take turns through one pass, and each step is still applied exactly once.
 /// </para>
@@ -207,7 +209,8 @@ public sealed class SchemaStepRunner {
 
       // Another instance is inside a step. Wait for its result rather than queue behind it.
       await SchemaInitializationObservers.LockContendedAsync(_services, _schema, cancellationToken).ConfigureAwait(false);
-      var deferral = await SchemaMigrationDeferral.DeferAsync(
+      // #2127: the step-level wait. A lock free again is the holder between two of its steps, not a migrator gone.
+      var deferral = await SchemaMigrationDeferral.WaitBetweenStepsAsync(
         _isSchemaCurrentAsync,
         ct => AdvisoryLockProbe.IsHeldElsewhereAsync(connection, _lockId, ct),
         _timeProvider, _schema, _logger, cancellationToken).ConfigureAwait(false);
