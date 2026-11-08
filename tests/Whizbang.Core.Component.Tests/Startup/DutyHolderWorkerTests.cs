@@ -684,7 +684,7 @@ public class DutyHolderWorkerTests {
     var onAcquired = new OnAcquired(async (_, token) => {
       started.TrySetResult();
       try {
-        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        await _untilCanceledAsync(token);
       } catch (OperationCanceledException) {
         canceled = true;
         throw;
@@ -714,7 +714,7 @@ public class DutyHolderWorkerTests {
     var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var first = new Handler("First", async token => {
       started.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, token);
+      await _untilCanceledAsync(token);
       return DutyWorkResult.Done();
     });
     var second = _done("Second");
@@ -758,7 +758,7 @@ public class DutyHolderWorkerTests {
     store.Owed.Add(_owed("Rewrite"));
     var worker = _worker(elector, store, [new Handler("Rewrite", async token => {
       started.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, token);
+      await _untilCanceledAsync(token);
       return DutyWorkResult.Done();
     })]);
     using var stop = new CancellationTokenSource();
@@ -770,6 +770,16 @@ public class DutyHolderWorkerTests {
     await Assert.That(async () => await pass).Throws<OperationCanceledException>();
     await Assert.That(worker.Holds(ROLE)).IsTrue();
     await Assert.That(grant.Disposed).IsFalse();
+  }
+
+  /// <summary>
+  /// Completes, canceled, the moment <paramref name="token"/> is canceled: work that stands still until the code under
+  /// test cancels it, waiting on that exact transition rather than on any clock.
+  /// </summary>
+  private static Task _untilCanceledAsync(CancellationToken token) {
+    var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    _ = token.Register(() => canceled.TrySetCanceled(token));
+    return canceled.Task;
   }
 
   /// <summary>Grants once; the token is canceled by the time the pass reaches the drain.</summary>

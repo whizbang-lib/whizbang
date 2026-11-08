@@ -96,6 +96,16 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     await _executeAsync("UPDATE wh_service_instances SET last_heartbeat_at = last_heartbeat_at - @by", ct, ("by", by));
   }
 
+  /// <summary>
+  /// Completes, canceled, the moment <paramref name="token"/> is canceled: work that stands still until the code under
+  /// test cancels it, waiting on that exact transition rather than on any clock.
+  /// </summary>
+  private static Task _untilCanceledAsync(CancellationToken token) {
+    var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    _ = token.Register(() => canceled.TrySetCanceled(token));
+    return canceled.Task;
+  }
+
   private static Task _lostAsync(IDutyGrant grant) {
     var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     _ = grant.LostToken.Register(() => lost.TrySetResult());
@@ -163,7 +173,7 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     var old = (await _electorFor(a, time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     var lost = _lostAsync(old);
-    var oldWork = Task.Delay(Timeout.InfiniteTimeSpan, old.LostToken);
+    var oldWork = _untilCanceledAsync(old.LostToken);
 
     await _ageAsync(TimeSpan.FromSeconds(45), cancellationToken);
     await _heartbeatAsync(b, cancellationToken);
