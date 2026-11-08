@@ -575,23 +575,27 @@ public partial class PerspectiveWorker(
     }
 
     var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
-    if (!isPerspectiveHost) {
-      // Turnkey park: the core worker pipeline hosts this worker unconditionally, so a host
-      // with NO perspective registry at all must cost NOTHING — no startup-repair queries, no
-      // drain loop, no poll cadence, no database connections. Before the core registration
-      // such hosts had no PerspectiveWorker at all; this restores exactly that footprint.
-      // (A registry that exists but is empty proceeds: rewind scan + loop still service
-      // leftover rows from removed perspectives.) The startup-scan barrier completes
-      // immediately: there are no read models to protect.
-      _startupScanTcs.TrySetResult();
+    if (isPerspectiveHost) {
+      _processInitialCheckpoints();
+      await _reconcileOrphanedLifecyclesAsync(stoppingToken);
+      await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+    }
+    // The read-model barrier waits on exactly this: the scan is what makes the read models
+    // trustworthy after a migration, and lens reads resume when it (and Migrate) complete. With no
+    // registry there are no read models to protect, so it completes at once.
+    _startupScanTcs.TrySetResult();
+
+    // Turnkey park: the core worker pipeline hosts this worker unconditionally, so a host with NO
+    // perspective registry runs no startup repair and, until it is handed work, costs nothing: no drain
+    // loop, no poll cadence, no database connection. It is parked on its drain channel, not ended
+    // (#2142): such a host still stores the collective events of the namespaces it subscribes to, the
+    // store routes each to the __collective__ sink, and the claim leases those rows and hands their
+    // streams to this channel like any other. The drain is the one place that concludes a row nothing
+    // here applies. When the worker ended here instead, nothing read the channel and the rows were
+    // leased, re-offered, released and leased again, for days, with nothing in the log.
+    if (!isPerspectiveHost && !await _awaitFirstDrainWorkAsync(stoppingToken).ConfigureAwait(false)) {
       return;
     }
-    _processInitialCheckpoints();
-    await _reconcileOrphanedLifecyclesAsync(stoppingToken);
-    await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
-    // The read-model barrier waits on exactly this: the scan is what makes the read models
-    // trustworthy after a migration, and lens reads resume when it (and Migrate) complete.
-    _startupScanTcs.TrySetResult();
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
@@ -916,9 +920,25 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Parks a host with no perspective registry until its claim hands it a drain stream (#2142). True once there is
+  /// one to read; false when the host stops first or the channel is closed, and the worker then ends.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unhandled-collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_HostWithNoPerspectiveRegistry_CompletesTheCollectiveRowsItsClaimLeases_WarnedAndCountedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerNoPerspectivesParkTests.cs:NoRegistry_ParksCleanly_NoCoordinatorCalls_StartupScanCompletesAsync</tests>
+  private async Task<bool> _awaitFirstDrainWorkAsync(CancellationToken stoppingToken) {
+    try {
+      return await _perspectiveDrainChannel.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      return false;
+    }
+  }
+
+  /// <summary>
   /// Initializes the per-event-type perspective map from the registry. Returns false ONLY when
   /// no <see cref="IPerspectiveRunnerRegistry"/> is registered at all — the host was never a
-  /// perspective host and the caller parks the worker entirely. A registry that is PRESENT but
+  /// perspective host and the caller skips startup repair and parks the worker until its claim hands
+  /// it drain work (the collective rows the claim leases, #2142). A registry that is PRESENT but
   /// EMPTY (perspectives removed) returns true: orphan reconciliation skips on the empty map,
   /// but the rewind scan and drain loop still run to service leftover rows.
   /// </summary>
@@ -1947,11 +1967,11 @@ public partial class PerspectiveWorker(
       CancellationToken cancellationToken) {
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
 
-    if (eventStore is null || !_eventTypeProvider.IsAvailable || _perspectivesPerEventType is null) {
-#pragma warning disable CA1848
-      _logger.LogWarning("Drain mode skipped: EventStore={HasStore}, EventTypeProvider={HasProvider}, PerspectiveMap={HasMap}",
-        eventStore is not null, _eventTypeProvider.IsAvailable, _perspectivesPerEventType is not null);
-#pragma warning restore CA1848
+    // Only a missing store stops the drain before the fetch. A host with no event types or no perspective map (no
+    // registry, or an empty one) still fetches what its claim leased, so the rows nothing here applies are concluded
+    // below (#2142) rather than leased again for ever; it applies nothing, as before.
+    if (eventStore is null) {
+      LogDrainSkippedNoEventStore(_logger, streamIds.Count);
       return null;
     }
 
@@ -2013,6 +2033,10 @@ public partial class PerspectiveWorker(
     var typedEvents = _deserializeDrainRows(eventStore, rowsToParse, eventTypes, rowErrors);
     await _failUnreadableDrainRowsAsync(rowsToParse, typedEvents, eventTypes, rowErrors, cancellationToken).ConfigureAwait(false);
 
+    if (_perspectivesPerEventType is null) {
+      // No perspective here: concluding the rows nothing applies was all there was to do.
+      return null;
+    }
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
       _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
@@ -2130,6 +2154,10 @@ public partial class PerspectiveWorker(
       LogUnhandledCollectiveRowsCompleted(_logger, _instanceProvider.ServiceName, byType.Key, byType.Count(), byType.First().StreamId);
     }
   }
+
+  [LoggerMessage(EventId = 81, Level = LogLevel.Warning,
+    Message = "Drain mode skipped for {StreamCount} stream(s): no event store is registered, so the leased perspective rows cannot be read")]
+  static partial void LogDrainSkippedNoEventStore(ILogger logger, int streamCount);
 
   [LoggerMessage(EventId = 80, Level = LogLevel.Warning,
     Message = "Service {ServiceName} has no local collective handler for {EventType}: completed {Count} __collective__ "
