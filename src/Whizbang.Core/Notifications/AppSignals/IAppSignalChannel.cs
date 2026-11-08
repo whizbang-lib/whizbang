@@ -35,7 +35,9 @@ public interface IAppSignalChannel {
   ///   </description></item>
   /// </list>
   /// <para>
-  /// Sent inside a caller's transaction, a payload PostgreSQL rejects (over its 8000-byte limit) fails that transaction.
+  /// Sent inside a caller's DbContext transaction, a payload PostgreSQL rejects (over its 8000-byte limit) fails that
+  /// transaction. Inside a <c>TransactionScope</c> the signal is sent after the scope commits, so the caller's work
+  /// commits and the rejected send is logged.
   /// </para>
   /// </remarks>
   /// <exception cref="ArgumentException">If topic format is invalid.</exception>

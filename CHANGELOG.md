@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dapper connection of the caller's own. Callers do not change. The Postgres driver registers the new
   `IAppSignalTransactionSource` for every framework DbContext. **Upgrade notes:** a custom `ISignalTopicTransport`
   implements `PublishTopicAsync(topic, payload, DbTransaction? transaction, ...)`; a payload PostgreSQL rejects (over
-  8000 bytes) published inside a caller's transaction now fails that transaction; code that resolved `IAppSignalChannel`
+  8000 bytes) published inside a caller's DbContext transaction now fails that transaction (inside a
+  `TransactionScope` the caller's work commits and the rejected send is logged); code that resolved `IAppSignalChannel`
   and expected the `SignalBus` instance now receives a per-scope channel over it.
 
 #### Security
