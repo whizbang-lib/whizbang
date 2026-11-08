@@ -31,6 +31,13 @@ regexTarget = "secret"
 regexes = ['''^(dW5pdC10ZXN0LWtleQ==|cHJvYmVrZXk=|dGVzdC1rZXktbm90LXJlYWw=)$''']
 
 [[allowlists]]
+description = """Placeholder Azure Storage account key in the archive location tests: base64 of \
+'secret-account-key-not-real', used to prove no key or connection string is ever stored in a location row."""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^c2VjcmV0LWFjY291bnQta2V5LW5vdC1yZWFs$''']
+
+[[allowlists]]
 description = """Identifiers that are not credentials: the partition key 'partition-key-1' in the perspective \
 store tests and the RabbitMQ routing key 'partition-2.order-12345' in a removed infrastructure doc."""
 targetRules = ["generic-api-key"]
