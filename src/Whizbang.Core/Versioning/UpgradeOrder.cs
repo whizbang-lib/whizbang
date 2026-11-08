@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Versioning;
 
@@ -95,6 +96,29 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
 /// <docs>operations/startup/rolling-upgrades#cluster-wide-stand-down</docs>
 /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs</tests>
 public static class UpgradeOrder {
+  /// <summary>
+  /// The configuration key of the incompatibility override (owner decision, #2022): <c>true</c> lets an instance start
+  /// when the verdict would stand it down for an incompatibility (the schema newer than this build, or a change it
+  /// cannot reverse applied since its version). Off by default. It never lifts the stand-down for a newer version
+  /// online, and it never runs a migration: the instance serves the schema as it is.
+  /// </summary>
+  public const string OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:OverrideIncompatibility";
+
+  /// <summary>Whether the host turned the incompatibility override on (#2022).</summary>
+  /// <param name="configuration">The host's configuration; null reads none.</param>
+  /// <returns><see langword="true"/> only when the key says <c>true</c>.</returns>
+  /// <exception cref="InvalidOperationException">The key holds something that is not a boolean: a host that says so
+  /// explicitly is told at once, never read as off.</exception>
+  public static bool IsIncompatibilityOverridden(IConfiguration? configuration) {
+    var value = configuration?[OVERRIDE_INCOMPATIBILITY_KEY];
+    if (string.IsNullOrWhiteSpace(value)) {
+      return false;
+    }
+    return bool.TryParse(value, out var on)
+      ? on
+      : throw new InvalidOperationException($"{OVERRIDE_INCOMPATIBILITY_KEY} is '{value}', which is not true or false.");
+  }
+
   /// <summary>Whether a library version reads as SemVer.</summary>
   /// <param name="libraryVersion">The version.</param>
   /// <returns>True when it can be ordered.</returns>

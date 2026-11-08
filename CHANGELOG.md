@@ -498,6 +498,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     on its next write), a row last skipped names nobody and never blocks, and a ledger older than 351 takes the version
     that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
     version yet and are not gated.
+  - **An override for incompatibility verdicts:** `Whizbang:Startup:OverrideIncompatibility` (off by default) lets an
+    instance start when Assess would stand it down for an incompatibility: the schema newer than its build, or a change
+    it cannot reverse applied since its version. It starts as `Current` (no election, no pass, no converge, nothing
+    applied and no migration run backward), logs at every start at Error (`StartupAssessmentSource` event 3) that it
+    runs past the verdict, with the verdict and its full reason, and records that reason on its instance row
+    (`wh_service_instances.incompatibility_override`, migration 356). It never lifts the stand-down for a newer
+    version online, nor the refusal of a build whose own version is missing or unreadable. Only the one verdict reads
+    and honors it (`StartupAssessment.OverriddenReason` is how everything else learns of it).
   - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
     Assess) when the verdict no longer says stand down, for example when the newer instance died; before, an instance
     stood down by the runtime re-assessment stayed down until replaced. A change applied since its version still keeps

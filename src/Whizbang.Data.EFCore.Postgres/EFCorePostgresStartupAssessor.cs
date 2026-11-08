@@ -32,6 +32,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   private readonly ILibraryVersionProvider? _versionProvider;
   private readonly IApplicationVersionProvider? _applicationVersion;
   private readonly IServiceInstanceProvider? _instance;
+  private readonly bool _overrideIncompatibility;
 
   /// <summary>Creates the assessor over the consumer's DbContext type, resolved per call.</summary>
   /// <param name="scopeFactory">Scopes the DbContext each read is made through.</param>
@@ -39,9 +40,12 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   /// <param name="versionProvider">This binary's library version; none means it is unknown, which stands down.</param>
   /// <param name="applicationVersion">This instance's application version (#2022); none means it is unknown.</param>
   /// <param name="instance">This instance's identity (#2022): its own row is never a newer instance.</param>
+  /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022): read by the driver's
+  /// registration from <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>.</param>
   public EFCorePostgresStartupAssessor(
       IServiceScopeFactory scopeFactory, Type dbContextType, ILibraryVersionProvider? versionProvider = null,
-      IApplicationVersionProvider? applicationVersion = null, IServiceInstanceProvider? instance = null) {
+      IApplicationVersionProvider? applicationVersion = null, IServiceInstanceProvider? instance = null,
+      bool overrideIncompatibility = false) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(dbContextType);
     _scopeFactory = scopeFactory;
@@ -49,6 +53,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
     _versionProvider = versionProvider;
     _applicationVersion = applicationVersion;
     _instance = instance;
+    _overrideIncompatibility = overrideIncompatibility;
   }
 
   /// <inheritdoc />
@@ -61,6 +66,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
     _readAsync((connection, schema, services) => PostgresStartupAssessment.AssessAsync(
       connection, schema,
       new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
+      _overrideIncompatibility,
       ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(services, ct),
       cancellationToken), cancellationToken);
 

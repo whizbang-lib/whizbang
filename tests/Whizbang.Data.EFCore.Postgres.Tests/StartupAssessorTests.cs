@@ -145,13 +145,13 @@ public class StartupAssessorTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
 
-    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null),
+    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), false,
       _ => throw new InvalidOperationException("the catalog could not be read"), cancellationToken);
 
     await Assert.That(unanswered.Verdict).IsEqualTo(StartupVerdict.Serve)
       .Because("a schema that cannot be shown current takes the full path, which finds out for itself");
     await Assert.That(unanswered.Reason).Contains("could not be shown current");
-    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null),
+    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), false,
         _ => throw new OperationCanceledException(), cancellationToken))
       .Throws<OperationCanceledException>();
   }

@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Versioning;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -321,5 +322,27 @@ public class RollbackGateTests : EFCoreTestBase {
     await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Current);
     await Assert.That(overridden.OverriddenReason).IsEqualTo(refused.Reason);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task TheOverrideRecord_IsWrittenOnlyWhereThereIsARowAndAPlaceForItAsync(CancellationToken ct) {
+    NpgsqlConnection open() => new(ConnectionString);
+    var instance = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await _execAsync("""
+      SELECT record_heartbeat(@id, 'svc', 'host', 1, '{}'::jsonb, 'Running', '1.0.0', 90, 'pooled', NULL)
+      """, ct, ("id", instance));
+
+    await Assert.That(await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, "why", ct)).IsTrue();
+    await Assert.That(await _scalarAsync<string>("SELECT incompatibility_override FROM wh_service_instances WHERE instance_id = @id", ct, ("id", instance)))
+      .IsEqualTo("why");
+    await Assert.That(await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+      open, "", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), "why", ct)).IsFalse().Because("no row to write it on");
+
+    await _execAsync("ALTER TABLE wh_service_instances DROP COLUMN incompatibility_override", ct);
+    await Assert.That(await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, "why", ct)).IsFalse()
+      .Because("a schema older than 356 has no place for it, and the start goes on");
+    await Assert.That(async () => await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, " ", ct))
+      .Throws<ArgumentException>();
   }
 }

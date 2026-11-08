@@ -348,7 +348,8 @@ public class UpgradeOrderTests {
   [Test]
   public async Task TheOverride_IsOffUnlessTheHostTurnsItOnAsync() {
     // Owner decision (#2022): off by default. A host that configures nothing never runs past an incompatibility.
-    await Assert.That(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY).IsEqualTo("Whizbang:Startup:OverrideIncompatibility");
+    var key = UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY;
+    await Assert.That(key).IsEqualTo("Whizbang:Startup:OverrideIncompatibility");
     await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(null)).IsFalse();
     await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config(null))).IsFalse();
     await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config(" "))).IsFalse();

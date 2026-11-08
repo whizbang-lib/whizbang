@@ -111,6 +111,11 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
     while (true) {
       try {
         var verdict = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
+        if (verdict.OverriddenReason is { } overridden) {
+          // #2022: loud at every start, in the words the stand-down would have used.
+          LogRunningPastAnIncompatibility(_logger, Whizbang.Core.Versioning.UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY,
+            nameof(StartupVerdict.StandDown), overridden);
+        }
         Verdict = verdict;
         attempt.SetResult(verdict);
         return;
@@ -159,6 +164,12 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
       + "past Preflight on this attempt, because an instance that cannot tell whether the schema is newer than its binary "
       + "must not migrate it")]
   static partial void LogFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Error,
+    Message = "Running past an incompatibility verdict because {Key} is on: startup's verdict was {Verdict}: {Reason}. "
+      + "This build serves a schema it did not create; nothing is applied and no migration runs, and the instance row "
+      + "records the override")]
+  static partial void LogRunningPastAnIncompatibility(ILogger logger, string key, string verdict, string reason);
 }
 
 /// <summary>Registers the one <see cref="StartupAssessmentSource"/> of a host (#1992).</summary>

@@ -426,7 +426,8 @@ public static class ServiceCollectionExtensions {
       IServiceProvider sp, string connectionString, Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) =>
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()?.InstanceId);
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()?.InstanceId,
+      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the

@@ -192,6 +192,29 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// The start the incompatibility override allowed (#2022): this build serves a schema it did not create, so nothing is
+  /// changed. No schema lock, no pass, no perspective registry reconcile and no converge: the instance joins the registry
+  /// and its row records the override, with the reason the verdict would have stood it down.
+  /// </summary>
+  /// <param name="overriddenReason">The overridden verdict's reason.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the instance is registered and the override recorded.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
+  public async Task ServeAsItIsAsync(string overriddenReason, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(overriddenReason);
+    if (Instance is not { } instance) {
+      return;   // no identity: there is no row to record the override on
+    }
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+    await SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+      () => new NpgsqlConnection(_connectionString), schema, instance.InstanceId, overriddenReason, cancellationToken);
+  }
+
+  /// <summary>
   /// Whether the schema needs nothing from this binary (#1992), read without a lock: every migration this binary
   /// carries recorded at its hash and at this binary's version (the infrastructure schema this driver builds is tied to
   /// the version, and recorded nowhere else), every perspective table and application object at its hash, every

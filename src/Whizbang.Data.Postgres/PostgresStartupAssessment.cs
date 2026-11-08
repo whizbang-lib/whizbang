@@ -60,13 +60,15 @@ internal static class PostgresStartupAssessment {
   /// <param name="connection">An open connection.</param>
   /// <param name="schema">The schema the ledger lives in; null or empty for the connection's own.</param>
   /// <param name="own">This instance's versions and id; a null library version means no provider says.</param>
+  /// <param name="overrideIncompatibility">Whether the host turned the incompatibility override on (#2022,
+  /// <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>).</param>
   /// <param name="isCurrent">Whether the schema needs nothing applied, asked only when nothing newer is recorded or
   /// online. A throw is read as "could not be shown current".</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The verdict.</returns>
   internal static async Task<StartupAssessment> AssessAsync(
-      NpgsqlConnection connection, string? schema, VersionSighting own, Func<CancellationToken, Task<bool>> isCurrent,
-      CancellationToken cancellationToken) {
+      NpgsqlConnection connection, string? schema, VersionSighting own, bool overrideIncompatibility,
+      Func<CancellationToken, Task<bool>> isCurrent, CancellationToken cancellationToken) {
     var prefix = PgIdentifier.QualifyPrefix(schema);
     var probe = await _probeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     if (!probe.Ledger) {
@@ -82,7 +84,7 @@ internal static class PostgresStartupAssessment {
     var online = probe.Online
       ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false)
       : [];
-    var verdict = ComputeVerdict(own, ledger, online);
+    var verdict = ComputeVerdict(own, ledger, online, overrideIncompatibility);
     if (verdict.Verdict != StartupVerdict.Serve) {
       return verdict;
     }
@@ -133,9 +135,14 @@ internal static class PostgresStartupAssessment {
   /// <param name="own">This instance's versions and id.</param>
   /// <param name="ledger">Every change the ledger records, with who applied it (null versions when unknown).</param>
   /// <param name="online">Every instance online.</param>
-  /// <returns>Migrate, Serve or StandDown; never Current, which needs the schema read.</returns>
+  /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022): a change applied since
+  /// this version then starts the instance as Current (no election, no pass, nothing applied), with the reason it would
+  /// have stood down in <see cref="StartupAssessment.OverriddenReason"/>. It never lifts the stand-down for a newer
+  /// version online, nor the refusal of a build that cannot say what it is.</param>
+  /// <returns>Migrate, Serve or StandDown; Current only when the override let an incompatible instance start.</returns>
   internal static StartupAssessment ComputeVerdict(
-      VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online) {
+      VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
+      bool overrideIncompatibility = false) {
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
@@ -155,11 +162,17 @@ internal static class PostgresStartupAssessment {
     }
 
     const string STANDING_DOWN = "; standing down: never apply anything, hold the data plane, report not-ready-while-alive";
-    if (UpgradeOrder.AppliedSince(own, ledger) is { Count: > 0 } since) {
-      return new StartupAssessment(StartupVerdict.StandDown, UpgradeOrder.DescribeAppliedSince(own, since) + STANDING_DOWN);
-    }
+    // A newer version online is the cluster-wide stand-down, not an incompatibility: no override lifts it.
     if (UpgradeOrder.FindNewer(own, online) is { } newer) {
       return new StartupAssessment(StartupVerdict.StandDown, newer.Describe() + STANDING_DOWN);
+    }
+    if (UpgradeOrder.AppliedSince(own, ledger) is { Count: > 0 } since) {
+      var incompatible = UpgradeOrder.DescribeAppliedSince(own, since) + STANDING_DOWN;
+      return overrideIncompatibility
+        ? new StartupAssessment(StartupVerdict.Current,
+            $"running past an incompatibility verdict because {UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY} is on: the schema is "
+            + "served as it is, with nothing applied and no migration run") { OverriddenReason = incompatible }
+        : new StartupAssessment(StartupVerdict.StandDown, incompatible);
     }
 
     var newest = UpgradeOrder.NewestLibrary(ledger.Select(v => v.LibraryVersion));

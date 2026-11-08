@@ -37,6 +37,12 @@ internal sealed class DapperSchemaInitializationRunner(
     if (StartupVerdictBinding.IsCurrent(assessment)) {
       // Current: no schema lock and no pass; this instance registers and the schema converges, as on every start.
       await SchemaInitializationStages.SchemaCurrentAsync(services, cancellationToken).ConfigureAwait(false);
+      if (assessment!.OverriddenReason is { } overridden) {
+        // #2022: started past an incompatibility verdict. It serves the schema as it is: it registers and records the
+        // override on its row, and converges nothing.
+        await createInitializer().ServeAsItIsAsync(overridden, cancellationToken).ConfigureAwait(false);
+        return;
+      }
       await createInitializer().ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
       return;
     }

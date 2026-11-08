@@ -446,7 +446,7 @@ public class StartupParityTests {
       .Because("the full reason, as the stand-down error carries it");
     var recorded = await _overrideRecordAsync(instance) as string;
     await Assert.That(recorded).IsNotNull().Because("operators and peers see it on the instance row");
-    await Assert.That(recorded!).Contains("(applied by library 999.0.0, application unknown)");
+    await Assert.That(recorded).Contains("(applied by library 999.0.0, application unknown)");
   }
 
   [Test]
@@ -480,8 +480,12 @@ public class StartupParityTests {
         'Running', '0.0.0-0', 90, 'pooled', '2.0.0')
       """);
     var stages = new StageLog();
-    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages),
-      config: [(OVERRIDE, "true"), ("Whizbang:Application:Version", "1.0.0")]);
+    // An application host registers its version with AddWhizbang; the driver alone does not, so the scenario does.
+    var instance = _compose(driver, configure: s => {
+      s.AddSingleton<IStartupStageReporter>(stages);
+      s.AddSingleton<Whizbang.Core.Versioning.IApplicationVersionProvider>(new Whizbang.Core.Versioning.ApplicationVersionProvider(
+        Whizbang.Core.Versioning.ApplicationVersion.FromRecorded("1.0.0")));
+    }, config: (OVERRIDE, "true"));
     var initializer = _initializer(instance);
 
     await initializer.StartAsync(cancellationToken);

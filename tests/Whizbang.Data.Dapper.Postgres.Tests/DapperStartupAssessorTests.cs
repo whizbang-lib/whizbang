@@ -271,4 +271,14 @@ public class DapperStartupAssessorTests {
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).Contains($"(applied by library {_newerThanThisBinary()}, application unknown)");
   }
+
+  [Test]
+  public async Task ServingAsItIs_WithNoInstanceIdentity_TouchesNothingAsync() {
+    // No identity, no row to record the override on: it returns without opening a connection (this one goes nowhere).
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
+
+    await initializer.ServeAsItIsAsync("the reason", CancellationToken.None);
+
+    await Assert.That(async () => await initializer.ServeAsItIsAsync(" ", CancellationToken.None)).Throws<ArgumentException>();
+  }
 }

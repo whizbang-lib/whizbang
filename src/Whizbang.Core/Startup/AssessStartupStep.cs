@@ -37,7 +37,14 @@ public enum StartupVerdict {
 /// <param name="Verdict">The verdict.</param>
 /// <param name="Reason">Framework-authored explanation (versions involved, what was compared).</param>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
-public sealed record StartupAssessment(StartupVerdict Verdict, string Reason);
+public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
+  /// <summary>
+  /// When the incompatibility override let this instance start (#2022): the reason the verdict would otherwise have
+  /// stood it down, in full; null when nothing was overridden. Only the one verdict sets it; everything else reads it.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public string? OverriddenReason { get; init; }
+}
 
 /// <summary>
 /// Computes the <c>Assess</c> verdict: this binary's library version against the versions the
