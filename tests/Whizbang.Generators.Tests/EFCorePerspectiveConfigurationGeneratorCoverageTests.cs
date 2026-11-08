@@ -1312,12 +1312,13 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   }
 
   /// <summary>
-  /// Test that a self-referencing model terminates via cycle detection and stays on
-  /// the standard (non-polymorphic) configuration.
+  /// Test that a self-referencing model terminates via cycle detection and is stored as one
+  /// opaque document, because the mapped path keeps only the first level of a recursive type
+  /// (#2112).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_SelfReferencingModel_UsesStandardConfigAsync() {
+  public async Task Generator_SelfReferencingModel_UsesOpaqueConfigAsync() {
     // Arrange
     const string source = """
         using Whizbang.Core;
@@ -1344,8 +1345,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     // Assert
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER);
-    await Assert.That(generated).DoesNotContain(POLYMORPHIC_CONFIG_MARKER);
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER);
+    await Assert.That(generated).DoesNotContain(STANDARD_CONFIG_MARKER);
   }
 
   /// <summary>

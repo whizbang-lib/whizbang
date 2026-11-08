@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### App signals
+- **An app signal published inside a transaction is delivered on its commit (#2076).** `IAppSignalChannel` is now
+  resolved per scope over the signal bus (`AddWhizbangAppSignalChannel`, called by the Postgres driver). A publish
+  through a channel resolved in a scope whose framework DbContext has a transaction open is sent on that transaction's
+  connection: subscribers hear it only when it commits, never when it (or the savepoint it was made in) rolls back, and
+  PostgreSQL delivers identical topic-and-payload publishes in one transaction once. Inside a `TransactionScope` the
+  signal is sent once the scope commits and dropped on rollback, on EF Core and Dapper alike. Everything else is sent at
+  once, as before: no transaction, a channel held by a singleton or resolved from the root, and a transaction begun on a
+  Dapper connection of the caller's own. Callers do not change. The Postgres driver registers the new
+  `IAppSignalTransactionSource` for every framework DbContext. **Upgrade notes:** a custom `ISignalTopicTransport`
+  implements `PublishTopicAsync(topic, payload, DbTransaction? transaction, ...)`; a payload PostgreSQL rejects (over
+  8000 bytes) published inside a caller's transaction now fails that transaction; code that resolved `IAppSignalChannel`
+  and expected the `SignalBus` instance now receives a per-scope channel over it.
+
 #### Security
 - **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
   singleton `ReceptorInterceptorPipeline`) are asked immediately before every receptor invocation: `SendAsync`,
@@ -1629,6 +1643,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window's answer (`BackfillWindowAnswer`) now reports the last commit sequence it covered and whether more remains, and
   the requester asks for the next window from exactly that point. An ordinary request that reaches the bound with more
   selected is counted (`redelivery_answers_capped`) and logged.
+- **A collection interface of records serializes on an opaque model or message (#2114).** The generated message JSON
+  context had metadata for `IReadOnlyList<T>` only among the collection interfaces, so a perspective model stored as one
+  opaque document (or any message) holding an `ICollection<T>`, `IReadOnlyCollection<T>` or `IEnumerable<T>` failed its
+  first write with `NotSupportedException` ("JsonTypeInfo metadata ... was not provided"). The mapped path cannot fill
+  those interfaces, so every perspective model declaring one of records was stored opaquely and could not be written at
+  all. The context now provides metadata for each, read back into a `List<T>`. No upgrade step and no schema change.
+- **A recursive type in a perspective model keeps every level (#2112).** A model holding a type that reaches itself (a
+  tree node with `List<TNode> Children`, `IList<TNode>`, `ImmutableList<TNode>`, or two types holding each other) was
+  stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one
+  level deep: every level below the first self-reference was dropped on write and read back as null, with no error at
+  model build, save or query. The generator now stores such a model as one opaque document (the form an array of records
+  already takes), so the whole tree round-trips at any depth, and the new WHIZ202 (Info) reports the recursive property,
+  at any depth, saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
+  that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
+  without recursion stays mapped. WHIZ304 and the index advisory (WHIZ302) name a recursive member as recursive, with
+  that reason, instead of as one "the mapped path cannot construct". The generated message JSON context now provides metadata for `IList<T>` and
+  `ImmutableList<T>` (as it did for `IReadOnlyList<T>`), and discovers the element type behind an `ImmutableList<T>`:
+  without it, any opaque document or message holding one could not be serialized at all (`NotSupportedException`,
+  "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a
+  row an earlier release wrote reads on the new path. Such a row holds only the first level of the recursion: the rest
+  was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
+  events) writes the whole tree. **Perspectives whose models are recursive must be rebuilt after upgrading; the startup
+  log names them.** Nothing is rebuilt automatically. On the first start against a database an earlier release
+  migrated, the instance doing the schema work logs one Warning per such perspective whose table holds rows (event id
+  2112, `RecursivePerspectiveNeedsRebuild`), naming the perspective (the name a rebuild takes) and its table. It reads
+  the migration ledger: new migration `351_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
+  migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
+  as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
+  as errors is not affected: WHIZ202 reports a recursive model at Info, since it is stored correctly and there is
+  nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).
+  **New error WHIZ201:** a perspective model whose recursive types form a circular reference cannot be saved. A tree
+  (`Node.Children`), two types holding collections of each other and a linked list (`Link.Next`) are writable; a
+  recursion that stores a collection and also a single-valued reference back up the document (`Node.Children` with
+  `Node.Parent`, `Order.Lines` with `Line.Order`, or deeper, `Order.Lines`, `Line.Detail`, `Detail.Order`) lets an
+  element reach its container, and is now a build error at the back-reference. Leave the reference out of the stored
+  model (`[JsonIgnore]`) and restore it after reading, or store the container's identifier. An object cycle the
+  analyzer cannot see (`Next` with `Prev`, a node placed among its own descendants) fails the write with the
+  serializer's cycle detection and stores nothing; it is never truncated in silence.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose

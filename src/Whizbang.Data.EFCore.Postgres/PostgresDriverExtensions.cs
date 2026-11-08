@@ -85,6 +85,10 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
             new Whizbang.Core.Observability.LibraryVersionProvider(LibraryVersionInfo.Value));
 
+        // TURNKEY (#2076): the context's open transaction, read by the application signal channel resolved in the same
+        // scope, so a signal published inside it is delivered on commit and never on rollback.
+        EFCoreAppSignalTransactionSource.Register(selector.Services, selector.DbContextType);
+
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
         // The generated code contains AOT-safe registration using concrete types

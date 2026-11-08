@@ -44,9 +44,23 @@ public partial class OutboxDrainWorkerCoverageTests {
 
   private sealed class DrainChannel : IOutboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _drained = new();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
+
+    /// <summary>
+    /// Completes when the worker releases <paramref name="streamId"/>'s draining marker: the
+    /// worker does that only after the stream's drain has returned, so every fetch and publish
+    /// the drain was going to make has already happened. A test that asserts on fetch or publish
+    /// counts waits on this, not on a count, because a count can still move after it is reached.
+    /// </summary>
+    public Task Drained(Guid streamId) => _drainedSignal(streamId).Task;
+
+    public void MarkDrained(Guid streamId) => _drainedSignal(streamId).TrySetResult();
+
+    private TaskCompletionSource _drainedSignal(Guid streamId) =>
+      _drained.GetOrAdd(streamId, static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
   }
 
   private sealed class CompletionChannel : IOutboxCompletionChannel {
@@ -304,7 +318,9 @@ public partial class OutboxDrainWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
-    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    // The stream's drain having returned, not the first publish: nothing may still be in flight
+    // when the published set is asserted on.
+    await drainChannel.Drained(streamId).WaitAsync(TimeSpan.FromSeconds(30));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
 
@@ -480,7 +496,11 @@ public partial class OutboxDrainWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
 
-    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    // The last publish lands inside the second page, BEFORE the worker loops back for the
+    // confirmation fetch this test is about. Waiting on the publish count and then cancelling
+    // let the worker see the cancellation at its loop boundary and skip that fetch (#2085).
+    // The drain having returned is the transition that follows the confirmation fetch.
+    await drainChannel.Drained(streamId).WaitAsync(TimeSpan.FromSeconds(30));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
@@ -535,11 +555,10 @@ public partial class OutboxDrainWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
 
-    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(30));
-    // Give the inner loop's own re-fetch (which finds only duplicates) a chance to run before
-    // asserting no further, spurious publishes happened — mirrors the established "give a
-    // chance for a spurious second pass" pattern already used in OutboxDrainWorkerTests.
-    await Task.Delay(200);
+    // The drain having returned, which it does only after the re-fetch that finds nothing but
+    // already-seen rows: a spurious re-publish would already have happened by then. A fixed delay
+    // here only hoped the re-fetch had run (#2085).
+    await drainChannel.Drained(streamId).WaitAsync(TimeSpan.FromSeconds(30));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 

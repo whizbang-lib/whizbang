@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Whizbang.Core.Notifications.AppSignals;
 
 namespace Whizbang.Core.Signals;
@@ -17,7 +18,8 @@ namespace Whizbang.Core.Signals;
 /// <remarks>
 /// The bus is also the application's <see cref="IAppSignalChannel"/> (#2046): a topic is handed to every transport that
 /// carries topics (<see cref="ISignalTopicTransport"/>), so application signals travel the same wire, on the same
-/// connection, as the framework's own.
+/// connection, as the framework's own. Applications resolve the channel per scope over this bus (#2076), which carries the
+/// scope's open transaction to the transports; a publish through the bus itself carries none.
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <docs>fundamentals/work-coordinator/app-signals</docs>
@@ -99,10 +101,17 @@ public sealed class SignalBus : ISignalBus, ISignalSink, IAppSignalChannel {
   }
 
   /// <inheritdoc />
-  async Task IAppSignalChannel.PublishAsync(string topic, string payload, CancellationToken cancellationToken) {
+  Task IAppSignalChannel.PublishAsync(string topic, string payload, CancellationToken cancellationToken) =>
+    PublishTopicAsync(topic, payload, transaction: null, cancellationToken);
+
+  /// <summary>
+  /// Hands a topic to every topic transport, with the caller's open <paramref name="transaction"/> when the per-scope
+  /// channel found one (#2076). The topic is validated before any transport sees it.
+  /// </summary>
+  internal async Task PublishTopicAsync(string topic, string payload, DbTransaction? transaction, CancellationToken cancellationToken) {
     _ = AppSignalTopicValidator.Validate(topic);
     foreach (var transport in _topicTransports) {
-      await transport.PublishTopicAsync(topic, payload, cancellationToken).ConfigureAwait(false);
+      await transport.PublishTopicAsync(topic, payload, transaction, cancellationToken).ConfigureAwait(false);
     }
   }
 

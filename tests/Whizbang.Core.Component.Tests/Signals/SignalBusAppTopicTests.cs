@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Data.Common;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -16,6 +17,7 @@ namespace Whizbang.Core.Tests.Signals;
 public class SignalBusAppTopicTests {
   private sealed class TopicTransport : ISignalTransport, ISignalTopicTransport {
     public List<(string Topic, string Payload)> Published { get; } = [];
+    public List<DbTransaction?> Transactions { get; } = [];
     public Dictionary<string, List<Func<string, CancellationToken, Task>>> Handlers { get; } = new(StringComparer.Ordinal);
     public int Disposed { get; private set; }
 
@@ -24,8 +26,9 @@ public class SignalBusAppTopicTests {
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
       where TSignal : ISignal => ValueTask.CompletedTask;
 
-    public Task PublishTopicAsync(string topic, string payload, CancellationToken cancellationToken = default) {
+    public Task PublishTopicAsync(string topic, string payload, DbTransaction? transaction, CancellationToken cancellationToken = default) {
       Published.Add((topic, payload));
+      Transactions.Add(transaction);
       return Task.CompletedTask;
     }
 
@@ -52,6 +55,8 @@ public class SignalBusAppTopicTests {
 
     await Assert.That(first.Published).IsEquivalentTo([("orders", "{\"id\":1}")]);
     await Assert.That(second.Published).IsEquivalentTo([("orders", "{\"id\":1}")]);
+    await Assert.That(first.Transactions).IsEquivalentTo([(DbTransaction?)null])
+      .Because("the bus itself knows no scope, so a publish through it carries no transaction (#2076)");
   }
 
   [Test]

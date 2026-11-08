@@ -40,6 +40,9 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
+    // an immutable collection is judged passes without the type ever being resolved (#2112).
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
     // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
     // so a generator test over a queryable-returning surface finds no symbol and reports nothing
@@ -158,6 +161,9 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
+    // an immutable collection is judged passes without the type ever being resolved (#2112).
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
     // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
     // so a generator test over a queryable-returning surface finds no symbol and reports nothing
@@ -304,6 +310,9 @@ public static class GeneratorTestHelper {
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    // ImmutableList<T> and friends, which are not in the core library: without the reference a source naming one
+    // compiles to an error type, and a test about how it is judged passes without the type ever being resolved (#2112).
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
     // Whizbang.Core too, so a source can carry the framework's own attributes rather than a
     // look-alike declared beside it. Discovery matches an attribute by its display name, so a
     // hand-rolled copy passes while proving nothing about the real one.
