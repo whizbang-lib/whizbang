@@ -273,6 +273,27 @@ public class DapperStartupAssessorTests {
   }
 
   [Test]
+  public async Task ServingAsItIs_RegistersTheInstance_WithItsConnectionModeAndLivenessWindow_AndTheOverrideAsync() {
+    // The start the override allowed joins the registry like any other (#2022), so it records what the one liveness
+    // rule judges it by from the moment its row exists, as every registration does (#2126).
+    await _startAsync();
+    await using var provider = _compose();
+    var instance = provider.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+    var initializer = new PostgresSchemaInitializer(_database.ConnectionString) {
+      Instance = instance,
+      RegistrationLiveness = new InstanceRegistrationLiveness(InstanceConnectionMode.Direct, 47),
+    };
+
+    await initializer.ServeAsItIsAsync("the reason", CancellationToken.None);
+
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<string>(
+        "SELECT connection_mode || ' ' || liveness_window_seconds || ' ' || incompatibility_override "
+        + "FROM wh_service_instances WHERE instance_id = @id", new { id = instance.InstanceId }))
+      .IsEqualTo("direct 47 the reason");
+  }
+
+  [Test]
   public async Task ServingAsItIs_WithNoInstanceIdentity_TouchesNothingAsync() {
     // No identity, no row to record the override on: it returns without opening a connection (this one goes nowhere).
     var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
