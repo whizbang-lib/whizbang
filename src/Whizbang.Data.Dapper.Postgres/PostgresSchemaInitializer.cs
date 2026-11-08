@@ -208,6 +208,7 @@ public sealed class PostgresSchemaInitializer {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes once the instance is registered and the override recorded.</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs:ServingAsItIs_RegistersTheInstance_WithItsConnectionModeAndLivenessWindow_AndTheOverrideAsync</tests>
   public async Task ServeAsItIsAsync(string overriddenReason, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(overriddenReason);
     if (Instance is not { } instance) {
@@ -217,7 +218,8 @@ public sealed class PostgresSchemaInitializer {
     await connection.OpenAsync(cancellationToken);
     var schema = await _targetSchemaAsync(connection, cancellationToken);
     await SchemaBootstrapPhase.RegisterInstanceAsync(
-      () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+      () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+      cancellationToken: cancellationToken);
     await SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
       () => new NpgsqlConnection(_connectionString), schema, instance.InstanceId, overriddenReason, cancellationToken);
   }
