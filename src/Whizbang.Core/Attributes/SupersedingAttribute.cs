@@ -39,4 +39,35 @@ namespace Whizbang.Core.Attributes;
 /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogGeneratorTests.cs:Generator_SupersedingEvent_StampsTheEntryAndRegistersTheKeyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:AttributedTypesInThisAssembly_AreRegisteredByTheGenerator_WithTheirKeyAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class SupersedingAttribute : Attribute;
+public sealed class SupersedingAttribute : Attribute {
+  /// <summary>
+  /// The superseding group the type belongs to (#2124), or <see langword="null"/> (the default) for none: the type is its
+  /// own group. The types of one group supersede each other, so the newest event of any of them replaces the older
+  /// events of every one of them, per stream, group and key.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The name is stored with every event of the type, so it is global and never derived from the type's name: choose
+  /// a stable name, and keep it when a type is renamed. An empty name is no group.
+  /// </para>
+  /// <para>
+  /// The types of a group must agree on their key: all without a <see cref="SupersedingKeyAttribute"/>, or all keyed by
+  /// the same type (WHIZ138). Every event of every type in the group must carry the whole state for its key, since the
+  /// newest event of any of them is the only one kept; a consumer that handles several of the types must need only the
+  /// newest.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [Superseding(Group = "document-embedding")]
+  /// public sealed record DocumentEmbeddingCreated([property: StreamId] Guid DocumentId, float[] Vector) : IEvent;
+  ///
+  /// [Superseding(Group = "document-embedding")]
+  /// public sealed record DocumentEmbeddingUpdated([property: StreamId] Guid DocumentId, float[] Vector) : IEvent;
+  /// </code>
+  /// </example>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogGeneratorTests.cs:Generator_ASupersedingGroup_IsRegisteredWithEachTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Emit_ANewerEventOfAnotherTypeInTheGroup_QueuesTheOlder_InEitherOrderAsync</tests>
+  public string? Group { get; set; }
+}

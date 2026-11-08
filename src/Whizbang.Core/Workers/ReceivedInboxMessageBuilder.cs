@@ -159,8 +159,11 @@ internal static class ReceivedInboxMessageBuilder {
         Hops = envelope.CopyHops(),
         DispatchContext = envelope.DispatchContext,
         EphemeralTtlSeconds = EphemeralTtlDeriver.Derive(payload, messageTypeName, ephemeralModeResolver),
-        // #1729: the receiver's copy of a superseding event is stored with the key its producer stored it with.
-        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payload, messageTypeName, jsonOptions)
+        // #1729: the receiver's copy of a superseding event is stored with the key its producer stored it with. A message
+        // from an older producer that lacks the key property has no key (#2123), so its copy is kept, never reaped.
+        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payload, messageTypeName, jsonOptions),
+        // #2124: and the group its producer stamped.
+        SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(payload, messageTypeName)
       },
       MessageType = messageTypeName,
       SourceServiceId = envelope.SourceServiceId,

@@ -123,4 +123,68 @@ public class SupersedingEventAnalyzerTests {
     await Assert.That(diagnostics.Any(d => d.Id == "WHIZ136")).IsFalse()
       .Because("a record parameter and the property it declares are one key, and keys on a type that is not superseding are never read");
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AGroupWhoseTypesDisagreeOnTheKey_ReportsWHIZ138OnEachAsync() {
+    // #2124: the types of a group supersede each other by key, so they must agree on it: all keyless, or all keyed by
+    // one CLR type. A Guid? key agrees with a Guid key: both are stored as the same text.
+    const string source = HEADER + """
+      [Superseding(Group = "region")]
+      public record RegionOpened([property: SupersedingKey] Guid Region) : IEvent;
+      [Superseding(Group = "region")]
+      public record RegionRevised([property: SupersedingKey] Guid? Region) : IEvent;
+      [Superseding(Group = "region")]
+      public record RegionReplaced : IEvent;
+      [Superseding(Group = "slot")]
+      public record SlotOpened([property: SupersedingKey] int Slot) : IEvent;
+      [Superseding(Group = "slot")]
+      public record SlotRenamed([property: SupersedingKey] string Slot) : IEvent;
+      public record SnapshotBase : IEvent;
+      [Superseding(Group = "snapshot")]
+      public record SnapshotTaken : SnapshotBase;
+      [Superseding(Group = "snapshot")]
+      public record SnapshotKeyed([property: SupersedingKey] string Part) : IEvent;
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<SupersedingEventAnalyzer>(source);
+    var found = diagnostics.Where(d => d.Id == "WHIZ138").ToArray();
+    var messages = found.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).ToArray();
+
+    await Assert.That(found.Length).IsEqualTo(7).Because("every type of a group that disagrees is named, so each can be fixed");
+    await Assert.That(found.All(d => d.Severity == DiagnosticSeverity.Error)).IsTrue();
+    await Assert.That(messages.Single(m => m.Contains("'RegionReplaced'", StringComparison.Ordinal))).Contains("no key")
+      .Because("a keyless type in a keyed group is named with what it has");
+    await Assert.That(messages.Single(m => m.Contains("'RegionOpened'", StringComparison.Ordinal))).Contains("System.Guid");
+    await Assert.That(messages.Single(m => m.Contains("'SlotRenamed'", StringComparison.Ordinal))).Contains("'slot'");
+    await Assert.That(messages.Single(m => m.Contains("'SnapshotTaken'", StringComparison.Ordinal))).Contains("with no key")
+      .Because("the key search walks every base type of a type that has none, and finds none");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AGroupWhoseTypesAgree_OrTypesOutsideAnyGroup_NoWHIZ138Async() {
+    const string source = HEADER + """
+      [Superseding(Group = "region")]
+      public record RegionOpened([property: SupersedingKey] Guid Region) : IEvent;
+      [Superseding(Group = "region")]
+      public record RegionRevised([property: SupersedingKey] Guid? Region) : IEvent;
+      [Superseding(Group = "profile")]
+      public record ProfileOpened : IEvent;
+      [Superseding(Group = "profile")]
+      public record ProfileReplaced : IEvent;
+      [Superseding]
+      public record Keyed([property: SupersedingKey] string Model) : IEvent;
+      [Superseding]
+      public record Keyless : IEvent;
+      [Superseding(Group = "lonely")]
+      public record Alone([property: SupersedingKey] string Model) : IEvent;
+      public record NotSuperseding : IEvent;
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<SupersedingEventAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ138")).IsFalse()
+      .Because("the control: agreeing groups and ungrouped types, keyed or not, are valid");
+  }
 }

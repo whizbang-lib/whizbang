@@ -60,8 +60,19 @@ jobs:
       pull-requests: read   # find the release PR this push merged
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
+      # The stable version published and tagged: the line plus its betas and rcs when the cut recorded a
+      # rollup (#2136), otherwise the line itself.
       version: ${{ steps.check.outputs.version }}
+      # The release branch's version (release/v<line>): what its tested packages carry.
+      line: ${{ steps.check.outputs.line }}
+      # true when version differs from line, so the tested build is repacked at version.
+      repack: ${{ steps.check.outputs.repack }}
     steps:
+      - name: Checkout the release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
       - name: Check if release should proceed
         id: check
         env:
@@ -79,8 +90,17 @@ jobs:
               echo "version=" >> "$GITHUB_OUTPUT"
             else
               echo "Manual trigger - release mode"
-              echo "should_release=true" >> "$GITHUB_OUTPUT"
-              echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+              # An explicit version is published as given (recovery). Its tested packages are the release
+              # branch's, so the line comes from the release PR this commit merged, when there is one.
+              HEAD_REF=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .merge_commit_sha == env.SHA)][0].head.ref // ""')
+              LINE="$INPUT_VERSION"
+              if [[ "$HEAD_REF" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                LINE="${BASH_REMATCH[1]}"
+              fi
+              REPACK=false
+              [ "$LINE" = "$INPUT_VERSION" ] || REPACK=true
+              { echo "should_release=true"; echo "version=$INPUT_VERSION"; echo "line=$LINE"; echo "repack=$REPACK"; } >> "$GITHUB_OUTPUT"
             fi
           else
             # The pull request this push merged into main, if any. Main takes merges only from
@@ -103,9 +123,18 @@ jobs:
                 echo "::error::Refusing to publish '$VERSION' from '$PR_HEAD_REF': a release PR must come from release/vX.Y.Z and be titled exactly 'chore(release): vX.Y.Z' with the same stable X.Y.Z. Recover with: gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false"
                 exit 1
               fi
-              echo "Release PR merged - version: $VERSION"
-              echo "should_release=true" >> "$GITHUB_OUTPUT"
-              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              # THE ROLLUP (#2136): the title and branch name the LINE. The stable adds the latest number of
+              # each label published from the branch (v<line>-beta.N, -rc.N, any label) to the record the
+              # cut left in the release PR body. No record (an override or a hotfix): the line ships as is.
+              TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v$VERSION-" --jq '.[].ref | sub("^refs/tags/"; "")')
+              RELEASE_PR_BODY=$(jq -r '.body // ""' <<< "$PR_JSON") GITHUB_OUTPUT="$RUNNER_TEMP/rollup.txt" \
+                pwsh -NoProfile -File .github/scripts/Get-ReleaseVersion.ps1 -Mode Stable -Line "$VERSION" -Tags "$TAGS"
+              STABLE=$(sed -n 's/^version=//p' "$RUNNER_TEMP/rollup.txt")
+              [ -n "$STABLE" ] || { echo "::error::The version rollup produced no version."; exit 1; }
+              echo "Release PR merged - line $VERSION ships as $STABLE"
+              REPACK=false
+              [ "$STABLE" = "$VERSION" ] || REPACK=true
+              { echo "should_release=true"; echo "version=$STABLE"; echo "line=$VERSION"; echo "repack=$REPACK"; } >> "$GITHUB_OUTPUT"
             else
               echo "PR merged but not a release PR"
               echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -370,6 +399,7 @@ jobs:
     outputs:
       run-id: ${{ steps.find.outputs.run-id }}
       artifact-name: ${{ steps.find.outputs.artifact-name }}
+      sha: ${{ steps.find.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -382,6 +412,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ needs.check-release.outputs.version }}
+          LINE: ${{ needs.check-release.outputs.line }}
         run: |
           set -euo pipefail
           # The tested commit is the merge commit's release-branch parent, on a release merge and on
@@ -402,7 +433,9 @@ jobs:
           # Which run tested it, green, with its packages still live. The lookup retries (a run search
           # can briefly miss a finished run, #926) and names the recovery for each failure; the rules
           # live in .github/scripts/Find-TestedPackages.ps1, tested by ci.yml's script-tests.
-          pwsh -NoProfile -File .github/scripts/Find-TestedPackages.ps1 -Sha "$SRC" -Version "$VERSION" -Repo "$REPO"
+          # The packages carry the LINE (the branch version); a rolled-up stable repacks them at VERSION.
+          pwsh -NoProfile -File .github/scripts/Find-TestedPackages.ps1 -Sha "$SRC" -Version "$LINE" -PublishVersion "$VERSION" -Repo "$REPO"
+          echo "sha=$SRC" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # Release - Create tag and GitHub Release
@@ -524,6 +557,8 @@ jobs:
     # locate-tested-packages). The job id is kept so publish and upload-release-assets are unchanged.
     name: Build · Promote the tested packages
     needs: [check-release, release, locate-tested-packages]
+    # The stable is the line itself: ship the tested packages as they are.
+    if: needs.check-release.outputs.repack != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -569,9 +604,32 @@ jobs:
             ./packages/*.cdx.json
           retention-days: 7
 
+  # The stable is the line plus its betas and rcs (#2136), so the tested packages carry the wrong number.
+  # Repack the release-branch run's tested build at the stable version without rebuilding, exactly as a
+  # beta or rc is made: the DLLs are the ones the suites ran against.
+  repack-tested-build:
+    name: Build · Repack the tested build at the rolled-up version
+    needs: [check-release, release, locate-tested-packages]
+    if: needs.check-release.outputs.repack == 'true'
+    permissions:
+      contents: read
+      actions: read   # download the release-branch run's build
+    uses: ./.github/workflows/reusable-pack.yml
+    with:
+      version: ${{ needs.check-release.outputs.version }}
+      build-run-id: ${{ needs.locate-tested-packages.outputs.run-id }}
+      ref: ${{ needs.locate-tested-packages.outputs.sha }}
+      artifact-name: nuget-packages-${{ github.run_id }}
+      retention-days: 7
+
   publish:
     name: Publish · Stable to NuGet
-    needs: [check-release, build-and-pack]
+    needs: [check-release, build-and-pack, repack-tested-build]
+    # Exactly one of the two package jobs runs; each needs the tag, the approval and the located tested
+    # build, so its success implies theirs. always() only stops the skipped one from skipping this job.
+    if: >-
+      always() && needs.check-release.outputs.should_release == 'true' &&
+      (needs.build-and-pack.result == 'success' || needs.repack-tested-build.result == 'success')
     permissions:
       contents: read
       id-token: write
@@ -586,7 +644,7 @@ jobs:
     name: Publish · Attach packages to the GitHub release
     # After publish: the packages' signed provenance is produced by the push itself (nuget-push.yml
     # attests before it pushes), and the release carries that same attestation.
-    needs: [check-release, build-and-pack, publish]
+    needs: [check-release, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -696,11 +754,12 @@ jobs:
 
   notify-release-failed:
     name: Notify · Release failed
-    needs: [check-release, release, build-and-pack, publish]
+    needs: [check-release, release, build-and-pack, repack-tested-build, publish]
     if: >-
       always() &&
       needs.check-release.outputs.should_release == 'true' &&
-      (needs.release.result == 'failure' || needs.build-and-pack.result == 'failure' || needs.publish.result == 'failure') &&
+      (needs.release.result == 'failure' || needs.build-and-pack.result == 'failure' ||
+        needs.repack-tested-build.result == 'failure' || needs.publish.result == 'failure') &&
       vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -717,12 +776,15 @@ jobs:
         env:
           RELEASE_RESULT: ${{ needs.release.result }}
           BUILD_RESULT: ${{ needs.build-and-pack.result }}
+          REPACK_RESULT: ${{ needs.repack-tested-build.result }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
           if [ "$RELEASE_RESULT" == "failure" ]; then
             echo "job=tag creation" >> "$GITHUB_OUTPUT"
           elif [ "$BUILD_RESULT" == "failure" ]; then
             echo "job=build-and-pack" >> "$GITHUB_OUTPUT"
+          elif [ "$REPACK_RESULT" == "failure" ]; then
+            echo "job=repack at the rolled-up version" >> "$GITHUB_OUTPUT"
           elif [ "$PUBLISH_RESULT" == "failure" ]; then
             echo "job=NuGet publish" >> "$GITHUB_OUTPUT"
           else
