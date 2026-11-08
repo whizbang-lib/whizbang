@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
@@ -60,14 +59,6 @@ public class StandbyWatcherUpgradeStandDownTests {
       return ValueTask.CompletedTask;
     }
     public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
-  }
-
-  private sealed class Host : IHostApplicationLifetime {
-    public int StopCalls { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopCalls++;
   }
 
   /// <summary>Answers each assessment with the next scripted verdict, repeating the last.</summary>
@@ -188,7 +179,7 @@ public class StandbyWatcherUpgradeStandDownTests {
     assessor ??= new ScriptedAssessor(StartupVerdict.Current);
     var logger = new FakeLogger<StandbyWatcher>();
     var watcher = new StandbyWatcher(
-      provider.GetRequiredService<IServiceScopeFactory>(), runControl, new Host(), new Instance(), new Library("1.0.0"),
+      provider.GetRequiredService<IServiceScopeFactory>(), runControl, new Whizbang.Testing.Lifecycle.RecordingInstanceExit(), new Instance(), new Library("1.0.0"),
       assessor, logger, new FakeTimeProvider(_now), pipelineRunner: null,
       options: new StandbyWatcherOptions { ObsolescenceInterval = obsolescenceInterval ?? TimeSpan.FromHours(1) }) {
       Signals = wired ? bus : null,
@@ -271,7 +262,7 @@ public class StandbyWatcherUpgradeStandDownTests {
   public async Task WithoutAStageReporter_TheStandDownAndTheResumeStillTakeThePathAsync() {
     using var h = _harness(new ScriptedAssessor(StartupVerdict.StandDown, StartupVerdict.Current));
     var watcher = new StandbyWatcher(
-      h.Provider.GetRequiredService<IServiceScopeFactory>(), h.RunControl, new Host(), new Instance(), new Library("1.0.0"),
+      h.Provider.GetRequiredService<IServiceScopeFactory>(), h.RunControl, new Whizbang.Testing.Lifecycle.RecordingInstanceExit(), new Instance(), new Library("1.0.0"),
       h.Assessor, h.Logger, new FakeTimeProvider(_now), options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
 
     await watcher.TickForTestsAsync(CancellationToken.None);
@@ -500,7 +491,7 @@ public class StandbyWatcherUpgradeStandDownTests {
   public async Task WithTheBusButNoFleetReader_NothingIsAnnounced_AndTheSignalsStillPromptTheQuestionAsync() {
     using var h = _harness(new ScriptedAssessor(StartupVerdict.Current, StartupVerdict.StandDown));
     var watcher = new StandbyWatcher(
-      h.Provider.GetRequiredService<IServiceScopeFactory>(), h.RunControl, new Host(), new Instance(), new Library("1.0.0"),
+      h.Provider.GetRequiredService<IServiceScopeFactory>(), h.RunControl, new Whizbang.Testing.Lifecycle.RecordingInstanceExit(), new Instance(), new Library("1.0.0"),
       h.Assessor, h.Logger, new FakeTimeProvider(_now), options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) }) {
       Signals = h.Bus,
       Lifecycle = h.Lifecycle,
