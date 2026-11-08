@@ -162,6 +162,18 @@ public class DutyGrantKeepaliveTests {
   }
 
   [Test]
+  public async Task ATickThatArrivesAfterTheStop_VerifiesNothingAsync() {
+    var grant = new LeasedGrant(_interval);
+    var keepalive = DutyGrantKeepalive.Start(grant, new FakeTimeProvider());
+    await keepalive.DisposeAsync();
+
+    keepalive.Tick();
+
+    await Assert.That(grant.Count).IsEqualTo(0)
+      .Because("a timer callback already on its way when the timer was disposed must not renew a released grant");
+  }
+
+  [Test]
   public async Task Dispose_Twice_IsHarmlessAsync() {
     var keepalive = DutyGrantKeepalive.Start(new LeasedGrant(_interval), new FakeTimeProvider());
 

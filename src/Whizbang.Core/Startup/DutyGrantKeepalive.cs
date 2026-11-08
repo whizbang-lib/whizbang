@@ -56,7 +56,7 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
     _grant = grant;
     _logger = logger;
     TickInterval = renewInterval / 2;
-    _timer = timeProvider.CreateTimer(_ => _tick(), null, TickInterval.Value, TickInterval.Value);
+    _timer = timeProvider.CreateTimer(_ => Tick(), null, TickInterval.Value, TickInterval.Value);
   }
 
   /// <summary>Whether the keepalive is renewing a grant now: started over a grant with a lease, and not yet disposed.</summary>
@@ -86,8 +86,12 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
       : _idle;
   }
 
-  /// <summary>One tick: verify now, or owe one verify to the verify still running.</summary>
-  private void _tick() {
+  /// <summary>
+  /// One tick: verify now, or owe one verify to the verify still running. A tick that arrives once the keepalive has
+  /// stopped (a timer callback already on its way when the timer was disposed) does nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantKeepaliveTests.cs:ATickThatArrivesAfterTheStop_VerifiesNothingAsync</tests>
+  internal void Tick() {
     lock (_sync) {
       if (_stopped) {
         return;
