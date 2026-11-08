@@ -77,7 +77,7 @@ public sealed record InstanceExitRequest(ExitCause Cause, string Reason, Excepti
 /// <param name="EvictedAt">When the tombstone was written, on the database's clock.</param>
 /// <param name="EvictedBy">The peer that evicted the instance; null when no peer recorded itself (a maintenance sweep).</param>
 /// <param name="Reason">The reason recorded on the tombstone.</param>
-/// <param name="LastHeartbeatAt">The instance's last heartbeat as the reap saw it; null on a tombstone written before 354.</param>
+/// <param name="LastHeartbeatAt">The instance's last heartbeat as the reap saw it; null on a tombstone written before 362.</param>
 /// <param name="LivenessWindowSeconds">The liveness window the instance was judged by; null when its row recorded none (the rule then uses 30 seconds).</param>
 /// <docs>operations/startup/instance-exits#evictions</docs>
 public sealed record InstanceEviction(

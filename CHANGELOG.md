@@ -535,10 +535,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Anything applied since stands it down at Assess with an error naming each change and who applied it, and that a
     migration cannot be reversed yet (down migrations: #2122). This replaces "the ledger records a newer version":
     an application or W! rollback with nothing migrated since now serves normally, where before any newer version the
-    ledger named stood it down. Migration 351 records who applied each change (`wh_schema_migrations.applied_version_id`,
+    ledger named stood it down. Migration 358 records who applied each change (`wh_schema_migrations.applied_version_id`,
     kept by a trigger: set on an insert or a content-hash change, kept through skips and re-stamps, never moved by a
-    failure). 351 rewrites no ledger row: a row last applied before it names its applier in `version_id` (carried over
-    on its next write), a row last skipped names nobody and never blocks, and a ledger older than 351 takes the version
+    failure). 358 rewrites no ledger row: a row last applied before it names its applier in `version_id` (carried over
+    on its next write), a row last skipped names nobody and never blocks, and a ledger older than 358 takes the version
     that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
     version yet and are not gated.
   - **An override for incompatibility verdicts:** `Whizbang:Startup:OverrideIncompatibility` (off by default) lets an
@@ -546,7 +546,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it cannot reverse applied since its version. It starts as `Current` (no election, no pass, no converge, nothing
     applied and no migration run backward), logs at every start at Error (`StartupAssessmentSource` event 3) that it
     runs past the verdict, with the verdict and its full reason, and records that reason on its instance row
-    (`wh_service_instances.incompatibility_override`, migration 356). It never lifts the stand-down for a newer
+    (`wh_service_instances.incompatibility_override`, migration 359). It never lifts the stand-down for a newer
     version online, nor the refusal of a build whose own version is missing or unreadable. Only the one verdict reads
     and honors it (`StartupAssessment.OverriddenReason` is how everything else learns of it).
   - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
@@ -1560,7 +1560,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed rows of `wh_instance_exits` older than a fixed 30 days with each write. The window is now
   `wh_settings.instance_exit_retention_days`, published from `Whizbang:Workers:Maintenance:Retention:InstanceExitDays`
   (`MaintenanceRetentionOptions.InstanceExitDays`) like every other retention window, and 30 days when nothing sets it
-  (migration 356, in the bootstrap closure with 354's definition; the function is now PL/pgSQL so it can probe for
+  (migration 363, in the bootstrap closure with 362's definition; the function is now PL/pgSQL so it can probe for
   `wh_settings`, which the closure runs before on a new database).
 - **A crash on any thread goes through the one exit path (#2126).** The exit path subscribes to the process's own
   failure events when the host starts (`IProcessCrashEvents`, `ProcessCrashEvents.Instance` unless a test registers
@@ -1623,7 +1623,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window, so the one liveness rule judged it by 30 seconds and any live peer's reap evicted an instance still electing
   or migrating. The heartbeat now starts at registration: the worker pipeline hosts it at Elect
   (`HeartbeatWorker.StartsAt`), and a test fails if it moves later. Until the schema-ready gate opens, a beat goes
-  through `IWorkCoordinator.RecordStartupHeartbeatAsync` (migration 353, `wh_record_startup_heartbeat`, in the bootstrap
+  through `IWorkCoordinator.RecordStartupHeartbeatAsync` (migration 361, `wh_record_startup_heartbeat`, in the bootstrap
   closure so it exists from Preflight on), which refreshes the heartbeat, the connection mode and the liveness window of
   the instance's existing row and nothing else: it never inserts a row, never writes the stage or the lifecycle phase
   (the stage record stays their one writer), reaps no peer and refuses an evicted instance. The first beat after the
@@ -1641,7 +1641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failure, Information for an intended stop) that says why, with every fact as a structured field (`ExitCause`,
   `ExitCode`, the instance, service and host, the stage and phase, uptime, time since the last accepted heartbeat, what it
   held, and for an eviction when, by which peer and why), records the same facts in the new `wh_instance_exits` table
-  (migration 354, one row per exit; best effort, and the entry says when the row could not be written), sets the exit
+  (migration 362, one row per exit; best effort, and the entry says when the row could not be written), sets the exit
   code and stops the host. `ExitCause` is closed: `HostShutdown`, `OperatorStop` and `UpgradeStandDown` exit 0, `Crash`
   1, `Unknown` 2, `ClusterEviction` 3, `StartupFailure` 4 and `SchemaIncompatible` 5. An instance whose heartbeat (or
   startup beat, or claim registration) is refused because a peer reaped and tombstoned it no longer stops beating and
@@ -1767,7 +1767,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log names them.** Nothing is rebuilt automatically. On the first start against a database an earlier release
   migrated, the instance doing the schema work logs one Warning per such perspective whose table holds rows (event id
   2112, `RecursivePerspectiveNeedsRebuild`), naming the perspective (the name a rebuild takes) and its table. It reads
-  the migration ledger: new migration `351_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
+  the migration ledger: new migration `360_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
   migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
   as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
   as errors is not affected: WHIZ202 reports a recursive model at Info, since it is stored correctly and there is

@@ -23,11 +23,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// rolled back with nothing migrated since serves normally.
 /// </summary>
 /// <remarks>
-/// Who applied a change is <c>wh_schema_migrations.applied_version_id</c> (351), kept by a trigger: set when a row is
+/// Who applied a change is <c>wh_schema_migrations.applied_version_id</c> (358), kept by a trigger: set when a row is
 /// inserted or its content hash changes, kept through skips and re-stamps, never moved by a failure. The ledger rows are
 /// written here as a pass writes them, so the trigger decides what each write applied.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/351_TheLedgerRecordsWhoAppliedEachChange.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/358_TheLedgerRecordsWhoAppliedEachChange.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
@@ -123,7 +123,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ARowLastAppliedBeforeTheRecord_IsTakenAsAppliedByItsVersion_ThroughLaterSkipsAsync(CancellationToken ct) {
-    // 351 rewrites no ledger row: a row whose last write before it was an apply (status 1, 2 or 4) names its applier in
+    // 358 rewrites no ledger row: a row whose last write before it was an apply (status 1, 2 or 4) names its applier in
     // version_id, and the first later write carries that over. A row last skipped names nobody.
     var first = await _versionAsync("1.0.0", "1.0.0", ct);
     var second = await _versionAsync("2.0.0", "1.0.0", ct);
@@ -244,7 +244,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task OnALedgerOlderThanTheRecord_WhoeverLastStampedARow_IsTakenToHaveAppliedItAsync(CancellationToken ct) {
-    // Before 351 the ledger cannot say who applied a change; the version that last stamped a row is the closest it
+    // Before 358 the ledger cannot say who applied a change; the version that last stamped a row is the closest it
     // comes, so a newer library there stands down as it did before (#1992).
     var library = await _ledgerLibraryAsync(ct);
     await _execAsync("ALTER TABLE wh_schema_migrations DROP COLUMN applied_version_id CASCADE", ct);
@@ -341,7 +341,7 @@ public class RollbackGateTests : EFCoreTestBase {
 
     await _execAsync("ALTER TABLE wh_service_instances DROP COLUMN incompatibility_override", ct);
     await Assert.That(await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, "why", ct)).IsFalse()
-      .Because("a schema older than 356 has no place for it, and the start goes on");
+      .Because("a schema older than 359 has no place for it, and the start goes on");
     await Assert.That(async () => await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, " ", ct))
       .Throws<ArgumentException>();
   }

@@ -41,7 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/353_TheHeartbeatStartsAtRegistration.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/361_TheHeartbeatStartsAtRegistration.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/HeartbeatWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs</code-under-test>

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 356_TheInstanceRowRecordsAnOverriddenIncompatibility.sql
+-- Migration: 359_TheInstanceRowRecordsAnOverriddenIncompatibility.sql
 -- Date: 2026-11-07
 -- Description: An instance started past an incompatibility verdict says so on its row (#2022).
 --
@@ -16,7 +16,7 @@
 --
 --              Rolling deploy: an older release neither reads nor writes the column.
 --
---              Number 356: 349 to 353 are on develop or in flight, and 355 is taken by a change in flight.
+--              Number 359: above every number on develop (through 355) and in open pull requests (357).
 --
 -- Dependencies: the core infrastructure schema (wh_service_instances), 316 (the one instance record)
 -- Objects: wh_service_instances.incompatibility_override
@@ -32,7 +32,7 @@ BEGIN
     ALTER TABLE __SCHEMA__.wh_service_instances ADD COLUMN IF NOT EXISTS incompatibility_override TEXT;
 
     COMMENT ON COLUMN __SCHEMA__.wh_service_instances.incompatibility_override IS
-      '356 (#2022): set when Whizbang:Startup:OverrideIncompatibility let this instance start past an incompatibility '
+      '359 (#2022): set when Whizbang:Startup:OverrideIncompatibility let this instance start past an incompatibility '
       'verdict: the reason the verdict would have stood it down. NULL otherwise.';
   END IF;
 END $$;

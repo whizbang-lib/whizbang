@@ -28,7 +28,7 @@ namespace Whizbang.Data.Postgres.Perspectives;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RecursivePerspectiveRebuildNoticeTests.cs</tests>
 public static partial class RecursiveDocumentRebuildNotice {
   /// <summary>The migration whose ledger row says the database was migrated by a release with the fix.</summary>
-  public const string MARKER_MIGRATION = "351_RecursiveDocumentsStoredWhole.sql";
+  public const string MARKER_MIGRATION = "360_RecursiveDocumentsStoredWhole.sql";
 
   /// <summary>The stable event id of the notice, for alerting and log queries.</summary>
   public const int EVENT_ID = 2112;

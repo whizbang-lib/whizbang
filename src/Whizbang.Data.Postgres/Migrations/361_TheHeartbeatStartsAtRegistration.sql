@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 353_TheHeartbeatStartsAtRegistration.sql
+-- Migration: 361_TheHeartbeatStartsAtRegistration.sql
 -- Date: 2026-11-07
 -- Description: A starting instance beats from its registration, not from schema-ready (#2126).
 --
@@ -26,7 +26,7 @@
 --              instance by its own window from the moment the row exists. Once the schema is ready the heartbeat goes
 --              back to record_heartbeat, which registers, reaps and announces as before.
 --
---              Number 353: the next free number after the ones taken on develop and in open pull requests.
+--              Number 361: above every number on develop (through 355) and in open pull requests (357).
 --
 -- Dependencies: 106 (wh_instance_evictions, in the closure), 277 (connection_mode, in the closure), 316
 --               (liveness_window_seconds, in the closure)
@@ -76,7 +76,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_record_startup_heartbeat(UUID, TEXT, INTEGER) IS
-  '353 (#2126): the beat of an instance still starting, from its registration at the end of Preflight until its schema '
+  '361 (#2126): the beat of an instance still starting, from its registration at the end of Preflight until its schema '
   'is ready. Refreshes the heartbeat, the connection mode and the liveness window of the instance''s existing row (a '
   'NULL keeps the recorded value) and nothing else: no row is inserted, the stage and the lifecycle phase are left to '
   'the stage record (wh_record_instance_transition), and no peer is reaped. Returns FALSE when the instance has been '

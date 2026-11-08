@@ -1,22 +1,22 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 356_InstanceExitRetentionIsASetting.sql
+-- Migration: 363_InstanceExitRetentionIsASetting.sql
 -- Date: 2026-11-07
 -- Description: How long the record of an instance's exits is kept is an operator setting (#2126).
 --
---              354's wh_record_instance_exit removed rows of wh_instance_exits older than a fixed 30 days with each
+--              362's wh_record_instance_exit removed rows of wh_instance_exits older than a fixed 30 days with each
 --              write. The window is now wh_settings.instance_exit_retention_days, published from
 --              Whizbang:Workers:Maintenance:Retention:InstanceExitDays like every other retention window, and 30 days
 --              when nothing sets it. wh_record_instance_exit is redefined whole with that change, in PL/pgSQL so the
---              settings table can be probed (see the body); its signature and result are 354's.
+--              settings table can be probed (see the body); its signature and result are 362's.
 --
---              In the bootstrap region, as 354's definition is: a starting instance can exit before the main pass, and
+--              In the bootstrap region, as 362's definition is: a starting instance can exit before the main pass, and
 --              the closure applies the regions in file order, so this definition is the one it leaves.
 --
---              Number 356: the next free number after the ones taken on develop and in open pull requests.
+--              Number 363: above every number on develop (through 355) and in open pull requests (357).
 --
--- Dependencies: 354 (wh_instance_exits, wh_record_instance_exit), wh_settings
+-- Dependencies: 362 (wh_instance_exits, wh_record_instance_exit), wh_settings
 -- Objects: wh_record_instance_exit
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README
 --            rule 12).
@@ -67,7 +67,7 @@ DECLARE
   v_days INTEGER;
 BEGIN
   -- Exits are rare, so the retention runs with each write rather than as a maintenance step. The window is the
-  -- operator's (356): wh_settings.instance_exit_retention_days, 30 days when unset. PL/pgSQL, and the settings table
+  -- operator's (363): wh_settings.instance_exit_retention_days, 30 days when unset. PL/pgSQL, and the settings table
   -- probed first, because this definition is in the bootstrap closure, which runs before the migration that creates
   -- wh_settings on a new database.
   IF to_regclass('__SCHEMA__.wh_settings') IS NOT NULL THEN
@@ -104,7 +104,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_record_instance_exit(UUID, TEXT, TEXT, INTEGER, TEXT, INTEGER, BOOLEAN, TEXT, TEXT, TEXT, TEXT, TEXT, DOUBLE PRECISION, DOUBLE PRECISION, TEXT[], INTEGER, INTEGER, TEXT) IS
-  '354, 356 (#2126): writes one row of wh_instance_exits for an exit of p_instance_id, with the instance''s eviction '
+  '362, 363 (#2126): writes one row of wh_instance_exits for an exit of p_instance_id, with the instance''s eviction '
   'tombstone when it has one, and returns the row''s id and the tombstone''s facts (NULL when it has none), so the '
   'exit''s log entry can state them. Removes rows older than wh_settings.instance_exit_retention_days (30 when unset).';
 

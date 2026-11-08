@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 354_EveryExitIsRecorded.sql
+-- Migration: 362_EveryExitIsRecorded.sql
 -- Date: 2026-11-07
 -- Description: Every exit of an instance is recorded, and an eviction says when, by whom and why (#2126).
 --
@@ -19,13 +19,13 @@
 --                  names itself as the reaper for the reap it runs, and cleanup_stale_instances writes that name.
 --
 --              The table, its function and the tombstone's new columns are in the bootstrap region: a starting instance
---              beats from its registration (353), so it can be evicted, and exit, before the main pass reaches this
+--              beats from its registration (361), so it can be evicted, and exit, before the main pass reaches this
 --              file. wh_record_instance_exit reads the tombstone in the same call, so the exit's entry can state the
 --              eviction from one round trip. Rows older than 30 days are removed by the next write.
 --
 --              record_heartbeat (316's) and cleanup_stale_instances (330's) are redefined whole, each with its delta.
 --
---              Number 354: the next free number after the ones taken on develop and in open pull requests.
+--              Number 362: above every number on develop (through 355) and in open pull requests (357).
 --
 -- Dependencies: 106 (wh_instance_evictions), 110 and 277 (evicted_by), 316 (record_heartbeat, liveness_window_seconds),
 --               330 (cleanup_stale_instances)
@@ -40,10 +40,10 @@ ALTER TABLE __SCHEMA__.wh_instance_evictions ADD COLUMN IF NOT EXISTS last_heart
 ALTER TABLE __SCHEMA__.wh_instance_evictions ADD COLUMN IF NOT EXISTS liveness_window_seconds INTEGER;
 
 COMMENT ON COLUMN __SCHEMA__.wh_instance_evictions.last_heartbeat_at IS
-  '354 (#2126): the evicted instance''s last heartbeat, as the reap that deleted its row saw it. NULL on a tombstone '
-  'written before 354, or by the standby handshake''s fence.';
+  '362 (#2126): the evicted instance''s last heartbeat, as the reap that deleted its row saw it. NULL on a tombstone '
+  'written before 362, or by the standby handshake''s fence.';
 COMMENT ON COLUMN __SCHEMA__.wh_instance_evictions.liveness_window_seconds IS
-  '354 (#2126): the liveness window the one rule judged the evicted instance by (NULL: its row recorded none, and the '
+  '362 (#2126): the liveness window the one rule judged the evicted instance by (NULL: its row recorded none, and the '
   'rule used 30 seconds).';
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_instance_exits (
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_instance_exits (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_instance_exits IS
-  '354 (#2126): one row per exit of an instance, of any kind, written by the one exit path when the database is '
+  '362 (#2126): one row per exit of an instance, of any kind, written by the one exit path when the database is '
   'reachable: the cause (ExitCause) and exit code, whether it was intended, why, where the instance was (stage, phase, '
   'uptime, time since its last accepted heartbeat), what it held, and for an eviction the tombstone''s account of it. '
   'Rows older than 30 days are removed by the next write.';
@@ -151,7 +151,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_record_instance_exit(UUID, TEXT, TEXT, INTEGER, TEXT, INTEGER, BOOLEAN, TEXT, TEXT, TEXT, TEXT, TEXT, DOUBLE PRECISION, DOUBLE PRECISION, TEXT[], INTEGER, INTEGER, TEXT) IS
-  '354 (#2126): writes one row of wh_instance_exits for an exit of p_instance_id, with the instance''s eviction '
+  '362 (#2126): writes one row of wh_instance_exits for an exit of p_instance_id, with the instance''s eviction '
   'tombstone when it has one, and returns the row''s id and the tombstone''s facts (NULL when it has none), so the '
   'exit''s log entry can state them. Removes rows older than 30 days.';
 
@@ -282,7 +282,7 @@ BEGIN
     -- subtransaction, so the rollback restores the caller's value with it.
     BEGIN
       PERFORM set_config('lock_timeout', '100ms', true);
-      -- 354 (#2126): the reap records on each tombstone which instance evicted the peer. Local to the subtransaction, so
+      -- 362 (#2126): the reap records on each tombstone which instance evicted the peer. Local to the subtransaction, so
       -- nothing else this transaction runs reads it.
       PERFORM set_config('whizbang.reaper_instance_id', p_instance_id::text, true);
       PERFORM __SCHEMA__.cleanup_stale_instances(NULL, NULL);
@@ -302,7 +302,7 @@ COMMENT ON FUNCTION __SCHEMA__.record_heartbeat(UUID, TEXT, TEXT, INTEGER, JSONB
 'p_library_version only as a registration: on the row it inserts, where the row records none, and for a new process '
 'under the same instance id. Every other beat leaves them as recorded. Migration 316 (#2027): p_stale_threshold_seconds '
 'is recorded as the instance''s liveness window (NULL keeps it), the one rule (wh_instance_liveness) judges every peer, and '
-'p_application_version is recorded like p_library_version. Migration 354 (#2126): the reap it runs records this instance '
+'p_application_version is recorded like p_library_version. Migration 362 (#2126): the reap it runs records this instance '
 'as the evicting peer on each tombstone.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -340,7 +340,7 @@ BEGIN
   -- ON CONFLICT is defensive only: an instance_id cannot be re-deleted once gone, so a
   -- collision here would mean a caller reused an id, which this must not paper over by
   -- discarding the earlier eviction's timestamp.
-  -- 354 (#2126): the tombstone records what the rule judged the instance by (its last heartbeat and its window) and the
+  -- 362 (#2126): the tombstone records what the rule judged the instance by (its last heartbeat and its window) and the
   -- peer whose heartbeat ran the reap (record_heartbeat sets whizbang.reaper_instance_id; NULL for any other caller), so
   -- the evicted instance's exit can say when, by whom and why.
   tombstoned AS (
@@ -424,4 +424,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.cleanup_stale_instances(TIMESTAMPTZ, TIMESTAMPTZ) IS
-  'Reaps every instance the one liveness rule (wh_instance_liveness) says is not live, tombstones it in wh_instance_evictions, releases its leases and wakes the live instances. 354 (#2126): each tombstone records the reaper (the instance whose record_heartbeat ran the reap; NULL for any other caller) and the last heartbeat and liveness window the rule judged the instance by.';
+  'Reaps every instance the one liveness rule (wh_instance_liveness) says is not live, tombstones it in wh_instance_evictions, releases its leases and wakes the live instances. 362 (#2126): each tombstone records the reaper (the instance whose record_heartbeat ran the reap; NULL for any other caller) and the last heartbeat and liveness window the rule judged the instance by.';

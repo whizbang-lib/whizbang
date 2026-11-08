@@ -36,7 +36,7 @@ measures the one-level mapping; if a future EF maps the whole depth, it fails an
 
 Rows an earlier release wrote on the mapped path hold only the first level; nothing rebuilds them automatically (owner
 decision). `RecursiveDocumentRebuildNotice` runs first in the stored-form phase, before the start's migrations: when the
-migration ledger exists and lacks `351_RecursiveDocumentsStoredWhole` (a marker migration that changes nothing), each
+migration ledger exists and lacks `360_RecursiveDocumentsStoredWhole` (a marker migration that changes nothing), each
 perspective in the generated `GetRecursivePerspectives()` whose table holds a row is logged once at Warning, event id
 2112, to be rebuilt from its events. A circular model (a recursion storing a collection and a single reference back up
 the document) is WHIZ201, a build error (`CircularReferenceDiscovery`); an object cycle it cannot see fails the write with

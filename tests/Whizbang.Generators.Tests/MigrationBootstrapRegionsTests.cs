@@ -51,9 +51,9 @@ public class MigrationBootstrapRegionsTests {
     "326_EveryDutyIsARoleAssignment.sql", // the vote, renewal and bridge expiry with no lock read: every duty is a role (#2044)
     "330_CoordinationOnTheSignalBus.sql", // redefines 184's wh_release_role to publish on the signal bus, and what it calls (#2046)
     "355_RoleHoldersAreJudgedByTheLivenessRule.sql", // the vote and the fence judge a holder by the one liveness rule, so the election needs it (#2140)
-    "353_TheHeartbeatStartsAtRegistration.sql", // the startup beat, which a starting instance sends from registration (#2126)
-    "354_EveryExitIsRecorded.sql", // the exit record and the tombstone's columns: an instance evicted while starting exits too (#2126)
-    "356_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 354's function (#2126)
+    "361_TheHeartbeatStartsAtRegistration.sql", // the startup beat, which a starting instance sends from registration (#2126)
+    "362_EveryExitIsRecorded.sql", // the exit record and the tombstone's columns: an instance evicted while starting exits too (#2126)
+    "363_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 362's function (#2126)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>
