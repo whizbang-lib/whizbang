@@ -188,14 +188,17 @@ public class SchemaMigratorDeferralGenerationTests {
   }
 
   /// <summary>
-  /// The migrator keeps its assignment through the migration: it renews between phases and marks the
-  /// DDL connection's backend, so one long statement does not lose the role (#968, decision 1).
+  /// The migrator keeps its assignment through the migration: its keepalive renews it from the election until the
+  /// initializer returns (#2127), it verifies before each attempt, and it marks the DDL connection's backend, so one
+  /// long statement does not lose the role (#968, decision 1).
   /// </summary>
   [Test]
   public async Task TheMigratorRenewsItsRole_AndMarksTheBackendRunningTheMigrationAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("migratorGrant.VerifyStillHeldAsync", StringComparison.Ordinal);
+    await Assert.That(output).Contains("await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger);", StringComparison.Ordinal);
+    await Assert.That(output).Contains("await migratorDuty.HoldAsync(staging);", StringComparison.Ordinal);
+    await Assert.That(output).Contains("migratorDuty.Grant.VerifyStillHeldAsync", StringComparison.Ordinal);
     await Assert.That(output).Contains("PgRoleElector.MarkDutyBackendAsync", StringComparison.Ordinal);
   }
 
