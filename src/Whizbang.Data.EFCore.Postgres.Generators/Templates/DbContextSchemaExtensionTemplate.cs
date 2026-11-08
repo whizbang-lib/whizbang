@@ -367,7 +367,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           ElectAsync: ct => Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
             serviceProvider?.GetService(typeof(Whizbang.Core.Startup.IDutyElector)) as Whizbang.Core.Startup.IDutyElector,
             "__SCHEMA__", logger, ct),
-          PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), startupClock, ct),
+          // On the system clock, like the deferral's own polls: a host clock frozen by a test must not stall a vote.
+          PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
           WorkAsync: _ => rewriteStoredFormsAsync(segmentConnectionFactory)),
         "__SCHEMA__", logger, cancellationToken);
     }
