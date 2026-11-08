@@ -1403,6 +1403,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **How long the record of an instance's exits is kept is an operator setting (#2126).** `wh_record_instance_exit`
+  removed rows of `wh_instance_exits` older than a fixed 30 days with each write. The window is now
+  `wh_settings.instance_exit_retention_days`, published from `Whizbang:Workers:Maintenance:Retention:InstanceExitDays`
+  (`MaintenanceRetentionOptions.InstanceExitDays`) like every other retention window, and 30 days when nothing sets it
+  (migration 356, in the bootstrap closure with 354's definition; the function is now PL/pgSQL so it can probe for
+  `wh_settings`, which the closure runs before on a new database).
 - **Long startup work says how far along it is, and unrepairable rows no longer make a table rescan every start
   (#2128).** The declared-key spelling scan and the required-member check that follows it said nothing above Debug, so a
   migrating instance could show minutes with no output, and a batched migration step (for example 087's backfill) logged
