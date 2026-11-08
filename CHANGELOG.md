@@ -1439,6 +1439,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
   an idle service, and a service whose repair stalled this way may never be idle.
 
+- **Stopping the shared LISTEN connection no longer hangs when the stop lands as its wait begins.** Npgsql's
+  `WaitAsync` checks its token and then re-arms the read's own cancellation source, which discards a cancellation
+  delivered in between (Npgsql 10.0.1), so a stop arriving as the dispatch loop parked was never seen and
+  `StopAsync`, which waited for the loop, could hang a host's shutdown. The loop now ends on the stopping token itself;
+  a stop with no delivery running returns at once, no subscriber is called after it, and the connection is disposed
+  only once the abandoned wait ends, never under a read in flight. A stop during a delivery still waits for it.
+
 - **A role holder is judged by the one liveness rule, learns of a loss within one renew interval, and quick hand-offs
   vacuum once (#2140).** A freshly elected holder busy with startup, or inside one long unit of work, lapsed 15 seconds
   after its last renewal although it was live, so a restart could move the maintainer role back and forth, and the old
