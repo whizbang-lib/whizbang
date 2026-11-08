@@ -1477,6 +1477,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A rebuild dates a row at its stream's start once the stream's first event is gone (Fixes #2152).** A perspective
+  row's `CreatedAt` is business time from the events folded into it, and an update never moves it. After the
+  superseding reaper or a prefix truncate deleted a stream's first event, a rebuild that writes the row afresh
+  (blue-green into an empty shadow table, or in place where the row is missing) had only the surviving events to date it
+  by. Migration 358 adds `wh_stream_lifecycle.first_event_at`: the reaper and `wh_truncate_stream_prefix` record the
+  business time of the stream's first event (its last stored hop's timestamp, the value the runner reads) before they
+  delete it, written once and never on the append path. `wh_stream_started_at` answers it only while the stream no
+  longer holds an event at version 0 or 1, falling back to `first_appended_at` for a first event removed before the
+  migration. `IEventStore.GetStreamStartedAtAsync` (both Postgres drivers, forwarded by every decorator) reads it, and
+  the generated runner asks only for a row that is not known to exist and whose fold does not begin with the stream's
+  first event, then dates that row's insert at the answer (`PerspectiveRowStart`). The answer is null while the stream
+  holds its first event, and an existing row keeps its `CreatedAt`.
+- **A new perspective row is dated at the first event folded into it, not the last (Fixes #2154).** The runner folds a
+  batch and writes the row once, and the insert took the write's own time, the last folded event's, so a rebuild of a
+  multi-event stream (blue-green, or in place where the row is missing) and a live first batch of several events dated
+  the row at the last event, and `CreatedAt` depended on batching. An insert now takes the first folded event's business
+  time (the timestamp of its last hop, as the runner reads every event), or the stream's recorded start once its first
+  event is gone (#2152); `UpdatedAt` keeps the last event's time and an update never moves `CreatedAt`. A row already
+  stored keeps the date it was given; rebuild blue-green to re-date rows written before this fix.
+- **A redelivery answer marks a bucket unhealable only when it covered the bucket's deficit (#2143).** Audit-driven
+  repairs and bulk backfills ask the origin for the compared window, and an answer for a recent window carries only the
+  stream's recent events. When the consumer already held those, the answer stored nothing and every bucket it touched
+  was marked as one repair cannot change, including buckets whose missing events are older than the window (most of
+  them whole-history deficits that never had a repair request of their own), so repair stopped on real gaps. The origin
+  now echoes the window it answered on every bundle (`RedeliveryComposite.AnswersWindow`, `AnsweredFromCommitSequence`,
+  `AnsweredToCommitSequence`; `RedeliveryPump.PublishAnswerAsync`), and a bucket is marked only when that window
+  includes the bucket's compared window (a whole-history bucket needs a whole-history answer) or the answer carried the
+  bucket's named missing event; any other bucket is recorded as answered and stays repairable. A bundle from an origin
+  that predates the fields marks as before. Migration 357 carries the check (`wh_integrity_record_bundle_answer` gains
+  trailing defaulted parameters, so calls from an older release still resolve, and the reconcile marks through the new
+  `wh_integrity_mark_unhealable_covered_batch`) and re-arms, once per database, the whole-history rows already marked with
+  no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
+  an idle service, and a service whose repair stalled this way may never be idle.
+
+- **Stopping the shared LISTEN connection no longer hangs when the stop lands as its wait begins.** Npgsql's
+  `WaitAsync` checks its token and then re-arms the read's own cancellation source, which discards a cancellation
+  delivered in between (Npgsql 10.0.1), so a stop arriving as the dispatch loop parked was never seen and
+  `StopAsync`, which waited for the loop, could hang a host's shutdown. The loop now ends on the stopping token itself;
+  a stop with no delivery running returns at once, no subscriber is called after it, and the connection is disposed
+  only once the abandoned wait ends, never under a read in flight. A stop during a delivery still waits for it.
+
 - **A role holder is judged by the one liveness rule, learns of a loss within one renew interval, and quick hand-offs
   vacuum once (#2140).** A freshly elected holder busy with startup, or inside one long unit of work, lapsed 15 seconds
   after its last renewal although it was live, so a restart could move the maintainer role back and forth, and the old

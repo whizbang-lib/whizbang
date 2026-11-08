@@ -2188,6 +2188,28 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IntegrityBundleAnswer?>(null);
 
+  /// <summary>
+  /// <see cref="IntegrityRecordBundleAnswerAsync(Guid, IReadOnlyList{Guid}, IReadOnlyList{long?}, DateTimeOffset, CancellationToken)"/>
+  /// for a bundle that says which window it answers (#2143): a bucket of a bundle that changed nothing is marked only
+  /// when <paramref name="answeredWindow"/> covers the bucket's compared window (a whole-history bucket needs a
+  /// whole-history answer) or the bundle carried the event the bucket is missing (#2103). Any other bucket is recorded
+  /// as answered and stays repairable. A null window (an origin that predates it) marks as the overload without it
+  /// does. The default ignores the window, as a store that cannot judge coverage behaves as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="eventIds">The bundle's event ids.</param>
+  /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>.</param>
+  /// <param name="answeredWindow">The window the bundle answers; null when the origin did not say.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The answer, or null when the store cannot record it.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerCoverageSqlTests.cs</tests>
+  Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, now, cancellationToken);
+
   /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
   /// <docs>resilience/stream-integrity</docs>
   Task<bool> IntegrityMarkHealedBatchAsync(
@@ -2218,6 +2240,26 @@ public interface IWorkCoordinator {
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>(null);
+
+  /// <summary>
+  /// <see cref="IntegrityMarkUnhealableBatchAsync(Guid, IReadOnlyList{IntegrityRepairLedger.DivergenceKey}, DateTimeOffset, CancellationToken)"/>
+  /// for a redelivery that says which window it answered (#2143): only the rows whose compared window
+  /// <paramref name="answeredWindow"/> covers, or whose missing event is among <paramref name="answeredEventIds"/>
+  /// (#2103), are marked. The default ignores the window, as a store that cannot judge coverage behaves as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the redelivery names.</param>
+  /// <param name="keys">The buckets the redelivery covered.</param>
+  /// <param name="answeredWindow">The window the redelivery answered.</param>
+  /// <param name="answeredEventIds">The events the redelivery carried.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The keys this call marked; null = unsupported.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerCoverageSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+    IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    IntegrityMarkUnhealableBatchAsync(originServiceId, keys, now, cancellationToken);
 
   /// <summary>
   /// Reconciles the events of one redelivery bundle that this store already holds. An event stored before the

@@ -587,6 +587,19 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityWindowAwareAnswerAndMark_WithoutProviderSupport_AnswerAsTheWindowlessOnesAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(
+      Guid.Empty, [], [], new RedeliveryAnswerWindow(1, 2), DateTimeOffset.UnixEpoch);
+    var marked = await coordinator.IntegrityMarkUnhealableBatchAsync(
+      Guid.Empty, [], new RedeliveryAnswerWindow(1, 2), [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(answer).IsNull().Because("a store that cannot judge coverage answers as the window-less record (#2143)");
+    await Assert.That(marked).IsNull();
+  }
+
+  [Test]
   public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

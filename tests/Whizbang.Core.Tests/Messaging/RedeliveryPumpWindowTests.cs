@@ -24,6 +24,26 @@ namespace Whizbang.Core.Tests.Messaging;
 public class RedeliveryPumpWindowTests {
 
   [Test]
+  public async Task PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync() {
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(new CaptureTransport(), serializer, _instance(), new CompositeFactory());
+    var stream = TrackedGuid.New().Value;
+
+    _ = await pump.PublishAnswerAsync(
+      [_evt(stream, 1, 10), _evt(TrackedGuid.New().Value, 1, 11)], new RedeliveryAnswerWindow(9, 20),
+      topic: "inbox.whizbang.service.billing", target: "billing");
+    _ = await pump.PublishAsync([_evt(stream, 2, 12)], topic: "inbox.whizbang.service.billing", target: "billing");
+
+    await Assert.That(serializer.Composites.Count).IsEqualTo(3);
+    foreach (var answered in serializer.Composites.Take(2)) {
+      await Assert.That(((IIdentityPreservingComposite)answered).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(9, 20))
+        .Because("the receiver marks only the buckets whose deficit the answer covered (#2143)");
+    }
+    await Assert.That(serializer.Composites[2].AnswersWindow).IsFalse()
+      .Because("a publish that answers no request says no window");
+  }
+
+  [Test]
   public async Task Publish_WithABundleStream_ShipsManyStreamsInOneBundle_OnTheBackfillSessionAsync() {
     var backfill = TrackedGuid.New().Value;
     var s1 = TrackedGuid.New().Value;
