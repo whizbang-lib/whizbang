@@ -16,13 +16,13 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Migration 362 (#2126) through the Dapper driver, as through the EF Core driver: every exit is one row of
+/// Migration 363 (#2126) through the Dapper driver, as through the EF Core driver: every exit is one row of
 /// <c>wh_instance_exits</c>, written with the instance's eviction tombstone read in the same call, and a peer's reap
 /// records which instance evicted it and what the one liveness rule judged it by.
 /// </summary>
 /// <remarks>Ages are on the database's clock (<c>NOW() - age</c>), never the host's.</remarks>
 /// <docs>operations/startup/instance-exits#the-exit-record</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/362_EveryExitIsRecorded.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/363_EveryExitIsRecorded.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs</code-under-test>
 public class DapperInstanceExitTests : PostgresTestBase {
   [Test]

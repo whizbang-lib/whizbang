@@ -32,7 +32,7 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// The ledger is read through the rollback gate (#2022, owner decision 3): an instance may serve only when nothing was
 /// applied after its own version, since a migration cannot be reversed yet (#2122). Who applied each change is
-/// <c>applied_version_id</c> (358), which a pass that only skips or re-stamps never moves, so an application rolled back
+/// <c>applied_version_id</c> (359), which a pass that only skips or re-stamps never moves, so an application rolled back
 /// with nothing migrated since serves normally. A ledger older than that record has only <c>version_id</c>, the version
 /// that last stamped each row, and it is taken as the applier: the conservative reading, and the one #1992 made. Step
 /// rows (a pass's progress) are not changes. Each row is a W! migration or an application schema change by its owner
@@ -208,9 +208,9 @@ internal static class PostgresStartupAssessment {
 
   private static async Task<IReadOnlyList<AppliedSchemaChange>> _readLedgerAsync(
       NpgsqlConnection connection, string prefix, Probe probe, CancellationToken cancellationToken) {
-    // #2022: who applied each change (358), or on an older ledger the version that last stamped it. Every row is read,
+    // #2022: who applied each change (359), or on an older ledger the version that last stamped it. Every row is read,
     // so a ledger whose rows were all re-stamped is still a ledger; a row whose applier is unknown carries no versions.
-    // A row not written since 358 has no applied_version_id: one last applied (status 1, 2, 4) was applied by its
+    // A row not written since 359 has no applied_version_id: one last applied (status 1, 2, 4) was applied by its
     // version_id, as every row of an older ledger is taken to be.
     var applier = probe.AppliedBy
       ? "COALESCE(m.applied_version_id, CASE WHEN m.status IN (1, 2, 4) THEN m.version_id END)"

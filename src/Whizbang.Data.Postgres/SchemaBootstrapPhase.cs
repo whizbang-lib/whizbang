@@ -561,7 +561,7 @@ public static class SchemaBootstrapPhase {
   /// <param name="instanceId">This instance.</param>
   /// <param name="reason">The overridden verdict's reason (<see cref="Whizbang.Core.Startup.StartupAssessment.OverriddenReason"/>).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>Whether it was recorded: false on a schema whose instance table has no place for it (older than 359).</returns>
+  /// <returns>Whether it was recorded: false on a schema whose instance table has no place for it (older than 360).</returns>
   /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
   public static async Task<bool> RecordIncompatibilityOverrideAsync(

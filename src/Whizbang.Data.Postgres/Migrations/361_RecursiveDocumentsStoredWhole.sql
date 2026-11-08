@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 360_RecursiveDocumentsStoredWhole.sql
+-- Migration: 361_RecursiveDocumentsStoredWhole.sql
 -- Date: 2026-11-07
 -- Description: Marks a database as migrated by a release that stores a perspective model holding a recursive type as
 --              one whole document (#2112).
@@ -17,7 +17,7 @@
 --              and whose table holds rows is named at Warning to be rebuilt. A fresh database and one already at or
 --              after this release are silent. The statement below exists only so the file is not empty.
 --
---              Number 360: above every number on develop (through 355) and in open pull requests (357).
+--              Number 361: above every number on develop (through 358) and in open pull requests.
 --
 -- Dependencies: 000 (the migration ledger)
 -- Objects: none

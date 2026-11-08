@@ -24,7 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </summary>
 /// <remarks>Ages are on the database's clock (<c>NOW() - age</c>), never the host's.</remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/361_TheHeartbeatStartsAtRegistration.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/362_TheHeartbeatStartsAtRegistration.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs</code-under-test>
 public class DapperStartupHeartbeatTests : PostgresTestBase {
   [Test]

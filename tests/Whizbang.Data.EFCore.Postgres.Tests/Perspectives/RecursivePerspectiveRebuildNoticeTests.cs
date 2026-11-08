@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// "An earlier release" is read from the migration ledger: migration <c>360_RecursiveDocumentsStoredWhole</c> ships with
+/// "An earlier release" is read from the migration ledger: migration <c>361_RecursiveDocumentsStoredWhole</c> ships with
 /// the fix and records nothing but its own ledger row, so a ledger without it was last migrated by a release before the
 /// fix. The check runs before this start's migrations apply, so it reads the previous release's ledger.
 /// </para>

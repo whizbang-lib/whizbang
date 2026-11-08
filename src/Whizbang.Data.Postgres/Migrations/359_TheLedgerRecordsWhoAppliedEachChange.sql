@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 358_TheLedgerRecordsWhoAppliedEachChange.sql
+-- Migration: 359_TheLedgerRecordsWhoAppliedEachChange.sql
 -- Date: 2026-11-07
 -- Description: The migration ledger records which version applied each change (#2022).
 --
@@ -22,7 +22,7 @@
 --              version, since a migration cannot be reversed yet (#2122).
 --
 --              Existing rows are not rewritten (a ledger write is what a pass and its observers count as work). A row
---              whose last write before 358 was an apply (status 1 Applied, 2 Updated, 4 migrating in the background) was
+--              whose last write before 359 was an apply (status 1 Applied, 2 Updated, 4 migrating in the background) was
 --              written by the version that applied it, so while applied_version_id is NULL its version_id is the
 --              applier: the reader takes it, and the trigger carries it over on the row's next write. A row last skipped
 --              (status 3) or failed says nothing about who applied it: it never stands an instance down.
@@ -31,7 +31,7 @@
 --              the trigger records what its writes applied; it does not read the column, and its own Assess compares
 --              version_id as it always has.
 --
---              Number 358: above every number on develop (through 355) and in open pull requests (357).
+--              Number 359: above every number on develop (through 358) and in open pull requests.
 --
 -- Dependencies: 000 (wh_schema_migrations, wh_schema_versions)
 -- Objects: wh_schema_migrations.applied_version_id, wh_schema_migration_applied_by, wh_schema_migrations_applied_by
@@ -51,8 +51,8 @@ BEGIN
       ADD COLUMN IF NOT EXISTS applied_version_id INTEGER REFERENCES __SCHEMA__.wh_schema_versions(id);
 
     COMMENT ON COLUMN __SCHEMA__.wh_schema_migrations.applied_version_id IS
-      '358 (#2022): the version that last applied this change (inserted the row or changed its content hash). '
-      'version_id is rewritten by every pass; this is not. NULL on a row not written since 358: then a row last applied '
+      '359 (#2022): the version that last applied this change (inserted the row or changed its content hash). '
+      'version_id is rewritten by every pass; this is not. NULL on a row not written since 359: then a row last applied '
       '(status 1, 2, 4) was applied by its version_id, and any other row by nobody known.';
   END IF;
 END $$;
@@ -73,7 +73,7 @@ BEGIN
   ELSIF NEW.status <> -1 AND NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN
     NEW.applied_version_id := NEW.version_id;
   ELSE
-    -- Nothing applied: the applier stays, and a row last applied before 358 carries its version_id over.
+    -- Nothing applied: the applier stays, and a row last applied before 359 carries its version_id over.
     NEW.applied_version_id := COALESCE(OLD.applied_version_id,
                                        CASE WHEN OLD.status IN (1, 2, 4) THEN OLD.version_id END);
   END IF;
@@ -82,8 +82,8 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_schema_migration_applied_by() IS
-  '358 (#2022): trigger function keeping wh_schema_migrations.applied_version_id: the row''s version on an insert or '
-  'a content-hash change, unchanged on any other write (a row last applied before 358 carrying its version_id), never '
+  '359 (#2022): trigger function keeping wh_schema_migrations.applied_version_id: the row''s version on an insert or '
+  'a content-hash change, unchanged on any other write (a row last applied before 359 carrying its version_id), never '
   'moved by a failure (status -1).';
 
 DROP TRIGGER IF EXISTS wh_schema_migrations_applied_by ON __SCHEMA__.wh_schema_migrations;
