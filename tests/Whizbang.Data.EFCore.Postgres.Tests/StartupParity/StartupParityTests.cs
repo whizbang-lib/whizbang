@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -382,6 +383,115 @@ public class StartupParityTests {
       .Throws<SchemaStandDownException>()
       .Because("no start path skips Assess: the direct initialization reads the same verdict and refuses");
     await Assert.That(await _ledgerAsync()).IsEqualTo(before);
+  }
+
+  // ── the incompatibility override (owner decision, #2022) ─────────────
+
+  private const string OVERRIDE = "Whizbang:Startup:OverrideIncompatibility";
+
+  /// <summary>Every log line at Warning or above, with its event id, from every category.</summary>
+  private sealed class WarningLog : ILoggerProvider {
+    private readonly Lock _lock = new();
+    private readonly List<(int Id, LogLevel Level, string Message)> _lines = [];
+    public List<(int Id, LogLevel Level, string Message)> Lines { get { lock (_lock) { return [.. _lines]; } } }
+    public ILogger CreateLogger(string categoryName) => new Sink(this, categoryName);
+    public void Dispose() { /* nothing held */ }
+
+    private sealed class Sink(WarningLog owner, string category) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+        if (IsEnabled(logLevel)) {
+          lock (owner._lock) {
+            owner._lines.Add((eventId.Id, logLevel, category + ": " + formatter(state, exception)));
+          }
+        }
+      }
+    }
+  }
+
+  private Task<object> _overrideRecordAsync(IServiceProvider instance) => _scalarAsync<object>(
+    "SELECT incompatibility_override FROM wh_service_instances WHERE instance_id = $1",
+    instance.GetRequiredService<IServiceInstanceProvider>().InstanceId);
+
+  private static List<(int Id, LogLevel Level, string Message)> _overrideLines(WarningLog log) =>
+    [.. log.Lines.Where(l => l.Message.StartsWith("Whizbang.Core.Startup.StartupAssessmentSource: ", StringComparison.Ordinal)
+      && l.Message.Contains(OVERRIDE, StringComparison.Ordinal))];
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var log = new WarningLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<ILoggerProvider>(log), config: (OVERRIDE, "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue()
+      .Because("the override lets this build serve");
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before)
+      .Because("it only serves: no migration runs, backward or otherwise");
+    var lines = _overrideLines(log);
+    await Assert.That(lines.Count).IsEqualTo(1).Because("logged once per start, loudly");
+    await Assert.That(lines[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(lines[0].Id).IsEqualTo(3);
+    await Assert.That(lines[0].Message).Contains("StandDown");
+    await Assert.That(lines[0].Message).Contains("(applied by library 999.0.0, application unknown)")
+      .Because("the full reason, as the stand-down error carries it");
+    var recorded = await _overrideRecordAsync(instance) as string;
+    await Assert.That(recorded).IsNotNull().Because("operators and peers see it on the instance row");
+    await Assert.That(recorded!).Contains("(applied by library 999.0.0, application unknown)");
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_OnACompatibleInstance_LogsNothing_AndRecordsNothingAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var log = new WarningLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<ILoggerProvider>(log), config: (OVERRIDE, "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(_overrideLines(log)).IsEmpty();
+    await Assert.That(await _overrideRecordAsync(instance)).IsEqualTo(DBNull.Value);
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_DoesNotOverrideANewerVersionOnlineAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _execAsync($$"""
+      SELECT record_heartbeat('{{Whizbang.Core.ValueObjects.TrackedGuid.New()}}'::uuid, 'svc', 'host', 1, '{}'::jsonb,
+        'Running', '0.0.0-0', 90, 'pooled', '2.0.0')
+      """);
+    var stages = new StageLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages),
+      config: [(OVERRIDE, "true"), ("Whizbang:Application:Version", "1.0.0")]);
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await stages.Registered.Task.WaitAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsFalse()
+      .Because("a newer version online is the cluster-wide stand-down, not an incompatibility: the override never lifts it");
+    await Assert.That(stages.Calls.Any(c => c.Contains("is online with application version 2.0.0", StringComparison.Ordinal))).IsTrue();
   }
 
   /// <summary>

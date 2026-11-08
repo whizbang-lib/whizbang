@@ -144,6 +144,37 @@ public partial class CoordinationSourceGuardTests {
     await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
   }
 
+  /// <summary>
+  /// C# files that may read or honor the incompatibility override (#2022): the setting is read where the rule lives, the
+  /// drivers hand it to their assessor, and only the one verdict turns an incompatibility into a start. Anything else
+  /// that read it could start an instance the verdict refused.
+  /// </summary>
+  private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
+    ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
+    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
+    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
+  };
+
+  [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]
+  private static partial Regex _incompatibilityOverride();
+
+  [Test]
+  public async Task TheIncompatibilityOverride_IsHonoredOnlyByTheOneVerdictAsync() =>
+    await _assertOnlyAllowedAsync(_incompatibilityOverride(), _overrideAllowlist,
+      "the incompatibility override read or honored outside the one verdict; read StartupAssessment.OverriddenReason instead");
+
+  [Test]
+  public async Task TheOverrideScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_incompatibilityOverride().IsMatch("var on = UpgradeOrder.IsIncompatibilityOverridden(configuration);")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("return verdict with { OverriddenReason = reason };")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("if (assessment.OverriddenReason is { } reason) {")).IsFalse()
+      .Because("reading the verdict's record of an override is how everything else learns of it");
+    var stale = _overrideAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_incompatibilityOverride().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
   private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
     + "closed run permit denies (#2045)";
   private const string STORE = "the store that implements the claim; its callers obey the run permit";

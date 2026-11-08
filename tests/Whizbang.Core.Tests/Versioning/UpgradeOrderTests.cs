@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -336,6 +337,29 @@ public class UpgradeOrderTests {
     await Assert.That(() => UpgradeOrder.AppliedSince(_own(), null!)).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.DescribeAppliedSince(null!, [])).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.DescribeAppliedSince(_own(), null!)).Throws<ArgumentNullException>();
+  }
+
+  // ── the incompatibility override ────────────────────────────────────
+
+  private static IConfiguration _config(string? value) => new ConfigurationBuilder()
+    .AddInMemoryCollection(value is null ? [] : [new KeyValuePair<string, string?>(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY, value)])
+    .Build();
+
+  [Test]
+  public async Task TheOverride_IsOffUnlessTheHostTurnsItOnAsync() {
+    // Owner decision (#2022): off by default. A host that configures nothing never runs past an incompatibility.
+    await Assert.That(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY).IsEqualTo("Whizbang:Startup:OverrideIncompatibility");
+    await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(null)).IsFalse();
+    await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config(null))).IsFalse();
+    await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config(" "))).IsFalse();
+    await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config("false"))).IsFalse();
+    await Assert.That(UpgradeOrder.IsIncompatibilityOverridden(_config("True"))).IsTrue();
+  }
+
+  [Test]
+  public async Task AnOverrideThatIsNotABoolean_IsRefusedLoudly_NeverReadAsOffAsync() {
+    await Assert.That(() => UpgradeOrder.IsIncompatibilityOverridden(_config("yes please")))
+      .Throws<InvalidOperationException>().WithMessageContaining("Whizbang:Startup:OverrideIncompatibility");
   }
 
   // ── the ordering primitives the other deciders share ────────────────

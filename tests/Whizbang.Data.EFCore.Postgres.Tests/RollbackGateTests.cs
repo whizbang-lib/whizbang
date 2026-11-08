@@ -34,12 +34,13 @@ public class RollbackGateTests : EFCoreTestBase {
   private const string SINCE = "schema change(s) were applied by a newer version that this version did not make, and a migration "
     + "cannot be reversed yet (down migrations: whizbang-lib/whizbang#2122)";
 
-  private EFCorePostgresStartupAssessor _assessor(string library, string? application) {
+  private EFCorePostgresStartupAssessor _assessor(string library, string? application, bool overrideIncompatibility = false) {
     var services = new ServiceCollection();
     services.AddScoped(_ => CreateDbContext());
     return new EFCorePostgresStartupAssessor(
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext),
-      new LibraryVersionProvider(library), new ApplicationVersionProvider(ApplicationVersion.FromRecorded(application)));
+      new LibraryVersionProvider(library), new ApplicationVersionProvider(ApplicationVersion.FromRecorded(application)),
+      overrideIncompatibility: overrideIncompatibility);
   }
 
   private async Task<T> _scalarAsync<T>(string sql, CancellationToken ct, params (string Name, object Value)[] args) {
@@ -253,5 +254,72 @@ public class RollbackGateTests : EFCoreTestBase {
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).Contains("(applied by library 1000.0.0, application unknown)");
+  }
+
+  // ── the incompatibility override (owner decision, #2022) ─────────────
+
+  private static readonly VersionSighting _me = new("1.0.0", "1.9.0", Guid.Parse("0199dddd-0000-0000-0000-000000000001"));
+  private static readonly AppliedSchemaChange _appliedSince = new("perspective:wh_per_orders", SchemaChangeKind.Application, "1.0.0", "2.0.0");
+
+  [Test]
+  public async Task TheOverride_LetsAnIncompatibleInstanceServe_WithoutAMigration_AndCarriesTheFullReasonAsync() {
+    var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], []);
+    var overridden = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], [], overrideIncompatibility: true);
+
+    await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(refused.OverriddenReason).IsNull();
+    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Current)
+      .Because("Current skips the election and the pass: the override only lets this build serve, it never migrates backward");
+    await Assert.That(overridden.OverriddenReason).IsEqualTo(refused.Reason)
+      .Because("the same detail the stand-down error carries");
+    await Assert.That(overridden.Reason).Contains(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY);
+  }
+
+  [Test]
+  public async Task TheOverride_NeverOverridesANewerVersionOnlineAsync() {
+    VersionSighting[] online = [new("1.0.0", "2.0.0", Guid.Parse("0199dddd-0000-0000-0000-000000000002"))];
+
+    var withAppliedSince = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], online, overrideIncompatibility: true);
+    var alone = PostgresStartupAssessment.ComputeVerdict(_me, [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)],
+      online, overrideIncompatibility: true);
+
+    await Assert.That(withAppliedSince.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(withAppliedSince.Reason).Contains("is online with application version 2.0.0");
+    await Assert.That(alone.Verdict).IsEqualTo(StartupVerdict.StandDown).Because("the cluster-wide stand-down is not an incompatibility");
+    await Assert.That(alone.OverriddenReason).IsNull();
+  }
+
+  [Test]
+  public async Task TheOverride_OnACompatibleInstance_ChangesNothingAsync() {
+    var verdict = PostgresStartupAssessment.ComputeVerdict(_me,
+      [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)], [], overrideIncompatibility: true);
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve);
+    await Assert.That(verdict.OverriddenReason).IsNull();
+  }
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("not-a-version")]
+  public async Task TheOverride_NeverServesABuildThatCannotSayWhatItIsAsync(string? library) {
+    var verdict = PostgresStartupAssessment.ComputeVerdict(new VersionSighting(library, null), [_appliedSince], [], overrideIncompatibility: true);
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(verdict.OverriddenReason).IsNull();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task TheOverride_AgainstTheRealLedger_ServesWhatTheGateRefusesAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    var file = await _lastWhizbangMigrationAsync(ct);
+    await _applyAsync(file, await _versionAsync("1000.0.0", "unknown", ct), ct);
+
+    var refused = await _assessor(library, null).AssessAsync(ct);
+    var overridden = await _assessor(library, null, overrideIncompatibility: true).AssessAsync(ct);
+
+    await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Current);
+    await Assert.That(overridden.OverriddenReason).IsEqualTo(refused.Reason);
   }
 }
