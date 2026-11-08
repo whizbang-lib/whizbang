@@ -26,7 +26,8 @@ public sealed class ArchiveObjectCorruptedException : Exception {
 
   /// <summary>Creates the exception for one object whose bytes do not match its manifest row.</summary>
   /// <param name="streamId">The archived stream.</param>
-  /// <param name="locator">The object's locator, as the manifest records it.</param>
+  /// <param name="locator">The object, as the manifest records it: its path from the stream inside the configured location
+  /// (#2137).</param>
   /// <param name="expectedLength">The byte length the manifest recorded.</param>
   /// <param name="actualLength">The byte length the store returned.</param>
   /// <param name="expectedSha256">The SHA-256 the manifest recorded.</param>
@@ -44,7 +45,7 @@ public sealed class ArchiveObjectCorruptedException : Exception {
   /// <summary>The archived stream, when known.</summary>
   public Guid? StreamId { get; }
 
-  /// <summary>The object's locator, when known.</summary>
+  /// <summary>The object (its path from the stream inside the configured location), when known.</summary>
   public string? Locator { get; }
 
   /// <summary>The SHA-256 the manifest recorded, when known.</summary>

@@ -58,17 +58,36 @@ public class AzureBlobArchiveStoreTests {
     return connection;
   }, Schema: null);
 
-  private BlobContainerClient _container(string? name = null, HttpPipelinePolicy? fault = null) {
+  private BlobContainerClient _container(string? name = null, HttpPipelinePolicy? fault = null, string? connectionString = null) {
     var options = new BlobClientOptions();
     if (fault is not null) {
       options.AddPolicy(fault, HttpPipelinePosition.PerCall);
     }
-    return new BlobContainerClient(_azurite, name ?? _containerName, options);
+    return new BlobContainerClient(connectionString ?? _azurite, name ?? _containerName, options);
   }
 
   private AzureBlobArchiveStore _store(
-      int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<AzureBlobArchiveStore>? logger = null) =>
-    new(_database(), _container(container, fault), new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk }, logger);
+      int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<AzureBlobArchiveStore>? logger = null,
+      string? connectionString = null, PostgresArchiveConnection? database = null, bool verifyLocation = true) {
+    var client = _container(container, fault, connectionString);
+    return new(database ?? _database(), client,
+      new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk, ContainerName = client.Name, VerifyLocation = verifyLocation },
+      logger);
+  }
+
+  // One setting of the emulator's connection string.
+  private string _setting(string key) =>
+    _azurite.Split(';').Single(part => part.StartsWith(key + "=", StringComparison.Ordinal))[(key.Length + 1)..];
+
+  // The same Azurite account reached through another endpoint name: what a configuration pointed at another storage
+  // account looks like to the store, while every request still lands on the one emulator (see RedirectHost).
+  private (string ConnectionString, RedirectHost Redirect) _anotherEndpoint() {
+    var endpoint = new Uri(_setting("BlobEndpoint"));
+    // Another IP literal, so the SDK still reads the emulator's path-style address (account in the path); never dialed.
+    const string OTHER = "127.0.0.2";
+    return (_azurite.Replace($"BlobEndpoint={endpoint.Scheme}://{endpoint.Authority}", $"BlobEndpoint={endpoint.Scheme}://{OTHER}:{endpoint.Port}",
+      StringComparison.Ordinal), new RedirectHost(OTHER, endpoint.Host));
+  }
 
   private async Task<NpgsqlConnection> _openAsync() {
     var connection = new NpgsqlConnection(_db.ConnectionString);
@@ -163,7 +182,7 @@ public class AzureBlobArchiveStoreTests {
   }
 
   private Task<List<string>> _manifestAsync(Guid stream) => _rowsAsync(
-    "SELECT concat_ws('|', first_version, last_version, event_count, locator, sha256) FROM wh_archive_manifest " +
+    "SELECT concat_ws('|', first_version, last_version, event_count, relative_path, sha256) FROM wh_archive_manifest " +
     "WHERE stream_id = @s ORDER BY first_version", stream);
 
   private async Task<List<string>> _objectsAsync(string? container = null) {
@@ -180,9 +199,9 @@ public class AzureBlobArchiveStoreTests {
 
   private static readonly IServiceProvider _noServices = new ServiceCollection().BuildServiceProvider();
 
-  // The stream's queued object deletions: locator and attempts.
+  // The stream's queued object deletions: relative path and attempts.
   private Task<List<string>> _queuedAsync(Guid stream) => _rowsAsync(
-    "SELECT concat_ws('|', locator, attempts) FROM wh_archive_object_deletions WHERE stream_id = @s ORDER BY locator", stream);
+    "SELECT concat_ws('|', relative_path, attempts) FROM wh_archive_object_deletions WHERE stream_id = @s ORDER BY relative_path", stream);
 
   // The stream's one queued row: attempts, whether the next try waits at most a minute, whether it waits at all, the error.
   private async Task<string> _waitAsync(Guid stream) => (await _rowsAsync(
@@ -213,7 +232,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
     await Assert.That(written.EventsArchived).IsEqualTo(5L);
     await Assert.That(written.LastVersion).IsEqualTo(5L);
-    await Assert.That(written.Locator).IsEqualTo(store.LocatorFor(stream));
+    await Assert.That(written.Locator).IsEqualTo(AzureBlobArchiveStore.LocatorFor(stream));
     await Assert.That(await _readAllAsync(store, stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the archive reads back byte-identical, in version order, across every object");
     await Assert.That(await _readAllAsync(store, stream, fromVersion: 4)).IsEquivalentTo(hot[3..], TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -223,8 +242,9 @@ public class AzureBlobArchiveStoreTests {
     var objects = await _objectsAsync();
     await Assert.That(manifest.Select(m => string.Join('|', m.Split('|')[..3]))).IsEquivalentTo(["1|2|2", "3|4|2", "5|5|1"],
       TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("at most MaxEventsPerChunk events per object, in version order");
-    await Assert.That(manifest.All(m => m.Contains($"azure-blob://{_containerName}/{stream:D}/", StringComparison.Ordinal)
-      && m.Contains("?codec=brotli&format=1", StringComparison.Ordinal))).IsTrue().Because("each object records its own codec and format");
+    await Assert.That(manifest.All(m => m.Contains($"|{stream:D}/", StringComparison.Ordinal)
+      && m.Contains(".jsonl.br|", StringComparison.Ordinal))).IsTrue()
+      .Because("each object records its path from the stream, whose name carries its codec; the container is its location's");
     await Assert.That(objects).Count().IsEqualTo(3);
     foreach (var name in objects) {
       var bytes = (await _container().GetBlobClient(name).DownloadContentAsync()).Value.Content.ToArray();
@@ -235,7 +255,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_archive WHERE stream_id = @s", stream)).IsEqualTo(0L)
       .Because("the staged rows leave with the commit; the events live in the objects only");
-    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{store.LocatorFor(stream)}|5"]);
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|5"]);
   }
 
   [Test]
@@ -367,31 +387,318 @@ public class AzureBlobArchiveStoreTests {
   }
 
   [Test]
-  public async Task Read_AManifestRowThisStoreDidNotWrite_IsRefusedAsync() {
+  public async Task Read_AnObjectNameThisStoreDidNotWrite_IsRefusedAsync() {
     var (stream, _) = await _seedAsync(3);
     var store = _store();
     _ = await store.WriteAsync(ArchiveBatch.Prefix(stream, 1));
     await using (var connection = await _openAsync()) {
       await _executeAsync(connection,
-        "UPDATE wh_archive_manifest SET locator = 'postgres-table://wh_event_archive?codec=none&format=1' " +
-        $"WHERE stream_id = '{stream}'");
+        $"UPDATE wh_archive_manifest SET relative_path = relative_path || '.gz' WHERE stream_id = '{stream}'");
     }
 
     await Assert.That(() => _completedAsync(_readAllAsync(store, stream))).Throws<InvalidDataException>()
-      .Because("a locator another store wrote is never read as one of this store's objects");
+      .Because("an object whose name carries no codec this store writes is never decoded by a guess");
+  }
+
+  // ── Locations (#2137): configuration drives every operation; a record never redirects one ──────────
+
+  [Test]
+  public async Task Write_RecordsTheConfiguredLocation_AndOnlyAPathFromTheStreamOnEachObject_NeverASecretAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var store = _store(maxEventsPerChunk: 2);
+    var accountKey = _setting("AccountKey");
+
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
+      new StreamPurgeRequest { StreamIds = [stream], RequestedBy = "operator-1", Reason = "test" });
+
+    await Assert.That(store.ConfiguredLocation.Endpoint).EndsWith("/devstoreaccount1");
+    await Assert.That(await _rowsAsync(
+        "SELECT concat_ws('|', provider, account_endpoint, connection_name, container) FROM wh_archive_locations WHERE @s IS NOT NULL", stream))
+      .IsEquivalentTo([$"azure-blob|{store.ConfiguredLocation.Endpoint}|default|{_containerName}"])
+      .Because("one location: the provider, the account endpoint, the logical connection name and the container");
+    var records = await _rowsAsync(
+      "SELECT concat_ws('|', (location_id IS NOT NULL)::text, (locator IS NULL)::text, relative_path) FROM wh_archive_object_deletions " +
+      "WHERE stream_id = @s ORDER BY relative_path", stream);
+    await Assert.That(records).Count().IsEqualTo(2);
+    await Assert.That(records.All(r => r.StartsWith($"true|true|{stream:D}/", StringComparison.Ordinal))).IsTrue()
+      .Because("each record holds its location id and a path that starts at the stream, nothing about account or container");
+    var everything = await _rowsAsync(
+      "SELECT row_to_json(l)::text FROM wh_archive_locations l WHERE @s IS NOT NULL " +
+      "UNION ALL SELECT row_to_json(q)::text FROM wh_archive_object_deletions q WHERE q.stream_id = @s", stream);
+    await Assert.That(everything).Count().IsGreaterThan(1);
+    await Assert.That(everything.All(r => !r.Contains(accountKey, StringComparison.Ordinal)
+      && !r.Contains("AccountKey", StringComparison.OrdinalIgnoreCase) && !r.Contains(_containerName + "/", StringComparison.Ordinal))).IsTrue()
+      .Because("no key or connection string is ever stored, and no record repeats the container");
   }
 
   [Test]
-  public async Task Read_AnObjectInTheContainerItsLocatorNames_AfterTheSettingChangedAsync() {
+  public async Task Read_Restore_Delete_InAnotherContainer_ThrowTheMismatch_AndTouchNoObjectAsync() {
+    var (stream, _) = await _seedAsync(3);
+    _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
+    var objects = await _objectsAsync();
+    var manifest = await _manifestAsync(stream);
+    var counter = new RedirectHost(from: null, to: null);
+    var other = _store(fault: counter, container: $"archive-{Guid.NewGuid():N}");
+
+    var read = await Assert.That(() => _completedAsync(_readAllAsync(other, stream))).Throws<ArchiveLocationMismatchException>();
+    var restore = await Assert.That(() => _completedAsync(other.RestoreAsync(stream))).Throws<ArchiveLocationMismatchException>();
+    var delete = await Assert.That(() => other.DeleteAsync(stream)).Throws<ArchiveLocationMismatchException>();
+    var drained = await other.DeleteQueuedObjectsAsync(100);
+
+    await Assert.That(read!.Operation).IsEqualTo("read");
+    await Assert.That(restore!.Operation).IsEqualTo("restore");
+    await Assert.That(delete!.Operation).IsEqualTo("delete");
+    await Assert.That(delete.Recorded!.Container).IsEqualTo(_containerName);
+    await Assert.That(delete.Configured).IsEqualTo(other.ConfiguredLocation);
+    await Assert.That(delete.StreamId).IsEqualTo(stream);
+    await Assert.That(drained).IsEqualTo(0);
+    await Assert.That(counter.Requests).IsEqualTo(0).Because("a mismatched record is refused before any request reaches storage");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo(objects);
+    await Assert.That(await _manifestAsync(stream)).IsEquivalentTo(manifest).Because("a refused delete or restore changes nothing");
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|3"]);
+    await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync() {
+    var (stream, _) = await _seedAsync(5);
+    var source = _store(maxEventsPerChunk: 10);
+    _ = await source.WriteAsync(ArchiveBatch.Prefix(stream, 2));
+    var manifest = await _manifestAsync(stream);
+    var tombstone = await _tombstoneAsync(stream);
+    var generation = await _generationAsync();
+    var counter = new RedirectHost(from: null, to: null);
+    var other = _store(maxEventsPerChunk: 10, fault: counter, container: $"archive-{Guid.NewGuid():N}");
+
+    var refused = await Assert.That(() => _completedAsync(other.WriteAsync(ArchiveBatch.Prefix(stream, 4)))).Throws<ArchiveLocationMismatchException>();
+    var requestsWhileRefused = counter.Requests;
+    var hotWhileRefused = await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream);
+    var manifestWhileRefused = await _manifestAsync(stream);
+    var tombstoneWhileRefused = await _tombstoneAsync(stream);
+    var generationWhileRefused = await _generationAsync();
+    _ = await other.RepointLocationAsync(refused!.RecordedLocationId!.Value);
+    var written = await other.WriteAsync(ArchiveBatch.Prefix(stream, 4));
+
+    await Assert.That(refused.Operation).IsEqualTo("write");
+    await Assert.That(refused.StreamId).IsEqualTo(stream);
+    await Assert.That(refused.Configured).IsEqualTo(other.ConfiguredLocation);
+    await Assert.That(requestsWhileRefused).IsEqualTo(0).Because("the refusal comes before any request, the container's creation included");
+    await Assert.That(hotWhileRefused).IsEqualTo(3L).Because("nothing moved: the stream stays as hot as it was");
+    await Assert.That(manifestWhileRefused).IsEquivalentTo(manifest);
+    await Assert.That(tombstoneWhileRefused).IsEquivalentTo(tombstone);
+    await Assert.That(generationWhileRefused).IsEqualTo(generation).Because("a refused write bumps no origin generation");
+    await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED)
+      .Because("once the operator repoints the location, the stream is in one location again and archives as usual");
+    await Assert.That(await _rowsAsync("SELECT DISTINCT location_id::text FROM wh_archive_manifest WHERE stream_id = @s", stream))
+      .Count().IsEqualTo(1).Because("a stream never spans two locations");
+  }
+
+  [Test]
+  public async Task Read_AtAnotherAccountEndpoint_ThrowsTheMismatch_UntilTheLocationRowIsUpdatedAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var hot = await _hotAsReadAsync(stream);
+    var source = _store();
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var (connectionString, redirect) = _anotherEndpoint();
+    var moved = _store(fault: redirect, connectionString: connectionString);
+
+    var refused = await Assert.That(() => _completedAsync(_readAllAsync(moved, stream))).Throws<ArchiveLocationMismatchException>();
+    var requestsWhileRefused = redirect.Requests;
+    await using (var connection = await _openAsync()) {
+      await using var update = new NpgsqlCommand("UPDATE wh_archive_locations SET account_endpoint = @e WHERE location_id = @id", connection);
+      update.Parameters.AddWithValue("e", moved.ConfiguredLocation.Endpoint!);
+      update.Parameters.AddWithValue("id", refused!.RecordedLocationId!.Value);
+      _ = await update.ExecuteNonQueryAsync();
+    }
+    var read = await _readAllAsync(moved, stream);
+
+    await Assert.That(moved.ConfiguredLocation.Container).IsEqualTo(source.ConfiguredLocation.Container);
+    await Assert.That(moved.ConfiguredLocation.ConnectionName).IsEqualTo(source.ConfiguredLocation.ConnectionName);
+    await Assert.That(refused.Recorded!.Endpoint).IsEqualTo(source.ConfiguredLocation.Endpoint)
+      .Because("the same logical name and container at another account endpoint is another location");
+    await Assert.That(requestsWhileRefused).IsEqualTo(0);
+    await Assert.That(read).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("updating the one location row is the operator's acknowledgement that the objects are at the new endpoint");
+    await Assert.That(() => _completedAsync(_readAllAsync(source, stream))).Throws<ArchiveLocationMismatchException>()
+      .Because("and the old endpoint is no longer where the records say they are");
+  }
+
+  [Test]
+  public async Task CopiedDatabase_CannotDeleteTheSourceEnvironmentsObjectsAsync() {
+    var (kept, _) = await _seedAsync(3);
+    var (purged, _) = await _seedAsync(3);
+    var source = _store(maxEventsPerChunk: 2);
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(kept));
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(purged));
+    var sourceObjects = await _objectsAsync();
+    NpgsqlConnection.ClearAllPools();
+    var copy = await PerTestDatabaseFactory.CreateFromTemplateAsync("blob_copy", _db.Name);
+    try {
+      var copyDatabase = new PostgresArchiveConnection(async ct => {
+        var connection = new NpgsqlConnection(copy.ConnectionString);
+        await connection.OpenAsync(ct);
+        return connection;
+      }, Schema: null);
+      var copyContainer = $"archive-{Guid.NewGuid():N}";
+      var copied = _store(maxEventsPerChunk: 2, container: copyContainer, database: copyDatabase);
+
+      await Assert.That(() => copied.DeleteAsync(kept)).Throws<ArchiveLocationMismatchException>();
+      await Assert.That(() => _completedAsync(copied.RestoreAsync(kept))).Throws<ArchiveLocationMismatchException>();
+      _ = await new PostgresStreamPurger(copyDatabase.Open).PurgeAsync(
+        new StreamPurgeRequest { StreamIds = [purged], RequestedBy = "operator-1", Reason = "test" });
+      var drained = await copied.DeleteQueuedObjectsAsync(100);
+      await new ArchiveObjectDeletionStep(copied).RunAsync(_noServices, CancellationToken.None);
+
+      await Assert.That(drained).IsEqualTo(0).Because("the copy's queue names the source's location, which it is not configured for");
+      await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
+        .Because("a copied database never deletes an object of the environment it was copied from");
+      await Assert.That(await _readAllAsync(source, kept)).Count().IsEqualTo(3).Because("the source still reads its archive");
+    } finally {
+      NpgsqlConnection.ClearAllPools();
+      await PerTestDatabaseFactory.DropAsync(copy.Name);
+    }
+  }
+
+  [Test]
+  public async Task RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync() {
+    var (stream, _) = await _seedAsync(5);
+    var hot = await _hotAsync(stream);
+    var source = _store(maxEventsPerChunk: 2);
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var sourceObjects = await _objectsAsync();
+    var moved = _store(maxEventsPerChunk: 2, container: $"archive-{Guid.NewGuid():N}");
+    await _copyObjectsAsync(_containerName, moved.ConfiguredLocation.Container);
+    var refused = await Assert.That(() => _completedAsync(moved.RestoreAsync(stream))).Throws<ArchiveLocationMismatchException>();
+    var noSuchRow = await Assert.That(() => _completedAsync(moved.RepointLocationAsync(999_999))).Throws<ArgumentException>();
+
+    var location = await moved.RepointLocationAsync(refused!.RecordedLocationId!.Value);
+    var restored = await moved.RestoreAsync(stream);
+
+    await Assert.That(noSuchRow!.Message).Contains("999999").Because("a repoint of a location that does not exist changes nothing");
+    await Assert.That(location).IsEqualTo(refused.RecordedLocationId!.Value).Because("the one row changed; no record did");
+    await Assert.That(restored.Status).IsEqualTo(ArchiveStatus.RESTORED);
+    await Assert.That(await _hotAsync(stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await _objectsAsync(moved.ConfiguredLocation.Container)).IsEmpty()
+      .Because("the restore removes its objects from the configured container");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
+      .Because("nothing is ever deleted outside the configured location");
+  }
+
+  [Test]
+  public async Task RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync() {
+    var (before, _) = await _seedAsync(3);
+    var (since, _) = await _seedAsync(2);
+    var hotBefore = await _hotAsReadAsync(before);
+    var hotSince = await _hotAsReadAsync(since);
+    var source = _store(maxEventsPerChunk: 10);
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(before));
+    var moved = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}");
+    _ = await moved.WriteAsync(ArchiveBatch.WholeStream(since));
+    await _copyObjectsAsync(_containerName, moved.ConfiguredLocation.Container);
+    var refused = await Assert.That(() => _completedAsync(_readAllAsync(moved, before))).Throws<ArchiveLocationMismatchException>();
+
+    var location = await moved.RepointLocationAsync(refused!.RecordedLocationId!.Value);
+
+    await Assert.That(location).IsNotEqualTo(refused.RecordedLocationId!.Value)
+      .Because("the configured location already existed, so the source location's records joined it");
+    await Assert.That(await _readAllAsync(moved, before)).IsEquivalentTo(hotBefore, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await _readAllAsync(moved, since)).IsEquivalentTo(hotSince, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await _countAsync("SELECT count(*) FROM wh_archive_locations WHERE @s IS NOT NULL", before)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync() {
+    var (restored, _) = await _seedAsync(3);
+    var (deleted, _) = await _seedAsync(2);
+    var (written, _) = await _seedAsync(3);
+    var hot = await _hotAsync(restored);
+    var hotAsRead = await _hotAsReadAsync(restored);
+    var source = _store(maxEventsPerChunk: 10);
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(restored));
+    _ = await source.WriteAsync(ArchiveBatch.WholeStream(deleted));
+    _ = await source.WriteAsync(ArchiveBatch.Prefix(written, 1));
+    var sourceObjects = await _objectsAsync();
+    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", verifyLocation: false);
+    var target = unverified.ConfiguredLocation.Container;
+    await _copyObjectsAsync(_containerName, target);
+
+    var read = await _readAllAsync(unverified, restored);
+    var restore = await unverified.RestoreAsync(restored);
+    var eventsDeleted = await unverified.DeleteAsync(deleted);
+    var write = await unverified.WriteAsync(ArchiveBatch.Prefix(written, 2));
+
+    await Assert.That(read).IsEquivalentTo(hotAsRead, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("with the check off, the record's location is not compared: the object is read from the configured container");
+    await Assert.That(restore.Status).IsEqualTo(ArchiveStatus.RESTORED);
+    await Assert.That(await _hotAsync(restored)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(eventsDeleted).IsEqualTo(2L);
+    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("with the check off, a write is not refused");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
+      .Because("the configured location is the only place it reads, restores, deletes or writes: the source is untouched");
+    await Assert.That((await _objectsAsync(target)).All(n => n.StartsWith($"{written:D}/", StringComparison.Ordinal))).IsTrue()
+      .Because("the restore and the delete removed their objects from the configured container, and the write added its own there");
+    await Assert.That(await _rowsAsync(
+        "SELECT l.container FROM wh_archive_manifest m JOIN wh_archive_locations l USING (location_id) " +
+        "WHERE m.stream_id = @s ORDER BY m.first_version", written))
+      .IsEquivalentTo([_containerName, target], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("location rows are still written, so the check can be turned back on later");
+  }
+
+  [Test]
+  public async Task Read_ARecordWithNoLocation_IsRefused_AndTouchesNoObjectAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var counter = new RedirectHost(from: null, to: null);
+    var store = _store(fault: counter);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    var requestsAfterWrite = counter.Requests;
+    await using (var connection = await _openAsync()) {
+      await _executeAsync(connection, $"UPDATE wh_archive_manifest SET location_id = NULL WHERE stream_id = '{stream}'");
+    }
+
+    var refused = await Assert.That(() => _completedAsync(_readAllAsync(store, stream))).Throws<ArchiveLocationMismatchException>();
+
+    await Assert.That(refused!.Recorded).IsNull();
+    await Assert.That(refused.RecordedLocationId).IsNull();
+    await Assert.That(counter.Requests).IsEqualTo(requestsAfterWrite).Because("a record with no location is never read anywhere");
+  }
+
+  [Test]
+  public async Task Read_ALegacyRecord_IsReadByTheStoreConfiguredForItsContainer_AndRefusedByAnyOtherAsync() {
     var (stream, _) = await _seedAsync(3);
     var hot = await _hotAsReadAsync(stream);
     _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));
-    var other = $"archive-{Guid.NewGuid():N}";
+    // What a database archived before 353 holds: a full locator and no location; the migration's backfill then runs.
+    await using (var connection = await _openAsync()) {
+      await _executeAsync(connection,
+        "UPDATE wh_archive_manifest m SET locator = 'azure-blob://' || l.container || '/' || m.relative_path || '?codec=brotli&format=1', " +
+        "location_id = NULL, relative_path = NULL FROM wh_archive_locations l WHERE l.location_id = m.location_id");
+      await _executeAsync(connection, "DELETE FROM wh_archive_locations");
+      await _executeAsync(connection, "SELECT wh_backfill_archive_locations()");
+    }
+    var other = _store(container: $"archive-{Guid.NewGuid():N}");
+    var upgraded = _store();
 
-    var read = await _readAllAsync(_store(container: other), stream);
+    var refused = await Assert.That(() => _completedAsync(_readAllAsync(other, stream))).Throws<ArchiveLocationMismatchException>();
+    var read = await _readAllAsync(upgraded, stream);
 
+    await Assert.That(refused!.Recorded!.Endpoint).IsNull().Because("the database never knew the endpoint of a record written before 353");
+    await Assert.That(refused.Recorded.Container).IsEqualTo(_containerName);
     await Assert.That(read).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("each object's locator names its container, so changing the setting never strands older archives");
+      .Because("an upgrade needs no operator step: the store configured for the container takes its legacy location");
+    await Assert.That(await _rowsAsync(
+        "SELECT concat_ws('|', account_endpoint, connection_name, container) FROM wh_archive_locations WHERE @s IS NOT NULL", stream))
+      .IsEquivalentTo([$"{upgraded.ConfiguredLocation.Endpoint}|default|{_containerName}"]);
+  }
+
+  // The operator's copy of a location's objects into another container (the step before a repoint).
+  private async Task _copyObjectsAsync(string from, string to) {
+    var target = _container(to);
+    _ = await target.CreateIfNotExistsAsync();
+    foreach (var name in await _objectsAsync(from)) {
+      var bytes = (await _container(from).GetBlobClient(name).DownloadContentAsync()).Value.Content;
+      _ = await target.GetBlobClient(name).UploadAsync(bytes);
+    }
   }
 
   // ── What the table store archived ──────────────────────────────────────────────────────────────────
@@ -562,7 +869,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _objectsAsync()).IsEquivalentTo(objects).Because("the delete really failed");
     await Assert.That(logger.Messages).Contains(m => m.Level == LogLevel.Warning && m.Text.Contains(objects[0], StringComparison.Ordinal))
       .Because("an object that could not be deleted is named in the log");
-    await Assert.That(await _queuedAsync(stream)).IsEquivalentTo([$"azure-blob://{_containerName}/{objects[0]}?codec=brotli&format=1|1"])
+    await Assert.That(await _queuedAsync(stream)).IsEquivalentTo([$"{objects[0]}|1"])
       .Because("it stays queued, with the failed attempt counted, for the maintenance step to retry");
   }
 
@@ -582,7 +889,7 @@ public class AzureBlobArchiveStoreTests {
     await Assert.That(await _manifestAsync(stream)).IsEmpty()
       .Because("a purged stream must never be restored from an object a manifest row still names");
     await Assert.That(queued).IsEquivalentTo(locators)
-      .Because("the purge queued every object its manifest rows named, container and name, in its own transaction");
+      .Because("the purge queued every object its manifest rows named, location and path, in its own transaction");
     await Assert.That(objectsBeforeTheStep).Count().IsEqualTo(2).Because("the purge itself cannot reach blob storage");
     await Assert.That(await _objectsAsync()).IsEmpty().Because("the maintenance step deletes the queued objects");
     await Assert.That(await _queuedAsync(stream)).IsEmpty().Because("and clears each row once storage confirmed the delete");
@@ -725,6 +1032,25 @@ public class AzureBlobArchiveStoreTests {
         Faulted++;
         throw new RequestFailedException(503, "injected: the process died after the upload");
       }
+    }
+  }
+
+  /// <summary>
+  /// Counts every request the client sends, and sends one addressed to <c>from</c> to <c>to</c> instead, so a store
+  /// configured for another endpoint name still reaches the one emulator.
+  /// </summary>
+  private sealed class RedirectHost(string? from, string? to) : HttpPipelinePolicy {
+    public int Requests { get; private set; }
+
+    public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline) =>
+      ProcessAsync(message, pipeline).AsTask().GetAwaiter().GetResult();
+
+    public override ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline) {
+      Requests++;
+      if (from is not null && string.Equals(message.Request.Uri.Host, from, StringComparison.OrdinalIgnoreCase)) {
+        message.Request.Uri.Host = to;
+      }
+      return ProcessNextAsync(message, pipeline);
     }
   }
 
