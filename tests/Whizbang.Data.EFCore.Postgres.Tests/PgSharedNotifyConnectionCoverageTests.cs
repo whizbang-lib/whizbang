@@ -190,7 +190,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
   // Npgsql's WaitAsync can miss a cancellation that lands while it is entering its read: it checks
   // the token, then re-arms the read's own cancellation source, and re-arming discards a cancel
   // delivered in between. The wait then sits on the socket until the server sends something, which
-  // for an idle LISTEN connection may be never. A stop that relied on cancelling the wait never
+  // for an idle LISTEN connection may be never. A stop that relied on canceling the wait never
   // finished: a host shutting down would hang, and AliveLock_AlreadyHeldByAnotherSession, which
   // stops its gates the moment they come up, timed out in CI with no failure of its own.
   [Test]
