@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 [Category("Benchmark")]
-[NotInParallel]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class RoleHolderLivenessCostScenarioTests : EFCoreTestBase {
   private const string ROLE = "maintainer";
