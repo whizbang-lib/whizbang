@@ -1443,6 +1443,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time (the timestamp of its last hop, as the runner reads every event), or the stream's recorded start once its first
   event is gone (#2152); `UpdatedAt` keeps the last event's time and an update never moves `CreatedAt`. A row already
   stored keeps the date it was given; rebuild blue-green to re-date rows written before this fix.
+- **A role holder is judged by the one liveness rule, learns of a loss within one renew interval, and quick hand-offs
+  vacuum once (#2140).** A freshly elected holder busy with startup, or inside one long unit of work, lapsed 15 seconds
+  after its last renewal although it was live, so a restart could move the maintainer role back and forth, and the old
+  holder learned of the loss only on its next verify, minutes later, with both instances believing they held the role.
+  Migration 355 judges a holder past its lease by the same rule every other reader asks (`wh_instance_is_live`: a
+  recent heartbeat or a held alive-lock), plus the role's own progress check: it keeps the role while the rule calls it
+  live and it renewed inside the progress window it declared for its epoch (`RoleAssignmentOptions.ProgressWindow`,
+  default 2 minutes, zero turns it off), so a connected but stuck holder still loses the role within the window and a
+  dead one lapses at its lease. The fence treats a holder as live exactly when the vote does. Each grant now watches its
+  assignment once per renew interval (`wh_role_is_held`) and cancels the new `IDutyGrant.LostToken` on a loss, or after
+  a whole lease without a confirmation; the duty holder loop links its work to that token, so exclusive work stops
+  before it could overlap the next holder's, and `DutyHolderWorker.Holds` turns false at once. The maintainer's
+  acquisition vacuum leaves a work table the database records as vacuumed within
+  `MaintenanceWorkerOptions.SkipAcquisitionVacuumWithin` (default 10 minutes) alone, so hand-offs shortly after a
+  takeover do not repeat it.
 - **An archive record never redirects a read, restore or delete to another container; archive locations are stored
   normalized and checked against configuration (#2137).** The Azure Blob archive store opened the container named in
   a manifest record whenever it differed from its configured one, so a database copied to another environment read,

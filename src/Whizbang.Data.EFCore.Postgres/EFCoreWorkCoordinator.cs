@@ -1830,28 +1830,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// table names are the framework's own constants, so nothing caller-supplied reaches the statement.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
-  public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
+  public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
+    VacuumWorkTablesAsync(TimeSpan.Zero, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>The loop is <c>TableMaintenanceSql.VacuumWorkTablesAsync</c>, shared with the Dapper coordinator.</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs:ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync</tests>
+  public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     if (_schemaInitConnectionString() is { } initConnectionString) {
-      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, cancellationToken).ConfigureAwait(false);
+      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, skipTablesVacuumedWithin, cancellationToken).ConfigureAwait(false);
     }
-
-    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
-      var qualified = BuildSchemaQualifiedName(schema, table);
-      if (await TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } notOwned) {
-        outcomes.Add(new WorkTableVacuum(table, false, notOwned));
-        continue;
-      }
-      await TableMaintenanceSql.VacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
-      outcomes.Add(new WorkTableVacuum(table, true, null));
-    }
-    return outcomes;
+    return await TableMaintenanceSql.VacuumWorkTablesAsync(__scope.Connection, table => BuildSchemaQualifiedName(schema, table),
+      skipTablesVacuumedWithin, (conn, qualified, table, ct) => TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, ct),
+      cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1949,19 +1945,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
 
+
   /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
   private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
-      string initConnectionString, string schema, CancellationToken cancellationToken) {
-    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
+      string initConnectionString, string schema, TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken) {
     await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
     await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
-      await TableMaintenanceSql.VacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
-      outcomes.Add(new WorkTableVacuum(table, true, null));
-    }
-    return outcomes;
+    return await TableMaintenanceSql.VacuumWorkTablesAsync(initConnection, table => BuildSchemaQualifiedName(schema, table),
+      skipTablesVacuumedWithin, notOwned: null, cancellationToken).ConfigureAwait(false);
   }
-
 
   /// <summary>
   /// The schema-initialization (<c>-init</c>) connection string configured for this context, or null. The

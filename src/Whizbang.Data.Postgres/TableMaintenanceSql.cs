@@ -193,6 +193,60 @@ internal static class TableMaintenanceSql {
     await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// <c>VACUUM ANALYZE</c> of every work table on <paramref name="conn"/>, the one loop both coordinators run (#1351,
+  /// #2140). A table <paramref name="notOwned"/> names a reason for is reported and left alone; a table the database
+  /// records as vacuumed (manually or by autovacuum, by any instance) within <paramref name="skipVacuumedWithin"/> is
+  /// reported as <see cref="WorkTableVacuum.RecentlyVacuumed"/> and left alone, so a hand-off shortly after a takeover
+  /// does not vacuum again.
+  /// </summary>
+  /// <param name="conn">An open connection outside any transaction.</param>
+  /// <param name="qualify">Qualifies a work table's name with the coordinator's schema.</param>
+  /// <param name="skipVacuumedWithin">How recent a vacuum makes another unnecessary; zero vacuums every table.</param>
+  /// <param name="notOwned">The ownership check, or null when the connection owns the tables.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  internal static async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(
+      DbConnection conn, Func<string, string> qualify, TimeSpan skipVacuumedWithin,
+      Func<DbConnection, string, string, CancellationToken, Task<string?>>? notOwned, CancellationToken cancellationToken) {
+    var outcomes = new List<WorkTableVacuum>(VACUUMED_WORK_TABLES.Length);
+    foreach (var table in VACUUMED_WORK_TABLES) {
+      var qualified = qualify(table);
+      if (notOwned is not null && await notOwned(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } reason) {
+        outcomes.Add(new WorkTableVacuum(table, false, reason));
+        continue;
+      }
+      if (skipVacuumedWithin > TimeSpan.Zero
+          && await _vacuumedSecondsAgoAsync(conn, qualified, skipVacuumedWithin, cancellationToken).ConfigureAwait(false) is { } ago) {
+        outcomes.Add(new WorkTableVacuum(table, false, string.Create(System.Globalization.CultureInfo.InvariantCulture,
+          $"{table} was vacuumed {ago:F0} s ago, within the {skipVacuumedWithin.TotalSeconds:F0} s window")) { RecentlyVacuumed = true });
+        continue;
+      }
+      await VacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      outcomes.Add(new WorkTableVacuum(table, true, null));
+    }
+    return outcomes;
+  }
+
+  /// <summary>
+  /// How many seconds ago the database last vacuumed the table, manually or by autovacuum, when that is inside
+  /// <paramref name="window"/>; null otherwise (never vacuumed, or longer ago). The statistics view records it for every
+  /// instance, so this is the fleet's memory of the last vacuum.
+  /// </summary>
+  private static async Task<double?> _vacuumedSecondsAgoAsync(
+      DbConnection conn, string qualified, TimeSpan window, CancellationToken cancellationToken) {
+    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    cmd.CommandText = """
+      SELECT EXTRACT(EPOCH FROM now() - GREATEST(s.last_vacuum, s.last_autovacuum))::DOUBLE PRECISION
+        FROM pg_stat_user_tables s
+       WHERE s.relid = to_regclass(@q)::OID
+         AND GREATEST(s.last_vacuum, s.last_autovacuum) > now() - @window
+      """;
+    cmd.Parameters.Add(new NpgsqlParameter("q", qualified));
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(window), window));
+    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as double?;
+  }
+
   /// <summary><c>VACUUM ANALYZE</c> of one work table, bounded by <see cref="WORK_TABLE_VACUUM_TIMEOUT_SECONDS"/>.</summary>
   internal static async Task VacuumAnalyzeAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
     await using var vacuum = conn.CreateCommand();

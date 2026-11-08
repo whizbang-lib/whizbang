@@ -28,6 +28,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// moves by shifting stored instants back, and the renew
 /// throttle runs on a fake clock, so nothing sleeps.
 /// </summary>
+/// <remarks>
+/// These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.
+/// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
@@ -51,7 +56,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
   private PgRoleElector _electorFor(
       Pod pod, string? version = null, TimeProvider? time = null,
       Action<RoleAssignmentOptions>? configure = null, string? connectionString = null) {
-    var options = new RoleAssignmentOptions();
+    var options = new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
     options.Roles.Add(OTHER);
     configure?.Invoke(options);
     return new PgRoleElector(
@@ -292,7 +297,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
   public async Task TryAcquireMany_WithoutAConnection_IsUnavailableForEveryDutyAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
     var noConnection = new PgRoleElector(
-      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions()), _config(), a,
+      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), _config(), a,
       NullLogger<PgRoleElector>.Instance, null);
     var unavailable = await noConnection.TryAcquireManyAsync([ROLE, StartupDuties.MIGRATOR], cancellationToken);
     await Assert.That(unavailable.All(x => x.Refusal == DutyRefusal.Unavailable)).IsTrue();
