@@ -32,7 +32,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
 public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   private static readonly DutyGrantKeepalive _idle = new();
 
@@ -90,7 +90,7 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   /// One tick: verify now, or owe one verify to the verify still running. A tick that arrives once the keepalive has
   /// stopped (a timer callback already on its way when the timer was disposed) does nothing.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantKeepaliveTests.cs:ATickThatArrivesAfterTheStop_VerifiesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs:ATickThatArrivesAfterTheStop_VerifiesNothingAsync</tests>
   internal void Tick() {
     lock (_sync) {
       if (_stopped) {

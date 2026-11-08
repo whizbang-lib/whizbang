@@ -98,7 +98,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// </summary>
   /// <remarks>A default member: a grant without a lease never lapses, so nothing has to renew it.</remarks>
   /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
   TimeSpan? RenewInterval => null;
 }
 

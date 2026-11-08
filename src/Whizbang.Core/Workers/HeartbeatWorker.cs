@@ -48,7 +48,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerStartupBeatTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/HeartbeatWorkerStartupBeatTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileStarting_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileRunning_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]

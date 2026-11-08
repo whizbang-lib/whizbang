@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
 /// <code-under-test>src/Whizbang.Core/Workers/HeartbeatWorker.cs</code-under-test>
-[Category("Unit")]
+[Category("Workers")]
 public class HeartbeatWorkerStartupBeatTests {
   private static readonly TimeSpan _deadline = TimeSpan.FromSeconds(30);
   private static readonly HeartbeatWorkerOptions _options = new() { IntervalSeconds = 30, SlowIntervalSeconds = 60 };
