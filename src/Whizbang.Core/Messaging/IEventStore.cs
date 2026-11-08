@@ -166,8 +166,8 @@ public interface IEventStore {
   /// <summary>
   /// The business time a stream started at, when the stream no longer holds its first event (#2152): the superseding
   /// reaper or a prefix truncate removed it. Null while the stream holds its first event, so a perspective row folded
-  /// from the stream's whole history is dated as it always was. The default returns null: a store that does not
-  /// remove events never needs it.
+  /// from it is dated by the first event it folds (#2154). The default returns null: a store that does not remove
+  /// events never needs it.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="cancellationToken">Cancellation token.</param>

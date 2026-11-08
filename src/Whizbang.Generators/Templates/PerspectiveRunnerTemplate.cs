@@ -1421,9 +1421,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CommitSequence = checkpointCommitSequence
     };
 
-    // #2152: a row this write may insert is dated at its stream's recorded start when the stream no longer holds its first
-    // event (the superseding reaper or a prefix truncate removed it). The event store is asked only when the row is not
-    // known to exist and the fold does not begin with the stream's first event; an update never moves created_at.
+    // A row this write may insert is dated at the first event folded into it (#2154), not at the write's own time, which
+    // is the last folded event's and goes to updated_at; or at its stream's recorded start once the stream no longer holds
+    // its first event (#2152, the superseding reaper or a prefix truncate removed it). The event store is asked only when
+    // the row is not known to exist and the fold does not begin with the stream's first event; an update never moves
+    // created_at.
     // <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
     var rowStartedAt = await global::Whizbang.Core.Perspectives.PerspectiveRowStart.ResolveAsync(
         _eventStore, streamId, rowExists, folded, cancellationToken);
@@ -2352,8 +2354,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public long? CollectivesHeldThrough { get; set; }
     // #1970: false when the replay folded a collective still in flight; its snapshot is then not taken.
     public bool CollectivesSettled { get; set; } = true;
-    // The first of the stream's own events the replay read (#2152): whether it begins the stream decides whether a row the
-    // replay inserts is dated at the stream's recorded start.
+    // The first of the stream's own events the replay read (#2152, #2154): a row the replay inserts is dated at it, or at
+    // the stream's recorded start when it does not begin the stream and the stream's first event is gone.
     public MessageEnvelope<IEvent>? FirstStreamEvent { get; set; }
   }
 

@@ -1434,8 +1434,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer holds an event at version 0 or 1, falling back to `first_appended_at` for a first event removed before the
   migration. `IEventStore.GetStreamStartedAtAsync` (both Postgres drivers, forwarded by every decorator) reads it, and
   the generated runner asks only for a row that is not known to exist and whose fold does not begin with the stream's
-  first event, then dates that row's insert at the answer (`PerspectiveRowStart`). A stream with its whole history is
-  dated exactly as before, and an existing row keeps its `CreatedAt`.
+  first event, then dates that row's insert at the answer (`PerspectiveRowStart`). The answer is null while the stream
+  holds its first event, and an existing row keeps its `CreatedAt`.
+- **A new perspective row is dated at the first event folded into it, not the last (Fixes #2154).** The runner folds a
+  batch and writes the row once, and the insert took the write's own time, the last folded event's, so a rebuild of a
+  multi-event stream (blue-green, or in place where the row is missing) and a live first batch of several events dated
+  the row at the last event, and `CreatedAt` depended on batching. An insert now takes the first folded event's business
+  time (the timestamp of its last hop, as the runner reads every event), or the stream's recorded start once its first
+  event is gone (#2152); `UpdatedAt` keeps the last event's time and an update never moves `CreatedAt`. A row already
+  stored keeps the date it was given; rebuild blue-green to re-date rows written before this fix.
 - **An archive record never redirects a read, restore or delete to another container; archive locations are stored
   normalized and checked against configuration (#2137).** The Azure Blob archive store opened the container named in
   a manifest record whenever it differed from its configured one, so a database copied to another environment read,

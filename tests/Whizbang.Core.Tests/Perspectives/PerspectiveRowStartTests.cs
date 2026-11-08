@@ -145,6 +145,22 @@ public class PerspectiveRowStartTests {
   }
 
   [Test]
+  public async Task ResolveAsync_AFirstEventReadWithNoHopList_LeavesTheRowToTheWritesOwnTimeAsync() {
+    // A stored envelope can come back with no hop list at all; the runner reads it the same way (no business time).
+    var row = Guid.NewGuid();
+    var envelope = _event(row, first: true, null);
+    var hopless = new MessageEnvelope<IEvent> {
+      MessageId = envelope.MessageId,
+      Payload = envelope.Payload,
+      Hops = null!,
+      DispatchContext = envelope.DispatchContext,
+      IsFirstInLocalStream = true,
+    };
+
+    await Assert.That(await PerspectiveRowStart.ResolveAsync(new StartStore(null), row, rowExists: false, [hopless])).IsNull();
+  }
+
+  [Test]
   public async Task ResolveAsync_CollectivesAheadOfTheFirstStreamEvent_AreSkippedAsync() {
     var store = new StartStore(_start);
     var row = Guid.NewGuid();
