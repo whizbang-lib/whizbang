@@ -18,7 +18,7 @@ namespace Whizbang.Data.Postgres;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#progress-of-long-startup-work</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationBatchProgressTests.cs</tests>
-public sealed class MigrationBatchProgress {
+public sealed partial class MigrationBatchProgress {
   private readonly string _migration;
   private readonly int _batchSize;
   private readonly ILogger _logger;
@@ -49,13 +49,25 @@ public sealed class MigrationBatchProgress {
   public void Batch(long rows) {
     Batches++;
     Rows += rows;
-    _ = _clock;
+    if (_clock.Due()) {
+      var elapsed = _clock.Elapsed;
+      LogProgress(_logger, _migration, Batches, Rows, new ProgressElapsed(elapsed));
+    }
   }
 
   /// <summary>Says the region finished, with its totals, when it moved anything.</summary>
   public void Finish() {
-    _ = _logger;
-    _ = _migration;
-    _ = _batchSize;
+    if (Batches > 0) {
+      var elapsed = _clock.Elapsed;
+      LogFinished(_logger, _migration, Rows, Batches, _batchSize, new ProgressElapsed(elapsed));
+    }
   }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information,
+    Message = "Migration {Migration}: batch {Batch}, {Rows} row(s) moved so far, {Elapsed} elapsed")]
+  static partial void LogProgress(ILogger logger, string migration, int batch, long rows, ProgressElapsed elapsed);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+    Message = "Migration {Migration}: backfilled {Rows} row(s) in {Batches} batch(es) of {Size}, in {Elapsed}")]
+  static partial void LogFinished(ILogger logger, string migration, long rows, int batches, int size, ProgressElapsed elapsed);
 }

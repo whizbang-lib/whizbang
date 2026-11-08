@@ -1403,6 +1403,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **Long startup work says how far along it is, and unrepairable rows no longer make a table rescan every start
+  (#2128).** The declared-key spelling scan and the required-member check that follows it said nothing above Debug, so a
+  migrating instance could show minutes with no output, and a batched migration step (for example 087's backfill) logged
+  its batches only at Debug, so an operator could not tell working from stuck. Each now reports at Information on a steady
+  cadence (`StartupProgress.Cadence`, 15 seconds, on the clock it is given): the scans say when they start, which table
+  of how many they are on with the rows read in it and in all, and their totals when they finish; a batched step says the
+  batch it is on, the rows moved and the time elapsed (`MigrationBatchProgress`, on both drivers), then its totals. A start
+  on which every table is settled says nothing. A table with rows missing a required member, which nothing at startup can
+  repair, used to stay unsettled and be scanned again, and reported again, on every start: it is now settled after the
+  check, which reports the rows once at Error with their count and the table, and is not checked again until what its
+  readers declare changes. A table whose keys were rewritten on a start stays open and is checked on the next one, which
+  reports what is missing then, once. The stored-form phases are also reported as progress within Migrate ("bringing
+  stored documents to their current form"). New overloads of `DeclaredKeySpellingPass.ApplyAsync`, `RewriteAsync` and
+  `SettleAsync` take the clock.
 - **The migrator keeps its role through a startup phase longer than its lease (#2127).** The migrator duty is a role
   assignment with a lease (30 seconds by default), and it was renewed only between phases, so a long one (the
   declared-key spelling scan, a wait for the schema lock, the stored-form rewrite, the index rebuild, the settle scan, a

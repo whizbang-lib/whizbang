@@ -805,7 +805,7 @@ public sealed class PostgresSchemaInitializer {
   /// Applies one migration file and its ledger row in a transaction of its own; on a failure, rolls it back and returns
   /// the failure without recording it, so the caller decides between a retry and a recorded failure.
   /// </summary>
-  private static async Task<Exception?> _applyMigrationFileAsync(
+  private async Task<Exception?> _applyMigrationFileAsync(
       NpgsqlConnection connection, Core.Data.MigrationScript migration, string hash, string? existingHash, int versionId,
       int executionOrder, CancellationToken cancellationToken) {
     var isUpdate = existingHash != null;
@@ -843,7 +843,7 @@ public sealed class PostgresSchemaInitializer {
           await cmd.ExecuteNonQueryAsync(cancellationToken);
         } else {
           cmd.CommandText = segment.Sql;
-          await _runBatchedRegionAsync(cmd, migration.Name, cancellationToken);
+          await _runBatchedRegionAsync(cmd, migration.Name, segment.BatchSize, Logger, cancellationToken);
         }
       }
 
@@ -876,7 +876,10 @@ public sealed class PostgresSchemaInitializer {
   /// Runs a batched region's command repeatedly until it reports no rows, failing once it has run more passes than
   /// <see cref="MaxBatchPasses"/> allows.
   /// </summary>
-  private static async Task _runBatchedRegionAsync(NpgsqlCommand cmd, string migrationName, CancellationToken cancellationToken) {
+  private static async Task _runBatchedRegionAsync(
+      NpgsqlCommand cmd, string migrationName, int batchSize, ILogger? logger, CancellationToken cancellationToken) {
+    // #2128: the batch it is on, the rows moved and the time elapsed, at Information on a steady cadence, then its totals.
+    var progress = new MigrationBatchProgress(migrationName, batchSize, TimeProvider.System, logger);
     var passes = 0;
     while (true) {
       var reported = await cmd.ExecuteScalarAsync(cancellationToken);
@@ -893,7 +896,9 @@ public sealed class PostgresSchemaInitializer {
           + "region has to exclude the rows it already handled, or it reports the same rows "
           + "forever.");
       }
+      progress.Batch(rows);
     }
+    progress.Finish();
   }
 
   /// <summary>

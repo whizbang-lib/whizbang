@@ -40,10 +40,18 @@ public sealed class DeclaredKeySpellingResult {
 /// </para>
 /// <para>
 /// The settle step runs after the rest of the stored-form rewrites, so a <c>[StoredForm(DefaultWhenMissing)]</c>
-/// has filled what it fills: it reports a required member still missing from stored rows at Error, and records the
-/// table in <c>wh_stored_form_migrations</c> under <see cref="DeclaredKeyTable.JournalName"/>, settled when the pass
-/// changed nothing and found nothing missing. A settled table is skipped with one lookup until what its readers
-/// declare changes; a pass that changed rows runs once more, catching rows an older instance wrote during a rollout.
+/// has filled what it fills, and records each table in <c>wh_stored_form_migrations</c> under
+/// <see cref="DeclaredKeyTable.JournalName"/>. A table whose rewrite changed nothing is checked for a required member
+/// still missing from stored rows, which is reported once at Error with the number of rows, and is then settled
+/// whatever the check found (#2128): rows nothing at startup can repair are not a reason to scan the table again at
+/// every start. A settled table is skipped with one lookup until what its readers declare changes. A table whose
+/// rewrite changed rows is left open and checked on the next start, which catches rows an older instance wrote
+/// during a rollout and reports what is missing then, once.
+/// </para>
+/// <para>
+/// Both scans say what they are doing at Information on a steady cadence (<see cref="StartupProgress.Cadence"/>): a
+/// line when the first table is scanned, a line each cadence with the table it is on and the rows read, and a line
+/// when it finishes (#2128). A start on which every table is settled says nothing.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
@@ -65,15 +73,12 @@ public static class DeclaredKeySpellingPass {
   /// <param name="logger">Where the pass reports what it changed.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="StoredFormConversionBlockedException">A row holds a key the pass cannot rewrite.</exception>
-  public static async Task ApplyAsync(
+  public static Task ApplyAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
-      int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) {
-    var result = await RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, logger, cancellationToken)
-      .ConfigureAwait(false);
-    await SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, logger, cancellationToken).ConfigureAwait(false);
-  }
+      int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
+    ApplyAsync(connectionFactory, schema, tables, commandTimeoutSeconds, TimeProvider.System, logger, cancellationToken);
 
-  /// <summary>Rewrites, then settles, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <summary>Rewrites, then settles, reporting progress on <paramref name="timeProvider"/>.</summary>
   /// <param name="connectionFactory">Produces the connections the pass uses.</param>
   /// <param name="schema">The schema the tables live in, unquoted.</param>
   /// <param name="tables">The tables and what their readers declare.</param>
@@ -81,11 +86,13 @@ public static class DeclaredKeySpellingPass {
   /// <param name="timeProvider">The clock the progress lines are paced on.</param>
   /// <param name="logger">Where the pass reports what it changed.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  public static Task ApplyAsync(
+  /// <exception cref="StoredFormConversionBlockedException">A row holds a key the pass cannot rewrite.</exception>
+  public static async Task ApplyAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(timeProvider);
-    return ApplyAsync(connectionFactory, schema, tables, commandTimeoutSeconds, logger, cancellationToken);
+    var result = await RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, timeProvider, logger, cancellationToken)
+      .ConfigureAwait(false);
+    await SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, timeProvider, logger, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -103,9 +110,12 @@ public static class DeclaredKeySpellingPass {
   public static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, logger, cancellationToken);
+    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, TimeProvider.System, logger, cancellationToken);
 
-  /// <summary>Rewrites, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <summary>
+  /// Rewrites every stored key in another case than its declared name, reporting progress on
+  /// <paramref name="timeProvider"/>.
+  /// </summary>
   /// <param name="connectionFactory">Produces the connections the pass uses.</param>
   /// <param name="schema">The schema the tables live in, unquoted.</param>
   /// <param name="tables">The tables and what their readers declare.</param>
@@ -113,7 +123,8 @@ public static class DeclaredKeySpellingPass {
   /// <param name="timeProvider">The clock the progress lines are paced on.</param>
   /// <param name="logger">Where the pass reports what it changed.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>The tables scanned.</returns>
+  /// <returns>The tables scanned, for <see cref="SettleAsync(Func{NpgsqlConnection}, string, DeclaredKeySpellingResult, int, TimeProvider, ILogger?, CancellationToken)"/>.</returns>
+  /// <exception cref="StoredFormConversionBlockedException">A row holds a key the pass cannot rewrite.</exception>
   public static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) =>
@@ -121,34 +132,43 @@ public static class DeclaredKeySpellingPass {
 
   internal static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
-      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(timeProvider);
-    return RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, batchSize, logger, cancellationToken);
-  }
+      int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) =>
+    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, batchSize, TimeProvider.System, logger, cancellationToken);
 
   internal static async Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
-      int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) {
+      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentException.ThrowIfNullOrWhiteSpace(schema);
     ArgumentNullException.ThrowIfNull(tables);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     var log = logger ?? NullLogger.Instance;
 
+    var progress = new ScanProgress(SPELLING_SCAN, schema, tables.Count, timeProvider, log);
     var checkedTables = new List<(DeclaredKeyTable, long)>();
     var conflicts = new List<string>();
-    foreach (var table in tables) {
+    long rowsChanged = 0;
+    for (var i = 0; i < tables.Count; i++) {
+      var table = tables[i];
       try {
         var outcome = await _rewriteTableAsync(
-          connectionFactory, schema, table, commandTimeoutSeconds, batchSize, log, cancellationToken).ConfigureAwait(false);
+          connectionFactory, schema, table, commandTimeoutSeconds, batchSize, progress.Table(i + 1, table.Table), log,
+          cancellationToken).ConfigureAwait(false);
         if (outcome is { } scanned) {
           checkedTables.Add((table, scanned.RowsChanged));
           conflicts.AddRange(scanned.Conflicts);
+          rowsChanged += scanned.RowsChanged;
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // Not fatal: the table stays as it is, every reader that tolerates the other case still reads it, and the
         // next start tries again. Said at Warning because a table that never gets checked is worth seeing.
         DeclaredKeySpellingLog.TableFailed(log, ex, $"{schema}.{table.Table}");
       }
+    }
+    if (progress.Started) {
+      var elapsed = progress.Elapsed;
+      DeclaredKeySpellingLog.ScanFinished(log, SPELLING_SCAN, schema, checkedTables.Count, progress.Rows, rowsChanged,
+        new ProgressElapsed(elapsed));
     }
 
     if (conflicts.Count > 0) {
@@ -170,9 +190,13 @@ public static class DeclaredKeySpellingPass {
   public static Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, logger, cancellationToken);
+    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, TimeProvider.System, logger, cancellationToken);
 
-  /// <summary>Settles, reporting progress on <paramref name="timeProvider"/> (not yet: RED).</summary>
+  /// <summary>
+  /// Reports a required member still missing from the stored rows of each table the rewrite scanned and changed
+  /// nothing in, and records each table in the stored-form journal, reporting progress on
+  /// <paramref name="timeProvider"/>.
+  /// </summary>
   /// <param name="connectionFactory">Produces the connections the pass uses.</param>
   /// <param name="schema">The schema the tables live in, unquoted.</param>
   /// <param name="result">What the rewrite found.</param>
@@ -187,31 +211,85 @@ public static class DeclaredKeySpellingPass {
 
   internal static Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
-      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(timeProvider);
-    return SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, batchSize, logger, cancellationToken);
-  }
+      int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) =>
+    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, batchSize, TimeProvider.System, logger, cancellationToken);
 
   internal static async Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
-      int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) {
+      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentException.ThrowIfNullOrWhiteSpace(schema);
     ArgumentNullException.ThrowIfNull(result);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     var log = logger ?? NullLogger.Instance;
 
-    foreach (var (table, rowsChanged) in result.Checked) {
+    var progress = new ScanProgress(REQUIRED_CHECK, schema, result.Checked.Count, timeProvider, log);
+    var checkedTables = 0;
+    long rowsMissing = 0;
+    for (var i = 0; i < result.Checked.Count; i++) {
+      var (table, rowsChanged) = result.Checked[i];
       try {
         await using var connection = connectionFactory();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         var scan = new TableScan(connection, schema, table, commandTimeoutSeconds, batchSize);
-        var missing = await scan.CountMissingRequiredAsync(cancellationToken).ConfigureAwait(false);
-        if (missing.Count > 0) {
-          DeclaredKeySpellingLog.RequiredMissing(log, scan.DisplayTable, string.Join("; ", missing));
+        if (rowsChanged > 0) {
+          // Rewritten this start: left open, so the next start scans it once more (rows an older instance wrote during
+          // a rollout) and checks what is missing then, once.
+          await scan.RecordAsync(rowsChanged, settled: false, cancellationToken).ConfigureAwait(false);
+          continue;
         }
-        await scan.RecordAsync(rowsChanged, settled: rowsChanged == 0 && missing.Count == 0, cancellationToken).ConfigureAwait(false);
+        var missing = await scan.CountMissingRequiredAsync(progress.Table(i + 1, table.Table), cancellationToken).ConfigureAwait(false);
+        checkedTables++;
+        if (missing.Rows > 0) {
+          rowsMissing += missing.Rows;
+          DeclaredKeySpellingLog.RequiredMissing(log, missing.Rows, scan.DisplayTable, string.Join("; ", missing.Details));
+        }
+        // Settled whatever the check found: the rows it reported cannot be repaired here, and are not reported again.
+        await scan.RecordAsync(0, settled: true, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         DeclaredKeySpellingLog.TableFailed(log, ex, $"{schema}.{table.Table}");
+      }
+    }
+    if (progress.Started) {
+      var elapsed = progress.Elapsed;
+      DeclaredKeySpellingLog.CheckFinished(log, REQUIRED_CHECK, schema, checkedTables, progress.Rows, rowsMissing,
+        new ProgressElapsed(elapsed));
+    }
+  }
+
+  private const string SPELLING_SCAN = "The declared-key spelling scan";
+  private const string REQUIRED_CHECK = "The required-member check";
+
+  /// <summary>One scan's progress: a line when it starts, a line each cadence, and its totals for the last line.</summary>
+  private sealed class ScanProgress(string phase, string schema, int tables, TimeProvider time, ILogger log) {
+    private ProgressClock? _clock;
+    private int _position;
+    private string _table = string.Empty;
+    private long _tableRows;
+
+    public bool Started => _clock is not null;
+    public long Rows { get; private set; }
+    public TimeSpan Elapsed => _clock!.Elapsed;
+
+    /// <summary>Starts table <paramref name="position"/>; returns what its chunks report their rows to.</summary>
+    public Action<int> Table(int position, string table) {
+      _position = position;
+      _table = $"{schema}.{table}";
+      _tableRows = 0;
+      return _read;
+    }
+
+    private void _read(int rows) {
+      if (_clock is null) {
+        _clock = new ProgressClock(time);
+        DeclaredKeySpellingLog.ScanStarted(log, phase, schema, tables);
+      }
+      _tableRows += rows;
+      Rows += rows;
+      if (_clock.Due()) {
+        var elapsed = _clock.Elapsed;
+        DeclaredKeySpellingLog.ScanProgressed(log, phase, schema, _position, tables, _table, _tableRows, Rows,
+          new ProgressElapsed(elapsed));
       }
     }
   }
@@ -220,7 +298,7 @@ public static class DeclaredKeySpellingPass {
 
   private static async Task<TableOutcome?> _rewriteTableAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeyTable table,
-      int commandTimeoutSeconds, int batchSize, ILogger log, CancellationToken cancellationToken) {
+      int commandTimeoutSeconds, int batchSize, Action<int> read, ILogger log, CancellationToken cancellationToken) {
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
     var scan = new TableScan(connection, schema, table, commandTimeoutSeconds, batchSize);
@@ -235,7 +313,7 @@ public static class DeclaredKeySpellingPass {
       return null;
     }
 
-    var outcome = await scan.RespellAsync(cancellationToken).ConfigureAwait(false);
+    var outcome = await scan.RespellAsync(read, cancellationToken).ConfigureAwait(false);
     if (outcome.RowsChanged > 0) {
       DeclaredKeySpellingLog.Rewrote(log, scan.DisplayTable, outcome.RowsChanged, outcome.Summary);
     }
@@ -274,7 +352,7 @@ public static class DeclaredKeySpellingPass {
       return await settled.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true ? TableState.Settled : TableState.Open;
     }
 
-    public async Task<ScanOutcome> RespellAsync(CancellationToken cancellationToken) {
+    public async Task<ScanOutcome> RespellAsync(Action<int> read, CancellationToken cancellationToken) {
       var columns = table.Columns;
       var hit = string.Join("\n    OR ", columns.Select(c => $"({DeclaredKeySpellingSql.CandidatePredicate(c.Column, c.Shape)})"));
       var selected = string.Concat(columns.Select(c => $", {SqlText.Identifier(c.Column)}"));
@@ -293,6 +371,7 @@ public static class DeclaredKeySpellingPass {
         if (chunk.Count == 0) {
           return outcome;
         }
+        read(chunk.Count);
         after = chunk[^1].Id;
         var updates = _rewriteChunk(chunk, outcome);
         if (updates.Count > 0) {
@@ -301,12 +380,13 @@ public static class DeclaredKeySpellingPass {
       }
     }
 
-    public async Task<IReadOnlyList<string>> CountMissingRequiredAsync(CancellationToken cancellationToken) {
+    public async Task<(long Rows, IReadOnlyList<string> Details)> CountMissingRequiredAsync(
+        Action<int> read, CancellationToken cancellationToken) {
       var checks = table.Columns
         .SelectMany(c => DeclaredKeySpellingSql.MissingRequired(c.Column, c.Shape).Select(m => (Label: $"{c.Column} {m.Path}", m.Predicate)))
         .ToList();
       if (checks.Count == 0) {
-        return [];
+        return (0, []);
       }
 
       // A column holding SQL NULL has no document, so nothing is missing from it.
@@ -314,30 +394,37 @@ public static class DeclaredKeySpellingPass {
         + "WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT $2";
       var counts = new long[checks.Count];
       var samples = checks.Select(_ => new List<Guid>()).ToArray();
+      long rowsMissing = 0;
       Guid? after = null;
-      int read;
+      int chunk;
       do {
         await using var command = _command(select);
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)after ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid });
         command.Parameters.AddWithValue(batchSize);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        read = 0;
+        chunk = 0;
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-          read++;
+          chunk++;
           after = reader.GetGuid(0);
+          var lacking = false;
           for (var i = 0; i < checks.Count; i++) {
             if (reader.GetBoolean(i + 1)) {
               counts[i]++;
+              lacking = true;
               _sample(samples[i], after.Value);
             }
           }
+          rowsMissing += lacking ? 1 : 0;
         }
-      } while (read > 0);
+        if (chunk > 0) {
+          read(chunk);
+        }
+      } while (chunk > 0);
 
-      return [.. checks.Select((c, i) => (c.Label, Count: counts[i], Sample: samples[i]))
+      return (rowsMissing, [.. checks.Select((c, i) => (c.Label, Count: counts[i], Sample: samples[i]))
         .Where(c => c.Count > 0)
         .Select(c => string.Create(CultureInfo.InvariantCulture,
-          $"{c.Label} in {c.Count} row(s) (for example {string.Join(", ", c.Sample)})"))];
+          $"{c.Label} in {c.Count} row(s) (for example {string.Join(", ", c.Sample)})"))]);
     }
 
     public async Task RecordAsync(long rowsChanged, bool settled, CancellationToken cancellationToken) {
@@ -502,10 +589,31 @@ internal static partial class DeclaredKeySpellingLog {
   public static partial void Absent(ILogger logger, string table);
 
   [LoggerMessage(Level = LogLevel.Error,
-    Message = "Stored documents in {Table} lack a required member: {Missing}. A reader that refuses a missing required "
-      + "member fails these rows, and Entity Framework's mapped reader reads the member's default. Fill them with "
-      + "[StoredForm(DefaultWhenMissing = ...)] or rebuild the perspective")]
-  public static partial void RequiredMissing(ILogger logger, string table, string missing);
+    Message = "{Rows} stored document(s) in {Table} lack a required member: {Missing}. A reader that refuses a missing "
+      + "required member fails these rows, and Entity Framework's mapped reader reads the member's default. Fill them "
+      + "with [StoredForm(DefaultWhenMissing = ...)] or rebuild the perspective. The table is recorded as checked, so "
+      + "this is said once: it is checked again when what its readers declare changes")]
+  public static partial void RequiredMissing(ILogger logger, long rows, string table, string missing);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "{Phase} of {Schema} started: {Tables} perspective table(s) to look at")]
+  public static partial void ScanStarted(ILogger logger, string phase, string schema, int tables);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "{Phase} of {Schema}: table {Position} of {Tables} ({Table}), {TableRows} row(s) read in it, "
+      + "{Rows} in all, {Elapsed} elapsed")]
+  public static partial void ScanProgressed(
+    ILogger logger, string phase, string schema, int position, int tables, string table, long tableRows, long rows, ProgressElapsed elapsed);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "{Phase} of {Schema} finished: {Scanned} table(s) scanned, {Rows} row(s) read, {Changed} row(s) "
+      + "rewritten, in {Elapsed}")]
+  public static partial void ScanFinished(ILogger logger, string phase, string schema, int scanned, long rows, long changed, ProgressElapsed elapsed);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "{Phase} of {Schema} finished: {CheckedTables} table(s) checked, {Rows} row(s) read, {Missing} row(s) "
+      + "lacking a required member, in {Elapsed}")]
+  public static partial void CheckFinished(ILogger logger, string phase, string schema, int checkedTables, long rows, long missing, ProgressElapsed elapsed);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Could not bring the stored keys of {Table} to their declared spelling; the next start tries again")]

@@ -274,7 +274,8 @@ public class DeclaredKeySpellingPassTests {
   public async Task AStartWithEveryTableSettled_SaysNothingAsync() {
     await _journalAsync();
     await _insertAsync(Guid.CreateVersion7(), """{"pts":[{"x":1}]}""", metadata: null);
-    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, new FakeTimeProvider());
+    // With no logger, a line due on every reading has nowhere to go and is skipped.
+    await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, new OneCadencePerReading());
     var log = new ListLogger();
 
     await DeclaredKeySpellingPass.ApplyAsync(_factory, "public", [_table], TIMEOUT_SECONDS, new FakeTimeProvider(), log);

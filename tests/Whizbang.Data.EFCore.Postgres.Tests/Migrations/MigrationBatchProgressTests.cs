@@ -81,10 +81,13 @@ public class MigrationBatchProgressTests {
 
   [Test]
   public async Task NoLogger_IsAllowed_AndMissingArgumentsAreRefusedAsync() {
-    var progress = new MigrationBatchProgress("202_Quiet", 1, new FakeTimeProvider(), null);
+    var time = new FakeTimeProvider();
+    var progress = new MigrationBatchProgress("202_Quiet", 1, time, null);
+    progress.Batch(1);
+    time.Advance(StartupProgress.Cadence);
     progress.Batch(1);
     progress.Finish();
-    await Assert.That(progress.Rows).IsEqualTo(1L);
+    await Assert.That(progress.Rows).IsEqualTo(2L).Because("a line due with nowhere to go is skipped, and the counting goes on");
 
     await Assert.That(() => new MigrationBatchProgress(null!, 1, new FakeTimeProvider(), null)).Throws<ArgumentNullException>();
     await Assert.That(() => new MigrationBatchProgress("x", 1, null!, null)).Throws<ArgumentNullException>();

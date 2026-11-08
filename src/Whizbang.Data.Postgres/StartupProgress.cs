@@ -19,7 +19,15 @@ public static class StartupProgress {
   /// <summary>An elapsed time as the progress lines give it: whole seconds, or minutes and seconds.</summary>
   /// <param name="elapsed">The time.</param>
   /// <returns>For example <c>42s</c> or <c>6m 05s</c>.</returns>
-  public static string Describe(TimeSpan elapsed) => elapsed.ToString("c", CultureInfo.InvariantCulture);
+  public static string Describe(TimeSpan elapsed) => elapsed < TimeSpan.FromMinutes(1)
+    ? string.Create(CultureInfo.InvariantCulture, $"{(int)elapsed.TotalSeconds}s")
+    : string.Create(CultureInfo.InvariantCulture, $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:00}s");
+}
+
+/// <summary>An elapsed time as a progress line says it (<see cref="StartupProgress.Describe"/>), formatted only when written.</summary>
+internal readonly struct ProgressElapsed(TimeSpan elapsed) {
+  /// <inheritdoc/>
+  public override string ToString() => StartupProgress.Describe(elapsed);
 }
 
 /// <summary>When the next progress line of one phase is due.</summary>

@@ -283,7 +283,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           rewriteConnectionFactory, "__SCHEMA__",
           Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(
             dbContext.Model, Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options),
-          _schemaCommandTimeoutSeconds, logger, cancellationToken);
+          _schemaCommandTimeoutSeconds, startupClock, logger, cancellationToken);
 
         // The app's stored-form migrations first, so a value a rename moves is converted to the canonical temporal
         // form in the same pass; then the temporal rewrites derived from the model; then the generated
@@ -309,7 +309,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // Last, once a [StoredForm(DefaultWhenMissing)] has filled what it fills: a required member still missing from
         // stored rows is reported, and each table checked is recorded, settled when nothing changed or is missing.
         await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.SettleAsync(
-          rewriteConnectionFactory, "__SCHEMA__", declaredKeys, _schemaCommandTimeoutSeconds, logger, cancellationToken);
+          rewriteConnectionFactory, "__SCHEMA__", declaredKeys, _schemaCommandTimeoutSeconds, startupClock, logger, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
@@ -787,8 +787,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         continue;
       }
 
-      var pass = 0;
-      long totalRows = 0;
+      // #2128: the batch it is on, the rows moved and the time elapsed, at Information on a steady cadence, then its totals.
+      var progress = new Whizbang.Data.Postgres.MigrationBatchProgress(migrationName, segment.BatchSize, TimeProvider.System, logger);
       while (true) {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -803,25 +803,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           break;
         }
 
-        pass++;
-        totalRows += rows;
-        logger?.LogDebug(
-          "Migration {Migration}: batch {Pass} moved {Rows} row(s) ({Total} so far)",
-          migrationName, pass, rows, totalRows);
+        progress.Batch(rows);
 
-        if (pass >= MAX_BATCH_PASSES) {
+        if (progress.Batches >= MAX_BATCH_PASSES) {
           throw new InvalidOperationException(
-            $"Migration {migrationName} ran {pass} batches of {segment.BatchSize} without finishing "
-            + $"({totalRows} rows so far). A batch has to exclude the rows it already handled, or it "
+            $"Migration {migrationName} ran {progress.Batches} batches of {segment.BatchSize} without finishing "
+            + $"({progress.Rows} rows so far). A batch has to exclude the rows it already handled, or it "
             + "reports the same rows forever; check the region's WHERE clause.");
         }
       }
 
-      if (pass > 0) {
-        logger?.LogInformation(
-          "Migration {Migration}: backfilled {Total} row(s) in {Passes} batch(es) of {Size}",
-          migrationName, totalRows, pass, segment.BatchSize);
-      }
+      progress.Finish();
     }
 
     await Whizbang.Data.Postgres.MigrationSearchPath.ExitAsync(migrationConnection, previousSearchPath, cancellationToken);
