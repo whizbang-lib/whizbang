@@ -238,11 +238,12 @@ public static class DeclaredKeySpellingPass {
           await scan.RecordAsync(rowsChanged, settled: false, cancellationToken).ConfigureAwait(false);
           continue;
         }
-        var missing = await scan.CountMissingRequiredAsync(progress.Table(i + 1, table.Table), cancellationToken).ConfigureAwait(false);
+        var (rowsLacking, details) = await scan.CountMissingRequiredAsync(progress.Table(i + 1, table.Table), cancellationToken)
+          .ConfigureAwait(false);
         checkedTables++;
-        if (missing.Rows > 0) {
-          rowsMissing += missing.Rows;
-          DeclaredKeySpellingLog.RequiredMissing(log, missing.Rows, scan.DisplayTable, string.Join("; ", missing.Details));
+        if (rowsLacking > 0) {
+          rowsMissing += rowsLacking;
+          DeclaredKeySpellingLog.RequiredMissing(log, rowsLacking, scan.DisplayTable, string.Join("; ", details));
         }
         // Settled whatever the check found: the rows it reported cannot be repaired here, and are not reported again.
         await scan.RecordAsync(0, settled: true, cancellationToken).ConfigureAwait(false);

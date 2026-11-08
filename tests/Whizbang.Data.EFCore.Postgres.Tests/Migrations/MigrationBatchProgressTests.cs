@@ -44,7 +44,7 @@ public class MigrationBatchProgressTests {
     progress.Batch(1_234);
     progress.Finish();
 
-    await Assert.That(lines.Entries.Select(e => e.Level).Distinct()).IsEquivalentTo(new[] { LogLevel.Information });
+    await Assert.That(lines.Entries.Select(e => e.Level).Distinct()).IsEquivalentTo([LogLevel.Information]);
     await Assert.That(string.Join("\n", lines.Entries.Select(e => e.Message))).IsEqualTo(string.Join("\n",
       "Migration 087_StreamDigests: batch 3, 30000 row(s) moved so far, 15s elapsed",
       "Migration 087_StreamDigests: batch 6, 60000 row(s) moved so far, 30s elapsed",
