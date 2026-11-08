@@ -25,6 +25,7 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class PerspectiveWorkerDeepPathDrainTests {
   private const int UNREADABLE_ROWS_EVENT_ID = 78;
   private const int UNHANDLED_COLLECTIVE_ROWS_EVENT_ID = 80;
+  private const int DRAIN_SKIPPED_NO_EVENT_STORE_EVENT_ID = 81;
 
   [Test]
   [Timeout(30000)]
@@ -326,5 +327,44 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([sinkWork]);
     await Assert.That(harness.FailureCapture.Items).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_HostWithNoEventStore_SkipsTheFetch_AndSaysWhyAsync(CancellationToken cancellationToken) {
+    // Only a missing event store stops the drain before its fetch now: nothing could read what the fetch leases. The
+    // skip is said once per batch, with how many streams it held.
+    var streamId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    using var logger = new EventIdSignalingLogger(DRAIN_SKIPPED_NO_EVENT_STORE_EVENT_ID);
+
+    var (worker, harness, _) = _createWorker(
+      coordinator, new DrainEventStore(), _registry(new DrainRunner()), logger: logger, withoutEventStore: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    var message = await logger.Logged.WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(message).Contains("for 1 stream(s): no event store is registered", StringComparison.Ordinal);
+    await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(0)
+      .Because("the fetch leases rows, and without a store nothing here could read them");
+  }
+
+  /// <summary>Completes <see cref="Logged"/> with the message of the first entry logged under one EventId.</summary>
+  private sealed class EventIdSignalingLogger(int awaitedEventId) : ILogger<PerspectiveWorker>, IDisposable {
+    private readonly TaskCompletionSource<string> _logged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<string> Logged => _logged.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == awaitedEventId) {
+        _logged.TrySetResult(formatter(state, exception));
+      }
+    }
+    public void Dispose() => _logged.TrySetCanceled();
   }
 }

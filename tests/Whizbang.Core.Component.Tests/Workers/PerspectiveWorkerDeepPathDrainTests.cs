@@ -987,7 +987,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null,
       IPerspectiveDrainChannel? drainChannel = null,
       CompositeMetrics? compositeMetrics = null,
-      bool withoutRegistry = false) {
+      bool withoutRegistry = false,
+      bool withoutEventStore = false) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -1002,7 +1003,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     }
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddSingleton<IEventStore>(eventStore);
+    if (!withoutEventStore) {
+      services.AddSingleton<IEventStore>(eventStore);
+    }
     if (lifecycleCoordinator is not null) {
       services.AddSingleton(lifecycleCoordinator);
     }
