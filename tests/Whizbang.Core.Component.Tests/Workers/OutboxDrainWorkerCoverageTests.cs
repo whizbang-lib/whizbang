@@ -497,7 +497,7 @@ public partial class OutboxDrainWorkerCoverageTests {
     await drainChannel.WriteAsync(streamId);
 
     // The last publish lands inside the second page, BEFORE the worker loops back for the
-    // confirmation fetch this test is about. Waiting on the publish count and then cancelling
+    // confirmation fetch this test is about. Waiting on the publish count and then canceling
     // let the worker see the cancellation at its loop boundary and skip that fetch (#2085).
     // The drain having returned is the transition that follows the confirmation fetch.
     await drainChannel.Drained(streamId).WaitAsync(TimeSpan.FromSeconds(30));

@@ -11,7 +11,8 @@ namespace Whizbang.Data.Postgres;
 /// from one that is stuck.
 /// </summary>
 /// <docs>operations/infrastructure/migrations#progress-of-long-startup-work</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StartupProgressTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationBatchProgressTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/DeclaredKeySpellingPassTests.cs</tests>
 public static class StartupProgress {
   /// <summary>How often a long phase says how far along it is: every 15 seconds.</summary>
   public static readonly TimeSpan Cadence = TimeSpan.FromSeconds(15);

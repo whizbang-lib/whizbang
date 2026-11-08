@@ -308,7 +308,7 @@ public class PerspectiveWorkerDedupTests {
     // and runs it, the other dedups it. Wait for BOTH, in either order, before stopping the worker.
     // Waiting on the pump's own claim count instead (the prior shape) only proved the work had been
     // ENQUEUED: a worker still starting up, or a consumer that had not yet read the channel, was
-    // cancelled before it ran anything and the assertion read 0 (issue #2101). Once both decisions
+    // canceled before it ran anything and the assertion read 0 (issue #2101). Once both decisions
     // have fired there is no third delivery (cycle 3 and later are empty), so the count is final.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
