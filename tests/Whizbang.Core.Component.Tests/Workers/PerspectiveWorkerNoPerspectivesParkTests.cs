@@ -23,12 +23,13 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// PerspectiveWorker is hosted unconditionally by the core worker pipeline (turnkey), so a
-/// service with NO registered perspectives must pay NOTHING for it: no startup-repair queries,
-/// no drain loop, no poll cadence, no database connections. Before the core registration such
-/// services had no PerspectiveWorker at all; the park restores exactly that footprint. The
+/// service with NO registered perspectives must pay NOTHING for it while it has no work: no
+/// startup-repair queries, no drain loop, no poll cadence, no database connections. The
 /// regression this fences out: an always-running worker draining a small connection pool in a
 /// perspective-less host — observed as pool exhaustion (Max Pool Size=2 fixtures), failed
-/// signal-bus self-tests, and cascade timeouts.
+/// signal-bus self-tests, and cascade timeouts. The worker is parked on its drain channel rather
+/// than ended (#2142): the claim still hands such a host the collective rows it stores, and the
+/// drain is what concludes them (see PerspectiveWorkerDeepPathDrainTests.UnreadableRows).
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 public class PerspectiveWorkerNoPerspectivesParkTests {
@@ -79,20 +80,22 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
 
-    // ACT
+    // ACT: the barrier is released immediately before the park, and stopping is the only way out of it.
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
     await worker.StartupScanComplete.WaitAsync(cancellationToken);
-    await worker.ExecuteTask!.WaitAsync(cancellationToken);
+    var parkedBeforeStop = worker.ExecuteTask!.IsCompleted;
+    await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask.WaitAsync(cancellationToken);
 
-    // ASSERT — parked: the execute loop ended cleanly without ever touching the coordinator.
+    // ASSERT: parked: no loop ran and the coordinator was never touched; the stop ended it cleanly.
+    await Assert.That(parkedBeforeStop).IsFalse()
+      .Because("a perspective-less host is parked on its drain channel, waiting for work its claim hands it");
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
-      .Because("a perspective-less host parks the worker cleanly — no channel-requirement throw, no loop");
+      .Because("stopping a parked worker ends it cleanly, with no channel-requirement throw, no loop");
     await Assert.That(resolutions).IsEqualTo(0)
       .Because("a parked PerspectiveWorker must never resolve the coordinator — it previously " +
                "ran orphan reconcile, rewind repair, and the poll loop, draining small connection pools");
-
-    await worker.StopAsync(CancellationToken.None);
   }
 
   // ============================================================================

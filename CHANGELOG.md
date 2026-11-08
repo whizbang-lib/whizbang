@@ -1550,6 +1550,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `true`): turned off, the store uses the configured location without comparing records, giving up that safety net, and
   still writes location rows so the check can be turned back on. The offload store records no locations: its claim
   names a provider and a key, and the provider always uses its configured container.
+- **A service with no perspectives of its own now concludes the collective events it stores (#2142).** Such a service
+  has no perspective registry, yet it stores the collective events of the namespaces it subscribes to and the store
+  routes each to the `__collective__` sink. The claim leased those rows and handed their streams to the drain, but the
+  perspective worker ended at startup when it found no registry, so nothing read them: the rows were leased in
+  batches, re-offered, released and leased again, with nothing in the log, and the #2142 fix never ran there. The
+  worker now parks on its drain channel instead (still no startup repair and no database work while idle) and drains
+  what the claim hands it, so those rows are completed, warned once per type and counted on
+  `whizbang.collectives.unhandled`. A service whose registry lists no perspective, which skipped every drain batch,
+  concludes them too.
 - **A collective event no handler on the service applies no longer stalls its perspective backlog (#2142).** The store
   routes every collective event it keeps to the `__collective__` sink, so a service that stores one it has no
   `[CollectiveApplyFor]` handler for (it consumes other events of the same namespace) got a sink row whose type the
