@@ -25,6 +25,13 @@ public enum SchemaDeferralOutcome {
   /// migrating is not coming back and this instance must take the work over.
   /// </summary>
   MigratingInstanceGone,
+
+  /// <summary>
+  /// A wait between two steps of the schema pass ended with the schema lock free and the schema still behind: the
+  /// instance doing the pass is between two of its steps, or stopped after one. Not a migrator gone; the waiter simply
+  /// contends for the next step, and each step's re-check under the lock keeps it from applying anything twice.
+  /// </summary>
+  FreeBetweenSteps,
 }
 
 /// <summary>
@@ -161,6 +168,32 @@ public static class SchemaMigrationDeferral {
       delay = NextPollDelay(delay);
     }
   }
+
+  /// <summary>
+  /// Waits, between two steps of the schema pass, for the instance whose step holds the schema lock (#2127).
+  /// </summary>
+  /// <remarks>
+  /// The step-level wait: the lock it watches is taken and released by every step of every instance's pass, so a
+  /// free lock means only that the holder is between two steps. It ends <see cref="SchemaDeferralOutcome.FreeBetweenSteps"/>,
+  /// not <see cref="SchemaDeferralOutcome.MigratingInstanceGone"/>, and says what it is doing at Debug: a pass that
+  /// two instances take turns through would otherwise log a takeover and a deferral for every step.
+  /// </remarks>
+  /// <param name="isSchemaCleanAsync">Whether the schema is current; a failure is read as "not current".</param>
+  /// <param name="isLockHeldAsync">Whether another session holds the schema lock; a failure ends the wait.</param>
+  /// <param name="timeProvider">The clock the waits are measured on.</param>
+  /// <param name="schema">The schema being waited on, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see cref="SchemaDeferralOutcome.AnotherInstanceMigrated"/> or <see cref="SchemaDeferralOutcome.FreeBetweenSteps"/>.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaMigrationDeferralTests.cs</tests>
+  public static Task<SchemaDeferralOutcome> WaitBetweenStepsAsync(
+      Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
+      Func<CancellationToken, Task<bool>> isLockHeldAsync,
+      TimeProvider timeProvider,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) =>
+    DeferAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, logger, cancellationToken);
 
   /// <summary>
   /// Asks whether the schema is current, treating an unanswerable question as "no".
