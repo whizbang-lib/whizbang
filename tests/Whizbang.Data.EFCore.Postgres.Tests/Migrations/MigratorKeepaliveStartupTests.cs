@@ -47,8 +47,8 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
   private static readonly TimeSpan _renewInterval = TimeSpan.FromSeconds(10);
   private static readonly TimeSpan _tick = TimeSpan.FromSeconds(5);
 
-  /// <summary>What the initializer reports when the pre-lock phases begin.</summary>
-  internal const string PRE_LOCK_STAGE = "bringing stored documents to their current form";
+  /// <summary>How a check names the moment the pre-lock phases begin.</summary>
+  private const string PRE_LOCK = "pre-lock phases";
 
   private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
@@ -107,7 +107,7 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
   /// </summary>
   private sealed class KeepaliveCheck(FakeTimeProvider time, LeasedGrant grant, ScriptedElector elector) {
     public List<string> Checked { get; } = [];
-    public List<(string Message, int Votes)> Stages { get; } = [];
+    public List<int> PreLockVotes { get; } = [];
 
     public async ValueTask CheckAsync(string where, CancellationToken cancellationToken) {
       if (!elector.HasGranted || grant.Disposed) {
@@ -123,15 +123,12 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
   }
 
   /// <summary>The instance's stage, as the reporter keeps it; each stage after the election is a keepalive check.</summary>
-  private sealed class CheckingStageReporter(KeepaliveCheck check, ScriptedElector elector) : IStartupStageReporter {
+  private sealed class CheckingStageReporter(KeepaliveCheck check) : IStartupStageReporter {
     public StartupStageSnapshot? Current { get; private set; }
 
     public async ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
       if (Current is null || stage >= Current.Stage) {
         Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
-      }
-      lock (check.Stages) {
-        check.Stages.Add((message, elector.Votes));
       }
       await check.CheckAsync($"{stage}: {message}", cancellationToken);
     }
@@ -144,9 +141,16 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
     public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class CheckingObserver(KeepaliveCheck check) : ISchemaInitializationObserver {
+  private sealed class CheckingObserver(KeepaliveCheck check, ScriptedElector elector) : ISchemaInitializationObserver {
     public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) =>
       check.CheckAsync("step " + stepName, cancellationToken);
+
+    public ValueTask OnPreLockPhasesStartingAsync(string schema, CancellationToken cancellationToken) {
+      lock (check.PreLockVotes) {
+        check.PreLockVotes.Add(elector.Votes);
+      }
+      return check.CheckAsync(PRE_LOCK, cancellationToken);
+    }
   }
 
   private async Task _driftAFrameworkMigrationAsync(CancellationToken ct) {
@@ -168,8 +172,8 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(pod);
     services.AddSingleton<IDutyElector>(elector);
     services.AddSingleton<TimeProvider>(time);
-    services.AddSingleton<IStartupStageReporter>(new CheckingStageReporter(check, elector));
-    services.AddSingleton<ISchemaInitializationObserver>(new CheckingObserver(check));
+    services.AddSingleton<IStartupStageReporter>(new CheckingStageReporter(check));
+    services.AddSingleton<ISchemaInitializationObserver>(new CheckingObserver(check, elector));
     return (services.BuildServiceProvider(), check, time);
   }
 
@@ -187,7 +191,7 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
     }
 
     await Assert.That(check.Checked).Contains(c => c.StartsWith("Elect:", StringComparison.Ordinal));
-    await Assert.That(check.Checked).Contains(c => c.Contains(PRE_LOCK_STAGE, StringComparison.Ordinal))
+    await Assert.That(check.Checked).Contains(PRE_LOCK)
       .Because("the stored-form scans, rewrites and rebuild run while the keepalive holds the lease");
     await Assert.That(check.Checked).Contains(c => c.StartsWith("step ", StringComparison.Ordinal))
       .Because("each migration step runs while the keepalive holds the lease");
@@ -215,11 +219,9 @@ public class MigratorKeepaliveStartupTests : EFCoreTestBase {
       await context.EnsureWhizbangDatabaseInitializedAsync(null, null, services, cancellationToken);
     }
 
-    var preLock = check.Stages.Where(s => s.Message.Contains(PRE_LOCK_STAGE, StringComparison.Ordinal)).ToList();
-    await Assert.That(preLock).Count().IsEqualTo(1);
-    await Assert.That(preLock[0].Votes).IsEqualTo(2)
+    await Assert.That(check.PreLockVotes).IsEquivalentTo([2])
       .Because("a waiter does the migrator's work only once it holds the migrator's role, never on a vacancy alone");
-    await Assert.That(check.Checked).Contains(c => c.Contains(PRE_LOCK_STAGE, StringComparison.Ordinal))
+    await Assert.That(check.Checked).Contains(PRE_LOCK)
       .Because("the takeover's grant is kept alive like the first migrator's");
   }
 
