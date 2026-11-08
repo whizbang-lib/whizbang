@@ -22,7 +22,9 @@ namespace Whizbang.Core.Tests.Perspectives;
 [Category("Unit")]
 [Category("Perspectives")]
 public class PerspectiveRowStartTests {
-  private static readonly DateTime _start = new(2020, 3, 1, 9, 0, 0, DateTimeKind.Utc);
+  private static readonly DateTime _start = new(2019, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+  private static readonly DateTimeOffset _mar1 = new(2020, 3, 1, 9, 0, 0, TimeSpan.Zero);
+  private static readonly DateTimeOffset _jun5 = new(2020, 6, 5, 9, 0, 0, TimeSpan.Zero);
 
   [Test]
   public async Task For_WithNothingBegun_IsNullAsync() {
@@ -71,23 +73,27 @@ public class PerspectiveRowStartTests {
     var store = new StartStore(_start);
     var row = Guid.NewGuid();
 
-    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: true, [_event(row, first: false)]);
+    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: true, [_event(row, first: false, _jun5)]);
 
     await Assert.That(resolved).IsNull();
     await Assert.That(store.Asked).IsEqualTo(0)
-      .Because("an existing row keeps its created_at on update, so its stream's start is never needed");
+      .Because("an existing row keeps its created_at on update, so nothing dates it");
   }
 
   [Test]
-  public async Task ResolveAsync_AFoldThatBeginsTheStream_AsksNothingAsync() {
+  public async Task ResolveAsync_AFoldThatBeginsTheStream_IsTheFirstEventsTime_NotTheLastsAsync() {
     var store = new StartStore(_start);
     var row = Guid.NewGuid();
 
-    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: false, [_event(row, first: true), _event(row, first: false)]);
+    var resolved = await PerspectiveRowStart.ResolveAsync(
+      store, row, rowExists: false, [_event(row, first: true, _mar1), _event(row, first: false, _jun5)]);
 
-    await Assert.That(resolved).IsNull();
+    await Assert.That(resolved).IsEqualTo(_mar1.UtcDateTime)
+      .Because("#2154: a row is dated at the first event folded into it, whatever else its first write folds; the "
+        + "last event's time is updated_at");
+    await Assert.That(resolved).IsNotEqualTo(_jun5.UtcDateTime);
     await Assert.That(store.Asked).IsEqualTo(0)
-      .Because("a fold that holds the stream's first event dates the row as it always did, with no extra round trip");
+      .Because("a fold that holds the stream's first event needs no round trip");
   }
 
   [Test]
@@ -95,46 +101,60 @@ public class PerspectiveRowStartTests {
     var store = new StartStore(DateTime.SpecifyKind(_start, DateTimeKind.Unspecified));
     var row = Guid.NewGuid();
 
-    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: false, [_event(row, first: false)]);
+    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: false, [_event(row, first: false, _jun5)]);
 
-    await Assert.That(resolved).IsEqualTo(_start);
+    await Assert.That(resolved).IsEqualTo(_start)
+      .Because("#2152: the stream's first event is gone, so the row is dated at the stream's recorded start");
     await Assert.That(resolved!.Value.Kind).IsEqualTo(DateTimeKind.Utc);
     await Assert.That(store.Asked).IsEqualTo(1);
     await Assert.That(store.AskedFor).IsEqualTo(row);
   }
 
   [Test]
-  public async Task ResolveAsync_AStreamThatStillHoldsItsStart_IsNullAsync() {
+  public async Task ResolveAsync_AStreamThatStillHoldsItsStart_IsTheFirstFoldedEventsTimeAsync() {
     var store = new StartStore(null);
     var row = Guid.NewGuid();
 
-    var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: false, [_event(row, first: false)]);
+    var resolved = await PerspectiveRowStart.ResolveAsync(
+      store, row, rowExists: false, [_event(row, first: false, _mar1), _event(row, first: false, _jun5)]);
 
-    await Assert.That(resolved).IsNull()
-      .Because("the store answers null while the stream holds its first event, so the row is dated as before");
+    await Assert.That(resolved).IsEqualTo(_mar1.UtcDateTime)
+      .Because("the store answers null while the stream holds its first event (this perspective folds none of the "
+        + "events before), so the row is dated at the first event it folded");
     await Assert.That(store.Asked).IsEqualTo(1);
   }
 
   [Test]
-  public async Task ResolveAsync_AStoreThatRemovesNoEvents_AnswersNullByDefaultAsync() {
+  public async Task ResolveAsync_AStoreThatRemovesNoEvents_DatesByTheFirstFoldedEventAsync() {
     // The interface default: a store that never removes a stream's first event has no start apart from its events.
     var row = Guid.NewGuid();
 
-    var resolved = await PerspectiveRowStart.ResolveAsync(new InMemoryEventStore(), row, rowExists: false, [_event(row, first: false)]);
+    var resolved = await PerspectiveRowStart.ResolveAsync(new InMemoryEventStore(), row, rowExists: false, [_event(row, first: false, _mar1)]);
 
-    await Assert.That(resolved).IsNull();
+    await Assert.That(resolved).IsEqualTo(_mar1.UtcDateTime);
+  }
+
+  [Test]
+  public async Task ResolveAsync_AFirstEventWithNoHop_LeavesTheRowToTheWritesOwnTimeAsync() {
+    var row = Guid.NewGuid();
+
+    var resolved = await PerspectiveRowStart.ResolveAsync(new StartStore(null), row, rowExists: false, [_event(row, first: true, null)]);
+
+    await Assert.That(resolved).IsNull()
+      .Because("an event with no hop carries no business time, so the write keeps the time it was given");
   }
 
   [Test]
   public async Task ResolveAsync_CollectivesAheadOfTheFirstStreamEvent_AreSkippedAsync() {
     var store = new StartStore(_start);
     var row = Guid.NewGuid();
-    MessageEnvelope<IEvent>[] folded = [_collective(), _event(row, first: true)];
+    MessageEnvelope<IEvent>[] folded = [_collective(), _event(row, first: true, _jun5)];
 
     var resolved = await PerspectiveRowStart.ResolveAsync(store, row, rowExists: false, folded);
 
-    await Assert.That(resolved).IsNull()
-      .Because("a collective is another stream's event; the row's own first event decides whether the fold begins the stream");
+    await Assert.That(resolved).IsEqualTo(_jun5.UtcDateTime)
+      .Because("a collective is another stream's event; the row's own first event dates it and decides whether the fold "
+        + "begins the stream");
     await Assert.That(store.Asked).IsEqualTo(0);
   }
 
@@ -170,10 +190,20 @@ public class PerspectiveRowStartTests {
     return PerspectiveRowStart.For(row);
   }
 
-  private static MessageEnvelope<IEvent> _event(Guid stream, bool first) => new() {
+  private static MessageEnvelope<IEvent> _event(Guid stream, bool first, DateTimeOffset? at) => new() {
     MessageId = MessageId.New(),
     Payload = new RowEvent { StreamId = stream },
-    Hops = [],
+    Hops = at is { } ts
+      ? [new MessageHop {
+          Type = HopType.Current,
+          Timestamp = ts.AddDays(-1),
+          ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.Empty, ServiceName = "producer", HostName = "h", ProcessId = 1 },
+        }, new MessageHop {
+          Type = HopType.Current,
+          Timestamp = ts,
+          ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.Empty, ServiceName = "store", HostName = "h", ProcessId = 1 },
+        }]
+      : [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     IsFirstInLocalStream = first,
   };

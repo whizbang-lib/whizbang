@@ -19,7 +19,8 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// What a rebuild keeps of a row's created_at once its stream's first event is gone (#2152). A row's created_at is the
+/// What a rebuild keeps of a row's created_at (#2152, #2154): the first folded event's time, or the stream's start once its
+/// first event is gone. A row's created_at is the
 /// business time of the event that brought it into being. The superseding reaper and a prefix truncate delete the
 /// stream's first event outright, and a rebuild that then writes the row afresh (blue-green into an empty shadow table, or
 /// in place where the row is missing) dated it at an event that survived. It now takes the stream's recorded start.
@@ -110,10 +111,11 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RebuildBlueGreen_AStreamHoldingItsFirstEvent_IsDatedByItsEventsAsBeforeAsync() {
+  public async Task RebuildBlueGreen_AFullHistoryStream_DatesTheRowAtItsFirstEvent_AndUpdatedAtAtItsLastAsync() {
     var stream = Guid.CreateVersion7();
     await using var sp = _services();
     await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 100m }, _mar1);
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 50m }, _jun5);
     // A recorded start the stream contradicts: it still holds its first event, so the record must not be used.
     await _executeAsync("UPDATE wh_stream_lifecycle SET first_event_at = @t WHERE stream_id = @s",
       ("t", _sep9.UtcDateTime), ("s", stream));
@@ -122,9 +124,52 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    await Assert.That((await _rowAsync(stream)).CreatedAt).IsEqualTo(_mar1.UtcDateTime)
-      .Because("a stream with its whole history rebuilds exactly as before: the ledger is consulted only once the first "
-        + "event is gone");
+    var row = await _rowAsync(stream);
+    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+      .Because("#2154: the row is dated at the first event folded into it, not the last event of the write that inserts "
+        + "it (Jun 5), and not the ledger's record, which is consulted only once the first event is gone (Sep 9)");
+    await Assert.That(row.UpdatedAt).IsEqualTo(_jun5.UtcDateTime)
+      .Because("updated_at is the last folded event's time");
+  }
+
+  [Test]
+  public async Task RebuildInPlace_AFullHistoryStream_InsertsTheRowDatedAtItsFirstEventAsync() {
+    var stream = Guid.CreateVersion7();
+    await using var sp = _services();
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 100m }, _mar1);
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 50m }, _jun5);
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 25m }, _sep9);
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    var row = await _rowAsync(stream);
+    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+      .Because("#2154: an in-place rebuild that inserts a missing row dates it at its first event, not the Sep 9 event "
+        + "its one write ends on");
+    await Assert.That(row.UpdatedAt).IsEqualTo(_sep9.UtcDateTime);
+  }
+
+  [Test]
+  public async Task LiveFirstBatch_OfSeveralEvents_DatesTheRowAtTheFirstAsync() {
+    var stream = Guid.CreateVersion7();
+    await using var sp = _services();
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 100m }, _mar1);
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 50m }, _jun5);
+    await _appendAsync(sp, stream, new RebuildCreditedEvent { StreamId = stream, Amount = 25m }, _sep9);
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>().GetRunner(PERSPECTIVE, scope.ServiceProvider)!;
+      var completion = await runner.RunAsync(stream, PERSPECTIVE, lastProcessedEventId: null);
+      await Assert.That(completion.EventsProcessed).IsEqualTo(3).Because("the live drain folded all three in one batch");
+    }
+
+    var row = await _rowAsync(stream);
+    await Assert.That(row.Balance).IsEqualTo(175m);
+    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+      .Because("#2154: a new row is dated at its first event however the events were batched; dating it at the last "
+        + "event of its first batch made created_at depend on batching");
+    await Assert.That(row.UpdatedAt).IsEqualTo(_sep9.UtcDateTime);
   }
 
   // ===== Fixture =====
@@ -195,13 +240,14 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
       VALUES (@name, @table, '{}'::jsonb, 'h', 'svc') ON CONFLICT DO NOTHING
       """, ("name", MODEL), ("table", TABLE));
 
-  private async Task<(decimal Balance, DateTime CreatedAt)> _rowAsync(Guid id) {
+  private async Task<(decimal Balance, DateTime CreatedAt, DateTime UpdatedAt)> _rowAsync(Guid id) {
     await using var conn = await _openAsync();
-    await using var cmd = new NpgsqlCommand($"SELECT (data->>'Balance')::numeric, created_at FROM {TABLE} WHERE id = @id", conn);
+    await using var cmd = new NpgsqlCommand($"SELECT (data->>'Balance')::numeric, created_at, updated_at FROM {TABLE} WHERE id = @id", conn);
     cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue().Because("the rebuild wrote the row");
-    return (reader.GetDecimal(0), DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc));
+    return (reader.GetDecimal(0), DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
+      DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc));
   }
 
   private async Task<long> _scalarAsync(string sql, params (string Name, object Value)[] parameters) {
