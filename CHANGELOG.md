@@ -1424,6 +1424,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A collective event no handler on the service applies no longer stalls its perspective backlog (#2142).** The store
+  routes every collective event it keeps to the `__collective__` sink, so a service that stores one it has no
+  `[CollectiveApplyFor]` handler for (it consumes other events of the same namespace) got a sink row whose type the
+  drain cannot read. That row was never concluded, so the claim took it again on every poll, oldest first, and the
+  rest of the perspective backlog waited behind it while the service never counted as idle. The drain now completes
+  such a row without applying it, as an event no perspective consumes is never queued, counts it on the new
+  `whizbang.collectives.unhandled` counter, and logs a Warning once per event type per batch naming the service, the
+  type, the count and a stream; a perspective rebuild applies those events once a handler is added. Rows already
+  stranded are concluded the same way on their next claim, which takes them first. The events are kept. An ordinary
+  perspective row of an unknown type is still left for an instance that can read it.
 - **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
   superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
   as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the
