@@ -102,7 +102,9 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
     // is set shorter than the phase: without it, the phase would have to outlast the 2-minute default before the
     // control lost anything, and the first test could pass with no keepalive at all.
     var roles = new RoleAssignmentOptions {
-      RenewInterval = _renewInterval, MissedRenewalsBeforeLapse = 2, ProgressWindow = _progressWindow,
+      RenewInterval = _renewInterval,
+      MissedRenewalsBeforeLapse = 2,
+      ProgressWindow = _progressWindow,
     };
     roles.RoleLeases[StartupDuties.MIGRATOR] = _lease;
     return new PgRoleElector(
