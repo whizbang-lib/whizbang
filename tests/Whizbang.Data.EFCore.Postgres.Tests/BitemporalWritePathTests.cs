@@ -187,12 +187,12 @@ public class BitemporalWritePathTests : EFCoreTestBase {
           new PerspectiveScope(), false, _eventAt(survivingEvent));
       }
     }
-    var inserted = await _readAxesAsync(conn, id);
+    var (insertedCreated, insertedUpdated, _, _) = await _readAxesAsync(conn, id);
 
-    await Assert.That(inserted.Created).IsEqualTo(streamStart)
+    await Assert.That(insertedCreated).IsEqualTo(streamStart)
       .Because("the row was inserted in a flow that dates it at its stream's start, so created_at is that start and not "
         + "the surviving event's time");
-    await Assert.That(inserted.Updated).IsEqualTo(survivingEvent)
+    await Assert.That(insertedUpdated).IsEqualTo(survivingEvent)
       .Because("updated_at is still the applied event's own time");
 
     using (PerspectiveRowStart.Begin(id, later)) {

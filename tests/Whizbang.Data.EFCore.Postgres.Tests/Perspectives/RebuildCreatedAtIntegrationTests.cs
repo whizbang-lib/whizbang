@@ -51,9 +51,9 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    var row = await _rowAsync(stream);
-    await Assert.That(row.Balance).IsEqualTo(20m).Because("the surviving event still decides the row's data");
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (balance, createdAt, _) = await _rowAsync(stream);
+    await Assert.That(balance).IsEqualTo(20m).Because("the surviving event still decides the row's data");
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("the stream began on Mar 1; its first event was reaped, and the rebuilt row is dated at the stream's "
         + "recorded start, not at the Jun 5 event that survived");
   }
@@ -85,9 +85,9 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    var row = await _rowAsync(stream);
-    await Assert.That(row.Balance).IsEqualTo(20m);
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (balance, createdAt, _) = await _rowAsync(stream);
+    await Assert.That(balance).IsEqualTo(20m);
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("an in-place rebuild updates a row that exists, and an update never moves created_at");
   }
 
@@ -104,9 +104,9 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    var row = await _rowAsync(stream);
-    await Assert.That(row.Balance).IsEqualTo(75m).Because("the truncated credit is gone from the fold");
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (balance, createdAt, _) = await _rowAsync(stream);
+    await Assert.That(balance).IsEqualTo(75m).Because("the truncated credit is gone from the fold");
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("the truncate recorded the business time of the first event it removed");
   }
 
@@ -124,11 +124,11 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    var row = await _rowAsync(stream);
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (_, createdAt, updatedAt) = await _rowAsync(stream);
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("#2154: the row is dated at the first event folded into it, not the last event of the write that inserts "
         + "it (Jun 5), and not the ledger's record, which is consulted only once the first event is gone (Sep 9)");
-    await Assert.That(row.UpdatedAt).IsEqualTo(_jun5.UtcDateTime)
+    await Assert.That(updatedAt).IsEqualTo(_jun5.UtcDateTime)
       .Because("updated_at is the last folded event's time");
   }
 
@@ -143,11 +143,11 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildInPlaceAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
-    var row = await _rowAsync(stream);
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (_, createdAt, updatedAt) = await _rowAsync(stream);
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("#2154: an in-place rebuild that inserts a missing row dates it at its first event, not the Sep 9 event "
         + "its one write ends on");
-    await Assert.That(row.UpdatedAt).IsEqualTo(_sep9.UtcDateTime);
+    await Assert.That(updatedAt).IsEqualTo(_sep9.UtcDateTime);
   }
 
   [Test]
@@ -164,12 +164,12 @@ public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {
       await Assert.That(completion.EventsProcessed).IsEqualTo(3).Because("the live drain folded all three in one batch");
     }
 
-    var row = await _rowAsync(stream);
-    await Assert.That(row.Balance).IsEqualTo(175m);
-    await Assert.That(row.CreatedAt).IsEqualTo(_mar1.UtcDateTime)
+    var (balance, createdAt, updatedAt) = await _rowAsync(stream);
+    await Assert.That(balance).IsEqualTo(175m);
+    await Assert.That(createdAt).IsEqualTo(_mar1.UtcDateTime)
       .Because("#2154: a new row is dated at its first event however the events were batched; dating it at the last "
         + "event of its first batch made created_at depend on batching");
-    await Assert.That(row.UpdatedAt).IsEqualTo(_sep9.UtcDateTime);
+    await Assert.That(updatedAt).IsEqualTo(_sep9.UtcDateTime);
   }
 
   // ===== Fixture =====
