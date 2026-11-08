@@ -1403,6 +1403,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The migrator keeps its role through a startup phase longer than its lease (#2127).** The migrator duty is a role
+  assignment with a lease (30 seconds by default), and it was renewed only between phases, so a long one (the
+  declared-key spelling scan, a wait for the schema lock, the stored-form rewrite, the index rebuild, the settle scan, a
+  long migration step) let the lease lapse; the renewal then refused the lapsed lease even when nobody had taken it, the
+  migrator said it lost the role, and a waiting instance concluded the migrator was gone and did the same work. Schema
+  initialization now holds the grant in a `MigratorDuty` from the election until it returns, and holding it starts a
+  `DutyGrantKeepalive`, which verifies the grant at half its role's renew interval (`IDutyGrant.RenewInterval`, a new
+  default member; a role-assignment grant reports `RoleAssignmentOptions.RenewInterval`), so the database sees one
+  renewal per interval through every phase; it stops before the grant is released, so a released role is never renewed.
+  A test fails if any phase from Elect to the end of Migrate runs outside it. The phases before the schema lock run only
+  on the instance holding the role (`MigratorPreLockPhase`): a waiter whose migrator is gone votes for the role and does
+  the work only once it holds it (losing the vote makes it a waiter for the winner, with the votes paced), and a migrator
+  that finds it no longer holds the role votes again rather than working without it; an instance that could not be
+  staged still does the work, as before. The wait between two steps of another instance's pass has its own outcome,
+  `SchemaDeferralOutcome.FreeBetweenSteps` (`SchemaMigrationDeferral.WaitBetweenStepsAsync`), said at Debug, instead of
+  "the migrator is gone, taking the work over" at Warning and "another instance is migrating" at Information for every
+  step.
 - **An upgrade from a release before #1681 no longer re-runs every older migration (#2125).** Releases before #1681
   (2026-10-23) recorded each migration's ledger hash over its raw text, and #1681 added a license header to every
   migration file in the same release that moved to normalized hashes. The step that moves those rows onto normalized

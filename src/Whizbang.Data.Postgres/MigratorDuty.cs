@@ -27,6 +27,7 @@ namespace Whizbang.Data.Postgres;
 public sealed class MigratorDuty : IAsyncDisposable {
   private readonly TimeProvider _timeProvider;
   private readonly ILogger? _logger;
+  private DutyGrantKeepalive? _keepalive;
 
   /// <summary>Creates the holder, holding nothing: the staging reads unstaged until an election is held.</summary>
   /// <param name="timeProvider">The clock the keepalive ticks on.</param>
@@ -47,7 +48,7 @@ public sealed class MigratorDuty : IAsyncDisposable {
   public IDutyGrant? Grant => Staging.Grant;
 
   /// <summary>Whether a grant is held and its lease is being renewed now.</summary>
-  public bool IsKeptAlive => _timeProvider is null;
+  public bool IsKeptAlive => _keepalive?.IsRunning == true;
 
   /// <summary>
   /// Holds what an election decided: releases any grant held before, then keeps the new one alive until the next
@@ -58,13 +59,19 @@ public sealed class MigratorDuty : IAsyncDisposable {
   public async Task HoldAsync(SchemaStaging staging) {
     await ReleaseAsync().ConfigureAwait(false);
     Staging = staging;
-    _ = _timeProvider;
-    _ = _logger;
+    if (staging.Grant is { } grant) {
+      _keepalive = DutyGrantKeepalive.Start(grant, _timeProvider, _logger);
+    }
   }
 
   /// <summary>Stops the keepalive and releases the grant, if one is held; the staging then reads unstaged.</summary>
   /// <returns>A task that completes once the grant is released.</returns>
   public async Task ReleaseAsync() {
+    // The keepalive first: once the grant is given back, nothing may renew it.
+    if (_keepalive is { } keepalive) {
+      _keepalive = null;
+      await keepalive.DisposeAsync().ConfigureAwait(false);
+    }
     if (Staging.Grant is { } grant) {
       await grant.DisposeAsync().ConfigureAwait(false);
     }

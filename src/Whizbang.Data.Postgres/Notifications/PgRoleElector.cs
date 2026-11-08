@@ -21,8 +21,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <remarks>
 /// <para>
 /// <b>Liveness comes from the holder's own work loop.</b> <see cref="IDutyGrant.VerifyStillHeldAsync"/>,
-/// which a holder already calls before each unit of exclusive work, renews the lease. There is no
-/// renewal timer: a holder that is stuck stops verifying and lapses, which is the point. Renewals
+/// which a holder already calls before each unit of exclusive work, renews the lease. The elector runs
+/// no renewal timer: a holder that is stuck stops verifying and lapses, which is the point. The one holder that keeps
+/// a timer is schema initialization, whose migrator runs phases longer than the lease with nothing in them that could
+/// verify: it keeps its grant alive with a <see cref="DutyGrantKeepalive"/> on the grant's
+/// <see cref="IDutyGrant.RenewInterval"/> from the election until it returns (#2127). Renewals
 /// are throttled to one per <see cref="RoleAssignmentOptions.RenewInterval"/>, measured on the
 /// monotonic clock from the moment the last successful renewal was sent. The database computed that
 /// lease from a later instant, so answering from memory inside the interval is safe, and it never
@@ -500,6 +503,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public DateTimeOffset AcquiredAt => grant.AcquiredAt;
     public Guid? PreviousHolder => grant.PreviousHolder;
     public bool DrainRequested => _drainRequested;
+    public TimeSpan RenewInterval => elector._roleOptions.RenewInterval;
 
     public Handle OpenHandle() {
       _ = Interlocked.Increment(ref _handles);
@@ -610,6 +614,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public long? Epoch => tenure.Epoch;
     public Guid? PreviousHolderInstanceId => tenure.PreviousHolder;
     public bool DrainRequested => tenure.DrainRequested;
+    public TimeSpan? RenewInterval => tenure.RenewInterval;
 
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Volatile.Read(ref _disposed) == 1 ? Task.FromResult(false) : tenure.VerifyAsync(cancellationToken);

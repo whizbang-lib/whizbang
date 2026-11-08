@@ -34,29 +34,116 @@ namespace Whizbang.Core.Startup;
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
 public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
-  private DutyGrantKeepalive(bool running) {
-    IsRunning = running;
-    TickInterval = running ? TimeSpan.Zero : null;
+  private static readonly DutyGrantKeepalive _idle = new();
+
+  private readonly IDutyGrant? _grant;
+  private readonly ITimer? _timer;
+  private readonly ILogger _logger;
+  private readonly CancellationTokenSource _stopping = new();
+  private readonly Lock _sync = new();
+  private Task _inFlight = Task.CompletedTask;
+  private bool _verifying;
+  private bool _owed;
+  private bool _stopped;
+
+  /// <summary>The keepalive of nothing: never running.</summary>
+  private DutyGrantKeepalive() {
+    _logger = NullLogger.Instance;
+    _stopped = true;
+  }
+
+  private DutyGrantKeepalive(IDutyGrant grant, TimeSpan renewInterval, TimeProvider timeProvider, ILogger logger) {
+    _grant = grant;
+    _logger = logger;
+    TickInterval = renewInterval / 2;
+    _timer = timeProvider.CreateTimer(_ => _tick(), null, TickInterval.Value, TickInterval.Value);
   }
 
   /// <summary>Whether the keepalive is renewing a grant now: started over a grant with a lease, and not yet disposed.</summary>
-  public bool IsRunning { get; }
+  public bool IsRunning {
+    get {
+      lock (_sync) {
+        return !_stopped;
+      }
+    }
+  }
 
   /// <summary>How often it verifies the grant: half the grant's renew interval, or null when there is nothing to keep alive.</summary>
   public TimeSpan? TickInterval { get; }
 
-  /// <summary>Starts keeping <paramref name="grant"/> alive (not yet: RED).</summary>
+  /// <summary>
+  /// Starts keeping <paramref name="grant"/> alive. A null grant, or one with no <see cref="IDutyGrant.RenewInterval"/>,
+  /// starts nothing, and the keepalive returned reports that it is not running.
+  /// </summary>
   /// <param name="grant">The grant, or null when nothing is held.</param>
   /// <param name="timeProvider">The clock the ticks are measured on.</param>
   /// <param name="logger">Where a verify that throws is reported.</param>
   /// <returns>The keepalive; dispose it before the grant.</returns>
   public static DutyGrantKeepalive Start(IDutyGrant? grant, TimeProvider timeProvider, ILogger? logger = null) {
     ArgumentNullException.ThrowIfNull(timeProvider);
-    _ = grant;
-    _ = logger ?? NullLogger.Instance;
-    return new DutyGrantKeepalive(false);
+    return grant?.RenewInterval is { } interval
+      ? new DutyGrantKeepalive(grant, interval, timeProvider, logger ?? NullLogger.Instance)
+      : _idle;
+  }
+
+  /// <summary>One tick: verify now, or owe one verify to the verify still running.</summary>
+  private void _tick() {
+    lock (_sync) {
+      if (_stopped) {
+        return;
+      }
+      if (_verifying) {
+        _owed = true;
+        return;
+      }
+      _verifying = true;
+      _inFlight = _verifyUntilNothingIsOwedAsync();
+    }
+  }
+
+  private async Task _verifyUntilNothingIsOwedAsync() {
+    while (true) {
+      await _verifyOnceAsync().ConfigureAwait(false);
+      lock (_sync) {
+        if (!_owed || _stopped) {
+          _verifying = false;
+          return;
+        }
+        _owed = false;
+      }
+    }
+  }
+
+  private async Task _verifyOnceAsync() {
+    try {
+      // The answer is the grant's own business: false means lost, or not reachable now, and the grant logs which.
+      _ = await _grant!.VerifyStillHeldAsync(_stopping.Token).ConfigureAwait(false);
+    } catch (OperationCanceledException) when (_stopping.IsCancellationRequested) {
+      // The keepalive is stopping; the verify it canceled is not a failure.
+    } catch (Exception ex) {
+      // Never fatal: the lease may still stand, and the next tick asks again. Said, because a keepalive that cannot
+      // renew is a role about to be lost.
+      LogVerifyFailed(_logger, _grant!.Duty, ex);
+    }
   }
 
   /// <inheritdoc />
-  public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+  public async ValueTask DisposeAsync() {
+    Task inFlight;
+    lock (_sync) {
+      if (_stopped) {
+        return;
+      }
+      _stopped = true;
+      inFlight = _inFlight;
+    }
+    _timer!.Dispose();
+    await _stopping.CancelAsync().ConfigureAwait(false);
+    await inFlight.ConfigureAwait(false);
+    _stopping.Dispose();
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "The keepalive of the {Duty} role could not verify its grant; the lease stands until it lapses, and the next tick asks again")]
+  static partial void LogVerifyFailed(ILogger logger, string duty, Exception exception);
 }

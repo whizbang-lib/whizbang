@@ -157,6 +157,14 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // ═══════════════════════════════════════════════════════════════════════════
     var staging = new Whizbang.Data.Postgres.SchemaStaging(
       Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
+    // The host's clock, for the migrator's keepalive and the long phases' progress lines.
+    var startupClock = serviceProvider?.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
+    // #2127: the migrator duty this instance holds, from the election until this method returns, however it returns.
+    // Holding a grant here starts its keepalive, which renews the lease on the role's renew interval through every
+    // phase that follows (the stored-form scans, the waits, the index rebuild, each migration step), so none of them
+    // can lose the role by outlasting the lease. Released, keepalive first, when this method returns: a duty still
+    // held by an instance that has finished, or failed, would leave every other instance waiting on it.
+    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger);
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
@@ -208,6 +216,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
                 as Whizbang.Core.Startup.IDutyElector,
               "__SCHEMA__", logger, cancellationToken);
+            await migratorDuty.HoldAsync(staging);
           } else {
             staging = new Whizbang.Data.Postgres.SchemaStaging(
               Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "this instance could not join the registry");
@@ -227,10 +236,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
     }
 
-    // Released when this method returns, however it returns. A duty still held by an instance that
-    // has finished, or failed, would leave every other instance waiting on it indefinitely.
-    await using var migratorGrant = staging.Grant;
-
     // The stored-form rewrite, committed before the transaction that indexes its result. An index
     // over an extraction of a rewritten key cannot be built in the transaction that did the
     // rewriting, because the index build evaluates its expression over row versions the rewrite
@@ -246,6 +251,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     //
     // One body for both call sites, so the two cannot drift apart.
     async Task rewriteStoredFormsAsync(Func<Npgsql.NpgsqlConnection> rewriteConnectionFactory) {
+      // Said as progress within Migrate: on a large database these phases are most of a migrating start (#2128).
+      await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
+        serviceProvider, "bringing stored documents to their current form", cancellationToken);
       try {
         // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
         // keeps writing the old unit into a table the ledger already says is converted, and nothing
@@ -315,71 +323,61 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
-    // Phase 2: whoever does the schema work rewrites first; whoever does not, waits.
+    // Phase 2: the phases before the schema lock run on the instance holding the migrator role, and on nobody else
+    // (#2127). They take no schema lock for most of what they do, so the role is all that keeps two instances from
+    // scanning and rewriting the same tables and building and dropping the same indexes at once.
     //
-    // A waiter lost the election, so it watches the migrator's DUTY: the migrator holds the role until
-    // it returns, and a holder that dies loses it (its lease lapses, or the one liveness rule has it
-    // reaped), so the wait ends in a takeover. How the wait ended decides one thing. Either the holder finished, and the fast path
-    // below reads clean hashes and exits in one query; or the holder is gone, or could not be
-    // watched, and this instance is about to do the schema work itself: then it rewrites first,
-    // because a migrator killed mid-rewrite leaves the remaining tables in the old form and every
-    // replacement instance is a waiter.
+    // A waiter lost the election, so it watches the migrator's DUTY: the migrator holds the role until it returns, and
+    // a holder that dies loses it (its lease lapses, or the one liveness rule has it reaped). How the wait ended decides
+    // what comes next. The holder finished: the fast path below reads clean hashes and exits in one query. The holder
+    // is gone with the schema still behind: this instance votes for the role, and does the work only once it holds it,
+    // because a migrator killed mid-rewrite leaves the remaining tables in the old form and every replacement instance
+    // is a waiter. Losing that vote makes it a waiter again, for whoever won.
     //
-    // Any other instance, the migrator or one that could not be staged, rewrites and then contends
-    // for the DDL lock. Not while another session holds the SCHEMA lock, though. That session is
-    // doing the schema work right now (its bootstrap, its rewrite, or its DDL), and the rewrite
-    // phase, which waits for the lock rather than skipping, would sit behind it for up to its whole
-    // budget to learn what this instance can simply watch for. So it watches the schema lock the way
-    // a waiter watches the duty, through the same wait, and rewrites when the wait ends, whichever
-    // way it ended: a schema brought up to date under it makes the rewrite a settled no-op and the
-    // fast path an exit, and a lock released over a schema still behind makes this the instance that
-    // does the work. The loop below then contends for the lock as it always did.
+    // The migrator, and an instance that could not be staged, do the work, but not while another session holds the
+    // SCHEMA lock: that session is doing the schema work right now (its bootstrap, its rewrite, or its DDL), and the
+    // rewrite phase, which waits for the lock rather than skipping, would sit behind it for up to its whole budget to
+    // learn what this instance can simply watch for. So it watches the schema lock the way a waiter watches the duty,
+    // and does the work when the wait ends, whichever way it ended. The migrator first confirms it still holds the
+    // role, and votes again rather than working without it.
     if (segmentConnectionFactory is not null && !schemaIsCurrent) {
-      var isWaiter = staging.Stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
-      var doesTheWork = staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter;
-      try {
-        await using var waitConnection = segmentConnectionFactory();
-        await waitConnection.OpenAsync(cancellationToken);
-        // A waiter watches the migrator: its assignment row, or, while an older release may be the
-        // migrator, the holding that release records (judged by the one liveness rule, #2044).
-        // Anyone else watches the schema lock.
-        System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
-          ? ct => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", ct)
-          : ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct);
-        if (isWaiter
-            || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
-          // Another instance is doing the schema work; this one waits for it, and says so first.
-          await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
-            serviceProvider, "waiting for the instance migrating the schema", cancellationToken);
-          await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
-          var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
-            ct => _isSchemaCurrentAsync(waitConnection, ct),
-            isMigrating,
-            TimeProvider.System,
-            "__SCHEMA__",
-            logger,
-            cancellationToken);
-          doesTheWork = !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;
-        }
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Falling through to contend for the lock is the correct response to not being able to
-        // wait, and the lock still excludes.
-        logger?.LogWarning(ex,
-          "Could not wait for the migrator of schema {Schema}; contending for the initialization "
-          + "lock instead", "__SCHEMA__");
-        doesTheWork = true;
-      }
-
-      if (doesTheWork) {
-        await rewriteStoredFormsAsync(segmentConnectionFactory);
-      }
+      await Whizbang.Data.Postgres.MigratorPreLockPhase.RunAsync(
+        migratorDuty,
+        new Whizbang.Data.Postgres.PreLockPhaseSteps(
+          WaitAsync: async (stage, ct) => {
+            await using var waitConnection = segmentConnectionFactory();
+            await waitConnection.OpenAsync(ct);
+            var isWaiter = stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
+            // A waiter watches the migrator: its assignment row, or, while an older release may be the migrator, the
+            // holding that release records (judged by the one liveness rule, #2044). Anyone else watches the schema lock.
+            System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
+              ? c => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", c)
+              : c => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, c);
+            if (!isWaiter && !await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct)) {
+              return true;
+            }
+            // Another instance is doing the schema work; this one waits for it, and says so first.
+            await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
+              serviceProvider, "waiting for the instance migrating the schema", ct);
+            await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", ct);
+            var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
+              c => _isSchemaCurrentAsync(waitConnection, c), isMigrating, TimeProvider.System, "__SCHEMA__", logger, ct);
+            return !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;
+          },
+          ElectAsync: ct => Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
+            serviceProvider?.GetService(typeof(Whizbang.Core.Startup.IDutyElector)) as Whizbang.Core.Startup.IDutyElector,
+            "__SCHEMA__", logger, ct),
+          PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), startupClock, ct),
+          WorkAsync: _ => rewriteStoredFormsAsync(segmentConnectionFactory)),
+        "__SCHEMA__", logger, cancellationToken);
     }
 
-    // The migrator holds its duty by assignment: verifying renews the lease between phases, so a
-    // long rewrite does not lose it. A lost assignment changes nothing here, since the schema lock
-    // still excludes; it only means a waiter may stop waiting and contend for that lock.
-    if (migratorGrant is not null) {
-      _ = await migratorGrant.VerifyStillHeldAsync(cancellationToken);
+    // The keepalive renews the migrator's assignment on the role's renew interval, so no phase loses it by running
+    // long. Verifying here learns at once of an assignment lost some other way (a takeover after a liveness verdict).
+    // A lost assignment changes nothing here, since the schema lock still excludes; it only means a waiter may stop
+    // waiting and contend for that lock.
+    if (migratorDuty.Grant is not null) {
+      _ = await migratorDuty.Grant.VerifyStillHeldAsync(cancellationToken);
     }
 
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
@@ -405,11 +403,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // mark is committed before the DDL transaction begins (a mark inside it would be invisible to
         // every voter until it committed) and cleared when this attempt ends. Nothing for an
         // instance that is not the migrator.
-        if (migratorGrant is not null) {
-          _ = await migratorGrant.VerifyStillHeldAsync(cancellationToken);
+        if (migratorDuty.Grant is not null) {
+          _ = await migratorDuty.Grant.VerifyStillHeldAsync(cancellationToken);
         }
         await using var migratorBackend = await Whizbang.Data.Postgres.Notifications.PgRoleElector.MarkDutyBackendAsync(
-          connection, migratorGrant, cancellationToken);
+          connection, migratorDuty.Grant, cancellationToken);
 
         // ═══════════════════════════════════════════════════════════════════════════
         // FAST PATH: Bulk-query existing per-object hashes BEFORE acquiring any lock.

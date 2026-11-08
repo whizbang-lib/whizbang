@@ -67,16 +67,86 @@ public static partial class MigratorPreLockPhase {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(duty);
     ArgumentNullException.ThrowIfNull(steps);
-    _ = schema;
-    _ = logger ?? NullLogger.Instance;
-    bool workRemains;
-    try {
-      workRemains = await steps.WaitAsync(duty.Stage, cancellationToken).ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      workRemains = true;
-    }
-    if (duty.Stage != SchemaStage.Waiter || workRemains) {
+    var log = logger ?? NullLogger.Instance;
+    var votes = 0;
+
+    while (true) {
+      cancellationToken.ThrowIfCancellationRequested();
+      var stage = duty.Stage;
+      var workRemains = await _waitAsync(steps, stage, schema, log, cancellationToken).ConfigureAwait(false);
+
+      if (stage == SchemaStage.Waiter) {
+        if (!workRemains) {
+          // The migrator finished: the schema pass that follows finds nothing to apply.
+          return;
+        }
+        LogMigratorGone(log, schema);
+        votes = await _voteAsync(duty, steps, votes, cancellationToken).ConfigureAwait(false);
+        if (duty.Stage == SchemaStage.Waiter) {
+          LogAnotherHolder(log, schema, duty.Staging.Detail);
+        }
+        continue;
+      }
+
+      if (stage == SchemaStage.Migrator && !await duty.Grant!.VerifyStillHeldAsync(cancellationToken).ConfigureAwait(false)) {
+        // Lost to a takeover, or not reachable now: either way not a role to work under. Given up, and voted for again.
+        LogRoleLost(log, schema);
+        await duty.ReleaseAsync().ConfigureAwait(false);
+        votes = await _voteAsync(duty, steps, votes, cancellationToken).ConfigureAwait(false);
+        continue;
+      }
+
+      if (stage == SchemaStage.Migrator) {
+        LogRoleHolderRuns(log, schema);
+      } else {
+        LogUnstagedRuns(log, schema, duty.Staging.Detail);
+      }
       await steps.WorkAsync(cancellationToken).ConfigureAwait(false);
+      return;
     }
   }
+
+  /// <summary>Votes again, after a pause from the second vote on; the duty then holds whatever the vote decided.</summary>
+  private static async Task<int> _voteAsync(MigratorDuty duty, PreLockPhaseSteps steps, int votes, CancellationToken cancellationToken) {
+    if (votes > 0) {
+      await steps.PauseAsync(votes, cancellationToken).ConfigureAwait(false);
+    }
+    await duty.HoldAsync(await steps.ElectAsync(cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+    return votes + 1;
+  }
+
+  /// <summary>The initializer's wait; one that throws is read as "work remains", as the initializer always did.</summary>
+  private static async Task<bool> _waitAsync(
+      PreLockPhaseSteps steps, SchemaStage stage, string schema, ILogger log, CancellationToken cancellationToken) {
+    try {
+      return await steps.WaitAsync(stage, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogWaitFailed(log, ex, schema);
+      return true;
+    }
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information,
+    Message = "This instance holds the migrator role for schema {Schema}; it brings stored documents to their current form before the schema pass")]
+  static partial void LogRoleHolderRuns(ILogger logger, string schema);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+    Message = "No migrator role is held for schema {Schema} ({Detail}); this instance brings stored documents to their current form, as every instance did before an election existed")]
+  static partial void LogUnstagedRuns(ILogger logger, string schema, string detail);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information,
+    Message = "The migrator of schema {Schema} is gone and the schema is still behind; voting for the migrator role before doing its work")]
+  static partial void LogMigratorGone(ILogger logger, string schema);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "Another instance won the migrator role for schema {Schema}; waiting for its result: {Detail}")]
+  static partial void LogAnotherHolder(ILogger logger, string schema, string detail);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "This instance no longer holds the migrator role for schema {Schema}; voting for it again rather than bringing stored documents to their current form without it")]
+  static partial void LogRoleLost(ILogger logger, string schema);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+    Message = "Could not wait for the instance doing the schema work for {Schema}; going on as if it were gone")]
+  static partial void LogWaitFailed(ILogger logger, Exception exception, string schema);
 }

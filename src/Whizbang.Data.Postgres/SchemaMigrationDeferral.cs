@@ -114,13 +114,23 @@ public static class SchemaMigrationDeferral {
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Which of the two endings occurred.</returns>
-  public static async Task<SchemaDeferralOutcome> DeferAsync(
+  public static Task<SchemaDeferralOutcome> DeferAsync(
       Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
       Func<CancellationToken, Task<bool>> isLockHeldAsync,
       TimeProvider timeProvider,
       string schema,
       ILogger? logger = null,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _waitAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, betweenSteps: false, logger, cancellationToken);
+
+  private static async Task<SchemaDeferralOutcome> _waitAsync(
+      Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
+      Func<CancellationToken, Task<bool>> isLockHeldAsync,
+      TimeProvider timeProvider,
+      string schema,
+      bool betweenSteps,
+      ILogger? logger,
+      CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(isSchemaCleanAsync);
     ArgumentNullException.ThrowIfNull(isLockHeldAsync);
     ArgumentNullException.ThrowIfNull(timeProvider);
@@ -148,7 +158,13 @@ public static class SchemaMigrationDeferral {
         // the whole fleet's startup riding on it. Contending for the lock is the guess that cannot
         // strand anything: it is what every instance did before this existed.
         SchemaMigrationDeferralLog.LockProbeFailed(log, ex, schema);
-        return SchemaDeferralOutcome.MigratingInstanceGone;
+        return betweenSteps ? SchemaDeferralOutcome.FreeBetweenSteps : SchemaDeferralOutcome.MigratingInstanceGone;
+      }
+
+      if (!held && betweenSteps) {
+        // Free between two of the holder's steps: it is not gone, and this instance contends for the next step.
+        SchemaMigrationDeferralLog.FreeBetweenSteps(log, schema, polls);
+        return SchemaDeferralOutcome.FreeBetweenSteps;
       }
 
       if (!held) {
@@ -157,7 +173,9 @@ public static class SchemaMigrationDeferral {
         return SchemaDeferralOutcome.MigratingInstanceGone;
       }
 
-      if (polls == 0) {
+      if (polls == 0 && betweenSteps) {
+        SchemaMigrationDeferralLog.WaitingOutAStep(log, schema);
+      } else if (polls == 0) {
         // Once, not once per poll: a fleet waiting out a long migration would otherwise fill its
         // logs with the fact that it is still waiting.
         SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
@@ -193,7 +211,7 @@ public static class SchemaMigrationDeferral {
       string schema,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) =>
-    DeferAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, logger, cancellationToken);
+    _waitAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, betweenSteps: true, logger, cancellationToken);
 
   /// <summary>
   /// Asks whether the schema is current, treating an unanswerable question as "no".
@@ -253,4 +271,17 @@ internal static partial class SchemaMigrationDeferralLog {
       Message = "Could not tell whether schema {Schema} is up to date; treating it as behind and "
               + "asking again (expected while the tracking tables are still being created)")]
   public static partial void CurrencyProbeFailed(ILogger logger, Exception exception, string schema);
+
+  [LoggerMessage(
+      EventId = 6,
+      Level = LogLevel.Debug,
+      Message = "Another instance holds the schema {Schema} lock for one of its steps; waiting for it")]
+  public static partial void WaitingOutAStep(ILogger logger, string schema);
+
+  [LoggerMessage(
+      EventId = 7,
+      Level = LogLevel.Debug,
+      Message = "The schema {Schema} lock is free between another instance's steps after {Polls} check(s); "
+              + "contending for the next step")]
+  public static partial void FreeBetweenSteps(ILogger logger, string schema, int polls);
 }

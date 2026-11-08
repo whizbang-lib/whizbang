@@ -14,8 +14,9 @@ namespace Whizbang.Core.Startup;
 /// <para>
 /// The lease is <see cref="RenewInterval"/> times <see cref="MissedRenewalsBeforeLapse"/>, so one
 /// slow renewal never costs the role: a holder lapses only after several renewals in a row fail to
-/// arrive. A holder renews from its own work loop, never from a timer, so a holder that is stuck
-/// stops renewing and lapses. After an involuntary lapse, that instance may not win the role back
+/// arrive. A holder renews from its own work loop, so a holder that is stuck stops renewing and
+/// lapses; the migrator, whose startup phases can each outlast the lease, renews on a keepalive
+/// timer from its election until schema initialization returns (#2127). After an involuntary lapse, that instance may not win the role back
 /// for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A graceful
 /// release carries no cool-down.
 /// </para>
