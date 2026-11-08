@@ -1430,8 +1430,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repair, used to stay unsettled and be scanned again, and reported again, on every start: it is now settled after the
   check, which reports the rows once at Error with their count and the table, and is not checked again until what its
   readers declare changes. A table whose keys were rewritten on a start stays open and is checked on the next one, which
-  reports what is missing then, once. The stored-form phases are also reported as progress within Migrate ("bringing
-  stored documents to their current form"). New overloads of `DeclaredKeySpellingPass.ApplyAsync`, `RewriteAsync` and
+  reports what is missing then, once. New overloads of `DeclaredKeySpellingPass.ApplyAsync`, `RewriteAsync` and
   `SettleAsync` take the clock.
 - **The migrator keeps its role through a startup phase longer than its lease (#2127).** The migrator duty is a role
   assignment with a lease (30 seconds by default), and it was renewed only between phases, so a long one (the
@@ -1446,7 +1445,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the instance holding the role (`MigratorPreLockPhase`): a waiter whose migrator is gone votes for the role and does
   the work only once it holds it (losing the vote makes it a waiter for the winner, with the votes paced), and a migrator
   that finds it no longer holds the role votes again rather than working without it; an instance that could not be
-  staged still does the work, as before. The wait between two steps of another instance's pass has its own outcome,
+  staged still does the work, as before. The phases are announced to the registered observers
+  (`ISchemaInitializationObserver.OnPreLockPhasesStartingAsync`, a default member), not as a stage, since they run on a
+  restart too. The wait between two steps of another instance's pass has its own outcome,
   `SchemaDeferralOutcome.FreeBetweenSteps` (`SchemaMigrationDeferral.WaitBetweenStepsAsync`), said at Debug, instead of
   "the migrator is gone, taking the work over" at Warning and "another instance is migrating" at Information for every
   step.

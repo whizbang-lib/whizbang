@@ -251,9 +251,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     //
     // One body for both call sites, so the two cannot drift apart.
     async Task rewriteStoredFormsAsync(Func<Npgsql.NpgsqlConnection> rewriteConnectionFactory) {
-      // Said as progress within Migrate: on a large database these phases are most of a migrating start (#2128).
-      await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
-        serviceProvider, "bringing stored documents to their current form", cancellationToken);
+      // Announced to the observers, not as a stage: these phases run on a restart too, and Migrate stays the pass's
+      // stage. Their progress is said in the log (#2128).
+      await Whizbang.Data.Postgres.SchemaInitializationObservers.PreLockPhasesStartingAsync(serviceProvider, "__SCHEMA__", cancellationToken);
       try {
         // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
         // keeps writing the old unit into a table the ledger already says is converted, and nothing

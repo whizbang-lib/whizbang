@@ -39,11 +39,10 @@ public static class SchemaInitializationObservers {
   /// <param name="schema">The schema, unquoted.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_TellsEveryRegisteredObserverAsync</tests>
-  public static Task PreLockPhasesStartingAsync(IServiceProvider? services, string schema, CancellationToken cancellationToken) {
-    _ = services;
-    _ = schema;
-    _ = cancellationToken;
-    return Task.CompletedTask;
+  public static async Task PreLockPhasesStartingAsync(IServiceProvider? services, string schema, CancellationToken cancellationToken) {
+    foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
+      await observer.OnPreLockPhasesStartingAsync(schema, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>The bootstrap closure for <paramref name="schema"/> failed transiently and retries after <paramref name="delay"/>.</summary>
