@@ -160,6 +160,79 @@ public class BitemporalWritePathTests : EFCoreTestBase {
       .Because("system time legitimately advances — the row really was written again");
   }
 
+  /// <summary>
+  /// #2152: a row written in a flow that dates it at its stream's start (its stream's first event is gone) is inserted
+  /// with that start as created_at, on the atomic path and on the Entity Framework path alike; an update never moves it.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Insert_InAFlowDatingTheRowAtItsStreamsStart_TakesThatStart_AndAnUpdateKeepsItAsync(bool atomic) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _createTableAsync(conn);
+
+    var id = Guid.CreateVersion7();
+    var streamStart = new DateTime(2019, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+    var survivingEvent = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+    var later = new DateTime(2021, 11, 12, 13, 14, 15, DateTimeKind.Utc);
+
+    await using var context = _createContext();
+    IPerspectiveStore<BitemporalWriteModel> store = new EFCorePostgresPerspectiveStore<BitemporalWriteModel>(
+      context, TABLE, atomic ? new PostgresUpsertStrategy() : new EntityFrameworkOnlyUpsertStrategy());
+
+    using (PerspectiveRowStart.Begin(Guid.CreateVersion7(), new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))) {
+      using (PerspectiveRowStart.Begin(id, streamStart)) {
+        await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },
+          new PerspectiveScope(), false, _eventAt(survivingEvent));
+      }
+    }
+    var inserted = await _readAxesAsync(conn, id);
+
+    await Assert.That(inserted.Created).IsEqualTo(streamStart)
+      .Because("the row was inserted in a flow that dates it at its stream's start, so created_at is that start and not "
+        + "the surviving event's time");
+    await Assert.That(inserted.Updated).IsEqualTo(survivingEvent)
+      .Because("updated_at is still the applied event's own time");
+
+    using (PerspectiveRowStart.Begin(id, later)) {
+      await store.UpsertAsync(id, new BitemporalWriteModel { Name = "second" },
+        new PerspectiveScope(), false, _eventAt(later));
+    }
+    await Assert.That((await _readAxesAsync(conn, id)).Created).IsEqualTo(streamStart)
+      .Because("an update never moves created_at, whatever the flow carries");
+  }
+
+  /// <summary>
+  /// #2152: a start the flow carries for ANOTHER row never dates this one, so one rebuild flow writing several rows
+  /// cannot date a row at a stream it does not belong to.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Insert_InAFlowDatingAnotherRow_IsDatedByItsEventAsync(bool atomic) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _createTableAsync(conn);
+
+    var id = Guid.CreateVersion7();
+    var occurredAt = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+
+    await using var context = _createContext();
+    IPerspectiveStore<BitemporalWriteModel> store = new EFCorePostgresPerspectiveStore<BitemporalWriteModel>(
+      context, TABLE, atomic ? new PostgresUpsertStrategy() : new EntityFrameworkOnlyUpsertStrategy());
+    using (PerspectiveRowStart.Begin(Guid.CreateVersion7(), new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))) {
+      await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },
+        new PerspectiveScope(), false, _eventAt(occurredAt));
+    }
+
+    await Assert.That((await _readAxesAsync(conn, id)).Created).IsEqualTo(occurredAt);
+  }
+
+  private sealed class EntityFrameworkOnlyUpsertStrategy : BaseUpsertStrategy {
+    protected override bool UsesAtomicUpsert => false;
+  }
+
   private BitemporalWriteDbContext _createContext() {
     var options = new DbContextOptionsBuilder<BitemporalWriteDbContext>()
       .UseNpgsql(ConnectionString)
