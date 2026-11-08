@@ -362,6 +362,21 @@ public sealed class EFCoreEventStore<TDbContext>(
     return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
   }
 
+  /// <summary>
+  /// The stream's start once its first event is gone (#2152): the business time the superseding reaper or a prefix
+  /// truncate recorded on the stream's ledger row when it removed that event. Null while the stream holds it.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamStartedAtSqlTests.cs:EventStore_GetStreamStartedAt_ReadsTheStreamsStartAsync</tests>
+  public Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    _queryHistoryAsync(Whizbang.Data.Postgres.StreamStartSql.StartedAt, streamId, beforeEventId: null,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return await reader.IsDBNullAsync(0, cancellationToken)
+          ? (DateTime?)null
+          : DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc);
+      }, cancellationToken);
+
   // Runs one of the version questions (#1933) on the context's connection and in its current transaction, qualified with
   // the schema the event store table is mapped to.
   private async Task<T> _queryHistoryAsync<T>(Func<string, string> sql, Guid streamId, Guid? beforeEventId,

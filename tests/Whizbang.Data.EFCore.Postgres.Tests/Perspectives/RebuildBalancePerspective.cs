@@ -20,6 +20,7 @@ public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildNonCreatingEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildBalanceSetEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildLabelSetEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildBalanceRestatedEvent>,
     IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
@@ -63,6 +64,12 @@ public class RebuildBalancePerspective :
   // A second last-write-wins field, so a test can compare a whole row and not only the field it expected to change.
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildLabelSetEvent @event) {
     return new RebuildBalanceModel { Id = @event.StreamId, Balance = currentData.Balance, Label = @event.Label };
+  }
+
+  // A superseding restatement (#2152): the newest of each account key carries the whole balance, so the reaper can remove
+  // the older ones, the stream's first event among them.
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildBalanceRestatedEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance, Label = currentData.Label };
   }
 
   // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
@@ -109,6 +116,16 @@ public record RebuildLabelSetEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
   public required string Label { get; init; }
+}
+
+/// <summary>Restates the balance in full: a superseding event, so an older one of the same key is reaped (#2152).</summary>
+[Whizbang.Core.Attributes.Superseding]
+public record RebuildBalanceRestatedEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  [Whizbang.Core.Attributes.SupersedingKey]
+  public required string Account { get; init; }
+  public required decimal Balance { get; init; }
 }
 
 public record RebuildClosedEvent : IEvent {

@@ -512,7 +512,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       if (expected.State == PerspectiveRowVersionState.Present) {
         cmd.Parameters.Add(PerspectiveRowVersionSql.ExpectedVersionParameter("wb_expected_version", expected));
       }
-      cmd.Parameters.Add(new NpgsqlParameter("wb_created", businessTime));
+      // created_at is written only on insert. A row whose stream no longer holds its first event is dated at the stream's
+      // recorded start, which the runner begins for this row (#2152); otherwise at the applied event's business time.
+      cmd.Parameters.Add(new NpgsqlParameter("wb_created", Whizbang.Core.Perspectives.PerspectiveRowStart.For(args.Id) ?? businessTime));
       // The timestamps hook may override business time explicitly; its default now yields the
       // applied event's own timestamp rather than the clock.
       cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? businessTime));
@@ -787,7 +789,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         }
       }
     } else {
-      row = _createNewRow(id, model, metadata, scope, businessTime, updatedAt);
+      // A row whose stream no longer holds its first event is dated at the stream's recorded start (#2152).
+      row = _createNewRow(id, model, metadata, scope, Whizbang.Core.Perspectives.PerspectiveRowStart.For(id) ?? businessTime, updatedAt);
       context.Set<PerspectiveRow<TModel>>().Add(row);
     }
 

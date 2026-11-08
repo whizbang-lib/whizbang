@@ -282,6 +282,23 @@ public partial class DapperPostgresEventStore(
   }
 
   /// <summary>
+  /// The stream's start once its first event is gone (#2152): the business time the superseding reaper or a prefix
+  /// truncate recorded on the stream's ledger row. Null while the stream holds its first event. Mirrors the EF Core driver.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamStartedAtTests.cs</tests>
+  public override async Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var startedAt = await Executor.ExecuteScalarAsync<DateTime?>(
+      connection,
+      Whizbang.Data.Postgres.StreamStartSql.StartedAt(string.Empty),
+      new { StreamId = streamId },
+      cancellationToken: cancellationToken);
+    return startedAt is { } at ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : null;
+  }
+
+  /// <summary>
   /// The values this store's direct append stores for <paramref name="payload"/> (#1741), so the book closer stores the
   /// closing summary and the opening balance exactly as an append would: the same envelope, persistence policies, size
   /// validation and kind bits.
