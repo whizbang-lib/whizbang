@@ -30,7 +30,7 @@ namespace Whizbang.Core.RunControl;
 /// </remarks>
 /// <docs>operations/startup/instance-exits</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs</tests>
-public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
+public sealed partial class WhizbangInstanceExit : IWhizbangInstanceExit {
   /// <summary>The page that explains every exit, linked from each exit's log entry.</summary>
   public const string DOCS_LINK = "https://whizbang-lib.github.io/docs/v1.0.0/operations/startup/instance-exits";
 
@@ -51,6 +51,7 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
   private readonly IProcessExitCode _exitCode;
   private readonly TimeProvider _time;
   private readonly ILogger _logger;
+  private readonly IProcessCrashEvents _crashEvents;
   private readonly Lock _gate = new();
   private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
   private InstanceExitRequest? _request;
@@ -58,6 +59,8 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
   private bool _hosted;
   private DateTimeOffset? _hostStartedAt;
   private InstanceExitReport? _report;
+  private bool _crashHooked;
+  private int _crashDeregistered;
 
   /// <summary>Creates the path.</summary>
   /// <param name="services">The host's services, read when the exit happens.</param>
@@ -79,7 +82,6 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
       TimeProvider? timeProvider,
       ILogger<WhizbangInstanceExit> logger,
       IProcessCrashEvents? crashEvents = null) {
-    _ = crashEvents;
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(exitCode);
     ArgumentNullException.ThrowIfNull(logger);
@@ -88,6 +90,7 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
     _exitCode = exitCode;
     _time = timeProvider ?? TimeProvider.System;
     _logger = logger;
+    _crashEvents = crashEvents ?? ProcessCrashEvents.Instance;
   }
 
   /// <inheritdoc />
@@ -138,7 +141,106 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
     lock (_gate) {
       _hosted = true;
       _hostStartedAt = _time.GetUtcNow();
+      if (_crashHooked || _completing) {
+        return;
+      }
+      _crashHooked = true;
     }
+    // A crash on any thread takes this path too (#2126). Subscribed here, once, by the exit path itself, so a host
+    // that can exit cannot lack it; given back when the exit completes.
+    _crashEvents.UnhandledException += _onUnhandledException;
+    _crashEvents.UnobservedTaskException += _onUnobservedTaskException;
+  }
+
+  /// <summary>
+  /// An exception nothing caught, on any thread: the process is dying, and this is the last thing that runs before it
+  /// goes. The exit is a <see cref="ExitCause.Crash"/> (code 1) unless an exit is already under way, whose cause stands.
+  /// Its halt, durable row and entry are attempted, bounded by <see cref="CrashExitBudget"/> on the exit path's clock;
+  /// whatever has not finished by then is abandoned. Never throws, and never runs an exit twice.
+  /// </summary>
+  /// <param name="thrown">What was thrown: an exception, or, from code in another language, any object.</param>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitCrashTests.cs</tests>
+  internal void ExitOnCrash(object? thrown) {
+#pragma warning disable CA1031, RCS1075 // the process is dying: nothing thrown here may escape into the runtime's handler
+    try {
+      var exception = thrown as Exception ?? new InvalidOperationException(
+        "Something that is not an exception was thrown and nothing caught it: " + TypeNameFormatter.RuntimeDisplayName(thrown));
+      lock (_gate) {
+        _request ??= new InstanceExitRequest(ExitCause.Crash,
+          "an exception nothing caught (" + TypeNameFormatter.DisplayName(exception.GetType()) + ") ended the process",
+          exception);
+      }
+      using var budget = new CancellationTokenSource(CrashExitBudget, _time);
+      // Bounded on the clock as well as by the token, so a step that ignores the token cannot hold the dying process.
+      var bound = Task.Delay(CrashExitBudget, _time, CancellationToken.None);
+      var exiting = _crashExitAsync(budget.Token);
+      Task.WhenAny(exiting, bound).GetAwaiter().GetResult();
+    } catch (Exception) {
+      // intentionally swallowed: see the pragma's justification; the exit's own entry says what it could
+    }
+#pragma warning restore CA1031, RCS1075
+  }
+
+  /// <summary>
+  /// A faulted task nobody observed. The runtime does not end the process for it, so neither does the exit path: it is
+  /// said at Error, with the exception, and the instance goes on.
+  /// </summary>
+  /// <param name="exception">The task's exception.</param>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitCrashTests.cs:AnUnobservedTaskException_IsSaid_AndDoesNotExitAsync</tests>
+  internal void ReportUnobservedTask(AggregateException exception) {
+#pragma warning disable CA1031, RCS1075 // raised on the finalizer thread: nothing thrown here may escape
+    try {
+      LogUnobservedTask(_logger, exception);
+    } catch (Exception) {
+      // intentionally swallowed: see the pragma's justification
+    }
+#pragma warning restore CA1031, RCS1075
+  }
+
+  /// <summary>
+  /// The exit under way completes (halt, row, entry, exit code), then this instance is deregistered: its leases released
+  /// and its row removed, which a graceful stop leaves to the shutdown service, and a dying process never reaches.
+  /// </summary>
+  private async Task _crashExitAsync(CancellationToken cancellationToken) {
+    try {
+      await _completeOnceAsync(cancellationToken).ConfigureAwait(false);
+    }
+#pragma warning disable CA1031, RCS1075 // not swallowed: the exit's own entry says what it could; the deregistration is still owed
+    catch (Exception) {
+      // intentionally swallowed: see the pragma's justification
+    }
+#pragma warning restore CA1031, RCS1075
+    if (_services.GetService<IServiceInstanceProvider>() is not { } instance
+        || Interlocked.Exchange(ref _crashDeregistered, 1) == 1) {
+      return;
+    }
+    try {
+      await using var scope = _services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+      if (scope.ServiceProvider.GetService<IWorkCoordinator>() is { } coordinator) {
+        await coordinator.DeregisterInstanceAsync(instance.InstanceId, cancellationToken).ConfigureAwait(false);
+      }
+    }
+#pragma warning disable CA1031 // not swallowed: said, and the dying process goes on dying
+    catch (Exception ex) {
+#pragma warning restore CA1031
+      LogCrashDeregisterFailed(_logger, instance.InstanceId, ex);
+    }
+  }
+
+  private void _onUnhandledException(object? sender, UnhandledExceptionEventArgs e) => ExitOnCrash(e.ExceptionObject);
+
+  private void _onUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e) => ReportUnobservedTask(e.Exception);
+
+  /// <summary>Gives the process's failure events back once the exit has completed: there is nothing left to exit.</summary>
+  private void _unhookCrash() {
+    lock (_gate) {
+      if (!_crashHooked) {
+        return;
+      }
+      _crashHooked = false;
+    }
+    _crashEvents.UnhandledException -= _onUnhandledException;
+    _crashEvents.UnobservedTaskException -= _onUnobservedTaskException;
   }
 
   /// <inheritdoc />
@@ -194,6 +296,7 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
       static (state, _) => state.ToString());
     _exitCode.SetExitCode(record.ExitCode);
     Volatile.Write(ref _report, new InstanceExitReport(record, recording));
+    _unhookCrash();
     if (_services.GetService<IHostApplicationLifetime>() is { ApplicationStopping.IsCancellationRequested: false } lifetime) {
 #pragma warning disable RS0030 // the one place library code stops the host (#2126)
       lifetime.StopApplication();
@@ -264,6 +367,14 @@ public sealed class WhizbangInstanceExit : IWhizbangInstanceExit {
         "the database could not be reached or refused the write (" + TypeNameFormatter.DisplayName(ex.GetType()) + ": " + ex.Message + ")");
     }
   }
+
+  [LoggerMessage(EventId = 2, EventName = "UnobservedTaskException", Level = LogLevel.Error,
+    Message = "A task failed and nothing observed its exception; the instance goes on, since the runtime does not end the process for it")]
+  static partial void LogUnobservedTask(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 3, EventName = "CrashDeregisterFailed", Level = LogLevel.Warning,
+    Message = "Instance {InstanceId} crashed and could not be deregistered; its row and leases are left to the liveness rule's reap")]
+  static partial void LogCrashDeregisterFailed(ILogger logger, Guid instanceId, Exception exception);
 }
 
 /// <summary>The default <see cref="IProcessExitCode"/>: sets <c>Environment.ExitCode</c>, the code a host process exits with.</summary>

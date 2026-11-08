@@ -1409,6 +1409,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`MaintenanceRetentionOptions.InstanceExitDays`) like every other retention window, and 30 days when nothing sets it
   (migration 356, in the bootstrap closure with 354's definition; the function is now PL/pgSQL so it can probe for
   `wh_settings`, which the closure runs before on a new database).
+- **A crash on any thread goes through the one exit path (#2126).** The exit path subscribes to the process's own
+  failure events when the host starts (`IProcessCrashEvents`, `ProcessCrashEvents.Instance` unless a test registers
+  its own), once, and gives them back when its exit completes. An exception nothing caught is a `Crash` (exit code 1)
+  unless an exit is already under way, whose cause stands: it halts through the run-control path (releasing roles and
+  leases), writes the detailed entry, records the durable row, sets the exit code, and then deregisters the instance
+  (its leases and row), which a graceful stop leaves to the shutdown service that a dying process never reaches; all of
+  it bounded by `WhizbangInstanceExit.CrashExitBudget` (5 seconds) on the exit path's clock, as well as by the token
+  the steps are given, so nothing it does can hold the dying process, throw into the runtime's handler, or exit twice.
+  A faulted task nobody observed is said at Error (event 2, `UnobservedTaskException`) and does not end the process,
+  since the runtime does not end it either.
 - **Long startup work says how far along it is, and unrepairable rows no longer make a table rescan every start
   (#2128).** The declared-key spelling scan and the required-member check that follows it said nothing above Debug, so a
   migrating instance could show minutes with no output, and a batched migration step (for example 087's backfill) logged

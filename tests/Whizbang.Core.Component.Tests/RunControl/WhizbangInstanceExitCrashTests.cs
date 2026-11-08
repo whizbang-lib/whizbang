@@ -35,7 +35,8 @@ public class WhizbangInstanceExitCrashTests {
   private static readonly Guid _instanceId = Guid.Parse("0199e000-0000-7000-8000-000000000011");
 
   [Test]
-  public async Task TheHostStart_SubscribesTheExitPathOnce_AndTheExitGivesTheEventsBackAsync() {
+  [Timeout(30000)]
+  public async Task TheHostStart_SubscribesTheExitPathOnce_AndTheExitGivesTheEventsBackAsync(CancellationToken cancellationToken) {
     var h = new Harness();
 
     h.Exit.OnHostStarting();
@@ -44,7 +45,9 @@ public class WhizbangInstanceExitCrashTests {
     await Assert.That(h.Events.UnhandledSubscribers).IsEqualTo(1);
     await Assert.That(h.Events.UnobservedSubscribers).IsEqualTo(1);
 
-    await h.Exit.ExitAsync(new InstanceExitRequest(ExitCause.HostShutdown, "the host was asked to stop"), CancellationToken.None);
+    // In a host a requested exit stops the host, and the host's stop completes it.
+    h.Exit.RequestExit(new InstanceExitRequest(ExitCause.HostShutdown, "the host was asked to stop"));
+    await h.Exit.OnHostStoppingAsync(cancellationToken);
 
     await Assert.That(h.Events.UnhandledSubscribers).IsEqualTo(0)
       .Because("once the exit has completed there is nothing left for a crash to exit");
@@ -54,10 +57,11 @@ public class WhizbangInstanceExitCrashTests {
   }
 
   [Test]
-  public async Task NoHostStart_NoHook_AndAnExitWithoutOneUnhooksNothingAsync() {
+  [Timeout(30000)]
+  public async Task NoHostStart_NoHook_AndAnExitWithoutOneUnhooksNothingAsync(CancellationToken cancellationToken) {
     var h = new Harness();
 
-    await h.Exit.ExitAsync(new InstanceExitRequest(ExitCause.HostShutdown, "a direct exit"), CancellationToken.None);
+    await h.Exit.ExitAsync(new InstanceExitRequest(ExitCause.HostShutdown, "a direct exit"), cancellationToken);
 
     await Assert.That(h.Events.UnhandledSubscribers).IsEqualTo(0);
   }
@@ -76,7 +80,7 @@ public class WhizbangInstanceExitCrashTests {
     var entry = h.Collector.GetSnapshot().Single(e => e.Id == WhizbangInstanceExit.ExitEventId);
     await Assert.That(entry.Level).IsEqualTo(LogLevel.Error);
     await Assert.That(entry.Exception).IsSameReferenceAs(failure);
-    await Assert.That(entry.Message).Contains("an exception nothing caught (InvalidOperationException) ended the process");
+    await Assert.That(entry.Message).Contains("An exception nothing caught (System.InvalidOperationException) ended the process.");
     await Assert.That(h.Coordinator.Written.Single().Cause).IsEqualTo(ExitCause.Crash);
     await Assert.That(h.RunControl.Halts).IsEquivalentTo([RunHaltReason.Stop]);
     await Assert.That(h.Coordinator.Deregistered).IsEquivalentTo([_instanceId])
@@ -94,7 +98,19 @@ public class WhizbangInstanceExitCrashTests {
     await Task.Run(() => h.Events.Crash("a string thrown from another language"), cancellationToken);
 
     await Assert.That(h.Exit.Cause).IsEqualTo(ExitCause.Crash);
-    await Assert.That(h.Exit.Report!.Record.ExceptionMessage).Contains("System.String");
+    await Assert.That(h.Exit.Report!.Record.ExceptionMessage).Contains("nothing caught it: System.String");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ANullThrown_IsStillACrashExitAsync(CancellationToken cancellationToken) {
+    var h = new Harness();
+    h.Exit.OnHostStarting();
+
+    await Task.Run(() => h.Events.Crash(null!), cancellationToken);
+
+    await Assert.That(h.Exit.Cause).IsEqualTo(ExitCause.Crash);
+    await Assert.That(h.Exit.Report!.Record.ExceptionMessage).EndsWith("nothing caught it: null");
   }
 
   [Test]
