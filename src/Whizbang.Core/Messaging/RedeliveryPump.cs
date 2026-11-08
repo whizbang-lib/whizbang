@@ -159,14 +159,32 @@ public sealed class RedeliveryPump(
   }
 
 
-  /// <summary>RED scaffold: echoes nothing yet.</summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "scaffold")]
+  /// <summary>
+  /// <see cref="PublishAsync"/> for an answer to a redelivery request (#2143): every bundle echoes
+  /// <paramref name="answeredWindow"/>, the window of origin commit sequences the selection covered, so the receiver
+  /// marks as unchangeable only the buckets whose deficit the answer covered.
+  /// </summary>
+  /// <param name="events">Selection output, ordered (stream, version).</param>
+  /// <param name="answeredWindow">The window the selection covered.</param>
+  /// <param name="topic">Wire topic.</param>
+  /// <param name="target">Directed-message target, or null to broadcast.</param>
+  /// <param name="originServiceId">This origin's service id.</param>
+  /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of composites published.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs:PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "PublishAsync's parameters plus the window the answer covered.")]
   public Task<int> PublishAnswerAsync(
-      IReadOnlyList<RedeliveryEvent> events, RedeliveryAnswerWindow answeredWindow, string topic, string? target,
-      Guid originServiceId = default, bool stateOnly = false, CancellationToken cancellationToken = default) {
-    _ = answeredWindow;
-    return PublishAsync(events, topic, target, originServiceId, stateOnly, cancellationToken);
-  }
+      IReadOnlyList<RedeliveryEvent> events,
+      RedeliveryAnswerWindow answeredWindow,
+      string topic,
+      string? target,
+      Guid originServiceId = default,
+      bool stateOnly = false,
+      CancellationToken cancellationToken = default) =>
+    _publishAsync(events, topic, target, originServiceId, stateOnly, answeredWindow, cancellationToken);
 
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
@@ -179,13 +197,25 @@ public sealed class RedeliveryPump(
   /// children carry their ORIGINAL source identity (Phase B windowed accounting). Default empty =
   /// unknown (children inherit the bundle envelope's source identity).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  public async Task<int> PublishAsync(
+  public Task<int> PublishAsync(
       IReadOnlyList<RedeliveryEvent> events,
       string topic,
       string? target,
       Guid originServiceId = default,
       bool stateOnly = false,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _publishAsync(events, topic, target, originServiceId, stateOnly, answeredWindow: null, cancellationToken);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "The two public publishes' parameters, the window optional.")]
+  private async Task<int> _publishAsync(
+      IReadOnlyList<RedeliveryEvent> events,
+      string topic,
+      string? target,
+      Guid originServiceId,
+      bool stateOnly,
+      RedeliveryAnswerWindow? answeredWindow,
+      CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(events);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     if (events.Count == 0) {
@@ -211,7 +241,7 @@ public sealed class RedeliveryPump(
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId),
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId, answeredWindow),
     });
 
     var published = 0;
@@ -230,7 +260,8 @@ public sealed class RedeliveryPump(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private static RedeliveryComposite _buildComposite(
-      IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId) {
+      IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId,
+      RedeliveryAnswerWindow? answeredWindow) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -252,6 +283,10 @@ public sealed class RedeliveryPump(
       OriginServiceId = originServiceId,
       InnerCommitSequences = [.. chunk.Select(c => c.CommitSequence)],
       OperatorRequested = operatorRequested,
+      // #2143: the window this answer covers, so the receiver marks only the buckets whose deficit it covered.
+      AnswersWindow = answeredWindow is not null,
+      AnsweredFromCommitSequence = answeredWindow?.FromCommitSequence,
+      AnsweredToCommitSequence = answeredWindow?.ToCommitSequence,
     };
   }
 

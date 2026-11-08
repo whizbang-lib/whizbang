@@ -1424,6 +1424,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **A redelivery answer marks a bucket unhealable only when it covered the bucket's deficit (#2143).** Audit-driven
+  repairs and bulk backfills ask the origin for the compared window, and an answer for a recent window carries only the
+  stream's recent events. When the consumer already held those, the answer stored nothing and every bucket it touched
+  was marked as one repair cannot change, including buckets whose missing events are older than the window (most of
+  them whole-history deficits that never had a repair request of their own), so repair stopped on real gaps. The origin
+  now echoes the window it answered on every bundle (`RedeliveryComposite.AnswersWindow`, `AnsweredFromCommitSequence`,
+  `AnsweredToCommitSequence`; `RedeliveryPump.PublishAnswerAsync`), and a bucket is marked only when that window
+  includes the bucket's compared window (a whole-history bucket needs a whole-history answer) or the answer carried the
+  bucket's named missing event; any other bucket is recorded as answered and stays repairable. A bundle from an origin
+  that predates the fields marks as before. Migration 357 carries the check
+  (`wh_integrity_record_bundle_answer` and `wh_integrity_mark_unhealable_batch` gain trailing defaulted parameters, so
+  calls from an older release still resolve) and re-arms, once per database, the whole-history rows already marked with
+  no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
+  an idle service, and a service whose repair stalled this way may never be idle.
 - **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
   superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
   as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the

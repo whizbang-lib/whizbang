@@ -187,17 +187,30 @@ public sealed class CoordinatorIntegrityRepairLedger(
   /// <inheritdoc />
   /// <remarks>One round trip. A store that cannot answer marks nothing: repair then keeps its terminal cadence for
   /// these buckets, which costs an occasional redundant redelivery and never stops a repair that could help.</remarks>
-  public async ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
       System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _markUnhealableAsync(keys, (coordinator, origin) =>
+      coordinator.IntegrityMarkUnhealableBatchAsync(origin, keys, now, cancellationToken));
+
+  /// <inheritdoc />
+  /// <remarks>One round trip; the store marks only the rows whose deficit the answer covered (#2143).</remarks>
+  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      System.Collections.Generic.IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _markUnhealableAsync(keys, (coordinator, origin) =>
+      coordinator.IntegrityMarkUnhealableBatchAsync(origin, keys, answeredWindow, answeredEventIds, now, cancellationToken));
+
+  private async ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> _markUnhealableAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      Func<IWorkCoordinator, Guid, Task<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>> mark) {
     if (keys.Count == 0) {
       return [];
     }
     try {
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
-      if (coordinator is not null
-          && await coordinator.IntegrityMarkUnhealableBatchAsync(keys[0].OriginServiceId, keys, now, cancellationToken).ConfigureAwait(false) is { } marked) {
+      if (coordinator is not null && await mark(coordinator, keys[0].OriginServiceId).ConfigureAwait(false) is { } marked) {
         return marked;
       }
     } catch (OperationCanceledException) {
@@ -206,14 +219,6 @@ public sealed class CoordinatorIntegrityRepairLedger(
       _degraded("mark-unhealable", fallback: false, ex);
     }
     return [];
-  }
-
-  /// <inheritdoc />
-  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
-      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
-      System.Collections.Generic.IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) {
-    _ = (answeredWindow, answeredEventIds);
-    return MarkUnhealableBatchAsync(keys, now, cancellationToken);
   }
 
   /// <inheritdoc />

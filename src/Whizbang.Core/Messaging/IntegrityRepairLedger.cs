@@ -273,12 +273,14 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
   }
 
   /// <inheritdoc />
+  /// <remarks>This ledger keeps no compared window, so every bucket here is whole-history: only a whole-history answer
+  /// covers it (#2143), and it keeps no named missing event either. A windowed answer marks nothing.</remarks>
   public ValueTask<IReadOnlyList<DivergenceKey>> MarkUnhealableBatchAsync(
       IReadOnlyList<DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow, IReadOnlyList<Guid> answeredEventIds,
-      DateTimeOffset now, CancellationToken cancellationToken = default) {
-    _ = (answeredWindow, answeredEventIds);
-    return MarkUnhealableBatchAsync(keys, now, cancellationToken);
-  }
+      DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    answeredWindow.IsWholeHistory
+      ? MarkUnhealableBatchAsync(keys, now, cancellationToken)
+      : ValueTask.FromResult<IReadOnlyList<DivergenceKey>>([]);
 
   private Entry _getOrAdd(DivergenceKey key, DateTimeOffset now) {
     if (_entries.TryGetValue(key, out var entry)) {
