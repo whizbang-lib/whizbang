@@ -1840,11 +1840,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     if (_schemaInitConnectionString() is { } initConnectionString) {
-      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
-      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      // The schema-initialization connection owns every work table.
-      return await TableMaintenanceSql.VacuumWorkTablesAsync(initConnection, table => BuildSchemaQualifiedName(schema, table),
-        skipTablesVacuumedWithin, notOwned: null, cancellationToken).ConfigureAwait(false);
+      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, skipTablesVacuumedWithin, cancellationToken).ConfigureAwait(false);
     }
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -1949,6 +1945,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
 
+
+  /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
+  private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
+      string initConnectionString, string schema, TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken) {
+    await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+    await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    return await TableMaintenanceSql.VacuumWorkTablesAsync(initConnection, table => BuildSchemaQualifiedName(schema, table),
+      skipTablesVacuumedWithin, notOwned: null, cancellationToken).ConfigureAwait(false);
+  }
 
   /// <summary>
   /// The schema-initialization (<c>-init</c>) connection string configured for this context, or null. The
