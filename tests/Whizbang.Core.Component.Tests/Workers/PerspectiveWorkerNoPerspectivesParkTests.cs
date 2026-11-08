@@ -80,7 +80,7 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
 
-    // ACT — the barrier is released immediately before the park, and stopping is the only way out of it.
+    // ACT: the barrier is released immediately before the park, and stopping is the only way out of it.
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await worker.StartAsync(cts.Token);
     await worker.StartupScanComplete.WaitAsync(cancellationToken);
@@ -88,11 +88,11 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
     await worker.StopAsync(CancellationToken.None);
     await worker.ExecuteTask.WaitAsync(cancellationToken);
 
-    // ASSERT — parked: no loop ran and the coordinator was never touched; the stop ended it cleanly.
+    // ASSERT: parked: no loop ran and the coordinator was never touched; the stop ended it cleanly.
     await Assert.That(parkedBeforeStop).IsFalse()
       .Because("a perspective-less host is parked on its drain channel, waiting for work its claim hands it");
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
-      .Because("stopping a parked worker ends it cleanly — no channel-requirement throw, no loop");
+      .Because("stopping a parked worker ends it cleanly, with no channel-requirement throw, no loop");
     await Assert.That(resolutions).IsEqualTo(0)
       .Because("a parked PerspectiveWorker must never resolve the coordinator — it previously " +
                "ran orphan reconcile, rewind repair, and the poll loop, draining small connection pools");
