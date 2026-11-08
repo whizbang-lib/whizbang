@@ -537,4 +537,15 @@ internal sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
       return [.. _byEventId[eventId]];
     }
   }
+
+  /// <summary>
+  /// Every message captured so far, across event ids, so a test that times out can say what the
+  /// connection reported instead of only that it never came up.
+  /// </summary>
+  public IReadOnlyList<string> AllMessages() {
+    lock (_gate) {
+      return [.. _byEventId.Values.SelectMany(entries => entries)
+        .Select(entry => entry.Exception is null ? entry.Message : $"{entry.Message} ({entry.Exception.GetType().Name}: {entry.Exception.Message})")];
+    }
+  }
 }

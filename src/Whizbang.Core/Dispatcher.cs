@@ -5000,8 +5000,9 @@ public abstract partial class Dispatcher(
         MessageId = jsonEnvelope.MessageId,
         Hops = jsonEnvelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver),
-        // #1729: the key the emit chain stamps on a superseding event.
-        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(eventData)
+        // #1729: the key the emit chain stamps on a superseding event, and (#2124) the group it supersedes within.
+        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(eventData),
+        SupersedingGroup = Whizbang.Core.Lifecycle.SupersedingEvents.GroupOf(eventData)
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = streamId,
@@ -6309,8 +6310,9 @@ public abstract partial class Dispatcher(
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver),
-        // #1729: the key the emit chain stamps on a superseding event.
-        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(payload)
+        // #1729: the key the emit chain stamps on a superseding event, and (#2124) the group it supersedes within.
+        SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(payload),
+        SupersedingGroup = Whizbang.Core.Lifecycle.SupersedingEvents.GroupOf(payload)
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,

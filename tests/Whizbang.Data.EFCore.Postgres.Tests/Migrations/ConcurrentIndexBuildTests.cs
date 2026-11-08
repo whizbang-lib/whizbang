@@ -98,8 +98,11 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
       CommandTimeout = 0,
     };
     var building = build.ExecuteNonQueryAsync(testToken);
-    while (await _scalarAsync(conn, "SELECT count(*) FROM pg_stat_progress_create_index WHERE relid = 'public.wh_event_store'::regclass") is 0L) {
-      await Task.Yield();   // waits on the other build's progress row, the signal that it has started
+    // Waits on the other build's index reaching the catalog, invalid: the state this test is about. Its progress row
+    // appears earlier, before the build commits that catalog entry, so waiting on it read the index back as absent.
+    while (await _validityAsync(conn, INDEX) is not false) {
+      testToken.ThrowIfCancellationRequested();
+      await Task.Yield();
     }
 
     var outcome = await ConcurrentIndexBuild.EnsureAsync(conn, "public", _definition(), 120, cancellationToken: testToken);

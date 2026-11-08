@@ -41,11 +41,24 @@ permanent and the approval is the human decision point. The one exception is a s
 setting (`PUBLISH_WITHOUT_APPROVAL=true`) that the user set themselves.
 
 Work out the version from facts, not guesses:
-- Next cut: run Start Release's own logic by reading `git tag -l 'v*' --sort=-v:refname | head`, or
-  `dotnet-gitversion` 6.2 with `GitVersion.yml` on `develop`. `auto` gives the next minor, unless an
-  open beta/rc series exists (then it continues that number).
+- **The rollup (#2136).** A stable release's version is the base plus, for each prerelease label
+  published since the last stable (alpha, beta, rc, any label), that label's latest number, added to the
+  minor (patch reset, no suffix): `0.2627.0-alpha.674` -> `0.3301.0`; with `beta.5` -> `0.3306.0`; with
+  `rc.3` too -> `0.3309.0`. The target component is `rollupTarget` in `.github/release-version.json`
+  (`minor`, or `patch` after 1.0). The math is `.github/scripts/Get-ReleaseVersion.ps1`; never do it by hand.
+- Next cut: `dotnet-gitversion` 6.2 with `GitVersion.yml` on `develop` gives `MajorMinorPatch` and
+  `PreReleaseNumber`; `auto` names the branch `release/v<minor + alpha number>` and records both in the
+  release PR body (`<!-- release-rollup: ... -->`). If an open beta/rc series exists it continues that
+  number instead and adds no alpha. `major`, `minor`, `patch` and `manual` are overrides: no record, and
+  the stable ships the branch number however many betas or rcs follow.
 - Next prerelease: `git ls-remote --tags origin 'refs/tags/vX.Y.Z-*'`; the next `beta.N`/`rc.N`
-  follows the highest. A beta after an rc is refused.
+  follows the highest. A beta after an rc is refused. Every beta or rc **raises the stable by one**:
+  Release Prerelease's summary says what the merge will ship.
+- Stable: the release PR title and branch name the **line**; what ships is the line plus the latest
+  beta and rc numbers (`Plan · Is this a release?` prints `alpha 674 + beta 5 + rc 3 = 682 -> 0.3309.0`).
+  When it differs from the line, `Build · Repack the tested build at the rolled-up version` repacks the
+  release-branch run's tested build (the same DLLs, as a beta is made) instead of promoting its packages.
+  Tell the user the rolled-up number, not the title's.
 
 ## Watch it through
 
