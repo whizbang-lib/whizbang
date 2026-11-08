@@ -33,6 +33,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <para>
 /// The second test is the control: the same phase, with the grant held and nothing renewing it, loses the role, and
 /// the renewal that comes afterwards is refused. Without it, the first test could pass on a lease that never lapses.
+/// Since #2140 a live holder keeps its role past the lease while it renewed inside its progress window, so the window
+/// here is shorter than the phase: the phase outlasts the lease and the window, and only renewal keeps the role.
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigratorDuty.cs</code-under-test>
@@ -44,6 +46,7 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
   private static readonly TimeSpan _renewInterval = TimeSpan.FromSeconds(4);
   private static readonly TimeSpan _lease = TimeSpan.FromSeconds(8);
   private static readonly TimeSpan _tick = TimeSpan.FromSeconds(2);
+  private static readonly TimeSpan _progressWindow = TimeSpan.FromSeconds(12);
 
   private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
@@ -95,7 +98,12 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
       register.Parameters.AddWithValue("id", pod.InstanceId);
       await register.ExecuteNonQueryAsync(ct);
     }
-    var roles = new RoleAssignmentOptions { RenewInterval = _renewInterval, MissedRenewalsBeforeLapse = 2 };
+    // Past its lease, a live holder keeps the role while it renewed inside its progress window (#2140), so the window
+    // is set shorter than the phase: without it, the phase would have to outlast the 2-minute default before the
+    // control lost anything, and the first test could pass with no keepalive at all.
+    var roles = new RoleAssignmentOptions {
+      RenewInterval = _renewInterval, MissedRenewalsBeforeLapse = 2, ProgressWindow = _progressWindow,
+    };
     roles.RoleLeases[StartupDuties.MIGRATOR] = _lease;
     return new PgRoleElector(
       Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
@@ -172,6 +180,8 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
       time.Advance(_tick);
     }
 
+    await Assert.That(_lease * 3).IsGreaterThan(_progressWindow)
+      .Because("the phase outlasts the progress window too, so the one liveness rule does not keep the role either");
     await Assert.That(await _holdsAsync(pod, cancellationToken)).IsFalse();
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse()
       .Because("a lapsed lease is refused renewal even though nobody took it: the defect the keepalive prevents");
