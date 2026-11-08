@@ -163,6 +163,41 @@ public class WhizbangInstanceExitCrashTests {
   }
 
   [Test]
+  [Timeout(30000)]
+  public async Task ASecondCrashAfterTheExit_DeregistersNothingTwiceAsync(CancellationToken cancellationToken) {
+    var h = new Harness();
+
+    await Task.Run(() => h.Exit.ExitOnCrash(new InvalidOperationException("first")), cancellationToken);
+    await Task.Run(() => h.Exit.ExitOnCrash(new InvalidOperationException("second")), cancellationToken);
+
+    await Assert.That(h.Coordinator.Deregistered).Count().IsEqualTo(1);
+    await Assert.That(h.Coordinator.Written).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ACrashWithNoIdentity_OrNoCoordinator_StillExits_AndDeregistersNothingAsync(CancellationToken cancellationToken) {
+    var anonymous = new Harness(withIdentity: false);
+    var uncoordinated = new Harness(withCoordinator: false);
+
+    await Task.Run(() => anonymous.Exit.ExitOnCrash(new InvalidOperationException("boom")), cancellationToken);
+    await Task.Run(() => uncoordinated.Exit.ExitOnCrash(new InvalidOperationException("boom")), cancellationToken);
+
+    await Assert.That(anonymous.Exit.Cause).IsEqualTo(ExitCause.Crash);
+    await Assert.That(anonymous.Coordinator.Deregistered).IsEmpty().Because("there is no instance to deregister");
+    await Assert.That(uncoordinated.Exit.Cause).IsEqualTo(ExitCause.Crash);
+    await Assert.That(uncoordinated.Exit.Report!.Recording.Recorded).IsFalse()
+      .Because("a host with no work coordinator keeps no instance records, and has none to remove");
+  }
+
+  [Test]
+  public async Task AClockThatFails_DoesNotLetTheCrashExitThrowAsync() {
+    var h = new Harness(clock: new FailingClock());
+
+    await Assert.That(() => h.Exit.ExitOnCrash(new InvalidOperationException("boom"))).ThrowsNothing();
+  }
+
+  [Test]
   public async Task AnUnobservedTaskException_IsSaid_AndDoesNotExitAsync() {
     var h = new Harness();
     h.Exit.OnHostStarting();
@@ -240,7 +275,9 @@ public class WhizbangInstanceExitCrashTests {
   }
 
   private sealed class Harness {
-    public Harness(bool throwingExitCode = false, bool throwingLogger = false) {
+    public Harness(
+        bool throwingExitCode = false, bool throwingLogger = false, bool withIdentity = true, bool withCoordinator = true,
+        TimeProvider? clock = null) {
       var services = new ServiceCollection();
       if (throwingLogger) {
         services.AddSingleton<ILoggerProvider>(new ThrowingProvider());
@@ -249,11 +286,15 @@ public class WhizbangInstanceExitCrashTests {
       }
       services.AddLogging();
       services.AddSingleton<IHostApplicationLifetime>(Lifetime);
-      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(_instanceId, "orders-svc", "orders-pod-7", 4242));
-      services.AddScoped<IWorkCoordinator>(_ => Coordinator);
+      if (withIdentity) {
+        services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(_instanceId, "orders-svc", "orders-pod-7", 4242));
+      }
+      if (withCoordinator) {
+        services.AddScoped<IWorkCoordinator>(_ => Coordinator);
+      }
       var provider = services.BuildServiceProvider();
       Exit = new WhizbangInstanceExit(provider, RunControl,
-        throwingExitCode ? new ThrowingExitCode() : ExitCodes, Time,
+        throwingExitCode ? new ThrowingExitCode() : ExitCodes, clock ?? Time,
         provider.GetRequiredService<ILogger<WhizbangInstanceExit>>(), Events);
     }
 
@@ -265,6 +306,12 @@ public class WhizbangInstanceExitCrashTests {
     public WhizbangInstanceExitTests.RecordingRunControl RunControl { get; } = new();
     public DeregisteringCoordinator Coordinator { get; } = new();
     public WhizbangInstanceExit Exit { get; }
+  }
+
+  /// <summary>A clock whose timers cannot be created: the crash exit's budget cannot even be set.</summary>
+  private sealed class FailingClock : TimeProvider {
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+      throw new InvalidOperationException("no timers");
   }
 
   private sealed class ThrowingExitCode : IProcessExitCode {
