@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// silently disable self-healing.
 /// </para>
 /// </remarks>
-/// <docs>resilience/stream-integrity</docs>
+/// <docs>operations/workers/housekeeping-arbitration#live-lease-unprocessed-only</docs>
 [Category("Shard1")]
 public class CountServiceBacklogSqlTests : EFCoreTestBase {
 
