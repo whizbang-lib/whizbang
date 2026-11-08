@@ -75,7 +75,7 @@ public sealed class ArchiveLocationMismatchException : Exception {
       ? "an archive record of it records no location"
       : $"its objects are recorded at location {recordedLocationId} ({recorded})";
     return $"The {operation} of the archive of stream {streamId} was refused: {where}, and this service is configured for " +
-      $"{configured}. Nothing was read, restored or deleted. If the objects are expected in the configured location (the " +
+      $"{configured}. Nothing was read, restored, written or deleted. If the objects are expected in the configured location (the " +
       "database was copied or restored, or the storage moved), repoint the record's location row in wh_archive_locations " +
       "(or call the store's repoint operation); otherwise correct the configuration.";
   }

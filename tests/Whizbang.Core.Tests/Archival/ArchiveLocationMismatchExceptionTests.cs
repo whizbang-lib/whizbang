@@ -39,7 +39,7 @@ public class ArchiveLocationMismatchExceptionTests {
       .And.Contains("archive-source")
       .And.Contains("https://copy.blob.core.windows.net")
       .And.Contains("archive-copy")
-      .And.Contains("Nothing was read, restored or deleted")
+      .And.Contains("Nothing was read, restored, written or deleted")
       .And.Contains("wh_archive_locations");
   }
 
