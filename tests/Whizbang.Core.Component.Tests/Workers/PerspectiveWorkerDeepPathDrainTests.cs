@@ -985,7 +985,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       StoredFormFailureRegistry? storedFormFailures = null,
       ISyncEventTracker? syncEventTracker = null,
       Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null,
-      IPerspectiveDrainChannel? drainChannel = null) {
+      IPerspectiveDrainChannel? drainChannel = null,
+      CompositeMetrics? compositeMetrics = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -1054,6 +1055,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       metrics: metrics,
       timeProvider: timeProvider,
       recentlyProcessedEventCache: cooldownCache,
+      compositeMetrics: compositeMetrics,
       storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }

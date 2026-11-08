@@ -17,6 +17,9 @@ namespace Whizbang.Archive.AzureBlob;
 /// <docs>fundamentals/events/archive-store#azure-blob-configuration</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs</tests>
 public sealed class AzureBlobArchiveOptions {
+  /// <summary>The logical connection name used when none is configured.</summary>
+  public const string DEFAULT_CONNECTION_NAME = "default";
+
   /// <summary>The container used when none is configured.</summary>
   public const string DEFAULT_CONTAINER_NAME = "whizbang-archive";
 
@@ -51,6 +54,48 @@ public sealed class AzureBlobArchiveOptions {
 
   /// <summary>The container that holds the archive objects; created on the first write when it does not exist.</summary>
   public string ContainerName { get; set; } = DEFAULT_CONTAINER_NAME;
+
+  /// <summary>
+  /// The logical name of the storage connection, recorded with the account endpoint and the container as the archive's
+  /// location (#2137). A name, never a connection string: a value with <c>;</c> or <c>=</c> is refused.
+  /// </summary>
+  /// <remarks>
+  /// Every archive record names its location, and the store refuses to read, restore or delete a record whose location
+  /// is not the configured one (<see cref="Whizbang.Core.Archival.ArchiveLocationMismatchException"/>). Give each
+  /// environment that shares a storage account its own name or container, so a database copied between them is refused
+  /// rather than reaching the other's objects.
+  /// </remarks>
+  /// <docs>fundamentals/events/archive-store#archive-locations</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:ConnectionName_DefaultsToDefault_AndIsBoundFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:ConnectionName_ThatLooksLikeAConnectionString_IsRefused_WhenBoundAndWhenBuiltAsync</tests>
+  public string ConnectionName { get; set; } = DEFAULT_CONNECTION_NAME;
+
+  /// <summary>
+  /// Whether every archive record's location is checked against the configured one before a read, restore, delete or
+  /// write (#2137). On by default.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// On, a record whose location (account endpoint, connection name, container) is not the configured one is refused
+  /// with <see cref="Whizbang.Core.Archival.ArchiveLocationMismatchException"/> before any request reaches storage, and a
+  /// write never lets a stream span two locations.
+  /// </para>
+  /// <para>
+  /// Off, the store reads, restores, deletes and writes in the configured location only and never compares a record's
+  /// location. What turning it off gives up is the safety net against a copied or restored database, or a configuration
+  /// pointed at another account or container, reading the wrong objects or deleting the objects at the same path in the
+  /// configured container that belong to another environment. Location rows are still written, so the check can be
+  /// turned back on later; a record written while it was off names the configured location.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/events/archive-store#archive-locations</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:VerifyLocation_DefaultsToOn_AndIsBoundFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
+  public bool VerifyLocation { get; set; } = true;
+
+  /// <summary>Whether <paramref name="name"/> can be a logical connection name: not empty, without <c>;</c> or <c>=</c>.</summary>
+  internal static bool IsLogicalName(string? name) =>
+    !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;
 
   /// <summary>The Brotli quality, 0 (fastest) to 11 (smallest). See <see cref="DEFAULT_COMPRESSION_LEVEL"/>.</summary>
   public int CompressionLevel { get; set; } = DEFAULT_COMPRESSION_LEVEL;

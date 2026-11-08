@@ -1438,6 +1438,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wh_integrity_mark_unhealable_covered_batch`) and re-arms, once per database, the whole-history rows already marked with
   no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
   an idle service, and a service whose repair stalled this way may never be idle.
+- **An archive record never redirects a read, restore or delete to another container; archive locations are stored
+  normalized and checked against configuration (#2137).** The Azure Blob archive store opened the container named in
+  a manifest record whenever it differed from its configured one, so a database copied to another environment read,
+  restored and, through retention and purge, deleted the source environment's objects. Migration 353 adds
+  `wh_archive_locations` (provider, storage account endpoint, logical connection name, container; never a secret), and
+  each manifest row and queued deletion now holds its `location_id` plus a path that starts at its stream; existing
+  locators are split into a location per container and a path, with no object moved or deleted. Before any request
+  reaches storage, a read, restore and delete compare every record's location with the configured one and throw the
+  new `ArchiveLocationMismatchException` naming both; a write of a stream whose objects are recorded elsewhere is refused
+  the same way and writes nothing, so a stream never spans two locations; the deletion queue is drained only for the
+  configured location. The tombstone locator names only the store and the stream (`azure-blob://{stream}?...`).
+  Repointing an environment (a copied or restored database, disaster recovery) is an explicit update of the one
+  location row, or `AzureBlobArchiveStore.RepointLocationAsync`, which merges into an existing location. New setting
+  `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`), and `Whizbang:Archive:AzureBlob:VerifyLocation` (default
+  `true`): turned off, the store uses the configured location without comparing records, giving up that safety net, and
+  still writes location rows so the check can be turned back on. The offload store records no locations: its claim
+  names a provider and a key, and the provider always uses its configured container.
+- **A collective event no handler on the service applies no longer stalls its perspective backlog (#2142).** The store
+  routes every collective event it keeps to the `__collective__` sink, so a service that stores one it has no
+  `[CollectiveApplyFor]` handler for (it consumes other events of the same namespace) got a sink row whose type the
+  drain cannot read. That row was never concluded, so the claim took it again on every poll, oldest first, and the
+  rest of the perspective backlog waited behind it while the service never counted as idle. The drain now completes
+  such a row without applying it, as an event no perspective consumes is never queued, counts it on the new
+  `whizbang.collectives.unhandled` counter, and logs a Warning once per event type per batch naming the service, the
+  type, the count and a stream; a perspective rebuild applies those events once a handler is added. Rows already
+  stranded are concluded the same way on their next claim, which takes them first. The events are kept. An ordinary
+  perspective row of an unknown type is still left for an instance that can read it.
 - **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
   superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
   as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the

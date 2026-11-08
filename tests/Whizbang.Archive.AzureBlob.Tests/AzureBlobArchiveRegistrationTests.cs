@@ -121,7 +121,8 @@ public class AzureBlobArchiveRegistrationTests {
 
     var store = (AzureBlobArchiveStore)provider.GetRequiredService<IArchiveStore>();
 
-    await Assert.That(store.LocatorFor(Guid.Empty).Address).StartsWith("whizbang-archive/");
+    await Assert.That(store.ConfiguredLocation.Endpoint).IsEqualTo("https://account.blob.core.windows.net");
+    await Assert.That(store.ConfiguredLocation.Container).IsEqualTo("whizbang-archive");
   }
 
   [Test]
@@ -273,6 +274,7 @@ public class AzureBlobArchiveRegistrationTests {
   [Arguments("CompressionLevel", "fast")]
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
+  [Arguments("VerifyLocation", "maybe")]
   public async Task Configuration_AValueThatCannotBeRead_IsRefused_NamingTheKeyAsync(string key, string value) {
     var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
         _config(new() { [key] = value }), new AzureBlobArchiveOptions()))
@@ -315,17 +317,15 @@ public class AzureBlobArchiveRegistrationTests {
   }
 
   [Test]
-  [Arguments("svc")]
-  [Arguments(null)]
-  public async Task LocatorFor_NamesTheStoreTheContainerAndTheStream_WithBrotliAndFormat1Async(string? schema) {
+  public async Task LocatorFor_NamesTheStoreAndTheStream_NeverTheContainer_WithBrotliAndFormat1Async() {
     var stream = Guid.Parse("0199a1b2-0000-7000-8000-000000000001");
 
-    var locator = new AzureBlobArchiveStore(_database with { Schema = schema }, _container(), new AzureBlobArchiveOptions())
-      .LocatorFor(stream);
+    var locator = AzureBlobArchiveStore.LocatorFor(stream);
 
     await Assert.That(locator.ToString())
-      .IsEqualTo("azure-blob://whizbang-archive/0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
-      .Because("the locator names the container, never the database schema the manifest lives in");
+      .IsEqualTo("azure-blob://0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
+      .Because("the tombstone says which store archived the stream; where it lives is the manifest's location (#2137), so " +
+        "a repoint never leaves it stale, and it never names the database schema the manifest lives in");
   }
 
   private static Azure.Storage.Blobs.BlobContainerClient _container() =>
