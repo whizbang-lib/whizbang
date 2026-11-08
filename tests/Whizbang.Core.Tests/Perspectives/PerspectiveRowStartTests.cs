@@ -116,6 +116,16 @@ public class PerspectiveRowStartTests {
   }
 
   [Test]
+  public async Task ResolveAsync_AStoreThatRemovesNoEvents_AnswersNullByDefaultAsync() {
+    // The interface default: a store that never removes a stream's first event has no start apart from its events.
+    var row = Guid.NewGuid();
+
+    var resolved = await PerspectiveRowStart.ResolveAsync(new InMemoryEventStore(), row, rowExists: false, [_event(row, first: false)]);
+
+    await Assert.That(resolved).IsNull();
+  }
+
+  [Test]
   public async Task ResolveAsync_CollectivesAheadOfTheFirstStreamEvent_AreSkippedAsync() {
     var store = new StartStore(_start);
     var row = Guid.NewGuid();

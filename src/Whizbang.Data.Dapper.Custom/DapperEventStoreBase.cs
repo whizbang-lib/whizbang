@@ -143,6 +143,14 @@ public abstract class DapperEventStoreBase : IEventStore {
     Task.FromResult(false);
 
   /// <summary>
+  /// A stream's start once its first event is gone (#2152). Declared here (virtual, interface default) for the reason
+  /// the history probes are: a derived store's override takes part in the interface mapping.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+  public virtual Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<DateTime?>(null);
+
+  /// <summary>
   /// Database-specific SQL for querying events between two checkpoint IDs (exclusive start, inclusive end).
   /// </summary>
   protected abstract string GetEventsBetweenSql();
