@@ -109,7 +109,10 @@ internal static class CoordinatorFleetSql {
   /// Bounded counts, deliberately: the gate needs to know whether these are zero, not their size, and an unbounded
   /// count on the checkpoint cadence would make a gate that protects the store into a periodic full scan of it.
   /// Settledness uses the claim's eligibility predicate, so rows parked with a future <c>scheduled_for</c> are not
-  /// backlog; a live lease is in-flight work whatever its schedule.
+  /// backlog; a live lease is in-flight work whatever its schedule, while its row is unprocessed (#2129). A processed
+  /// row is finished whatever lease it still carries (the store pass completes a refused event where it stands), and
+  /// the unprocessed predicate is also what lets the count use a partial index: without it the count read the whole
+  /// table, every processed row it retains included, on every call.
   /// </remarks>
   internal static async Task<ServiceBacklog?> CountServiceBacklogAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     var inbox = prefix + "wh_inbox_state";
@@ -122,7 +125,7 @@ internal static class CoordinatorFleetSql {
            AND (scheduled_for IS NULL OR scheduled_for <= now())
            AND priority <= {idleBandStart} LIMIT 1000) a),
         (SELECT count(*) FROM (SELECT 1 FROM {inbox}
-           WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
+           WHERE processed_at IS NULL AND instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
         COALESCE(EXTRACT(EPOCH FROM (now() - (
           SELECT received_at FROM {inbox} WHERE processed_at IS NULL
             AND (scheduled_for IS NULL OR scheduled_for <= now())
