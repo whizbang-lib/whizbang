@@ -884,7 +884,9 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
 
   /// <summary>The streams of the last claim this instance still holds leased, for the exit's account (#2126).</summary>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerRunPermitTests.cs:ReleaseHeldWork_ReleasesTheLastClaimsStreamsThatNoDrainHasStartedAsync</tests>
-  public int HeldLeases => 0;
+  public int HeldLeases => Volatile.Read(ref _lastClaimed) is { } held
+    ? held.InboxStreamIds.Count + held.PerspectiveStreamIds.Count
+    : 0;
 
   [LoggerMessage(EventId = 21, Level = LogLevel.Information,
     Message = "Run control: released {InboxReleased} inbox and {PerspectiveReleased} perspective rows this instance had leased and not started, so a peer takes them over")]

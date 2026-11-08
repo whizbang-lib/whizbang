@@ -53,7 +53,10 @@ public sealed class RecordingInstanceExit : IWhizbangInstanceExit {
   /// <inheritdoc />
   public void RequestExit(InstanceExitRequest request) {
     ArgumentNullException.ThrowIfNull(request);
-    // Not implemented yet.
+    lock (_gate) {
+      _requests.Add(request);
+    }
+    _first.TrySetResult(request);
   }
 
   /// <inheritdoc />

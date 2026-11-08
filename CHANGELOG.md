@@ -1432,6 +1432,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the claim ranking and the partition assignment, holds no role but the migrator, and reads as migrating in the fleet
   status, until it records Accept commands. On the Dapper driver, which applies no bootstrap closure and registers after
   its pass, a startup beat before the pass has created the function is accepted and writes nothing.
+- **Every exit goes through one exit path, and an evicted instance exits (#2126).** Each way the process exits, good or
+  bad, now takes `IWhizbangInstanceExit`: a host shutdown, the killswitch's stop, a stand-down whose newer version
+  committed, a hosted worker that faulted, a blocking schema initialization that failed, a required capability that is
+  not ready, and an eviction by the fleet. An exit halts through the one run-control path (`HaltAsync` with
+  `RunHaltReason.Stop`, bounded by the host's stop token), writes one entry (EventId 1, `InstanceExit`; Error for a
+  failure, Information for an intended stop) that says why, with every fact as a structured field (`ExitCause`,
+  `ExitCode`, the instance, service and host, the stage and phase, uptime, time since the last accepted heartbeat, what it
+  held, and for an eviction when, by which peer and why), records the same facts in the new `wh_instance_exits` table
+  (migration 354, one row per exit; best effort, and the entry says when the row could not be written), sets the exit
+  code and stops the host. `ExitCause` is closed: `HostShutdown`, `OperatorStop` and `UpgradeStandDown` exit 0, `Crash`
+  1, `Unknown` 2, `ClusterEviction` 3, `StartupFailure` 4 and `SchemaIncompatible` 5. An instance whose heartbeat (or
+  startup beat, or claim registration) is refused because a peer reaped and tombstoned it no longer stops beating and
+  stays sidelined: it exits with code 3 so its host restarts it under a new instance id. The tombstone now records the
+  evicting peer for a reap too, and the last heartbeat and liveness window the rule judged the instance by. Library code
+  can no longer stop the host or set the exit code anywhere else: `BannedSymbols.Exit.txt` bans
+  `IHostApplicationLifetime.StopApplication`, `Environment.Exit`, `Environment.ExitCode` and `Environment.FailFast` in
+  every library project, and a source guard fails on any call the analyzer cannot see. Two changes in behavior follow: a
+  capability that is not ready now exits with code 4 (it was 1), and a blocking schema initialization
+  (`NonBlockingSchemaInit = false`) that fails now exits with code 4 (5 for a schema newer than the binary) instead of
+  throwing out of host start, which ended the process as an unhandled crash. The killswitch's `StopAsync` now ends the
+  process (exit code 0) once held work and roles are released. The heartbeat also no longer holds its first full beat
+  back by a cadence when the schema-ready gate opens between its plan and its wait.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them

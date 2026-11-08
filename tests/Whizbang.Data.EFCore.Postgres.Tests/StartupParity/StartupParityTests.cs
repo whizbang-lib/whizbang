@@ -56,6 +56,8 @@ public class StartupParityTests {
       string? connectionString = null, Action<IServiceCollection>? configure = null, params (string Key, string Value)[] config) {
     var services = new ServiceCollection();
     services.AddLogging();
+    // #2126: an exit in a test keeps the test process's own exit code.
+    services.AddSingleton<Whizbang.Core.RunControl.IProcessExitCode>(new DiscardedExitCode());
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
       .AddInMemoryCollection(config.Select(c => new KeyValuePair<string, string?>(c.Key, c.Value))).Build());
     services.Configure<SchemaInitializationOptions>(o => {
@@ -70,6 +72,10 @@ public class StartupParityTests {
     var provider = services.BuildServiceProvider();
     _instances.Add(provider);
     return provider;
+  }
+
+  private sealed class DiscardedExitCode : Whizbang.Core.RunControl.IProcessExitCode {
+    public void SetExitCode(int exitCode) { }
   }
 
   private static WhizbangDatabaseInitializerService _initializer(IServiceProvider instance) =>
@@ -202,8 +208,13 @@ public class StartupParityTests {
     await _startAsync(driver, ("Whizbang:Schema:Reconcile:Drop:Index", "false"));
     await Assert.That(await _existsAsync(driver.Retired)).IsTrue().Because("index drops are switched off");
 
-    await Assert.That(async () => await _startAsync(driver, ("Whizbang:Schema:Reconcile:Mode", "Sideways")))
-      .Throws<InvalidOperationException>().Because("a setting that is not one fails the start rather than being ignored");
+    // #2126: a setting that is not one fails the start rather than being ignored: the instance exits through the one exit
+    // path as a startup failure (exit code 4), rather than throwing out of host start as an unhandled crash.
+    var refused = await _startAsync(driver, ("Whizbang:Schema:Reconcile:Mode", "Sideways"));
+    var exit = refused.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>();
+    await exit.Completion;
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure);
+    await Assert.That(exit.Report!.Record.ExceptionType).IsEqualTo("System.InvalidOperationException");
 
     await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.Retired)).IsFalse();

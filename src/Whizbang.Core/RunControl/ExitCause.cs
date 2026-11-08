@@ -54,7 +54,14 @@ public static class ExitCauses {
   /// </summary>
   /// <param name="cause">The cause.</param>
   /// <returns>The exit code.</returns>
-  public static int ExitCodeOf(ExitCause cause) => throw new NotImplementedException(cause.ToString());
+  public static int ExitCodeOf(ExitCause cause) => cause switch {
+    ExitCause.HostShutdown or ExitCause.OperatorStop or ExitCause.UpgradeStandDown => 0,
+    ExitCause.Crash => 1,
+    ExitCause.ClusterEviction => 3,
+    ExitCause.StartupFailure => 4,
+    ExitCause.SchemaIncompatible => 5,
+    _ => 2,
+  };
 
   /// <summary>Whether <paramref name="cause"/> is an intended stop (exit code 0) rather than a failure.</summary>
   /// <param name="cause">The cause.</param>

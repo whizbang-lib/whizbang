@@ -271,6 +271,10 @@ public partial class HeartbeatWorker(
   /// <returns>A task that completes when the wait is over, or is canceled with the token.</returns>
   internal async Task WaitForNextTickAsync(TimeSpan wait, CancellationToken cancellationToken) {
     if (_schemaReady.IsReady) {
+      if (_lastBeatWasStartupBeat) {
+        // The gate opened between the plan and this wait: the full beat it owes is due now, so the loop plans again.
+        return;
+      }
       await Task.Delay(wait, _time, cancellationToken).ConfigureAwait(false);
       return;
     }

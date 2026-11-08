@@ -270,7 +270,7 @@ public class WhizbangInstanceExitTests {
     await Assert.That(h.Exit.Cause).IsEqualTo(ExitCause.Crash);
     await Assert.That(h.ExitCodes.Codes).IsEquivalentTo([1]);
     var entry = h.Entries.Single();
-    await Assert.That(entry.Message).Contains("the hosted service Whizbang.Core.Component.Tests.RunControl.WhizbangInstanceExitTests+FaultingWorker failed");
+    await Assert.That(entry.Message).Contains("The hosted service Whizbang.Core.Component.Tests.RunControl.WhizbangInstanceExitTests+FaultingWorker failed");
     await Assert.That(entry.Exception!.Message).IsEqualTo("the worker failed");
     await Assert.That(h.Exit.Report!.Record.ExceptionType).IsEqualTo("System.InvalidOperationException");
   }
@@ -358,10 +358,29 @@ public class WhizbangInstanceExitTests {
     var logger = NullLogger<WhizbangInstanceExit>.Instance;
 
     await Assert.That(() => new WhizbangInstanceExit(null!, run, codes, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new WhizbangInstanceExit(services, null!, codes, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new WhizbangInstanceExit(services, run, null!, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, null!)).Throws<ArgumentNullException>();
     await Assert.That(() => new WhizbangInstanceExit(services, run, codes, null, logger).RequestExit(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>A host without the worker pipeline has no run-control path: it still exits, and says nothing was halted.</summary>
+  [Test]
+  public async Task AHostWithoutARunControlPath_StillExits_SayingThereWasNothingToHaltAsync() {
+    var codes = new RecordingExitCode();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IProcessExitCode>(codes);
+    services.TryAddWhizbangInstanceExit();
+    await using var provider = services.BuildServiceProvider();
+    var exit = provider.GetRequiredService<IWhizbangInstanceExit>();
+
+    await exit.ExitAsync(new InstanceExitRequest(ExitCause.StartupFailure, "a capability is not ready"), CancellationToken.None);
+
+    await Assert.That(codes.Codes).IsEquivalentTo([4]);
+    await Assert.That(provider.GetService<IWhizbangRunController>()).IsNull();
+    await Assert.That(exit.Report!.Record.InHand).IsEqualTo(0);
+    await Assert.That(() => WhizbangRunControlServiceCollectionExtensions.TryAddWhizbangInstanceExit(null!))
       .Throws<ArgumentNullException>();
   }
 

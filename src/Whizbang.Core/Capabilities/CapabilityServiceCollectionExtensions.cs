@@ -40,8 +40,8 @@ public static class CapabilityServiceCollectionExtensions {
 
     services.AddMetrics();
     services.TryAddSingleton<WhizbangMetrics>();
-    // #2126: the enforcer exits through the one exit path, which the run-control registration provides (idempotent).
-    Whizbang.Core.RunControl.WhizbangRunControlServiceCollectionExtensions.AddWhizbangRunControl(services);
+    // #2126: the enforcer exits through the one exit path (idempotent; it halts through run control where the host has it).
+    Whizbang.Core.RunControl.WhizbangRunControlServiceCollectionExtensions.TryAddWhizbangInstanceExit(services);
     services.TryAddSingleton<ICapabilityRegistry>(sp => new CapabilityRegistry(
       sp.GetServices<ICapabilityProvider>(),
       sp.GetRequiredService<ILogger<CapabilityRegistry>>(),

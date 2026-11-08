@@ -48,20 +48,34 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetRequiredService<WhizbangLifecycleOptions>(),
       sp.GetService<TimeProvider>(),
       sp.GetLoggerOrNullLogger<WhizbangRunController>()));
-    // #2126: the one exit path every exit takes, and the one place the exit code is set. A test host registers its own
-    // IProcessExitCode first so the test process keeps its own exit code.
-    services.TryAddSingleton<IProcessExitCode>(ProcessExitCode.Instance);
-    services.TryAddSingleton<IWhizbangInstanceExit>(static sp => new WhizbangInstanceExit(
-      sp,
-      sp.GetRequiredService<IWhizbangRunController>(),
-      sp.GetRequiredService<IProcessExitCode>(),
-      sp.GetService<TimeProvider>(),
-      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>()));
+    TryAddWhizbangInstanceExit(services);
     services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
       sp.GetRequiredService<IWhizbangRunController>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
       sp.GetRequiredService<IWhizbangInstanceExit>()));
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the one exit path (#2126) and the one place the exit code is set (idempotent). The run-control
+  /// registration and every other registration that can end the process (the capability enforcer) call it, so no host
+  /// that can exit lacks the path. The exit halts through the run-control path when the host registers one.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The same collection.</returns>
+  /// <docs>operations/startup/instance-exits</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheRunControlRegistration_ProvidesOneExitPath_AndTheProcessExitCodeAsync</tests>
+  public static IServiceCollection TryAddWhizbangInstanceExit(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    // A test host registers its own IProcessExitCode first so the test process keeps its own exit code.
+    services.TryAddSingleton<IProcessExitCode>(ProcessExitCode.Instance);
+    services.TryAddSingleton<IWhizbangInstanceExit>(static sp => new WhizbangInstanceExit(
+      sp,
+      sp.GetService<IWhizbangRunController>(),
+      sp.GetRequiredService<IProcessExitCode>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>()));
     return services;
   }
 

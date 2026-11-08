@@ -97,16 +97,16 @@ public class InstanceExitRecordSqlTests : EFCoreTestBase {
       "INSERT INTO wh_instance_evictions (instance_id, evicted_at, reason, evicted_by, last_heartbeat_at, liveness_window_seconds) "
       + $"VALUES ('{instance}', NOW() - INTERVAL '5 seconds', 'not live (wh_instance_liveness)', '{peer}', "
       + "NOW() - INTERVAL '205 seconds', 150)", cancellationToken);
-    var tombstone = await _tombstoneTimesAsync(instance, cancellationToken);
+    var (evictedAt, lastHeartbeatAt) = await _tombstoneTimesAsync(instance, cancellationToken);
 
     var result = await _recordAsync(_exit(instance, ExitCause.ClusterEviction), cancellationToken);
 
     await Assert.That(result.Recorded).IsTrue();
     var eviction = result.Eviction!;
-    await Assert.That(eviction.EvictedAt).IsEqualTo(tombstone.EvictedAt);
+    await Assert.That(eviction.EvictedAt).IsEqualTo(evictedAt);
     await Assert.That(eviction.EvictedBy).IsEqualTo(peer);
     await Assert.That(eviction.Reason).IsEqualTo("not live (wh_instance_liveness)");
-    await Assert.That(eviction.LastHeartbeatAt).IsEqualTo(tombstone.LastHeartbeatAt);
+    await Assert.That(eviction.LastHeartbeatAt).IsEqualTo(lastHeartbeatAt);
     await Assert.That(eviction.LivenessWindowSeconds).IsEqualTo(150);
     await Assert.That(await _scalarAsync<long>(
         $"SELECT count(*) FROM wh_instance_exits WHERE instance_id = '{instance}' AND exit_cause = 'ClusterEviction' "
