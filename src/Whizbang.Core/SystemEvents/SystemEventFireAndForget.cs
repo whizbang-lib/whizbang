@@ -62,8 +62,10 @@ public static partial class SystemEventFireAndForget {
       // Nothing above this frame observes the task, so this catch is the only place the loss can be
       // reported. It must not rethrow: an unobserved fault would surface nowhere useful.
       var eventType = typeof(TSystemEvent).Name;
-      LogSystemEventLost(logger, ex, eventType, tenantId, SystemEventStreams.StreamFor(systemEvent));
+      // Counted before it is logged: the log line is the last thing the loss does, so a reader that sees it (an
+      // operator, or a test waiting on it) also sees the count.
       metrics?.SystemEventEmitFailures.Add(1, new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventType));
+      LogSystemEventLost(logger, ex, eventType, tenantId, SystemEventStreams.StreamFor(systemEvent));
     }
   }
 
