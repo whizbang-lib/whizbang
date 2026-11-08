@@ -318,6 +318,22 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
       .Because("the group match is an index condition, not a filter over every keyed event of the stream");
   }
 
+  /// <summary>
+  /// 295's index on the event type is gone once the group index serves every probe (#2166): nothing reads it, and every
+  /// keyed write into the store would still maintain it.
+  /// </summary>
+  [Test]
+  public async Task TheTypeKeyedIndex_IsDroppedAsync() {
+    await using var conn = await _openAsync();
+
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_event_store_superseding'"))
+      .IsEqualTo(0L)
+      .Because("every probe matches on COALESCE(group, type), which idx_event_store_superseding_group serves, ungrouped rows included");
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_event_store_superseding_group'"))
+      .IsEqualTo(1L)
+      .Because("positive control: the catalog read sees the index that replaced it");
+  }
+
   // ===== Helpers =====
 
   private static SupersedingHistoryReconcileStep _step() =>
