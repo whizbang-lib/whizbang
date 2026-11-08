@@ -76,6 +76,7 @@ Whizbang:Database:PollingFallbackInterval
 Whizbang:Database:RoleAssignment:CooldownAfterLapse
 Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
+Whizbang:Database:RoleAssignment:ProgressWindow
 Whizbang:Database:RoleAssignment:RenewInterval
 Whizbang:Database:SignalRetention
 Whizbang:Database:SignalingMode
@@ -608,6 +609,7 @@ Whizbang:Workers:Maintenance:RowReapBatchSize
 Whizbang:Workers:Maintenance:SettledFoldBatchSize
 Whizbang:Workers:Maintenance:SettledFoldClaimWindowHours
 Whizbang:Workers:Maintenance:SettledFoldIdleDays
+Whizbang:Workers:Maintenance:SkipAcquisitionVacuumWithin
 Whizbang:Workers:Maintenance:StuckRowSentinelEnabled
 Whizbang:Workers:Maintenance:StuckRowSentinelLimit
 Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
