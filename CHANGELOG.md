@@ -1433,9 +1433,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AnsweredToCommitSequence`; `RedeliveryPump.PublishAnswerAsync`), and a bucket is marked only when that window
   includes the bucket's compared window (a whole-history bucket needs a whole-history answer) or the answer carried the
   bucket's named missing event; any other bucket is recorded as answered and stays repairable. A bundle from an origin
-  that predates the fields marks as before. Migration 357 carries the check
-  (`wh_integrity_record_bundle_answer` and `wh_integrity_mark_unhealable_batch` gain trailing defaulted parameters, so
-  calls from an older release still resolve) and re-arms, once per database, the whole-history rows already marked with
+  that predates the fields marks as before. Migration 357 carries the check (`wh_integrity_record_bundle_answer` gains
+  trailing defaulted parameters, so calls from an older release still resolve, and the reconcile marks through the new
+  `wh_integrity_mark_unhealable_covered_batch`) and re-arms, once per database, the whole-history rows already marked with
   no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
   an idle service, and a service whose repair stalled this way may never be idle.
 - **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A

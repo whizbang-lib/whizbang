@@ -126,7 +126,7 @@ public class IntegrityAnswerCoverageSqlTests : EFCoreTestBase {
     var origin = TrackedGuid.New().Value;
     await using (var conn = await _openAsync()) {
       await using var drop = conn.CreateCommand();
-      drop.CommandText = "DROP FUNCTION wh_integrity_mark_unhealable_batch";
+      drop.CommandText = "DROP FUNCTION wh_integrity_mark_unhealable_covered_batch";
       await drop.ExecuteNonQueryAsync();
     }
 

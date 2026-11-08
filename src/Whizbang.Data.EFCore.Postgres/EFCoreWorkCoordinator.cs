@@ -1091,18 +1091,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_unhealable_batch");
+      // 357 (#2143): an answer whose window is known marks through the coverage-checking function.
+      var qualified = BuildSchemaQualifiedName(schema,
+        answeredWindow is null ? "wh_integrity_mark_unhealable_batch" : "wh_integrity_mark_unhealable_covered_batch");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
       cmd.Parameters.AddWithValue(P_NOW, now);
-      _bindAnsweredWindow(cmd, answeredWindow);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = answeredEventIds.ToArray()
-      });
+      var arguments = "@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now";
+      if (answeredWindow is not null) {
+        _bindAnsweredWindow(cmd, answeredWindow);
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = answeredEventIds.ToArray()
+        });
+        arguments += ",@p_answer_from,@p_answer_to,@p_event_ids";
+      }
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_event_ids)";
+      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}({arguments})";
 #pragma warning restore S2077
       var marked = new List<IntegrityRepairLedger.DivergenceKey>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1125,11 +1131,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Binds the window a redelivery answered (#2143): whether it is known, and its exclusive floor and inclusive ceiling
-  /// (NULL = unbounded). An unknown window marks as before 357.
+  /// Binds the window a redelivery answered (#2143): its exclusive floor and inclusive ceiling (NULL = unbounded, and
+  /// both NULL when the window is not known).
   /// </summary>
   private static void _bindAnsweredWindow(Npgsql.NpgsqlCommand cmd, RedeliveryAnswerWindow? window) {
-    cmd.Parameters.AddWithValue("p_answer_window_known", window is not null);
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_from", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)window?.FromCommitSequence ?? DBNull.Value
     });
@@ -1239,6 +1244,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = commitSequences.ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
+      // An unknown window marks as before 357.
+      cmd.Parameters.AddWithValue("p_answer_window_known", answeredWindow is not null);
       _bindAnsweredWindow(cmd, answeredWindow);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to)";

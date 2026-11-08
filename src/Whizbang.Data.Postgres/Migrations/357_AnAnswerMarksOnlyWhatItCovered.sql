@@ -21,8 +21,9 @@
 --              2. wh_integrity_record_bundle_answer: copied whole from 333, plus three trailing parameters with
 --                 defaults (the answered window), so a four-argument call from an older release still resolves and marks
 --                 as before. An unchanged bucket the answer did not cover is answered and not marked.
---              3. wh_integrity_mark_unhealable_batch: copied whole from 249, plus the answered window and the
---                 bundle's events as trailing defaulted parameters, for the reconcile's mark.
+--              3. wh_integrity_mark_unhealable_covered_batch (new): 249's wh_integrity_mark_unhealable_batch with the
+--                 coverage check, for the reconcile's mark. A new name, not new parameters on 249's function: 249
+--                 cannot change, and a second arity would leave it redefining the name without clearing overloads.
 --              4. wh_integrity_rearm_narrow_answers (new), run once below: re-arms the per-stream whole-history rows an
 --                 earlier release marked unhealable with no repair attempt of their own (another request's answer
 --                 marked them). Which answer marked a row is not recorded, so a row with an attempt of its own, or a
@@ -41,9 +42,9 @@
 --              Number 357: 351 to 356 are taken by changes in flight.
 --
 -- Dependencies: 090 (wh_integrity_ledger), 097 (window_from, window_until), 249 (unhealable_at,
---               wh_integrity_mark_unhealable_batch, copied with the delta above), 320 (answered_at), 333
+--               wh_integrity_mark_unhealable_batch, copied under a new name with the delta above), 320 (answered_at), 333
 --               (wh_integrity_record_bundle_answer, copied with the delta above), 338 (missing_event_id)
--- Objects: _wh_integrity_answer_covers, wh_integrity_record_bundle_answer, wh_integrity_mark_unhealable_batch,
+-- Objects: _wh_integrity_answer_covers, wh_integrity_record_bundle_answer, wh_integrity_mark_unhealable_covered_batch,
 --          wh_integrity_rearm_narrow_answers; wh_settings row integrity_rearm_narrow_answers_version
 -- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from
 --            Migrations/constants.txt at apply time (README rule 12).
@@ -270,24 +271,21 @@ COMMENT ON FUNCTION __SCHEMA__.wh_integrity_record_bundle_answer(UUID, UUID[], B
 '357 (#2143): a bucket of a bundle that changed nothing is marked unhealable only when the answer covered its deficit: the answered window (p_answer_from exclusive, p_answer_to inclusive) includes the row''s compared window, or the bundle carried the row''s named missing event; p_answer_window_known false (an origin or caller that does not say) marks as before. Other buckets are answered and stay repairable. 333 (#2093): the covered ledger rows are found by primary key (no ledger scan), and a row already answered with no answer pending is not rewritten. 321: its working table is made once per connection and emptied at commit. 320 (#2029, #2033): records a committed redelivery bundle''s answer when its children commit. Per bucket: the events present in the event store, absent (the bundle stores them), refused as truncated (252) and adoptable; the covered ledger rows and their type lane stop waiting (answered); and every refused bucket is marked unhealable, returned with the reason so each is reported once.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- wh_integrity_mark_unhealable_batch: last word 249, copied whole with the 357 delta (the answered window and the
--- bundle's events, trailing and defaulted, so a five-argument call from an older release marks as before).
-SELECT __SCHEMA__.drop_all_overloads('wh_integrity_mark_unhealable_batch');
--- <docs>resilience/stream-integrity#unhealable-buckets</docs>
+-- The reconcile's mark for an answer whose window is known: wh_integrity_mark_unhealable_batch (249) plus the coverage
+-- check. A new name rather than new parameters on 249's function: a second arity there would leave 249 (which cannot
+-- change) defining the name without clearing its overloads, so a replay of 249 would add an overload beside this one.
+SELECT __SCHEMA__.drop_all_overloads('wh_integrity_mark_unhealable_covered_batch');
 -- <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnhealableSqlTests.cs:MarkUnhealable_ATrackedBucket_IsReturnedOnce_AndAKeyWithoutARowIsIgnoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnhealableSqlTests.cs:MarkUnhealable_AnEmptyTenant_MatchesTheRowTheLedgerKeyedWithoutOneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerCoverageSqlTests.cs:MarkUnhealable_WithAWindow_MarksOnlyTheRowsTheAnswerCoveredAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_mark_unhealable_batch(
-  p_origin_service_id   UUID,
-  p_tenant_scopes       TEXT[],
-  p_event_types         TEXT[],
-  p_stream_ids          UUID[],
-  p_now                 TIMESTAMPTZ,
-  p_answer_window_known BOOLEAN DEFAULT false,
-  p_answer_from         BIGINT DEFAULT NULL,
-  p_answer_to           BIGINT DEFAULT NULL,
-  p_event_ids           UUID[] DEFAULT NULL
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_mark_unhealable_covered_batch(
+  p_origin_service_id UUID,
+  p_tenant_scopes     TEXT[],
+  p_event_types       TEXT[],
+  p_stream_ids        UUID[],
+  p_now               TIMESTAMPTZ,
+  p_answer_from       BIGINT,
+  p_answer_to         BIGINT,
+  p_event_ids         UUID[]
 ) RETURNS TABLE(tenant_scope TEXT, event_type TEXT, stream_id UUID) AS $$
 #variable_conflict use_column
 BEGIN
@@ -305,15 +303,14 @@ BEGIN
     AND l.event_type = k.etype
     AND l.stream_id = k.sid
     AND l.unhealable_at IS NULL
-    -- 357 (#2143): only a row whose deficit the answer covered.
-    AND __SCHEMA__._wh_integrity_answer_covers(p_answer_window_known, p_answer_from, p_answer_to,
+    AND __SCHEMA__._wh_integrity_answer_covers(true, p_answer_from, p_answer_to,
                                                l.window_from, l.window_until, l.missing_event_id, p_event_ids)
   RETURNING l.tenant_scope, l.event_type, l.stream_id;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_unhealable_batch(UUID, TEXT[], TEXT[], UUID[], TIMESTAMPTZ, BOOLEAN, BIGINT, BIGINT, UUID[]) IS
-'357 (#2143): with the answered window known, marks only the rows whose deficit the answer covered (_wh_integrity_answer_covers). 249 (#1790): marks the tracked ledger rows of the keyed buckets as ones repair cannot change and returns the rows this call marked (a row already marked, or a key with no row, is not returned), so each is reported once.';
+COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_unhealable_covered_batch(UUID, TEXT[], TEXT[], UUID[], TIMESTAMPTZ, BIGINT, BIGINT, UUID[]) IS
+'357 (#2143): wh_integrity_mark_unhealable_batch for an answer whose window is known: marks only the tracked rows whose deficit the answer covered (_wh_integrity_answer_covers) and returns the rows this call marked, so each is reported once.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- The one-time correction: per-stream whole-history rows marked unhealable with no repair attempt of their own were
