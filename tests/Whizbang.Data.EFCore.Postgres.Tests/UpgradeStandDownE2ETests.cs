@@ -3,7 +3,6 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -276,11 +275,16 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
     public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
   }
 
-  private sealed class Host : IHostApplicationLifetime {
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => throw new InvalidOperationException("a stand-down never stops the host");
+  /// <summary>The one exit path (#2126), which a stand-down never takes: it stays alive, not ready.</summary>
+  private sealed class NoExit : IWhizbangInstanceExit {
+    public ExitCause? Cause => null;
+    public InstanceExitReport? Report => null;
+    public Task Completion => Task.CompletedTask;
+    public void RequestExit(InstanceExitRequest request) => throw new InvalidOperationException("a stand-down never exits");
+    public Task ExitAsync(InstanceExitRequest request, CancellationToken cancellationToken) =>
+      throw new InvalidOperationException("a stand-down never exits");
+    public void OnHostStarting() { }
+    public Task OnHostStoppingAsync(CancellationToken stopToken) => Task.CompletedTask;
   }
 
   private PgRoleElector _elector(Pod pod, WhizbangRunPermit permit) => new(
@@ -314,7 +318,7 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
       sp.GetRequiredService<WorkCoordinationDbContext>(), JsonContextRegistry.CreateCombinedOptions()));
     await using var provider = services.BuildServiceProvider();
     var bus = new Bus();
-    using var watcher = new StandbyWatcher(provider.GetRequiredService<IServiceScopeFactory>(), path, new Host(), old,
+    using var watcher = new StandbyWatcher(provider.GetRequiredService<IServiceScopeFactory>(), path, new NoExit(), old,
       new LibraryVersionProvider("999.0.0"), _assessor(old), NullLogger<StandbyWatcher>.Instance, new FakeTimeProvider(),
       options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) }) {
       Signals = bus,
