@@ -14,6 +14,9 @@
 --              The instance's own start writes it (SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync). Nothing else
 --              writes it, and the heartbeat leaves it alone.
 --
+--              In the bootstrap region: the instance table is Preflight's, so every column a migration gives it is
+--              there before the main pass, as the registration that writes this one expects.
+--
 --              Rolling deploy: an older release neither reads nor writes the column.
 --
 --              Number 359: above every number on develop (through 355) and in open pull requests (357).
@@ -22,6 +25,9 @@
 -- Objects: wh_service_instances.incompatibility_override
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README
 --            rule 12).
+
+-- @whizbang:bootstrap-begin
+-- Bootstrap: the instance table's columns are all there from Preflight on.
 
 DO $$
 BEGIN
@@ -36,3 +42,5 @@ BEGIN
       'verdict: the reason the verdict would have stood it down. NULL otherwise.';
   END IF;
 END $$;
+
+-- @whizbang:bootstrap-end
