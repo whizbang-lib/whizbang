@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="FromCommitSequence">Exclusive floor; null = from the beginning.</param>
 /// <param name="ToCommitSequence">Inclusive ceiling; null = to the head.</param>
 /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryAnswerWindowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryAnswerCoverageTests.cs</tests>
 public readonly record struct RedeliveryAnswerWindow(long? FromCommitSequence, long? ToCommitSequence) {
   /// <summary>The answer covers the stream's whole history: neither bound is set.</summary>
   public bool IsWholeHistory => FromCommitSequence is null && ToCommitSequence is null;
