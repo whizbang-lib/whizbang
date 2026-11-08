@@ -119,7 +119,7 @@ public class CoordinatorIntegrityRepairLedgerUnhealableTests {
     await Assert.That(result).IsEquivalentTo([marked]);
     await Assert.That(coordinator.WindowedMark!.Value.Window).IsEqualTo(new RedeliveryAnswerWindow(3, 9))
       .Because("the store judges which rows the answer covered (#2143)");
-    await Assert.That(coordinator.WindowedMark!.Value.EventIds).IsEquivalentTo([carried]);
+    await Assert.That(coordinator.WindowedMark.Value.EventIds).IsEquivalentTo([carried]);
   }
 
   [Test]

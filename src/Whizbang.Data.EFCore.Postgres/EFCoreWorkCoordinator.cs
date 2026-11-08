@@ -1136,10 +1136,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   private static void _bindAnsweredWindow(Npgsql.NpgsqlCommand cmd, RedeliveryAnswerWindow? window) {
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_from", NpgsqlTypes.NpgsqlDbType.Bigint) {
-      Value = (object?)window?.FromCommitSequence ?? DBNull.Value
+      Value = window is { FromCommitSequence: { } from } ? (object)from : DBNull.Value
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_to", NpgsqlTypes.NpgsqlDbType.Bigint) {
-      Value = (object?)window?.ToCommitSequence ?? DBNull.Value
+      Value = window is { ToCommitSequence: { } to } ? (object)to : DBNull.Value
     });
   }
 

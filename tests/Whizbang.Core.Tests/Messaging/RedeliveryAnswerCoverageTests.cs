@@ -147,6 +147,8 @@ public class RedeliveryAnswerCoverageTests {
     var (origin, stream) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
     var bundle = _bundle(origin, stream, new RedeliveryAnswerWindow(300, null));
     var (coordinator, ledger, key) = _store(origin, stream, deferring: true);
+    // The commit-time record found every event already stored; the window still decides the mark.
+    coordinator.BundleAnswer = new IntegrityBundleAnswer(2, 2, 0, 0, 0, [], []);
     await using var services = _services(coordinator, ledger, withDeliveries: true);
     var deferred = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle), services, NullLogger.Instance, _now);
     await Assert.That(deferred.Deferred).IsTrue().Because("precondition: the reconcile waits for the maintainer");
