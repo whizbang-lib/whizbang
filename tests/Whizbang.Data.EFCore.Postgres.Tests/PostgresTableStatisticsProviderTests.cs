@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs</code-under-test>
 [Category("Integration")]
-[Category("Shard2")]
+[Category("Shard5")]
 public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
   private NpgsqlDataSource _dataSource = null!;
   private PostgresTableStatisticsProvider _provider = null!;
