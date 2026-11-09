@@ -207,5 +207,26 @@ public interface IServiceBusAdminClient {
     CreateRuleOptions options,
     CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// Replaces an existing rule's filter in place (#2175). One broker operation, so the subscription is never left
+  /// without the rule, unlike a delete and a create. The default throws <see cref="NotSupportedException"/> for an
+  /// implementation that predates it; the excluded-event-types reconcile then logs a warning and the subscription keeps
+  /// delivering every event.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="rule">The rule, named as it exists, carrying its new filter.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task completing when the rule is replaced.</returns>
+  /// <docs>messaging/transports/azure-service-bus#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientDefaultsTests.cs:UpdateRuleAsync_Default_IsNotSupportedAsync</tests>
+  Task UpdateRuleAsync(
+    string topicName,
+    string subscriptionName,
+    RuleProperties rule,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException(
+      $"{GetType().Name} cannot update a subscription rule in place; implement UpdateRuleAsync to filter excluded event types at the broker.");
+
   #endregion
 }

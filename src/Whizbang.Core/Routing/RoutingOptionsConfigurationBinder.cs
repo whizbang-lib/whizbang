@@ -21,6 +21,8 @@ namespace Whizbang.Core.Routing;
 ///   <item><c>Whizbang:Routing:RetireSharedInbox</c> (bool) — retirement of the legacy
 ///   catch-all. <c>false</c> keeps the transitional shared subscription (and the entity's
 ///   provisioning) while publishers stay flipped: the dual-delivery rollback rung.</item>
+///   <item><c>Whizbang:Routing:ExcludedEventTypes</c> (string array, #2175): event types this service opts out of,
+///   merged with <see cref="RoutingOptions.ExcludeEventType{TEvent}"/>. Empty by default.</item>
 /// </list>
 /// Explicit per-key reads only (house idiom — no <c>IConfiguration.Bind</c>, no reflection),
 /// applied ON TOP of the code-callback values. Absent section = no-op (defaults locked).
@@ -29,6 +31,7 @@ namespace Whizbang.Core.Routing;
 /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:WithRouting_ConfigurationFlipSet_AppliedOnOptionsResolutionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_ConfigurationRetireSharedInbox_WithWildcardFlip_BindsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:Configuration_RouteAllFalse_RollsBackTheDefaultFlipAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:WithRouting_ConfigurationList_IsMergedWithTheCodeListAsync</tests>
 internal static class RoutingOptionsConfigurationBinder {
   /// <summary>The routing configuration section.</summary>
   internal const string CONFIGURATION_SECTION = "Whizbang:Routing";
@@ -41,6 +44,9 @@ internal static class RoutingOptionsConfigurationBinder {
 
   /// <summary>The shared-inbox retirement key under the routing section (a boolean).</summary>
   internal const string RETIRE_SHARED_INBOX_KEY = "RetireSharedInbox";
+
+  /// <summary>The opt-out list of event types under the routing section (a string array, #2175).</summary>
+  internal const string EXCLUDED_EVENT_TYPES_KEY = "ExcludedEventTypes";
 
   /// <summary>The array entry that flips ALL command namespaces.</summary>
   internal const string ROUTE_ALL_WILDCARD = "*";
@@ -76,6 +82,10 @@ internal static class RoutingOptionsConfigurationBinder {
     if (bool.TryParse(section[RETIRE_SHARED_INBOX_KEY], out var retire)) {
       _ = retire ? options.RetireSharedInbox() : options.KeepSharedInbox();
     }
+
+    // The opt-out list of event types (#2175), merged with the code list: a type named in either is excluded.
+    // ExcludeEventTypes skips blank entries.
+    options.ExcludeEventTypes([.. section.GetSection(EXCLUDED_EVENT_TYPES_KEY).GetChildren().Select(c => c.Value!)]);
 
     var flipSection = section.GetSection(COMMAND_NAMESPACES_TO_INBOX_KEY);
     if (!flipSection.Exists()) {

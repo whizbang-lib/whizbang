@@ -437,7 +437,11 @@ public static class TransportConsumerBuilderExtensions {
         discovery,
         serviceName,
         sp.GetService<IInboxRoutingStrategy>(),
-        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
+        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>(),
+        // The excluded-event-types checks (#2175) warn on a type the application does not declare and log what each
+        // event subscription excludes.
+        sp.GetService<IMessageTypeCatalog>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<TransportSubscriptionBuilder>>());
 
     subscriptionBuilder.ConfigureOptions(options);
 
