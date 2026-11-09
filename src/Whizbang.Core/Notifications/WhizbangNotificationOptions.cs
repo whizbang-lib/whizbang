@@ -105,7 +105,11 @@ public sealed class WhizbangNotificationOptions {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionWindowTests.cs:Sweep_UsesTheConfiguredWindowAsync</tests>
   public TimeSpan SignalRetention { get; set; } = TimeSpan.FromDays(7);
 
-  /// <summary>Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s.</summary>
+  /// <summary>
+  /// Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s. It is also the
+  /// timeout of the connection's wait for notifications, so it bounds how long a subscription made
+  /// after the connection came up can wait to be listened on when its wake-up is lost (#2155).
+  /// </summary>
   public TimeSpan ListenKeepaliveInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>First reconnect attempt delay after a disconnect. Default 1 s.</summary>
