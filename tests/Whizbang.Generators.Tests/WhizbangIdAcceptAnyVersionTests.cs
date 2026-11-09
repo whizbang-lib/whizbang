@@ -10,9 +10,11 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// <c>[WhizbangId(AcceptAnyVersion = true)]</c> generates an id that takes any non-empty Guid through every way
-/// in: <c>From</c>, <c>Parse</c>, the explicit cast, the JSON converter, the constructor and the <c>Value</c>
-/// initializer. Without it, the generated id keeps today's UUIDv7 rule.
+/// <c>[WhizbangId(AcceptAnyVersion = true)]</c> generates an id that takes any non-empty Guid through the checked
+/// entry points: <c>From</c>, <c>Parse</c>, the explicit cast and the JSON converter. The constructor and the
+/// <c>Value</c> initializer stay unchecked, as on every id: they are the load path for EF Core and the persistence
+/// converter. Without the option, the generated id keeps today's UUIDv7 rule. When two <c>[WhizbangId]</c>
+/// attributes for the same id disagree on the option, WHIZ029 reports each opt-in that is ignored.
 /// </summary>
 /// <remarks>
 /// Name-derived ids (v5, v8), hash-derived ids and ids issued by an external identity provider (v4) are not v7 and
@@ -58,7 +60,7 @@ public class WhizbangIdAcceptAnyVersionTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task ExplicitType_WithAcceptAnyVersion_ConstructorAndValueAgreeWithFromAsync() {
+  public async Task ExplicitType_WithAcceptAnyVersion_ConstructorAndValueStayUncheckedAsync() {
     const string source = """
       using Whizbang.Core;
       namespace MyApp.Domain;
@@ -69,9 +71,8 @@ public class WhizbangIdAcceptAnyVersionTests {
     var generated = _generatedId(source);
 
     await Assert.That(generated).Contains(
-      "public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(_requireNonEmpty(value, nameof(Value))); }");
-    await Assert.That(generated).Contains(
-      "public ProductId(Guid Value) => _tracked = TrackedGuid.FromExternal(_requireNonEmpty(Value, nameof(Value)));");
+      "public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
+    await Assert.That(generated).Contains("public ProductId(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
   }
 
   [Test]
@@ -176,5 +177,107 @@ public class WhizbangIdAcceptAnyVersionTests {
 
     await Assert.That(converter).IsNotNull();
     await Assert.That(converter).Contains("ProductId.From(Guid.Parse(");
+  }
+
+  // ========================================
+  // WHIZ029: discovery routes disagree on AcceptAnyVersion
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task RoutesThatAgreeOnAcceptAnyVersion_ReportNoWhiz029Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId(AcceptAnyVersion = true)]
+      public readonly partial struct ProductId;
+      public class CreateProduct {
+        [WhizbangId(AcceptAnyVersion = true)]
+        public ProductId Id { get; set; }
+      }
+      public record UpdateProduct([WhizbangId(AcceptAnyVersion = true)] ProductId Id);
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
+
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ029")).IsEmpty();
+    await Assert.That(generated).Contains(NON_EMPTY_GUARD);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task StrictRoutesOnly_ReportNoWhiz029Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId]
+      public readonly partial struct ProductId;
+      public class CreateProduct {
+        [WhizbangId]
+        public ProductId Id { get; set; }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ029")).IsEmpty();
+  }
+
+  /// <summary>
+  /// The type opts in and a property's attribute does not: the id keeps the UUIDv7 rule whichever route is
+  /// discovered first, and WHIZ029 points at the opt-in that is ignored.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task RoutesThatDisagree_KeepTheUuidV7RuleAndReportWhiz029AtTheOptInAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId(AcceptAnyVersion = true)]
+      public readonly partial struct ProductId;
+      public class CreateProduct {
+        [WhizbangId]
+        public ProductId Id { get; set; }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
+    var whiz029 = result.Diagnostics.Where(d => d.Id == "WHIZ029").ToList();
+
+    await Assert.That(generated).Contains(STRICT_FROM_GUARD);
+    await Assert.That(generated).DoesNotContain(NON_EMPTY_GUARD);
+    await Assert.That(whiz029).Count().IsEqualTo(1);
+    await Assert.That(whiz029[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(whiz029[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("ProductId");
+    // Reported at the type's opt-in, not at the property's [WhizbangId].
+    await Assert.That(DiagnosticSourceText.Of(whiz029[0])).IsEqualTo("WhizbangId(AcceptAnyVersion = true)");
+  }
+
+  /// <summary>
+  /// The same disagreement with the routes the other way round (the property opts in, the type does not), and
+  /// with two opt-ins: the outcome is the same, and every ignored opt-in is reported.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task RoutesThatDisagree_ReportEveryIgnoredOptInWhateverTheOrderAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      public record UpdateProduct([WhizbangId(AcceptAnyVersion = true)] ProductId Id);
+      public class CreateProduct {
+        [WhizbangId(AcceptAnyVersion = true)]
+        public ProductId Id { get; set; }
+      }
+      [WhizbangId]
+      public readonly partial struct ProductId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
+
+    await Assert.That(generated).Contains(STRICT_FROM_GUARD);
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ029")).Count().IsEqualTo(2);
   }
 }
