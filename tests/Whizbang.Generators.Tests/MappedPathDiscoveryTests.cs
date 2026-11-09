@@ -278,10 +278,11 @@ public class MappedPathDiscoveryTests {
   }
 
   /// <summary>
-  /// A struct is constructed the same way a class is, so a struct whose only constructor takes a collection is named.
+  /// A struct's constructors are judged like a class's, and a struct always has its public parameterless constructor,
+  /// so one that also declares a collection constructor is still constructible and is not named.
   /// </summary>
   [Test]
-  public async Task ANestedStructWithOnlyACollectionConstructorIsReportedAsync() {
+  public async Task ANestedStructWithACollectionConstructorIsNotReportedAsync() {
     var member = _unmappable(_modelWith("""
         public Pocket Item { get; init; }
       }
@@ -291,8 +292,8 @@ public class MappedPathDiscoveryTests {
         public string Label { get; init; }
       """));
 
-    await Assert.That(member).IsEqualTo("Item")
-      .Because("a struct's declared constructor is judged like a class's");
+    await Assert.That(member).IsNull()
+      .Because("the parameterless constructor every struct has binds nothing, so the mapped path can construct it");
   }
 
   /// <summary>
