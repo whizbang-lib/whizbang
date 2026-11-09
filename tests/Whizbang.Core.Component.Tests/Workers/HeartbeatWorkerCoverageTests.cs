@@ -55,6 +55,20 @@ public class HeartbeatWorkerCoverageTests {
     }
   }
 
+  /// <summary>Accepts the beat after canceling the host's stop token, standing in for a host that stops while a beat
+  /// is in flight and the beat still completes: the loop must then end on its own condition, not on a cancellation
+  /// thrown from the beat or the wait.</summary>
+  private sealed class StopDuringBeatCoordinator(CancellationTokenSource stop) : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      stop.Cancel();
+      return Task.FromResult(true);
+    }
+  }
+
   private static HeartbeatWorker _buildWorker(
       IWorkCoordinator coordinator, HeartbeatWorkerOptions options) {
     var services = new ServiceCollection();
@@ -134,5 +148,29 @@ public class HeartbeatWorkerCoverageTests {
     await Assert.That(coordinator.Calls).IsGreaterThanOrEqualTo(2)
       .Because("a single failed tick is non-fatal — the worker must still be ticking afterward, "
              + "or a transient DB hiccup would permanently silence this instance's heartbeat");
+  }
+  // Target: the beat loop's `while (!stoppingToken.IsCancellationRequested)` exiting on its condition. Every other test
+  // stops the worker by canceling while it waits, which ends the loop through the wait's cancellation catch; the
+  // condition's false outcome was reached only when a test's cancel happened to land while a beat was still returning,
+  // so it depended on thread timing (a merge-queue run lost it). Here the beat itself cancels the stop token and then
+  // completes, so the loop always comes back to the condition with the token canceled.
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_HostStopsDuringAnAcceptedBeat_EndsTheLoopOnItsConditionAsync(
+      CancellationToken testToken) {
+    using var stop = new CancellationTokenSource();
+    var coordinator = new StopDuringBeatCoordinator(stop);
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+
+    await worker.StartAsync(stop.Token);
+    var executeTask = worker.ExecuteTask;
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+      .Because("a beat that completes after the host stopped returns to the loop, which sees the stop and ends "
+             + "normally rather than throwing or waiting for another cadence");
+    await Assert.That(coordinator.Calls).IsEqualTo(1)
+      .Because("the loop checks the stop token before planning another tick, so no second beat is attempted");
   }
 }
