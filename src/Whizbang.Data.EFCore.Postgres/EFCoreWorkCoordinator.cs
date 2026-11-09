@@ -1175,6 +1175,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+      Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
   /// out their backoff only, as before.</remarks>
   public async Task<int> IntegrityMarkAnswerPendingAsync(

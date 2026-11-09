@@ -100,6 +100,15 @@ public sealed class IntegrityDomainOwnership {
   public bool IsOwnedByAnother(string storedEventType, Guid originServiceId) =>
     FindOwner(storedEventType) is { } owner && owner.OwnerServiceId != originServiceId;
 
+  /// <summary>The rule before this change (RED): the map alone.</summary>
+  /// <param name="storedEventType">A stored type name.</param>
+  /// <param name="originServiceId">The origin that reported the type.</param>
+  /// <param name="localOwnedDomains">This service's own owned domains.</param>
+  public bool IsNotAuthoritative(string storedEventType, Guid originServiceId, IReadOnlyCollection<string> localOwnedDomains) {
+    ArgumentNullException.ThrowIfNull(localOwnedDomains);
+    return IsOwnedByAnother(storedEventType, originServiceId);
+  }
+
   /// <summary>
   /// A stable fingerprint of the map together with this service's own owned domains, independent of order and case.
   /// Re-attribution rewalks the store from the start whenever it changes, so history parked as unattributed reaches an
