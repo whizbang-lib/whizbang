@@ -231,15 +231,35 @@ public class SubscriptionBackfillWorkerTests {
   }
 
   [Test]
+  public async Task Tick_RecordsTheWindowAsRequested_BeforeItLeaves_SoAnAnswerThatOutrunsThePublishFindsItAsync() {
+    // The owner may answer before the publish call returns (a fast owner, or this host's continuation delayed under
+    // load). Its answer applies only to a window already recorded as awaiting it, so the record must come first.
+    var cursor = _cursor(_orders, "orders-svc", PLACED);
+    var (worker, coordinator, transport) = _build(_options(), [cursor]);
+    var marksWhenPublished = -1;
+    transport.OnPublish = () => marksWhenPublished = coordinator.Marks.Count;
+
+    await worker.TickAsync(10, _now, CancellationToken.None);
+
+    await Assert.That(marksWhenPublished).IsEqualTo(1)
+      .Because("the window is recorded as awaiting its answer before the request can reach the owner");
+    await Assert.That(coordinator.Withdrawals).IsEmpty();
+  }
+
+  [Test]
   public async Task Tick_AFailedSend_IsNotRecorded_AndTheNextBackfillStillGoesAsync() {
-    var failing = _cursor(_orders, "orders-svc", PLACED);
+    var failing = _cursor(_orders, "orders-svc", PLACED) with { CursorCommitSequence = 77, Window = 2, WindowsRequested = 2, WindowAttempts = 1 };
     var sent = _cursor(_billing, "billing-svc", BILLED);
     var (worker, coordinator, transport) = _build(_options(perMinute: 1_000_000), [failing, sent]);
     transport.FailFirst = 1;
 
     await worker.TickAsync(60, _now, CancellationToken.None);
 
-    await Assert.That(coordinator.Marks.Select(m => m.BackfillId)).IsEquivalentTo([sent.BackfillId]);
+    await Assert.That(coordinator.Withdrawals).IsEquivalentTo([(failing, 3L)])
+      .Because("the window recorded before the send is withdrawn when the send fails, back to the state it was asked from");
+    await Assert.That(coordinator.Cursors.Single(c => c.BackfillId == failing.BackfillId)).IsEqualTo(failing)
+      .Because("a window that could not leave is not recorded as awaiting an answer, so a later tick asks it");
+    await Assert.That(coordinator.Cursors.Single(c => c.BackfillId == sent.BackfillId).Window).IsEqualTo(1L);
   }
 
   [Test]
@@ -599,6 +619,7 @@ public class SubscriptionBackfillWorkerTests {
     public IReadOnlyList<IntegrityDomainClaim> Claims { get; init; } = [];
     public List<(Guid BackfillId, long Window, DateTimeOffset Now, DateTimeOffset AnswerDueBy)> Marks { get; } = [];
     public List<(Guid BackfillId, SubscriptionBackfillOutcome Outcome, DateTimeOffset Now)> Ended { get; } = [];
+    public List<(SubscriptionBackfillCursor RequestedFrom, long Window)> Withdrawals { get; } = [];
     public int Reads { get; private set; }
     public int FailReadsRemaining { get; set; }
     public Exception? FailReadsWith { get; set; }
@@ -627,6 +648,14 @@ public class SubscriptionBackfillWorkerTests {
       return Task.CompletedTask;
     }
 
+    public Task WithdrawSubscriptionBackfillWindowRequestAsync(
+        SubscriptionBackfillCursor requestedFrom, long window, CancellationToken cancellationToken = default) {
+      Withdrawals.Add((requestedFrom, window));
+      var index = Cursors.FindIndex(c => c.BackfillId == requestedFrom.BackfillId);
+      Cursors[index] = requestedFrom;
+      return Task.CompletedTask;
+    }
+
     public Task EndSubscriptionBackfillAsync(
         Guid backfillId, SubscriptionBackfillOutcome outcome, DateTimeOffset now, CancellationToken cancellationToken = default) {
       Ended.Add((backfillId, outcome, now));
@@ -638,11 +667,13 @@ public class SubscriptionBackfillWorkerTests {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public int FailFirst { get; set; }
     public Exception? FailWith { get; set; }
+    public Action? OnPublish { get; set; }
     private int _attempts;
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      OnPublish?.Invoke();
       lock (Published) {
         _attempts++;
         if (_attempts <= FailFirst) {

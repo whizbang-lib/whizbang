@@ -55,22 +55,21 @@ public class HeartbeatWorkerCoverageTests {
     }
   }
 
-  /// <summary>Accepts the beat after canceling the host's stop token, standing in for a host that stops while a beat
-  /// is in flight and the beat still completes: the loop must then end on its own condition, not on a cancellation
-  /// thrown from the beat or the wait.</summary>
-  private sealed class StopDuringBeatCoordinator(CancellationTokenSource stop) : NoOpWorkCoordinator, IWorkCoordinator {
+  /// <summary>Stops the host from inside a beat and still accepts it, without observing the token.</summary>
+  private sealed class StopsTheHostDuringTheBeatCoordinator(CancellationTokenSource hostStop) : NoOpWorkCoordinator, IWorkCoordinator {
     private int _calls;
     public int Calls => Volatile.Read(ref _calls);
 
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _calls);
-      stop.Cancel();
+      hostStop.Cancel();
       return Task.FromResult(true);
     }
   }
 
   private static HeartbeatWorker _buildWorker(
-      IWorkCoordinator coordinator, HeartbeatWorkerOptions options) {
+      IWorkCoordinator coordinator, HeartbeatWorkerOptions options,
+      Whizbang.Testing.Lifecycle.RecordingInstanceExit? instanceExit = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
@@ -85,7 +84,33 @@ public class HeartbeatWorkerCoverageTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
-        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: instanceExit ?? new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
+  }
+
+  // Target: the beat loop's own stop check (`while (!stoppingToken.IsCancellationRequested)` in
+  // _beatUntilStoppedOrEvictedAsync), taken with the token already canceled. The loop is normally left through the
+  // cancellation the next wait throws, so without this test whether that outcome is taken depends on timing. Here the
+  // host stops inside a beat the registry still accepts without observing the token, so no wait and no beat throws, and
+  // the stop check is what ends the loop, by construction.
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_HostStopsDuringAnAcceptedBeat_LoopExitsOnItsStopCheckWithoutRequestingExitAsync(
+      CancellationToken testToken) {
+    using var hostStop = new CancellationTokenSource();
+    var coordinator = new StopsTheHostDuringTheBeatCoordinator(hostStop);
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 }, exit);
+
+    await worker.StartAsync(hostStop.Token);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+
+    await Assert.That(coordinator.Calls).IsEqualTo(1)
+      .Because("the worker ran one beat, and the stop it saw afterwards ended the loop before a second");
+    await Assert.That(worker.LastAcceptedAt.HasValue).IsTrue()
+      .Because("the beat returned normally and was recorded as accepted, so no cancellation was thrown out of it");
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(exit.Requests).IsEmpty()
+      .Because("a host stop is not an eviction: only a refused beat asks the instance to exit");
   }
 
   // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the
@@ -148,29 +173,5 @@ public class HeartbeatWorkerCoverageTests {
     await Assert.That(coordinator.Calls).IsGreaterThanOrEqualTo(2)
       .Because("a single failed tick is non-fatal — the worker must still be ticking afterward, "
              + "or a transient DB hiccup would permanently silence this instance's heartbeat");
-  }
-  // Target: the beat loop's `while (!stoppingToken.IsCancellationRequested)` exiting on its condition. Every other test
-  // stops the worker by canceling while it waits, which ends the loop through the wait's cancellation catch; the
-  // condition's false outcome was reached only when a test's cancel happened to land while a beat was still returning,
-  // so it depended on thread timing (a merge-queue run lost it). Here the beat itself cancels the stop token and then
-  // completes, so the loop always comes back to the condition with the token canceled.
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_HostStopsDuringAnAcceptedBeat_EndsTheLoopOnItsConditionAsync(
-      CancellationToken testToken) {
-    using var stop = new CancellationTokenSource();
-    var coordinator = new StopDuringBeatCoordinator(stop);
-    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
-
-    await worker.StartAsync(stop.Token);
-    var executeTask = worker.ExecuteTask;
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
-      .Because("a beat that completes after the host stopped returns to the loop, which sees the stop and ends "
-             + "normally rather than throwing or waiting for another cadence");
-    await Assert.That(coordinator.Calls).IsEqualTo(1)
-      .Because("the loop checks the stop token before planning another tick, so no second beat is attempted");
   }
 }

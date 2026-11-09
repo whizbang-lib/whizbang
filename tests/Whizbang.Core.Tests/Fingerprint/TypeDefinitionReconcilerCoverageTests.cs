@@ -115,8 +115,9 @@ public class TypeDefinitionReconcilerCoverageTests {
     await Assert.That(coordinator.Recorded.Value.To).IsEqualTo(2);
   }
 
-  // #1578: the flag reclaims the history of every ephemeral event type on the boot it is on, not only on the boot
-  // that first saw the type turn ephemeral, so turning it on after that boot still reclassifies.
+  // #2206: startup reclassifies nothing, whatever the flag says; the maintenance cycle's ephemeral-history-reclassify
+  // step does it in bounded batches, on every cycle with the flag on (which keeps #1578: a type that turned ephemeral
+  // on an earlier boot with the flag off is still reclassified once the flag is on).
 
   private static MessageTypeCatalogEntry _entry(string kind, bool ephemeral) =>
     new(typeof(object), "Contracts.PresencePinged", kind, null) {
@@ -127,27 +128,18 @@ public class TypeDefinitionReconcilerCoverageTests {
     };
 
   [Test]
-  public async Task Reconcile_FlagOn_TypeAlreadyEphemeralOnAnEarlierBoot_ReclassifiesItsHistoryAsync() {
-    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew: false);
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task Reconcile_FlagOn_LeavesTheReclassifyToTheMaintenanceCycle_StartupDoesNotWaitOnItAsync(bool registersAsNew) {
+    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew);
     var reconciler = _reconciler(coordinator, new FakeCatalog(_entry("event", ephemeral: true)), reconcileHistorical: true);
 
     var summary = await reconciler.ReconcileAsync(CancellationToken.None);
 
-    await Assert.That(coordinator.Reclassified).Count().IsEqualTo(1)
-      .Because("the drift was seen on an earlier boot with the flag off; turning the flag on must still reclaim the history");
-    await Assert.That(coordinator.Reclassified[0]).IsEquivalentTo(["Contracts.PresencePinged", "Contracts.Legacy.PresencePinged"])
-      .Because("history stored under a former name belongs to the same type");
-    await Assert.That(summary.TypesReclassified).IsEqualTo(1);
-  }
-
-  [Test]
-  public async Task Reconcile_FlagOn_TypeTurningEphemeralOnThisBoot_IsReclassifiedOnceAsync() {
-    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew: true);
-    var reconciler = _reconciler(coordinator, new FakeCatalog(_entry("event", ephemeral: true)), reconcileHistorical: true);
-
-    await reconciler.ReconcileAsync(CancellationToken.None);
-
-    await Assert.That(coordinator.Reclassified).Count().IsEqualTo(1);
+    await Assert.That(coordinator.Reclassified).IsEmpty()
+      .Because("one statement over every stored event of the type is what startup waited on; the walk runs in maintenance");
+    await Assert.That(summary.TypesReclassified).IsEqualTo(0);
+    await Assert.That(summary.TypesRegistered).IsEqualTo(1).Because("the control: the pass itself ran");
   }
 
   [Test]

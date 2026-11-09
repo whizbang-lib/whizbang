@@ -134,8 +134,12 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
       .Because("skipping means NO catalog walk and no per-type round-trips, not just no writes.");
   }
 
+  /// <summary>
+  /// #2206: with the opt-in on, startup records the drift and leaves the history to the maintenance cycle, whose
+  /// ephemeral-history-reclassify step then reclassifies it in bounded batches.
+  /// </summary>
   [Test]
-  public async Task Reconcile_SettingsDriftToEphemeral_ActEnabled_ReclassifiesAndRecordsLineageAsync() {
+  public async Task Reconcile_SettingsDriftToEphemeral_ActEnabled_RecordsLineage_AndTheMaintenanceStepReclassifiesAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
@@ -152,7 +156,25 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var summary = await _reconciler(coordinator, catalog, act: true).ReconcileAsync();
 
     await Assert.That(summary.DriftDetected).IsEqualTo(1).Because("The type's definition changed since it was last stored.");
-    await Assert.That(summary.TypesReclassified).IsEqualTo(1).Because("Settings drift toward Ephemeral, with act enabled, reclassifies its history.");
+    await Assert.That(summary.TypesReclassified).IsEqualTo(0).Because("Startup no longer waits on the reclassification.");
+    await Assert.That(await _flagsAsync(connection, e1) & 8).IsEqualTo(0).Because("Startup left the history to the maintenance cycle.");
+
+    await using (var stamp = connection.CreateCommand()) {
+      stamp.CommandText = "SELECT stamp_pending_commit_sequences(1000)";
+      await stamp.ExecuteNonQueryAsync();
+    }
+    var services = new ServiceCollection()
+      .AddSingleton(new Whizbang.Data.Postgres.PostgresArchiveConnection(async ct => {
+        var c = new NpgsqlConnection(ConnectionString);
+        await c.OpenAsync(ct);
+        return c;
+      }, "public"))
+      .AddSingleton<IMessageTypeCatalog>(catalog)
+      .AddSingleton(Options.Create(new EphemeralOptions { ReconcileHistoricalOnStartup = true }))
+      .BuildServiceProvider();
+    var cycle = await Whizbang.Data.Postgres.EphemeralHistoryReclassifyStep.FromServices(services).ReclassifyAsync(services, CancellationToken.None);
+
+    await Assert.That(cycle.EventsReclassified).IsEqualTo(2L).Because("The maintenance step reclassifies the history.");
     await Assert.That(await _flagsAsync(connection, e1) & 8).IsEqualTo(8).Because("Historical event 1 is now stamped ephemeral.");
     await Assert.That(await _flagsAsync(connection, e2) & 8).IsEqualTo(8).Because("Historical event 2 is now stamped ephemeral.");
     await Assert.That(await _lineageCountAsync(connection, (int)DefinitionRelationship.ReclassifiedTo)).IsEqualTo(1L)
