@@ -93,7 +93,7 @@ public static partial class SchemaRollback {
     for (var i = 0; i < plan.Count; i++) {
       var step = plan[i];
       StartupProgress.Note();
-      LogReversing(log, step.Change.Name, MigrationReversal.LedgerText(step.Change.Reversal), i + 1, plan.Count);
+      LogReversing(log, step.Change.Name, step.Change.Reversal, i + 1, plan.Count);
       await _reverseAsync(connection, transaction, prefix, step, request.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -130,7 +130,7 @@ public static partial class SchemaRollback {
   private static partial void LogStarting(ILogger logger, string schema, int count, string? library, string? application);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Reversing {Change} ({Kind}) ({Step}/{Steps})")]
-  private static partial void LogReversing(ILogger logger, string change, string kind, int step, int steps);
+  private static partial void LogReversing(ILogger logger, string change, SchemaChangeReversal kind, int step, int steps);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Rolled back schema {Schema}: {Count} change(s) reversed in {Elapsed}")]
   private static partial void LogFinished(ILogger logger, string schema, int count, ProgressElapsed elapsed);
