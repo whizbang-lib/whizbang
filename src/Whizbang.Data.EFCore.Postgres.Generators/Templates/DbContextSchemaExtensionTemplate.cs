@@ -167,7 +167,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // phase that follows (the stored-form scans, the waits, the index rebuild, each migration step), so none of them
     // can lose the role by outlasting the lease. Released, keepalive first, when this method returns: a duty still
     // held by an instance that has finished, or failed, would leave every other instance waiting on it.
-    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger);
+    // #2165: the keepalive renews only while the schema work reports progress, so a migrator that is alive but stuck lets
+    // its role lapse to another instance. Every committed step, phase announcement and counted batch this start reports
+    // reaches the duty through the route below, for as long as this method runs.
+    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger,
+      Whizbang.Data.Postgres.MigratorDuty.StallLimitFor(
+        (serviceProvider?.GetService(typeof(Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>))
+          as Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>)?.Value,
+        _schemaCommandTimeoutSeconds));
+    using var migratorProgress = Whizbang.Data.Postgres.StartupProgress.ReportTo(migratorDuty.NoteProgress);
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an

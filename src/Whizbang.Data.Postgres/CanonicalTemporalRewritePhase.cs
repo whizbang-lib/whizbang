@@ -151,6 +151,8 @@ public static class CanonicalTemporalRewritePhase {
     IReadOnlyList<string> rewritten;
     try {
       foreach (var (name, sql) in pending) {
+        // #2165: each table the phase reaches is progress, so a long phase over many tables keeps the migrator's role.
+        StartupProgress.Note();
         await transaction.SaveAsync(SAVEPOINT, cancellationToken);
         try {
           await using var command = new NpgsqlCommand(sql, connection) {

@@ -76,6 +76,7 @@ Whizbang:Database:ListenReconnectInitialDelay
 Whizbang:Database:ListenReconnectMaxDelay
 Whizbang:Database:PollingFallbackInterval
 Whizbang:Database:RoleAssignment:CooldownAfterLapse
+Whizbang:Database:RoleAssignment:MigratorStallLimit
 Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
 Whizbang:Database:RoleAssignment:ProgressWindow
