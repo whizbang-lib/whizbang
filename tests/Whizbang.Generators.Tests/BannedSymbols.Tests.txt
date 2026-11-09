@@ -1,0 +1,1 @@
+M:Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(System.String,Microsoft.CodeAnalysis.MetadataReferenceProperties,Microsoft.CodeAnalysis.DocumentationProvider); Use SharedMetadataReferences.FromFile: a reference per compilation decodes the assembly again for every test, and the module outgrew a 16 GB runner (#2159)

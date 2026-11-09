@@ -267,7 +267,7 @@ public class GraphQLLensScopeSchemaTests {
     var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
         .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
         .Where(path => !System.IO.Path.GetFileName(path).Contains("Generators", StringComparison.Ordinal))
-        .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+        .Select(path => (MetadataReference)SharedMetadataReferences.FromFile(path))
         .ToList();
 
     var compilation = CSharpCompilation.Create(

@@ -2011,10 +2011,10 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new List<MetadataReference> {
-      MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("netstandard").Location),
-      MetadataReference.CreateFromFile(typeof(Whizbang.Core.IEvent).Assembly.Location)
+      SharedMetadataReferences.FromFile(typeof(object).Assembly.Location),
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("netstandard").Location),
+      SharedMetadataReferences.FromFile(typeof(Whizbang.Core.IEvent).Assembly.Location)
     };
 
     var compilation = CSharpCompilation.Create(
