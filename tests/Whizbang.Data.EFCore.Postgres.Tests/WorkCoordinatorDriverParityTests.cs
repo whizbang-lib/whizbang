@@ -79,6 +79,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.GetTypeDigestsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityClaimLedgerRecheckAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityClaimRepairDrainAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.IntegrityForgetNonOwnerLedgerRowsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityForgetUnconsumedEventTypesAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkAnswerPendingAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkHealedAsync)] = INTEGRITY,

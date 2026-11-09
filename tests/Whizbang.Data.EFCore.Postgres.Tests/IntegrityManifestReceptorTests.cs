@@ -3401,6 +3401,25 @@ public class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task ManifestReceptor_DigestsOfATypeThisServiceOwns_AreNotComparedAsync() {
+    var coordinator = new AuditCoordinator { ReceivedTypeDigests = [] };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher,
+      routing: new Whizbang.Core.Routing.RoutingOptions().OwnDomains("App.Contracts.Orders"));
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator,
+      [_typeDigest("App.Contracts.Orders.Placed, App.Contracts", 4, 5, 6)], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeTableReads + coordinator.TypeComputeCalls).IsEqualTo(0)
+      .Because("this service authors its own domain's events, so another origin reporting them only received them; a "
+             + "service never announces its own domains to itself, so only its own owned domains can say so");
+    await Assert.That(dispatcher.Published).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
   public async Task ManifestReceptor_MixedDigests_ComparesOnlyThoseNoOtherServiceOwnsAsync() {
     var coordinator = new AuditCoordinator {
       ReceivedTypeDigests = [],
