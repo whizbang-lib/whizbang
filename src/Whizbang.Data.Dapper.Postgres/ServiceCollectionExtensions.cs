@@ -426,11 +426,15 @@ public static class ServiceCollectionExtensions {
   /// The driver's assessor (#1992), with this instance's application version and id (#2022) so the one version rule
   /// compares both versions and never counts the instance's own row.
   /// </summary>
+  /// <remarks>
+  /// The instance identity is required, not optional: <c>_addSchemaInitialization</c> registers it alongside this
+  /// assessor, so there is always one to read.
+  /// </remarks>
   private static DapperPostgresStartupAssessor _assessor(
       IServiceProvider sp, string connectionString, Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) =>
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()?.InstanceId,
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
       Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
