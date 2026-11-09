@@ -73,6 +73,17 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     return found;
   }
 
+  // The receptors compiled into this registry, by id, for the startup report of a receptor two assemblies both
+  // declare (#2197, #2201)
+  private static readonly string[] _compiledReceptorIds = [
+    #region COMPILED_RECEPTOR_IDS
+    // This region will be replaced with the generated receptor ids
+    #endregion
+  ];
+
+  /// <summary>The ids of the receptors compiled into this registry, each once.</summary>
+  public IReadOnlyCollection<string> GetCompiledReceptorIds() => _compiledReceptorIds;
+
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
   /// Returns compile-time entries concatenated with any runtime-registered entries.
