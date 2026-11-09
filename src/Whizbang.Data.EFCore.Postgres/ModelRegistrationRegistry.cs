@@ -28,6 +28,16 @@ public static class ModelRegistrationRegistry {
   /// <param name="registrar">Callback that registers models with the service collection.</param>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:RegisterModels_WithValidRegistrar_StoresCallbackAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:RegisterModels_MultipleRegistrations_UsesLatestRegistrarAsync</tests>
+  public static void RegisterModels(
+      string assemblyName,
+      IReadOnlyList<(Type DbContextType, Type ModelType)> models,
+      Action<IServiceCollection, Type, IDbUpsertStrategy> registrar) {
+    _ = (assemblyName, models);
+    RegisterModels(registrar);
+  }
+
+  /// <summary>Registers a callback that will register discovered perspective models.</summary>
+  /// <param name="registrar">Callback that registers models with the service collection.</param>
   public static void RegisterModels(Action<IServiceCollection, Type, IDbUpsertStrategy> registrar) {
     lock (_lock) {
       _registrars.Add(registrar);
