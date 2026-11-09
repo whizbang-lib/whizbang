@@ -24,7 +24,11 @@ public interface IWhizbangKillswitch {
   /// </summary>
   ValueTask ResumeAsync(CancellationToken cancellationToken = default);
 
-  /// <summary>Stop everything for good through the run-control path: Stopping, then Stopped once held work and roles are released.</summary>
+  /// <summary>
+  /// Stop for good: the instance exits through the one exit path (#2126) as an <see cref="ExitCause.OperatorStop"/>, which
+  /// takes the run-control path (Stopping, then Stopped once held work and roles are released), records the exit, and
+  /// stops the host with exit code 0. Returns once the exit has completed.
+  /// </summary>
   ValueTask StopAsync(CancellationToken cancellationToken = default);
 
   /// <summary>Pin one component to <paramref name="phase"/> regardless of the system phase (e.g. drain a transport).</summary>
@@ -43,16 +47,24 @@ public sealed class WhizbangKillswitch : IWhizbangKillswitch {
   private readonly IWhizbangRunController _runControl;
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly WhizbangLifecycleCoordinator _coordinator;
+  private readonly IWhizbangInstanceExit _instanceExit;
 
-  /// <summary>Creates the killswitch over the run-control path, the lifecycle state and the coordinator.</summary>
+  /// <summary>Creates the killswitch over the run-control path, the lifecycle state, the coordinator and the exit path.</summary>
+  /// <param name="runControl">The run-control path a pause and a resume take.</param>
+  /// <param name="lifecycle">The lifecycle state a component override reads.</param>
+  /// <param name="coordinator">The coordinator a component override goes through.</param>
+  /// <param name="instanceExit">The one exit path a stop takes (#2126).</param>
   public WhizbangKillswitch(
-      IWhizbangRunController runControl, IWhizbangLifecycleState lifecycle, WhizbangLifecycleCoordinator coordinator) {
+      IWhizbangRunController runControl, IWhizbangLifecycleState lifecycle, WhizbangLifecycleCoordinator coordinator,
+      IWhizbangInstanceExit instanceExit) {
     ArgumentNullException.ThrowIfNull(runControl);
     ArgumentNullException.ThrowIfNull(lifecycle);
     ArgumentNullException.ThrowIfNull(coordinator);
+    ArgumentNullException.ThrowIfNull(instanceExit);
     _runControl = runControl;
     _lifecycle = lifecycle;
     _coordinator = coordinator;
+    _instanceExit = instanceExit;
   }
 
   /// <inheritdoc />
@@ -65,7 +77,9 @@ public sealed class WhizbangKillswitch : IWhizbangKillswitch {
 
   /// <inheritdoc />
   public async ValueTask StopAsync(CancellationToken cancellationToken = default) =>
-    await _runControl.HaltAsync(RunHaltReason.Stop, cancellationToken).ConfigureAwait(false);
+    await _instanceExit.ExitAsync(
+      new InstanceExitRequest(ExitCause.OperatorStop, "an operator stopped the instance through the killswitch"),
+      cancellationToken).ConfigureAwait(false);
 
   /// <inheritdoc />
   public ValueTask OverrideComponentAsync(string component, LifecyclePhase phase, CancellationToken cancellationToken = default)

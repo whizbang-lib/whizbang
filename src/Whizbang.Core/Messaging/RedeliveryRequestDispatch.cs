@@ -19,14 +19,15 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 internal static class RedeliveryRequestDispatch {
   /// <summary>
-  /// Publishes <paramref name="command"/> to <paramref name="originServiceName"/> on <paramref name="requestTopic"/>,
-  /// with <paramref name="sessionStreamId"/> (one of the requested streams) as the session key.
+  /// Publishes <paramref name="command"/> to <paramref name="originServiceName"/> (null broadcasts, #2092) at <paramref name="destination"/>: the
+  /// origin's request topic, keyed by one of the requested streams and carrying the integrity time to live (#2078, built
+  /// by <see cref="IntegrityControlDestination"/>).
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "One directed send: the transport and serializer, the sender's identity, the command, where it goes and its session key, the clock and cancellation. Both callers hold each separately.")]
+    Justification = "One directed send: the transport and serializer, the sender's identity, the command, its addressee and destination, the clock and cancellation. Every caller holds each separately.")]
   internal static async Task PublishAsync(
       ITransport transport, IEnvelopeSerializer serializer, IServiceInstanceProvider? instanceProvider,
-      RequestRedeliveryCommand command, string originServiceName, string requestTopic, Guid sessionStreamId,
+      RequestRedeliveryCommand command, string? originServiceName, TransportDestination destination,
       DateTimeOffset now, CancellationToken cancellationToken) {
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
@@ -38,7 +39,7 @@ internal static class RedeliveryRequestDispatch {
     };
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      ControlPlaneDestination.For(requestTopic, sessionStreamId, typeof(RequestRedeliveryCommand)),
+      destination,
       serialized.EnvelopeType, cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 }

@@ -60,7 +60,7 @@ public class JsonIndexDiscoveryGuardTests {
   /// </remarks>
   [Test]
   public async Task ANullableTemporalTypeIsTheUnderlyingTemporalTypeAsync() {
-    var compilation = CSharpCompilation.Create("probe", references: [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)]);
+    var compilation = CSharpCompilation.Create("probe", references: [SharedMetadataReferences.FromFile(typeof(object).Assembly.Location)]);
     var dateTime = compilation.GetSpecialType(SpecialType.System_DateTime);
     var nullableDateTime = compilation.GetSpecialType(SpecialType.System_Nullable_T).Construct(dateTime);
 

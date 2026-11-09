@@ -142,6 +142,14 @@ internal static class ProcessWideOptionsBinding {
     AddDatabaseFailureEscalation(services);
     AddEventStoreMetadata(services);
 
+    services.AddOptions<SupersedingOptions>();
+    services.AddSingleton<IConfigureOptions<SupersedingOptions>>(sp =>
+      new ConfigureOptions<SupersedingOptions>(options => {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+        Section(sp, SupersedingOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+      }));
+
     // The IOptions<WhizbangCoreOptions> view (read by the EF Core lens queries and work coordinator)
     // is a separate object from the singleton AddWhizbang registers; both read the same section.
     services.AddOptions<WhizbangCoreOptions>();

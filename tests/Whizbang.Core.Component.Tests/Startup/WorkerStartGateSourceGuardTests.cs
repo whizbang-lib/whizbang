@@ -37,6 +37,10 @@ public partial class WorkerStartGateSourceGuardTests {
       "the Migrate startup step completes when the gate opens; the pipeline worker in the same file does not wait on it",
     ["src/Whizbang.Core/Startup/StartupStageGatedService.cs"] = "the wrapper that starts a worker at its stage",
     ["src/Whizbang.Core/Startup/SchemaReadyGatedService.cs"] = "the wrapper that starts a worker when the schema is ready",
+    // #2126: the heartbeat starts at its registered stage (Elect) like any worker; the gate only chooses which beat it
+    // sends, the startup beat until the schema is ready and the full heartbeat after.
+    ["src/Whizbang.Core/Workers/HeartbeatWorker.cs"] =
+      "starts at Elect; reads the gate only to choose between the startup beat and the full heartbeat",
   };
 
   [GeneratedRegex(@"\b(?:class|record)\s+\w+[^{;]*?:[^{;]*?\b(?:BackgroundService|IHostedService|IHostedLifecycleService)\b",

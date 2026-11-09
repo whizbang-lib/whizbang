@@ -23,8 +23,9 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// <para>
 /// <see cref="AddWhizbangWorkerAtSchemaReady{TWorker}(IServiceCollection)"/> starts a worker when the schema-ready gate
-/// opens, at the end of <see cref="StartupStage.Coordinate"/>: the framework uses it for the heartbeat and the other
-/// work that keeps an instance alive and coordinated while it is not yet eligible for work.
+/// opens, at the end of <see cref="StartupStage.Coordinate"/>: the framework uses it for the work that keeps an instance
+/// coordinated while it is not yet eligible for work. The heartbeat starts earlier, at
+/// <see cref="HeartbeatWorker.StartsAt"/>, right after the instance registers (#2126).
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>

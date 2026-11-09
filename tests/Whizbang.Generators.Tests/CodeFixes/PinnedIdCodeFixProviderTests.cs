@@ -150,14 +150,14 @@ public class PinnedIdCodeFixProviderTests {
 
     var references = new List<MetadataReference>();
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "netstandard.dll")));
+    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "netstandard.dll")));
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
     } catch { /* fallback below */ }
 
     var compilation = CSharpCompilation.Create(

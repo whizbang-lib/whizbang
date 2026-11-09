@@ -24,6 +24,9 @@ public sealed class DispatcherSupersedingKeyTests {
   [Superseding]
   public sealed record ProfileEmbedded([property: StreamId] Guid ProfileId, [property: SupersedingKey] string Model) : IEvent;
 
+  [Superseding(Group = "profile-state")]
+  public sealed record ProfileStateReplaced([property: StreamId] Guid ProfileId) : IEvent;
+
   public sealed record ProfileRenamed([property: StreamId] Guid ProfileId) : IEvent;
 
   public sealed record EmbedProfileCommand(Guid ProfileId, string Model);
@@ -50,6 +53,21 @@ public sealed class DispatcherSupersedingKeyTests {
     await Assert.That(strategy.Queued[1].Flags).IsEqualTo(EventFlags.None);
     await Assert.That(strategy.Queued[1].Metadata!.SupersedingKey).IsNull()
       .Because("the control: an ordinary event is stored with no key");
+  }
+
+  /// <summary>#2124: a grouped event carries its group beside its key, for the emit chain to stamp.</summary>
+  [Test]
+  public async Task PublishAsync_AGroupedSupersedingEvent_CarriesItsGroup_AnUngroupedOneNoneAsync() {
+    var strategy = new CapturingStrategy();
+    var dispatcher = _createDispatcher(strategy);
+
+    await dispatcher.PublishAsync(new ProfileStateReplaced(_profile));
+    await dispatcher.PublishAsync(new ProfileEmbedded(_profile, "model-a"));
+
+    await Assert.That(strategy.Queued[0].Metadata!.SupersedingGroup).IsEqualTo("profile-state");
+    await Assert.That(strategy.Queued[0].Metadata!.SupersedingKey).IsEqualTo(string.Empty);
+    await Assert.That(strategy.Queued[1].Metadata!.SupersedingGroup).IsNull()
+      .Because("an ungrouped superseding type is its own group, which the store reads as its event type");
   }
 
   [Test]

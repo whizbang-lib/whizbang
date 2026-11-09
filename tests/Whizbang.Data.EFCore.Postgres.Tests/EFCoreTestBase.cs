@@ -13,7 +13,6 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Functions;
-using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -60,8 +59,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // Initialize shared container (only starts once, subsequent calls return immediately)
       await SharedPostgresContainer.InitializeAsync();
 
-      // Create a database of this test's own, through the factory that retries template contention.
-      var database = await PerTestDatabaseFactory.CreateAsync(DATABASE_PREFIX);
+      // A database of this test's own, copied from the run's migrated template: already the full schema.
+      var database = await EFCoreSchemaTemplate.CreateDatabaseAsync(DATABASE_PREFIX);
       _testDatabaseName = database.Name;
 
       // Build connection string for the test database
@@ -73,43 +72,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       };
       ConnectionString = builder.ConnectionString;
 
-      // Configure Npgsql data source with JSON serializer options
-      var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
-
-      // CRITICAL CONFIGURATION FOR POCO JSON MAPPING:
-      // All entities (infrastructure + perspectives) now use custom POCO types with .HasColumnType("jsonb")
-      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, PerspectiveScope, ServiceInstanceMetadata
-      // - Perspectives: PerspectiveRow<T>.Data, Metadata, Scope
-      // - Test types: Order, SampleOrderCreatedEvent (registered via TestJsonContext)
-      //
-      // JsonContextRegistry.CreateCombinedOptions() provides source-generated converters for ALL registered contexts:
-      // - Whizbang.Core contexts (WhizbangIdJsonContext, InfrastructureJsonContext, MessageJsonContext)
-      // - Test contexts (TestJsonContext with Order, etc.)
-      // EnableDynamicJson() enables POCO → JSONB mapping for properties with .HasColumnType("jsonb")
-      //
-      // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-      var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-      dataSourceBuilder.EnableDynamicJson();
-
-      // Enable pgvector type mapping for vector search operations
-      // This allows Pgvector.Vector type to work with EF Core
-      dataSourceBuilder.UseVector();
-
-      _dataSource = dataSourceBuilder.Build();
-
-      // Configure DbContext options to use the data source
-      var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
-      optionsBuilder.UseNpgsql(_dataSource, npgsqlOptions => {
-        // Register Whizbang's custom PostgreSQL function translators
-        // This enables optimized ?| array overlap for large principal sets
-        npgsqlOptions.UseWhizbangFunctions();
-      })
-      .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-      DbContextOptions = optionsBuilder.Options;
-
-      // Initialize database schema
-      await InitializeDatabaseAsync();
+      (_dataSource, var options) = CreateContextOptions(ConnectionString);
+      DbContextOptions = options;
 
       setupSucceeded = true;
     } finally {
@@ -151,11 +115,30 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  private async Task InitializeDatabaseAsync() {
-    // Use generated EnsureWhizbangDatabaseInitializedAsync extension method
-    // This creates all tables, functions, and sequences needed by the EF Core implementation
-    await using var dbContext = CreateDbContext();
-    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+  /// <summary>
+  /// The data source and context options every test of this base, and the schema template it copies, reach their
+  /// database through.
+  /// </summary>
+  /// <param name="connectionString">The connection string to the database.</param>
+  /// <returns>The data source, which the caller disposes, and options built over it.</returns>
+  /// <remarks>
+  /// One place, so the template is migrated through exactly the JSON, vector and function configuration a test's
+  /// context has: a template built under different options could record a different schema than a test would.
+  /// <c>ConfigureJsonOptions</c> comes before <c>EnableDynamicJson</c> (Npgsql #5562); the combined options carry the
+  /// source-generated converters of every registered context, the framework's and the tests'.
+  /// </remarks>
+  internal static (NpgsqlDataSource DataSource, DbContextOptions<WorkCoordinationDbContext> Options) CreateContextOptions(
+      string connectionString) {
+    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+    dataSourceBuilder.ConfigureJsonOptions(JsonContextRegistry.CreateCombinedOptions());
+    dataSourceBuilder.EnableDynamicJson();
+    dataSourceBuilder.UseVector();
+    var dataSource = dataSourceBuilder.Build();
+
+    var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
+    optionsBuilder.UseNpgsql(dataSource, npgsqlOptions => npgsqlOptions.UseWhizbangFunctions())
+      .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+    return (dataSource, optionsBuilder.Options);
   }
 
   /// <summary>

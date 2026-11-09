@@ -29,8 +29,9 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// <b>Blocking (opt in with <c>NonBlockingSchemaInit = false</c>):</b>
 /// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
-/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
-/// in a safe halted state.
+/// no workers) until they complete. A failure ends the process through the one exit path (#2126): a
+/// startup failure (exit code 4), or an incompatible schema (exit code 5) when the schema is newer than
+/// the binary, with the schema-ready gate still closed. A host without the exit path fails its start.
 /// </para>
 /// <para>
 /// <b>In the non-blocking default:</b> initialization runs in the background; <c>StartAsync</c> returns
@@ -74,7 +75,16 @@ internal sealed partial class WhizbangDatabaseInitializerService(
 
   private Task? _backgroundInit;
   private Task? _standDown;
-  private readonly CancellationTokenSource _stopCts = new();
+  // The token is read once, with the source, while the source is alive: the retry loop waits on it after an attempt
+  // fails, which can be after the host has disposed this service, and reading Token from a disposed source throws an
+  // exception nothing awaits (it surfaced as an unobserved task exception).
+  private readonly (CancellationTokenSource Source, CancellationToken Token) _stop = _newStop();
+  private bool _disposed;
+
+  private static (CancellationTokenSource Source, CancellationToken Token) _newStop() {
+    var source = new CancellationTokenSource();
+    return (source, source.Token);
+  }
 
   /// <summary>
   /// The background initialization task when <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/>
@@ -98,17 +108,61 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       return Task.CompletedTask;
     }
 
-    // Blocking (default): the host waits for init; a failure throws and aborts startup.
-    return _runInitializationAsync(cancellationToken);
+    // Blocking: the host waits for init; a failure ends the process through the one exit path (#2126).
+    return _runBlockingAsync(cancellationToken);
   }
+
+  /// <summary>
+  /// Blocking initialization (#2126): a failure is an exit, not an exception out of host start. An exception thrown out
+  /// of <c>StartAsync</c> ends the process as an unhandled crash, whose exit code and log say nothing of why; instead the
+  /// instance exits through the one exit path, as a <see cref="Whizbang.Core.RunControl.ExitCause.SchemaIncompatible"/>
+  /// (code 5) when the schema is newer than this binary and a <see cref="Whizbang.Core.RunControl.ExitCause.StartupFailure"/>
+  /// (code 4) otherwise. The schema-ready gate stays closed, so nothing touches the unmigrated schema while the host stops.
+  /// A host without the exit path fails its start as before.
+  /// </summary>
+  private async Task _runBlockingAsync(CancellationToken cancellationToken) {
+    try {
+      await _runInitializationAsync(cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
+      if (_serviceProvider.GetService<Whizbang.Core.RunControl.IWhizbangInstanceExit>() is not { } exit) {
+        throw;
+      }
+      exit.RequestExit(StartupFailureOf(ex));
+    }
+  }
+
+  /// <summary>The exit a blocking initialization failure takes: an incompatible schema, or a startup failure.</summary>
+  /// <param name="failure">Why initialization failed.</param>
+  /// <returns>The exit request.</returns>
+  internal static Whizbang.Core.RunControl.InstanceExitRequest StartupFailureOf(Exception failure) =>
+    failure is SchemaStandDownException
+      ? new(Whizbang.Core.RunControl.ExitCause.SchemaIncompatible,
+        "schema initialization found the schema newer than this binary, so this binary cannot run against it: " + failure.Message,
+        failure)
+      : new(Whizbang.Core.RunControl.ExitCause.StartupFailure,
+        "schema initialization failed, and with NonBlockingSchemaInit = false the host does not start without it: " + failure.Message,
+        failure);
 
   public Task StopAsync(CancellationToken cancellationToken) {
     // Ends the background retry loop (it waits on this token between attempts).
-    _stopCts.Cancel();
+    _stop.Source.Cancel();
     return Task.CompletedTask;
   }
 
-  public void Dispose() => _stopCts.Dispose();
+  /// <summary>Ends the background retry loop, if it is still running, and releases its token source.</summary>
+  /// <remarks>
+  /// Canceled before it is disposed, so a loop whose attempt fails after this returns sees a canceled token and ends,
+  /// rather than retrying on a token that can no longer be canceled.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangDatabaseInitializerServiceCoverageTests.cs:BackgroundInit_AnAttemptFailingAfterDispose_EndsTheLoopWithoutFaultingAsync</tests>
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    _stop.Source.Cancel();
+    _stop.Source.Dispose();
+  }
 
   private async Task _runInitializationLoggedAsync() {
     // Self-healing loop: fail-closed WHILE retrying, but never give up. MarkReady is only reached
@@ -133,9 +187,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
         try {
           foreach (var observer in _observers) {
-            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+            await observer.OnAttemptFailedAsync(attempt, ex, _stop.Token).ConfigureAwait(false);
           }
-          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
+          await Task.Delay(delay, _timeProvider, _stop.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           return;   // host shutdown ends the loop; the gate stays closed.
         }
@@ -181,7 +235,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       return;
     }
     await standDown.RecordAsync(assessment, cancellationToken);
-    _standDown = standDown.KeepVisibleAsync(_stopCts.Token);
+    _standDown = standDown.KeepVisibleAsync(_stop.Token);
   }
 
   private async Task _runMigrationsAsync(CancellationToken cancellationToken) {

@@ -304,7 +304,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
     // Opaque storage is forced by polymorphism or by a member the mapped path cannot construct, so a
     // model that is not polymorphic has such a member.
     if (!PolymorphicModelDiscovery.IsPolymorphic(model)) {
-      return $"the model holds '{MappedPathDiscovery.UnmappableMember(model)}', which the mapped path cannot construct";
+      return $"the model {MappedPathDiscovery.DescribeUnmappable(model)}";
     }
 
     var named = model.GetMembers().OfType<IPropertySymbol>()

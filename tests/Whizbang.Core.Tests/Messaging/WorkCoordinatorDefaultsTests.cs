@@ -175,6 +175,22 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task SubscriptionBackfillMembers_WithoutProviderSupport_UseTheInertDefaultsAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var id = Guid.Parse("0b000000-0000-0000-0000-00000000000b");
+    var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+
+    await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, "Contracts.A")]);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, now, now.AddMinutes(1));
+    await coordinator.EndSubscriptionBackfillAsync(id, SubscriptionBackfillOutcome.Unanswered, now);
+
+    await Assert.That(await coordinator.GetSubscriptionBackfillsAsync()).IsEmpty()
+      .Because("an engine without the backfill table queues nothing, so it has nothing to walk");
+    await Assert.That(await coordinator.RecordSubscriptionBackfillAnswerAsync(new BackfillWindowAnswer { BackfillId = id, Window = 1 }, now)).IsNull();
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.A"])).IsNull();
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -571,6 +587,19 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityWindowAwareAnswerAndMark_WithoutProviderSupport_AnswerAsTheWindowlessOnesAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(
+      Guid.Empty, [], [], new RedeliveryAnswerWindow(1, 2), DateTimeOffset.UnixEpoch);
+    var marked = await coordinator.IntegrityMarkUnhealableBatchAsync(
+      Guid.Empty, [], new RedeliveryAnswerWindow(1, 2), [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(answer).IsNull().Because("a store that cannot judge coverage answers as the window-less record (#2143)");
+    await Assert.That(marked).IsNull();
+  }
+
+  [Test]
   public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -578,6 +607,16 @@ public class WorkCoordinatorDefaultsTests {
 
     await Assert.That(result).IsNull()
       .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");
+  }
+
+  [Test]
+  public async Task ReconcileRedeliveredBundlesAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReconcileRedeliveredBundlesAsync([]);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain to reconcile each bundle on its own (#2099)");
   }
 
   [Test]
@@ -635,6 +674,33 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityClaimLedgerRecheckAsync_WithoutProviderSupport_ClaimsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var claimed = await coordinator.IntegrityClaimLedgerRecheckAsync([Guid.NewGuid()], DateTimeOffset.MinValue, DateTimeOffset.MinValue, 10);
+
+    await Assert.That(claimed).IsEmpty().Because("#2115: an engine without the ledger has nothing to re-check");
+  }
+
+  [Test]
+  public async Task IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var forgotten = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true);
+
+    await Assert.That(forgotten).IsEqualTo(0).Because("#2185: an engine without the ledger has no row to forget");
+  }
+
+  [Test]
+  public async Task IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var pending = await coordinator.IntegrityCountAnswerPendingAsync(DateTimeOffset.MinValue, 500);
+
+    await Assert.That(pending).IsEqualTo(0).Because("#2184: an engine without the ledger has no answer outstanding");
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -650,6 +716,24 @@ public class WorkCoordinatorDefaultsTests {
     var result = await coordinator.ComputeStreamDigestsForChunkAsync(Guid.Empty, [], null, null, TimeSpan.Zero);
 
     await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ComputeUnsequencedReceivedDigestsAsync_WithoutProviderSupport_HoldsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeUnsequencedReceivedDigestsAsync(Guid.Empty, ["Contracts.T"], null, TimeSpan.Zero);
+
+    await Assert.That(result).IsEmpty()
+      .Because("a store that cannot tell holds no sequence-less events as far as a comparison knows, and compares as before");
+  }
+
+  [Test]
+  public async Task IntegrityRecordMissingEventsAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(async () => await coordinator.IntegrityRecordMissingEventsAsync(Guid.Empty, [], [])).ThrowsNothing()
+      .Because("an engine that cannot record the named event has the drain sync the stream whole, as before");
   }
 
   [Test]
@@ -786,6 +870,15 @@ public class WorkCoordinatorDefaultsTests {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
     var result = await coordinator.ReleaseMaturedCoalesceAsync("x");
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.DropExhaustedInboxRowsAsync([Guid.NewGuid()], maxAttempts: 10);
 
     await Assert.That(result).IsEqualTo(0);
   }

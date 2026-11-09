@@ -9,7 +9,9 @@ namespace Whizbang.Core.Health;
 /// Managed-health surface of the startup topology-drift check (topology arc phase 5): reports
 /// the <c>"topology"</c> component as <see cref="ComponentState.Degraded"/> — never faulted,
 /// the service still serves — while any ownership violation stands (a second service's
-/// subscription observed on a command inbox entity this service owns). Cross-service command
+/// subscription on a command inbox entity this service subscribes to that is not filtered to exact command types,
+/// #2089). Degraded maps to readiness Degraded (HTTP 200, the pod stays in rotation) and liveness Healthy under both
+/// built-in health policies. Cross-service command
 /// ownership cannot be enforced at build time (the WHIZ151 analyzer covers only the
 /// intra-compilation invariant), so the provisioning path's observation is the census-mandated
 /// runtime check — and a health Degraded is how it stays visible after the startup log scrolls
@@ -41,7 +43,7 @@ public sealed class TopologyDriftHealthSource : IWhizbangHealthSource {
     var detail = "topology ownership drift: "
       + string.Join("; ", findings.Select(f =>
           $"command inbox '{f.Entity}' carries foreign subscription '{f.ObservedSubscription}'"))
-      + " — one service owns a command namespace; a second subscriber duplicates every command";
+      + " not filtered to exact command types; it receives (and may double-handle) commands it does not handle";
     return ValueTask.FromResult(new ComponentHealth(ComponentState.Degraded, detail));
   }
 }

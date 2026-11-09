@@ -114,7 +114,7 @@ public static class SchemaBootstrapPhase {
 
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
-    var target = string.IsNullOrEmpty(request.Schema) ? "public" : request.Schema.Replace("\"", string.Empty);
+    var target = _targetSchema(request.Schema);
     var closure = BootstrapClosure.Of(request.Scripts);
     var attempt = new BootstrapAttempt(
       request.ConnectionFactory, request.LockId, closure, target, request.CommandTimeoutSeconds, services, log);
@@ -415,6 +415,10 @@ public static class SchemaBootstrapPhase {
   private const string SEARCH_PATH = "<search path>";
   private const string ELECTION_PROBE = "<election probe>";
 
+  /// <summary>The schema a bootstrap call targets, unquoted: <c>public</c> when none is named.</summary>
+  private static string _targetSchema(string? schema) =>
+    string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+
 
   /// <summary>The wait before the bootstrap's next attempt after its <paramref name="attempt"/>th transient failure.</summary>
   /// <param name="attempt">Which attempt failed, from 1.</param>
@@ -455,7 +459,7 @@ public static class SchemaBootstrapPhase {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
 
-    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+    var target = _targetSchema(schema);
 
     // Counted, not tested one by one: (relname) is unique within a schema, and so is (proname, argument types).
     await using var command = new NpgsqlCommand(
@@ -485,6 +489,7 @@ public static class SchemaBootstrapPhase {
   /// <param name="schema">The target schema.</param>
   /// <param name="instance">Who to register.</param>
   /// <param name="leaseSeconds">How long the registration is asserted good for.</param>
+  /// <param name="liveness">The connection mode and liveness window to record (#2126); the default records neither.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <remarks>
   /// <para>
@@ -493,21 +498,30 @@ public static class SchemaBootstrapPhase {
   /// looks like.
   /// </para>
   /// <para>
-  /// This runs before the heartbeat worker exists, which is the point: the worker starts after the
-  /// schema is ready, and the election that decides who makes it ready happens now. The row this
-  /// writes is picked up and maintained by that worker as soon as it does start.
+  /// This runs before the heartbeat worker starts, which is the point: the election that decides who makes the schema
+  /// ready happens next. The heartbeat starts right after this, at Elect (#2126), and keeps the row it writes alive
+  /// through Elect, Migrate, Converge and Coordinate.
+  /// </para>
+  /// <para>
+  /// The registration also records what <paramref name="liveness"/> declares, the instance's connection mode and
+  /// liveness window (#2126), through the beat a starting instance sends (<c>wh_record_startup_heartbeat</c>, Preflight's
+  /// function), so the one liveness rule judges the row by its own window from the moment it exists rather than by the
+  /// 30 seconds it gives a row that records none. A value it leaves out keeps what the row records.
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ARegistration_RecordsTheConnectionModeAndTheLivenessWindowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AStartingInstanceHeldInMigrate_PastThirtySeconds_IsNotEvictedByALivePeersReapAsync</tests>
   public static async Task RegisterInstanceAsync(
       Func<NpgsqlConnection> connectionFactory,
       string schema,
       IServiceInstanceProvider instance,
       int leaseSeconds = 60,
+      InstanceRegistrationLiveness liveness = default,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(instance);
 
-    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+    var target = _targetSchema(schema);
 
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
@@ -532,6 +546,50 @@ public static class SchemaBootstrapPhase {
     record.Parameters.AddWithValue(instance.InstanceId);
     record.Parameters.AddWithValue(StartupStages.LifecyclePhaseOf(StartupStage.Preflight).ToString());
     await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+    // #2126: what the one liveness rule judges the row by, recorded the way every startup beat records it. Its answer
+    // (whether the instance was evicted) is the heartbeat's to act on, not the registration's.
+    _ = await StartupHeartbeatSql.RecordAsync(
+      connection, $"{_quoteIdentifier(target)}.{StartupHeartbeatSql.FUNCTION_NAME}",
+      new Whizbang.Core.Messaging.HeartbeatRequest(instance.InstanceId, instance.ServiceName, instance.HostName,
+        instance.ProcessId, StaleThresholdSeconds: liveness.LivenessWindowSeconds, ConnectionMode: liveness.ConnectionMode),
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Records on this instance's row that the incompatibility override let it start (#2022), with the reason the verdict
+  /// would have stood it down, so operators and peers see it without reading its logs. Written once the row exists.
+  /// </summary>
+  /// <param name="connectionFactory">Produces the connection to write over.</param>
+  /// <param name="schema">The target schema.</param>
+  /// <param name="instanceId">This instance.</param>
+  /// <param name="reason">The overridden verdict's reason (<see cref="Whizbang.Core.Startup.StartupAssessment.OverriddenReason"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether it was recorded: false on a schema whose instance table has no place for it (older than 360).</returns>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
+  public static async Task<bool> RecordIncompatibilityOverrideAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, Guid instanceId, string reason,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
+    ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+    var target = _quoteIdentifier(_targetSchema(schema));
+
+    await using var connection = connectionFactory();
+    await connection.OpenAsync(cancellationToken);
+    await using (var probe = new NpgsqlCommand(
+      "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'incompatibility_override' "
+      + "AND NOT attisdropped)", connection)) {
+      probe.Parameters.AddWithValue(target + ".wh_service_instances");
+      if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
+        return false;
+      }
+    }
+    await using var command = new NpgsqlCommand(
+      $"UPDATE {target}.wh_service_instances SET incompatibility_override = $2 WHERE instance_id = $1", connection);
+    command.Parameters.AddWithValue(instanceId);
+    command.Parameters.AddWithValue(reason);
+    return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
   }
 
   /// <summary>

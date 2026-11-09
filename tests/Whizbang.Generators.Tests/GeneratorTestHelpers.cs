@@ -112,12 +112,12 @@ public static class GeneratorTestHelpers {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new[] {
-      MetadataReference.CreateFromFile(typeof(object).GetTypeInfo().Assembly.Location),  // System.Private.CoreLib
-      MetadataReference.CreateFromFile(typeof(Console).GetTypeInfo().Assembly.Location), // System.Console
-      MetadataReference.CreateFromFile(typeof(Enumerable).GetTypeInfo().Assembly.Location), // System.Linq
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("netstandard").Location),
-      MetadataReference.CreateFromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
+      SharedMetadataReferences.FromFile(typeof(object).GetTypeInfo().Assembly.Location),  // System.Private.CoreLib
+      SharedMetadataReferences.FromFile(typeof(Console).GetTypeInfo().Assembly.Location), // System.Console
+      SharedMetadataReferences.FromFile(typeof(Enumerable).GetTypeInfo().Assembly.Location), // System.Linq
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("netstandard").Location),
+      SharedMetadataReferences.FromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
     };
 
     return CSharpCompilation.Create(
@@ -136,22 +136,22 @@ public static class GeneratorTestHelpers {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new[] {
-      MetadataReference.CreateFromFile(typeof(object).GetTypeInfo().Assembly.Location),  // System.Private.CoreLib
-      MetadataReference.CreateFromFile(typeof(Console).GetTypeInfo().Assembly.Location), // System.Console
-      MetadataReference.CreateFromFile(typeof(Enumerable).GetTypeInfo().Assembly.Location), // System.Linq
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
-      MetadataReference.CreateFromFile(System.Reflection.Assembly.Load("netstandard").Location),
-      MetadataReference.CreateFromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
-      MetadataReference.CreateFromFile(typeof(DbContext).GetTypeInfo().Assembly.Location), // EF Core
-      MetadataReference.CreateFromFile(typeof(WhizbangDbContextAttribute).GetTypeInfo().Assembly.Location), // Whizbang.Data.EFCore.Custom
+      SharedMetadataReferences.FromFile(typeof(object).GetTypeInfo().Assembly.Location),  // System.Private.CoreLib
+      SharedMetadataReferences.FromFile(typeof(Console).GetTypeInfo().Assembly.Location), // System.Console
+      SharedMetadataReferences.FromFile(typeof(Enumerable).GetTypeInfo().Assembly.Location), // System.Linq
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("System.Runtime").Location),
+      SharedMetadataReferences.FromFile(System.Reflection.Assembly.Load("netstandard").Location),
+      SharedMetadataReferences.FromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
+      SharedMetadataReferences.FromFile(typeof(DbContext).GetTypeInfo().Assembly.Location), // EF Core
+      SharedMetadataReferences.FromFile(typeof(WhizbangDbContextAttribute).GetTypeInfo().Assembly.Location), // Whizbang.Data.EFCore.Custom
       // System.Text.Json: without it a model using [JsonConverter] does not bind, the attribute resolves
       // to an error type, and a generator looking for one silently finds nothing.
-      MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).GetTypeInfo().Assembly.Location),
-      MetadataReference.CreateFromFile(
+      SharedMetadataReferences.FromFile(typeof(System.Text.Json.JsonSerializer).GetTypeInfo().Assembly.Location),
+      SharedMetadataReferences.FromFile(
         typeof(System.Text.Json.Serialization.JsonConverterAttribute).GetTypeInfo().Assembly.Location),
       // [NotMapped] lives here. Without it the attribute does not bind, and a test about a
       // property being excluded would silently be reporting the reference list instead.
-      MetadataReference.CreateFromFile(
+      SharedMetadataReferences.FromFile(
         typeof(System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute).GetTypeInfo().Assembly.Location),
     };
 

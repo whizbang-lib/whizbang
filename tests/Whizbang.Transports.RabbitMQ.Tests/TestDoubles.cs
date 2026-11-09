@@ -341,7 +341,13 @@ internal class FakeChannel : IChannel {
   }
   public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  /// <summary>Every (queue, exchange, routing key) unbound, in order (#2089).</summary>
+  public List<(string Queue, string Exchange, string RoutingKey)> QueueUnbindings { get; } = [];
+
+  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) {
+    QueueUnbindings.Add((queue, exchange, routingKey));
+    return Task.CompletedTask;
+  }
   public Task TxCommitAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxRollbackAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();

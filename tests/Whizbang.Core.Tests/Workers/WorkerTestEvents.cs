@@ -8,7 +8,7 @@ namespace Whizbang.Core.Tests.Workers;
 // Event types shared by the unit and component projects (one source, compiled into both): the worker
 // tests and their priority tests resolve the same types.
 
-/// <summary>The event SubscriptionExpansionWorkerTests and SubscriptionExpansionWorkerPriorityTests expand.</summary>
+/// <summary>The event SubscriptionExpansionWorkerTests expands.</summary>
 public static class SubscriptionExpansionTestEvents {
   /// <summary>An event with a stream id, as a subscription expansion would carry.</summary>
   public sealed record ExpandedEvent : IEvent {

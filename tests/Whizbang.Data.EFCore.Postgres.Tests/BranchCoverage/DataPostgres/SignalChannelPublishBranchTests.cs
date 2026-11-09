@@ -96,7 +96,7 @@ public class SignalChannelPublishBranchTests : EFCoreTestBase {
       new ServiceInstanceProvider(Guid.NewGuid(), "branch-svc", "branch-host", processId: 1),
       NullLogger<PostgresSignalTransport>.Instance);
 
-    await appChannel.PublishTopicAsync(topic, null!, cancellationToken);
+    await appChannel.PublishTopicAsync(topic, null!, transaction: null, cancellationToken);
     while (!received.Task.IsCompleted) {
       // Blocks until the server delivers an asynchronous message; the handler above runs inside it.
       await listener.WaitAsync(cancellationToken);

@@ -24,8 +24,6 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Data.EFCore.Postgres.Functions;
-using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -77,23 +75,14 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   /// <summary>Provisions the SECOND store (the consumer's) beside the base class's origin store —
   /// two databases, two local service ids, exactly like two services sharing nothing but the wire.</summary>
   private async Task<DbContextOptions<WorkCoordinationDbContext>> _provisionConsumerDbAsync() {
-    _consumerDbName = (await PerTestDatabaseFactory.CreateAsync("consumer")).Name;
+    // A copy of the run's migrated template, as the base class's origin store is.
+    _consumerDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("consumer")).Name;
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _consumerDbName,
       Timezone = "UTC",
       IncludeErrorDetail = true
     };
-    var dsBuilder = new NpgsqlDataSourceBuilder(builder.ConnectionString);
-    dsBuilder.ConfigureJsonOptions(JsonContextRegistry.CreateCombinedOptions());
-    dsBuilder.EnableDynamicJson();
-    dsBuilder.UseVector();
-    _consumerDataSource = dsBuilder.Build();
-    var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
-    optionsBuilder.UseNpgsql(_consumerDataSource, o => o.UseWhizbangFunctions())
-      .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-    var consumerDbOptions = optionsBuilder.Options;
-    await using var ctx = new WorkCoordinationDbContext(consumerDbOptions);
-    await ctx.EnsureWhizbangDatabaseInitializedAsync();
+    (_consumerDataSource, var consumerDbOptions) = CreateContextOptions(builder.ConnectionString);
     return consumerDbOptions;
   }
 
@@ -379,6 +368,8 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     services.AddSingleton(Options.Create(options));
     services.AddSingleton<IIntegrityRepairLedger>(new IntegrityRepairLedger());
+    // The consumer consumes the probe type (#2058: only what the receive boundary keeps is compared).
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     if (tracker is not null) {
       services.AddSingleton(tracker);
     }

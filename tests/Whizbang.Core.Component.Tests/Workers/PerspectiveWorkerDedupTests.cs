@@ -266,8 +266,10 @@ public class PerspectiveWorkerDedupTests {
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, cancellationToken);
-    // Wait for next cycle to ensure in-flight marking is complete
-    await coordinator.WaitForClaimCallsAsync(2, cancellationToken);
+    // The marking's own signal. A later pump cycle (the prior wait) says nothing about the worker:
+    // the run returns before the completion path marks the work in-flight, and a stop landing
+    // between the two leaves nothing marked.
+    await observer.WaitForInFlightCallsAsync(1, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
@@ -286,6 +288,7 @@ public class PerspectiveWorkerDedupTests {
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
     var registry = new SingleRunnerRegistry(runner);
+    var observer = new SpyDedupObserver();
     var workId = Guid.CreateVersion7();
     var streamId = Guid.CreateVersion7();
 
@@ -299,13 +302,19 @@ public class PerspectiveWorkerDedupTests {
     };
     coordinator.WorkItemsPerCycle = [[work], [work], []];
 
-    var (worker, harness) = _createWorker(coordinator, registry, useBatchedStrategy: true);
+    var (worker, harness) = _createWorker(coordinator, registry, observer: observer, useBatchedStrategy: true);
 
-    // Act — run through all 3 cycles
+    // Act. The two deliveries of the work are settled by exactly two worker decisions: one admits it
+    // and runs it, the other dedups it. Wait for BOTH, in either order, before stopping the worker.
+    // Waiting on the pump's own claim count instead (the prior shape) only proved the work had been
+    // ENQUEUED: a worker still starting up, or a consumer that had not yet read the channel, was
+    // canceled before it ran anything and the assertion read 0 (issue #2101). Once both decisions
+    // have fired there is no third delivery (cycle 3 and later are empty), so the count is final.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForClaimCallsAsync(3, cancellationToken);
+    await runner.WaitForRunCallsAsync(1, cancellationToken);
+    await observer.WaitForDedupCallsAsync(1, cancellationToken);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
@@ -314,6 +323,9 @@ public class PerspectiveWorkerDedupTests {
     // Assert — runner should only be called once despite work being returned twice
     await Assert.That(runner.RunAsyncCallCount).IsEqualTo(1)
       .Because("Dedup cache should prevent duplicate Apply during batched completion deferral window");
+    await Assert.That(observer.DedupCalls.Count).IsEqualTo(1)
+      .Because("The second delivery is the one the worker deduped");
+    await Assert.That(observer.DedupCalls[0].EventIds).Contains(workId);
   }
 
   [Test]
@@ -617,6 +629,7 @@ public class PerspectiveWorkerDedupTests {
   private sealed class SpyDedupObserver : IProcessedEventCacheObserver {
     private readonly Lock _gate = new();
     private readonly TaskCompletionSource[] _dedupWaiters = new TaskCompletionSource[10];
+    private readonly TaskCompletionSource[] _inFlightWaiters = new TaskCompletionSource[10];
 
     public List<(IReadOnlyList<Guid> EventIds, string PerspectiveName, Guid StreamId)> DedupCalls { get; } = [];
     public List<IReadOnlyList<Guid>> InFlightCalls { get; } = [];
@@ -627,6 +640,7 @@ public class PerspectiveWorkerDedupTests {
     public SpyDedupObserver() {
       for (var i = 0; i < _dedupWaiters.Length; i++) {
         _dedupWaiters[i] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _inFlightWaiters[i] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       }
     }
 
@@ -640,6 +654,15 @@ public class PerspectiveWorkerDedupTests {
       await _dedupWaiters[count - 1].Task.WaitAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Resolves once at least <paramref name="count"/> in-flight markings have been observed, so a
+    /// test reads <see cref="InFlightCalls"/> only after the worker has written it.
+    /// </summary>
+    public async Task WaitForInFlightCallsAsync(int count, CancellationToken cancellationToken) {
+      ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _inFlightWaiters.Length);
+      await _inFlightWaiters[count - 1].Task.WaitAsync(cancellationToken);
+    }
+
     public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
       lock (_gate) {
         // Record the call, THEN signal — so any awaiter that wakes sees the call already in the list.
@@ -650,8 +673,16 @@ public class PerspectiveWorkerDedupTests {
         }
       }
     }
-    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) =>
-      InFlightCalls.Add(eventIds);
+    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) {
+      lock (_gate) {
+        // Record, THEN signal, as OnEventsDeduped does.
+        InFlightCalls.Add(eventIds);
+        var current = InFlightCalls.Count;
+        for (var i = 0; i < _inFlightWaiters.Length && i < current; i++) {
+          _inFlightWaiters[i].TrySetResult();
+        }
+      }
+    }
     public void OnRetentionActivated(int count) =>
       ActivationCounts.Add(count);
     public void OnEvicted(int count) =>

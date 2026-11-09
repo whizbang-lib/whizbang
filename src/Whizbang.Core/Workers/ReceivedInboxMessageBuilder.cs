@@ -39,21 +39,36 @@ internal static class ReceivedInboxMessageBuilder {
   }
 
   /// <summary>
-  /// Whether a received message is an event the inbox copies into the event store: the service's event catalog
-  /// decides by the message type name, and only a host with no catalog falls back to the payload's own marker. The
+  /// Whether a received message is an event the inbox copies into the event store: the consumer registry's event flag
+  /// decides for a type this service consumes (#2064), the message type catalog's declared kind for a type it declares
+  /// (#2074); for any other type the perspective list or the payload's own marker says it is an event. The
   /// one classification both consumer workers and dead-letter recovery use, so a recovered message is classified
   /// exactly as its delivery was (#1664).
   /// </summary>
-  /// <param name="scope">The scope the catalog is resolved from.</param>
+  /// <param name="scope">The scope the consumer registry, the catalog's kinds and the perspective list are resolved from.</param>
   /// <param name="messageTypeName">The payload type name.</param>
-  /// <param name="payload">The payload; only consulted when no catalog is registered.</param>
+  /// <param name="payload">The payload; its marker is consulted only for a type nothing here consumes or declares.</param>
   /// <returns><see langword="true"/> for an event.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedEventReachesEventStoreTests.cs</tests>
   internal static bool ClassifiesAsEvent(IServiceProvider scope, string messageTypeName, object? payload) {
-    var eventTypeProvider = scope.GetRequiredService<IEventTypeProvider>();
-    return eventTypeProvider.IsAvailable
-      ? EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes())
-      : payload is IEvent;
+    // #2064: the consumer registry is authoritative for a type this service consumes. The perspective list alone
+    // missed every receptor-only event, and a transport payload arrives as JSON, so its marker cannot say.
+    if (scope.GetService<IConsumerRegistry>()?.FindConsumedMessage(messageTypeName) is { } consumed) {
+      return consumed.IsEvent;
+    }
+    // #2074: a type this service does not consume but the application declares (an absorbed namespace's event, stored
+    // on purpose and received as JSON): the catalog's declared kind.
+    if (scope.GetService<CatalogMessageKinds>()?.IsEvent(messageTypeName) is { } declared) {
+      return declared;
+    }
+    // A type nobody here declares or consumes (a recovered dead letter): the perspective list, kept as a positive signal
+    // for hosts without the registry, then the payload's own marker.
+    var eventTypeProvider = scope.GetService<IEventTypeProvider>();
+    return (eventTypeProvider is { IsAvailable: true }
+        && EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes()))
+      || payload is IEvent;
   }
 
   /// <summary>
@@ -144,8 +159,11 @@ internal static class ReceivedInboxMessageBuilder {
         Hops = envelope.CopyHops(),
         DispatchContext = envelope.DispatchContext,
         EphemeralTtlSeconds = EphemeralTtlDeriver.Derive(payload, messageTypeName, ephemeralModeResolver),
-        // #1729: the receiver's copy of a superseding event is stored with the key its producer stored it with.
-        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payload, messageTypeName, jsonOptions)
+        // #1729: the receiver's copy of a superseding event is stored with the key its producer stored it with. A message
+        // from an older producer that lacks the key property has no key (#2123), so its copy is kept, never reaped.
+        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payload, messageTypeName, jsonOptions),
+        // #2124: and the group its producer stamped.
+        SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(payload, messageTypeName)
       },
       MessageType = messageTypeName,
       SourceServiceId = envelope.SourceServiceId,

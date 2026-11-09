@@ -38,9 +38,11 @@ public readonly record struct IntegrityReportObservation(
 /// when the row predates window stamping — dispatch then derives a coarser range per origin).
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
+/// <param name="MissingEventId">#2103: the one event the bucket is missing, when its comparison could name it (the
+/// origin held exactly one event more and both sides carried id lanes); null asks for the stream over the window.</param>
 public readonly record struct IntegrityRepairDrainItem(
   Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId,
-  long? WindowFrom, long? WindowUntil);
+  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null);
 
 /// <summary>
 /// What a manifest comparison needs to know before it adds deficit buckets to the paced repair
@@ -217,4 +219,24 @@ public interface IIntegrityRepairLedger {
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
     CancellationToken cancellationToken = default) =>
     ValueTask.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>>([]);
+
+  /// <summary>
+  /// <see cref="MarkUnhealableBatchAsync(IReadOnlyList{IntegrityRepairLedger.DivergenceKey}, DateTimeOffset, CancellationToken)"/>
+  /// for a redelivery that says which window it answered (#2143): a bucket is marked only when
+  /// <paramref name="answeredWindow"/> covers the bucket's compared window (a whole-history bucket needs a
+  /// whole-history answer) or the redelivery carried the event the bucket is missing (#2103). Any other bucket stays
+  /// repairable: its missing events may lie outside the window. The default ignores the window.
+  /// </summary>
+  /// <param name="keys">The buckets the redelivery covered.</param>
+  /// <param name="answeredWindow">The window the redelivery answered.</param>
+  /// <param name="answeredEventIds">The events the redelivery carried.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The keys newly marked by this call.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
+  ValueTask<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+    IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    MarkUnhealableBatchAsync(keys, now, cancellationToken);
 }

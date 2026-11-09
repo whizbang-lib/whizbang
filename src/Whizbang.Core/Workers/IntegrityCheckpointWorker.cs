@@ -149,6 +149,8 @@ public sealed partial class IntegrityCheckpointWorker(
     // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
     var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
     if (tracker is not null) {
+      // #2104: liveness keeps the last-seen times from before a restart.
+      await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
       var now = _time.GetUtcNow();
       var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
       // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a

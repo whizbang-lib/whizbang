@@ -126,6 +126,30 @@ public class RedeliveryReconcilerTests {
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Information)).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// #2099: events that already carried the origin and took only its sequence (history re-attributed to its owner) are
+  /// reported apart from events whose origin was filled. Reporting both as filling the origin made a run of sequence
+  /// fills read as the same origins being filled again and again.
+  /// </summary>
+  [Test]
+  [Arguments(2, "filled the origin identity of 1 and only the origin sequence of 2 of its 3 event(s)")]
+  [Arguments(3, "filled the origin identity of 3 of its 3 event(s)")]
+  public async Task Reconcile_SequenceFills_AreReportedApartFromOriginFillsAsync(int adopted, string expected) {
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var bundle = _bundle(origin, stream, 3);
+    var coordinator = new AdoptingCoordinator {
+      Answer = [new(stream, null, EVENT_TYPE, Present: 3, Adopted: adopted, OriginsFilled: adopted == 3 ? 3 : 0),
+                new(TrackedGuid.New().Value, null, EVENT_TYPE, Present: 0, Adopted: 3 - adopted, OriginsFilled: 3 - adopted)],
+    };
+    await using var services = _services(coordinator, new IntegrityRepairLedger());
+    var logger = new CapturingLogger();
+
+    _ = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, logger, _now);
+
+    await Assert.That(logger.Entries.Single(e => e.Level == LogLevel.Information).Message).Contains(expected);
+  }
+
   [Test]
   public async Task Reconcile_EveryEventAlreadyPresentAndNothingAdopted_MarksTheBucketUnhealableOnceAsync() {
     var origin = TrackedGuid.New().Value;

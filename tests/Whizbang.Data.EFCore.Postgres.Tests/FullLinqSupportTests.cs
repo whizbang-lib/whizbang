@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// They ensure pure LINQ queries work without raw SQL or EF.Functions calls.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard2")]
 public class FullLinqSupportTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -135,7 +134,8 @@ public class FullLinqSupportTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     // Register physical fields
-    PhysicalFieldRegistry.Clear();
+    // This class's own model only, and never a Clear(): the registry is keyed by model type, so registering touches
+    // nothing another test reads, and the class runs in parallel with them (#2167).
     PhysicalFieldRegistry.Register<CustomerOrder>("CustomerName", "customer_name");
     PhysicalFieldRegistry.Register<CustomerOrder>("TotalAmount", "total_amount");
     PhysicalFieldRegistry.Register<CustomerOrder>("Status", "status");

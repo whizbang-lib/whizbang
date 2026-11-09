@@ -60,6 +60,16 @@ public sealed class EnvelopeMetadata {
   public string? SupersedingKey { get; init; }
 
   /// <summary>
+  /// The superseding group of a superseding event (<c>[Superseding(Group = "...")]</c>, #2124), stamped beside
+  /// <see cref="SupersedingKey"/>. The emit chains copy it into <c>wh_event_store.supersede_group</c> for an event flagged
+  /// <c>EventFlags.Superseding</c>. Null for an ungrouped type, which the store matches by its event type.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataSlimFormTests.cs:ToSlim_KeepsWhatReadersTakeFromAStoredEventAsync</tests>
+  [System.Text.Json.Serialization.JsonPropertyName("sg")]
+  public string? SupersedingGroup { get; init; }
+
+  /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
   /// ephemeral TTL, the superseding key, and one Current hop carrying the message timestamp, correlation id, causation
   /// id, stream id and trace parent as the first hop holds them (where readers take them from), and the scope folded over
@@ -81,6 +91,7 @@ public sealed class EnvelopeMetadata {
         Hops = [],
         EphemeralTtlSeconds = EphemeralTtlSeconds,
         SupersedingKey = SupersedingKey,
+        SupersedingGroup = SupersedingGroup,
       };
     }
 
@@ -96,6 +107,7 @@ public sealed class EnvelopeMetadata {
       MessageId = MessageId,
       EphemeralTtlSeconds = EphemeralTtlSeconds,
       SupersedingKey = SupersedingKey,
+      SupersedingGroup = SupersedingGroup,
       Hops = [
         new MessageHop {
           Type = HopType.Current,

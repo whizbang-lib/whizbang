@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -22,6 +24,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 public partial class PerspectiveWorkerDeepPathDrainTests {
   private const int UNREADABLE_ROWS_EVENT_ID = 78;
+  private const int UNHANDLED_COLLECTIVE_ROWS_EVENT_ID = 80;
+  private const int DRAIN_SKIPPED_NO_EVENT_STORE_EVENT_ID = 81;
 
   [Test]
   [Timeout(30000)]
@@ -150,5 +154,217 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(harness.FailureCapture.Items).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_CollectiveRowsNoHandlerHereApplies_AreCompletedWithoutApplying_WarnedOncePerTypeAndCountedAsync(
+      CancellationToken cancellationToken) {
+    // #2142: a service stores a collective event it has no [CollectiveApplyFor] handler for (it consumes other events
+    // of the same namespace), and the store still routes it to the __collective__ sink. Its type is not among this
+    // service's event types, so it is never read; left alone, it was claimed and re-offered on every poll, for days,
+    // and the oldest such rows crowded every other perspective row out of the claim. Nothing here applies it, so it
+    // is completed like an event no perspective consumes, and said so once per type per batch.
+    const string architectureType = "Contracts.ArchitectureAppliedCollectiveEvent, Contracts";
+    const string overlayType = "Contracts.OverlayAppliedCollectiveEvent, Contracts";
+    var firstStream = Guid.CreateVersion7();
+    var secondStream = Guid.CreateVersion7();
+    var thirdStream = Guid.CreateVersion7();
+    var firstWork = Guid.CreateVersion7();
+    var secondWork = Guid.CreateVersion7();
+    var overlayWork = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(firstStream, Guid.CreateVersion7(), firstWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = architectureType },
+      _raw(secondStream, Guid.CreateVersion7(), secondWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = architectureType },
+      _raw(thirdStream, Guid.CreateVersion7(), overlayWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = overlayType }]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([]);
+    var runner = new DrainRunner();
+    var logger = new FakeLogger<PerspectiveWorker>();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var compositeMetrics = new CompositeMetrics(new WhizbangMetrics(factory));
+
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner), logger: logger, compositeMetrics: compositeMetrics);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(firstStream, cts.Token);
+    await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(25), firstWork, secondWork, overlayWork);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([firstWork, secondWork, overlayWork])
+      .Because("nothing on this service applies them, so they are completed and the claim stops re-offering them");
+    await Assert.That(harness.FailureCapture.Items).IsEmpty()
+      .Because("a collective event no handler applies is not a failure to retry or dead-letter");
+    await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(0);
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.unhandled"))
+      .IsEqualTo(3);
+    var warnings = logger.Collector.GetSnapshot().Where(r => r.Id.Id == UNHANDLED_COLLECTIVE_ROWS_EVENT_ID).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(2).Because("one line per collective event type per batch, with its count");
+    await Assert.That(warnings.All(w => w.Level == LogLevel.Warning)).IsTrue();
+    var architecture = warnings.Single(w => w.Message.Contains(architectureType, StringComparison.Ordinal));
+    await Assert.That(architecture.Message).Contains("DeepPathDrainTest", StringComparison.Ordinal);
+    await Assert.That(architecture.Message).Contains("completed 2 __collective__ row(s) without applying", StringComparison.Ordinal);
+    await Assert.That(architecture.Message).Contains(firstStream.ToString(), StringComparison.Ordinal);
+    await Assert.That(architecture.Message).Contains("no local collective handler", StringComparison.Ordinal);
+    await Assert.That(architecture.Message).Contains("perspective rebuild applies", StringComparison.Ordinal);
+    var overlay = warnings.Single(w => w.Message.Contains(overlayType, StringComparison.Ordinal));
+    await Assert.That(overlay.Message).Contains("completed 1 __collective__ row(s)", StringComparison.Ordinal);
+    await Assert.That(overlay.Message).Contains(thirdStream.ToString(), StringComparison.Ordinal);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_UnhandledCollectiveRowFetchedWithAReadableEvent_IsCompleted_AndTheEventAppliedAsync(
+      CancellationToken cancellationToken) {
+    var streamId = Guid.CreateVersion7();
+    var goodEvent = Guid.CreateVersion7();
+    var sinkWork = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, goodEvent, Guid.CreateVersion7()),
+      _raw(Guid.CreateVersion7(), Guid.CreateVersion7(), sinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = "Contracts.ArchitectureAppliedCollectiveEvent, Contracts" }]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(goodEvent, new DrainDeepEvent("good"))]);
+    var runner = new DrainRunner();
+
+    var (worker, harness, _) = _createWorker(coordinator, eventStore, _registry(runner));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.FirstCompletion.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.WaitForAnyEventWorkIdAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(sinkWork);
+    await Assert.That(runner.ReceivedBatches.SelectMany(b => b)).IsEquivalentTo([goodEvent]);
+    await Assert.That(harness.FailureCapture.Items).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_HostWithNoPerspectiveRegistry_CompletesTheCollectiveRowsItsClaimLeases_WarnedAndCountedAsync(
+      CancellationToken cancellationToken) {
+    // #2142 follow-up: a service with no perspectives of its own has no perspective registry, yet it stores the
+    // collective events of the namespaces it subscribes to and the store routes each to the __collective__ sink. The
+    // claim leases those rows and hands their streams to the drain like any other, but the worker parked when it found
+    // no registry, so nothing ever read the drain channel: the rows were leased in batches, re-offered, released and
+    // leased again, for days, with no line in the log. The drain is the one place that concludes such a row, so it has
+    // to run on this host too.
+    const string architectureType = "Contracts.ArchitectureAppliedCollectiveEvent, Contracts";
+    var streamId = Guid.CreateVersion7();
+    var firstWork = Guid.CreateVersion7();
+    var secondWork = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, Guid.CreateVersion7(), firstWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = architectureType },
+      _raw(streamId, Guid.CreateVersion7(), secondWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = architectureType }]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([]);
+    var logger = new FakeLogger<PerspectiveWorker>();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var compositeMetrics = new CompositeMetrics(new WhizbangMetrics(factory));
+
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(new DrainRunner()), logger: logger, compositeMetrics: compositeMetrics,
+      withoutRegistry: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(25), firstWork, secondWork);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([firstWork, secondWork])
+      .Because("nothing on a host with no perspectives applies a collective event, so its rows are completed");
+    await Assert.That(harness.FailureCapture.Items).IsEmpty();
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.unhandled"))
+      .IsEqualTo(2);
+    var warning = logger.Collector.GetSnapshot().Single(r => r.Id.Id == UNHANDLED_COLLECTIVE_ROWS_EVENT_ID);
+    await Assert.That(warning.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(warning.Message).Contains("completed 2 __collective__ row(s) without applying", StringComparison.Ordinal);
+    await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Message.StartsWith("Drain mode", StringComparison.Ordinal)))
+      .IsFalse().Because("concluding the rows is the whole of the drain's work here, not a skipped or empty batch");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_HostWithAnEmptyPerspectiveRegistry_CompletesTheCollectiveRowsItsClaimLeasesAsync(
+      CancellationToken cancellationToken) {
+    // The same host with a registry that lists no perspective (every perspective removed): the drain skipped every
+    // batch with a warning and concluded nothing, so the collective rows looped there too.
+    var streamId = Guid.CreateVersion7();
+    var sinkWork = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, Guid.CreateVersion7(), sinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)
+        with { EventType = "Contracts.ArchitectureAppliedCollectiveEvent, Contracts" }]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([]);
+
+    var (worker, harness, _) = _createWorker(coordinator, eventStore, new MultiRunnerRegistry([]));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await harness.CompletionCapture.WaitForAnyEventWorkIdAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([sinkWork]);
+    await Assert.That(harness.FailureCapture.Items).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_HostWithNoEventStore_SkipsTheFetch_AndSaysWhyAsync(CancellationToken cancellationToken) {
+    // Only a missing event store stops the drain before its fetch now: nothing could read what the fetch leases. The
+    // skip is said once per batch, with how many streams it held.
+    var streamId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    using var logger = new EventIdSignalingLogger(DRAIN_SKIPPED_NO_EVENT_STORE_EVENT_ID);
+
+    var (worker, harness, _) = _createWorker(
+      coordinator, new DrainEventStore(), _registry(new DrainRunner()), logger: logger, withoutEventStore: true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    var message = await logger.Logged.WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(message).Contains("for 1 stream(s): no event store is registered", StringComparison.Ordinal);
+    await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(0)
+      .Because("the fetch leases rows, and without a store nothing here could read them");
+  }
+
+  /// <summary>Completes <see cref="Logged"/> with the message of the first entry logged under one EventId.</summary>
+  private sealed class EventIdSignalingLogger(int awaitedEventId) : ILogger<PerspectiveWorker>, IDisposable {
+    private readonly TaskCompletionSource<string> _logged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<string> Logged => _logged.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == awaitedEventId) {
+        _logged.TrySetResult(formatter(state, exception));
+      }
+    }
+    public void Dispose() => _logged.TrySetCanceled();
   }
 }

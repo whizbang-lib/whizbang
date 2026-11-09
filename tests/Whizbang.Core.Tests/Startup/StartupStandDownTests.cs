@@ -75,6 +75,7 @@ public class StartupStandDownTests {
     var standDown = StartupStandDown.FromServices(provider)!;
 
     await Assert.That(standDown.RunControl).IsSameReferenceAs(provider.GetRequiredService<IWhizbangRunController>());
+    await Assert.That(standDown.InstanceExit).IsSameReferenceAs(provider.GetRequiredService<IWhizbangInstanceExit>());
   }
 
   private sealed class PhaseLog : IWhizbangLifecycleState {
@@ -127,6 +128,21 @@ public class StartupStandDownTests {
     await Assert.That(coordinator.Requests).Count().IsEqualTo(1);
     await Assert.That(stages.Calls).IsEmpty()
       .Because("a tombstoned instance id never becomes valid again, so beating on is pointless");
+  }
+
+  [Test]
+  public async Task KeepVisible_WhenTheRegistryEvictedTheInstance_ExitsOnce_AsAClusterEvictionAsync() {
+    // #2126: nothing keeps running sidelined. A stood-down instance the fleet evicted exits, code 3, so its host restarts
+    // it under a new instance id.
+    var coordinator = new BeatingCoordinator { Accept = false };
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var standDown = _create(coordinator, new RecordingStageReporter(), new FakeTimeProvider(), instanceExit: exit);
+
+    await standDown.KeepVisibleAsync(CancellationToken.None);
+
+    var request = exit.Requests.Single();
+    await Assert.That(request.Cause).IsEqualTo(ExitCause.ClusterEviction);
+    await Assert.That(request.Reason).Contains("stood-down instance was refused");
   }
 
   [Test]
@@ -248,13 +264,14 @@ public class StartupStandDownTests {
   private static readonly FixedInstance _instance = new();
 
   private static StartupStandDown _create(
-      BeatingCoordinator coordinator, IStartupStageReporter stages, TimeProvider clock, IWhizbangRunController? runControl = null) {
+      BeatingCoordinator coordinator, IStartupStageReporter stages, TimeProvider clock, IWhizbangRunController? runControl = null,
+      IWhizbangInstanceExit? instanceExit = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     var provider = services.BuildServiceProvider();
     return new StartupStandDown(
       provider.GetRequiredService<IServiceScopeFactory>(), _instance, stages, "1.0.0", TimeSpan.FromSeconds(5), clock,
-      NullLogger<StartupStandDown>.Instance) { RunControl = runControl };
+      NullLogger<StartupStandDown>.Instance) { RunControl = runControl, InstanceExit = instanceExit };
   }
 
   /// <summary>Hands out each beat's outcome in order, as the stand-down announces it.</summary>

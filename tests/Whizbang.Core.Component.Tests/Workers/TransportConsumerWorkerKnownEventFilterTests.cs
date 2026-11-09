@@ -138,6 +138,53 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// An event the known set does not name is still stored live when the discard policy keeps it with no consumer (an
+  /// absorbed namespace, #1776): the known set now includes the consumer registry (#2064), so it no longer falls back to
+  /// "no filtering" on a service without perspectives, and the policy's keep is what protects the absorbed event.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task BatchHandler_AnUnknownEvent_IsStoredLiveOnlyWhenTheDiscardPolicyKeepsItAsync(bool absorbed) {
+    var provider = new MutableEventTypeProvider([typeof(FilterCoverageKnownEvent)]);
+    var coordinator = new NoOpWorkCoordinator();
+    var noConsumer = new NoConsumers();
+    var routing = new RoutingOptions();
+    if (absorbed) {
+      routing.AbsorbNamespaces(typeof(FilterCoverageUnknownEvent).Namespace!);
+    }
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IEventTypeProvider>(provider);
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IMessageDiscardPolicy>(new MessageDiscardPolicy(
+      noConsumer, NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("known-event-filter-test"),
+      Options.Create(routing), new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+    await using var sp = services.BuildServiceProvider();
+    var transport = new FilterTransport();
+    var worker = _buildWorker(transport, sp);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    await transport.DeliverBatchAsync([
+      new TransportMessage(_createJsonEnvelope(MessageId.New()), _envelopeTypeFor(typeof(FilterCoverageKnownEvent)))
+    ]);
+    provider.EventTypes.Add(typeof(FilterCoverageUnknownEvent));
+    await transport.DeliverBatchAsync([
+      new TransportMessage(_createJsonEnvelope(MessageId.New()), _envelopeTypeFor(typeof(FilterCoverageUnknownEvent)))
+    ]);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.StoredMessages[1].DiscardedOnReceive)
+      .IsEqualTo(absorbed ? null : InboxReceiveDiscard.UNKNOWN_EVENT_TYPE)
+      .Because(absorbed
+        ? "an absorbed namespace's event is stored on purpose though nothing here consumes it"
+        : "an unknown event the policy does not keep is still settled as unknown");
+  }
+
   // ============================================================
   // Helpers
   // ============================================================
@@ -190,6 +237,11 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
   // ============================================================
   // Test doubles
   // ============================================================
+
+  /// <summary>A consumer registry that consumes nothing, for the discard policy.</summary>
+  private sealed class NoConsumers : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => false;
+  }
 
   /// <summary>Event-type provider whose list can grow mid-test — lets phase 2 present an
   /// event type the worker's phase-1-cached known set has never seen.</summary>

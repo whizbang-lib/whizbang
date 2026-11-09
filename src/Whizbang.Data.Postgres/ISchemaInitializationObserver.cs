@@ -58,6 +58,21 @@ public interface ISchemaInitializationObserver {
   ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 
   /// <summary>
+  /// The phases before the schema lock (the declared-key scan, the stored-form rewrites, the index rebuild and the
+  /// settle scan) are about to run for <paramref name="schema"/> on this instance, which holds the migrator role or could
+  /// not be staged (#2127).
+  /// </summary>
+  /// <param name="schema">The schema whose stored documents are brought to their current form, unquoted.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <remarks>
+  /// Not a stage: these phases run on a restart too, against tables they find settled, and the Migrate stage stays the
+  /// pass's. Their progress is said in the log (#2128).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorKeepaliveStartupTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
+  ValueTask OnPreLockPhasesStartingAsync(string schema, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+  /// <summary>
   /// The bootstrap closure for <paramref name="schema"/> failed with a transient database failure (a deadlock, a
   /// dropped connection, a timeout), and is applied again once <paramref name="delay"/> has passed.
   /// </summary>

@@ -24,4 +24,10 @@ public sealed class PermissiveReceptorRegistryQuery : IReceptorRegistryQuery {
 
   /// <inheritdoc />
   public IReadOnlyList<HandledMessageInfo> GetHandledMessages() => [];
+
+  /// <inheritdoc />
+  /// <remarks>Everything is consumed, but only what the generated registry knows can be listed: the list is the
+  /// generated one, so a host built on this query still audits the types it really consumes.</remarks>
+  public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+    Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
 }

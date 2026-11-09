@@ -56,12 +56,15 @@ public class CommandAuditListLengthsTests {
       RequesterService = "service-a",
       Topic = "topic-a",
       StreamIds = [Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7()],
+      EventIds = [Guid.CreateVersion7(), Guid.CreateVersion7()],
       EventTypes = ["OrderPlaced"],
     };
 
     var body = await _auditedBodyAsync(command);
 
     await Assert.That(_property(body, nameof(RequestRedeliveryCommand.StreamIds)).GetInt32()).IsEqualTo(3);
+    await Assert.That(_property(body, nameof(RequestRedeliveryCommand.EventIds)).GetInt32()).IsEqualTo(2)
+      .Because("#2103: a repair's named events are audited as a count, like its streams");
     await Assert.That(_property(body, nameof(RequestRedeliveryCommand.EventTypes)).ValueKind).IsEqualTo(JsonValueKind.Array);
   }
 

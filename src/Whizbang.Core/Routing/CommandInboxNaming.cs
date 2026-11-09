@@ -30,6 +30,12 @@ public static class CommandInboxNaming {
   /// </summary>
   private const string CONTROL_BROADCAST_INBOX_TOPIC = "inbox.whizbang.control";
 
+  /// <summary>
+  /// Prefix of each service's own control inbox (#2090): <c>inbox.whizbang.service.&lt;service&gt;</c>. Only that service
+  /// subscribes to it, so directed integrity traffic addressed to it reaches it and no other service, structurally.
+  /// </summary>
+  private const string SERVICE_CONTROL_TOPIC_PREFIX = "inbox.whizbang.service.";
+
   /// <summary>The framework-reserved contract-namespace subtree (lowercase-invariant).</summary>
   private const string FRAMEWORK_RESERVED_NAMESPACE = "whizbang.core";
 
@@ -44,6 +50,33 @@ public static class CommandInboxNaming {
 
   /// <summary>Gets the control-class broadcast entity name (<c>inbox.whizbang.control</c>).</summary>
   public static string ControlBroadcastTopic => CONTROL_BROADCAST_INBOX_TOPIC;
+
+  /// <summary>Gets the prefix of each service's own control inbox (<c>inbox.whizbang.service.</c>).</summary>
+  public static string ServiceControlTopicPrefix => SERVICE_CONTROL_TOPIC_PREFIX;
+
+  /// <summary>
+  /// Derives a service's own control inbox entity (#2090): <c>inbox.whizbang.service.&lt;service&gt;</c>, lowercase, with
+  /// every character a broker entity name cannot carry (anything but letters, digits, <c>.</c>, <c>-</c> and <c>_</c>)
+  /// replaced by <c>-</c>. Directed integrity traffic (repair and redelivery requests, manifests and the bundles that
+  /// answer them) is addressed here: a per-namespace command inbox is not exclusive (every service handling one of its
+  /// commands reads it, #2089) and its subscriptions filter to command types, so it can carry neither.
+  /// </summary>
+  /// <param name="serviceName">The service's name.</param>
+  /// <returns>The control inbox entity name.</returns>
+  /// <exception cref="ArgumentException">Thrown when the service name is null or whitespace.</exception>
+  /// <docs>fundamentals/dispatcher/routing#service-control-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_IsTheServicesOwnLowercaseControlEntityAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_ReplacesCharactersAnEntityNameCannotCarryAsync</tests>
+  public static string ServiceControlTopicFor(string serviceName) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
+    var lowered = serviceName.Trim().ToLowerInvariant();
+    var chars = new char[lowered.Length];
+    for (var i = 0; i < lowered.Length; i++) {
+      var c = lowered[i];
+      chars[i] = char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' ? c : '-';
+    }
+    return SERVICE_CONTROL_TOPIC_PREFIX + new string(chars);
+  }
 
   /// <summary>
   /// Metadata key marking a <see cref="TransportDestination"/> as a consumer-provisioned

@@ -14,8 +14,9 @@ namespace Whizbang.Core.Workers;
 /// DI extension that wires <see cref="OrphanInboxJanitor"/> into the host. Snapshots all
 /// <see cref="IReceptor{TMessage}"/> / <see cref="IReceptor{TMessage,TResponse}"/>
 /// registrations from the service collection so the janitor can union them with the
-/// perspective registry's event types at run time.
+/// consumer registry's consumed types at run time.
 /// </summary>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 public static class OrphanInboxJanitorExtensions {
   /// <summary>
   /// Registers the orphan-inbox janitor as a hosted service. Call AFTER all receptor

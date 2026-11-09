@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -158,27 +159,203 @@ public class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
-  public async Task RunAuditOnce_NoEventTypeProvider_RequestCarriesNoTypeFilterAsync() {
+  public async Task RunAuditOnce_ConsumerWithNoPerspectives_RequestsOnlyTheEventItsReceptorConsumesAsync() {
     var transport = new CaptureTransport();
-    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null);
+    // The application knows A and B (a shared contracts assembly) but only a receptor for A is registered, and no
+    // perspective: the perspective event-type provider is unavailable.
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: NullEventTypeProvider.Instance,
+      consumed: [_event(TYPE_A), new ConsumedMessageInfo(COMMAND, IsEvent: false)]);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var request = _deserializeRequest(transport.Published.Single().Envelope);
-    await Assert.That(request.EventTypes).IsNull()
-      .Because("with no provider the request asks for every type rather than for an empty list");
+    await Assert.That(request.EventTypes).IsEquivalentTo([TYPE_A])
+      .Because("the audit asks for what this service consumes, never for every type (null) and never for B, which nothing here consumes");
   }
 
   [Test]
-  public async Task RunAuditOnce_UnavailableEventTypeProvider_RequestCarriesNoTypeFilterAsync() {
+  public async Task RunAuditOnce_PerspectiveAndReceptorConsumer_RequestIncludesTheReceptorOnlyEventAsync() {
     var transport = new CaptureTransport();
-    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: NullEventTypeProvider.Instance);
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: new PerspectiveTypes(),
+      consumed: [_event(TYPE_A), _event(TYPE_R)]);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var request = _deserializeRequest(transport.Published.Single().Envelope);
-    await Assert.That(request.EventTypes).IsNull()
-      .Because("a provider that is not available must not narrow the request to the empty set it reports");
+    await Assert.That(request.EventTypes).IsEquivalentTo([TYPE_A, TYPE_R])
+      .Because("an event only a receptor consumes is still stored here, so it is audited like a perspective's");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_ConsumesNoEvents_RequestsNothingAsync() {
+    var transport = new CaptureTransport();
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null,
+      consumed: [new ConsumedMessageInfo(COMMAND, IsEvent: false)], coordinator: coordinator);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("a service that consumes no events has nothing to audit; an empty filter must never widen to 'every type'");
+    await Assert.That(coordinator.ForgetCalls.Single()).IsEmpty()
+      .Because("every ledger row of such a service is for a type it does not consume");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_ForgetsTheLedgerRowsOfEveryTypeOutsideTheConsumedSetAsync() {
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(new CaptureTransport(), typeProvider: null,
+      consumed: [_event(TYPE_A)], coordinator: coordinator);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgetCalls.Single()).IsEquivalentTo([TYPE_A])
+      .Because("the audit hands the ledger the consumed set each cycle, so rows recorded for other types go away");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_AbsorbedNamespace_WithNothingConsumingIt_IsStillAuditedAsync() {
+    var transport = new CaptureTransport();
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null,
+      consumed: [new ConsumedMessageInfo(COMMAND, IsEvent: false)], coordinator: coordinator,
+      absorbedNamespaces: ["Contracts.Jobs"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.EventNamespaces).IsEquivalentTo(["contracts.jobs"])
+      .Because("an absorbed namespace's events are stored here on purpose, so they are audited though nothing consumes them");
+    await Assert.That(request.EventTypes).IsEmpty()
+      .Because("the type list stays the consumed events: empty, never null (which an origin reads as every type)");
+    await Assert.That(coordinator.ForgetNamespaces.Single()).IsEquivalentTo(["contracts.jobs"])
+      .Because("the ledger keeps the rows of an absorbed namespace's types");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_ForgottenLedgerRows_AreLoggedAsync() {
+    var coordinator = new AuditCoordinator { ForgetResult = 3 };
+    var logger = new MessageLogger();
+    var tracker = new IntegrityGapTracker();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, tracker, logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Saw("forgot 3 repair-ledger row(s)")).IsTrue()
+      .Because("rows removed from the ledger change the unhealed gauge, so the audit says why it moved");
+  }
+
+  // ── a ledger row filed under an origin that does not own its type ─────
+
+  private static readonly Guid _ownerSvc = Guid.Parse("0a000000-0000-0000-0000-0000000000a1");
+  private static readonly Guid _copySvc = Guid.Parse("0b000000-0000-0000-0000-0000000000b2");
+  private const string ORDERS_TYPE = "App.Contracts.Orders.Placed, App.Contracts";
+  private const string OWN_TYPE = "App.Contracts.Self.Started, App.Contracts";
+  private const string UNCLAIMED_TYPE = "App.Contracts.Loose.Happened, App.Contracts";
+
+  [Test]
+  public async Task RunAuditOnce_LedgerRowsOfAnOriginThatDoesNotOwnTheType_AreForgottenAsync() {
+    var coordinator = new AuditCoordinator {
+      Claims = [new IntegrityDomainClaim { Domain = "app.contracts.orders", OwnerServiceId = _ownerSvc, OwnerServiceName = "orders-svc" }],
+      LedgerPairs = [
+        (_copySvc, ORDERS_TYPE),     // a copy-holder's report of the owner's type
+        (_ownerSvc, ORDERS_TYPE),    // the owner's own report
+        (_copySvc, OWN_TYPE),        // another origin's report of this service's own type
+        (_copySvc, UNCLAIMED_TYPE),  // nobody claims the type: the origin is taken at its word
+      ],
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger: logger,
+      ownedDomains: ["App.Contracts.Self"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_copySvc, ORDERS_TYPE), (_copySvc, OWN_TYPE)])
+      .Because("a non-owner's answer leaves out every type it does not own, so its rows are never compared again and "
+             + "can never heal or clear; they are false differences, and the owner's own rows stay");
+    await Assert.That(logger.Saw("forgot 2 repair-ledger row(s) recorded under an origin that does not own")).IsTrue()
+      .Because("rows removed from the ledger move the unhealed gauge, so the audit says why");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_WithNoNonOwnerRows_LogsNothingAboutThemAsync() {
+    var coordinator = new AuditCoordinator { LedgerPairs = [(_copySvc, UNCLAIMED_TYPE)] };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEmpty()
+      .Because("with no owner known and no domain of its own, this service takes every origin at its word, as before");
+    await Assert.That(logger.Saw("does not own")).IsFalse();
+  }
+
+  // ── #2185: a type no service owns, from an origin that stopped reporting ─────
+
+  private static readonly DateTimeOffset _auditNow = new(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
+  private static readonly Guid _silentSvc = Guid.Parse("0c000000-0000-0000-0000-0000000000c3");
+  private static readonly Guid _edgeSvc = Guid.Parse("0d000000-0000-0000-0000-0000000000d4");
+
+  [Test]
+  public async Task RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync() {
+    var coordinator = new AuditCoordinator {
+      Claims = [new IntegrityDomainClaim { Domain = "app.contracts.orders", OwnerServiceId = _ownerSvc, OwnerServiceName = "orders-svc" }],
+      LedgerPairs = [
+        (_silentSvc, UNCLAIMED_TYPE),   // nobody owns it, and its origin has been silent past the threshold
+        (_copySvc, UNCLAIMED_TYPE),     // nobody owns it, but its origin still reports
+        (_edgeSvc, UNCLAIMED_TYPE),     // nobody owns it, and its origin went silent exactly the threshold ago
+        (_ownerSvc, ORDERS_TYPE),       // a silent origin's own type: its owner may come back and answer
+      ],
+      OriginLastReported = new() {
+        [_silentSvc] = _auditNow.AddDays(-8),
+        [_copySvc] = _auditNow.AddDays(-6),
+        [_edgeSvc] = _auditNow.AddDays(-7),
+        [_ownerSvc] = _auditNow.AddDays(-30),
+      },
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, UnownedTypeOriginSilenceDays = 7 },
+      logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_silentSvc, UNCLAIMED_TYPE)])
+      .Because("no owner can confirm or repair a type nobody owns once the origin that reported it stopped reporting; "
+             + "an origin that still reports, or that owns the type, keeps its rows");
+    await Assert.That(logger.Saw("from an origin silent for over 7 day(s)")).IsTrue()
+      .Because("rows removed from the ledger move the unhealed gauge, so the audit says why");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_UnownedTypeRowsOfThisServicesOwnDomain_AreForgottenWhateverTheOriginsSilenceAsync() {
+    var coordinator = new AuditCoordinator {
+      LedgerPairs = [(_copySvc, OWN_TYPE)],
+      OriginLastReported = new() { [_copySvc] = _auditNow },
+    };
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, ownedDomains: ["App.Contracts.Self"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_copySvc, OWN_TYPE)])
+      .Because("a type in this service's own domains has an owner, this service, so the non-owner rule forgets it at once");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_TheManifestRequest_ExpiresWithTheIntegrityTimeToLiveAsync() {
+    var transport = new CaptureTransport();
+    var worker = _buildWorkerWithOneOrigin(transport, typeProvider: null, consumed: [_event(TYPE_A)]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var destination = transport.Published.Single().Destination;
+    await Assert.That(destination.Address).IsEqualTo("origin-a.requests");
+    await Assert.That(Whizbang.Core.Transports.ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a manifest request is regenerated every cycle, so a stale one must expire at the broker");
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────
@@ -195,12 +372,20 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
   }
 
-  private static IntegrityAuditWorker _buildWorkerWithOneOrigin(CaptureTransport transport, IEventTypeProvider? typeProvider) {
+  private const string TYPE_A = "Contracts.OrderShipped, Contracts";
+  private const string TYPE_R = "Contracts.OrderAudited, Contracts";
+  private const string COMMAND = "Contracts.ShipOrder, Contracts";
+
+  private static ConsumedMessageInfo _event(string typeName) => new(typeName, IsEvent: true);
+
+  private static IntegrityAuditWorker _buildWorkerWithOneOrigin(
+      CaptureTransport transport, IEventTypeProvider? typeProvider, ConsumedMessageInfo[] consumed,
+      AuditCoordinator? coordinator = null, string[]? absorbedNamespaces = null) {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    return _buildWorker(new AuditCoordinator(), new CaptureDispatcher(), transport,
+    return _buildWorker(coordinator ?? new AuditCoordinator(), new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, tracker,
-      typeProvider: typeProvider, registerTypeProvider: true);
+      typeProvider: typeProvider, registerTypeProvider: true, consumed: consumed, absorbedNamespaces: absorbedNamespaces);
   }
 
   private static IntegrityAuditWorker _buildWorker(
@@ -210,8 +395,17 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       ILogger<IntegrityAuditWorker>? logger = null,
       bool registerInstanceProvider = true,
       IEventTypeProvider? typeProvider = null,
-      bool registerTypeProvider = false) {
+      bool registerTypeProvider = false,
+      ConsumedMessageInfo[]? consumed = null,
+      string[]? absorbedNamespaces = null,
+      string[]? ownedDomains = null) {
     var services = new ServiceCollection();
+    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_auditNow));
+    if (absorbedNamespaces is not null || ownedDomains is not null) {
+      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions()
+        .AbsorbNamespaces(absorbedNamespaces ?? []).OwnDomains(ownedDomains ?? [])));
+    }
+    services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(consumed ?? [_event(TYPE_A)]));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
@@ -235,6 +429,19 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       Options.Create(options),
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
+
+  /// <summary>The consumer registry: what this service consumes.</summary>
+  private sealed class ConsumedRegistry(ConsumedMessageInfo[] consumed) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => consumed.Any(c => c.TypeName == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => consumed;
+  }
+
+  /// <summary>A perspective event-type provider that knows A only (the perspective folds A).</summary>
+  private sealed class PerspectiveTypes : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(PerspectiveFoldedEvent)];
+  }
+
+  private sealed record PerspectiveFoldedEvent : IEvent;
 
   private sealed class NullValueOptions : IOptions<StreamIntegrityOptions> {
     public StreamIntegrityOptions Value => null!;
@@ -271,6 +478,36 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int EpochVerifyCalls { get; private set; }
+    public List<IReadOnlyList<string>> ForgetCalls { get; } = [];
+    public int ForgetResult { get; init; }
+    public List<IReadOnlyCollection<string>> ForgetNamespaces { get; } = [];
+
+    public Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+        IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+        CancellationToken cancellationToken = default) {
+      ForgetCalls.Add(consumedEventTypes);
+      ForgetNamespaces.Add(absorbedNamespaces);
+      return Task.FromResult(ForgetResult);
+    }
+
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; init; } = [];
+    public List<(Guid Origin, string EventType)> LedgerPairs { get; init; } = [];
+    public List<(Guid Origin, string EventType)> ForgottenPairs { get; } = [];
+
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Claims);
+
+    /// <summary>When each origin last reported (#2185); an origin not listed reported at the audit's instant.</summary>
+    public Dictionary<Guid, DateTimeOffset> OriginLastReported { get; init; } = [];
+
+    public Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+        Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+      var gone = LedgerPairs
+        .Where(p => isNotAuthoritative(p.Origin, p.EventType, OriginLastReported.GetValueOrDefault(p.Origin, _auditNow)))
+        .ToList();
+      ForgottenPairs.AddRange(gone);
+      return Task.FromResult(gone.Count);
+    }
 
     public EpochVerificationResult EpochResult { get; init; } = new(0, 0);
 

@@ -310,6 +310,30 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
+  /// Records the beat of an instance that is still starting: from its registration at the end of Preflight until its
+  /// schema is ready (#2126). The heartbeat starts at registration, so a peer's reap judges a starting instance by a
+  /// heartbeat it really sends, through Elect, Migrate, Converge and Coordinate.
+  /// </summary>
+  /// <remarks>
+  /// A driver with staged startup overrides this with a beat that needs only what Preflight creates: it refreshes the
+  /// heartbeat, the connection mode and the liveness window of the instance's existing row, never inserts a row, never
+  /// writes the stage or the lifecycle phase (the stage record is their one writer), and reaps no peer. The default is
+  /// the full heartbeat, for a coordinator with no schema to wait for.
+  /// </remarks>
+  /// <param name="request">The instance and what it declares: its connection mode and liveness window.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// <see langword="false"/> when this instance has been evicted and must stop heartbeating, as for
+  /// <see cref="RecordHeartbeatAsync"/>; <see langword="true"/> otherwise.
+  /// </returns>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupHeartbeatTests.cs</tests>
+  Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+    => RecordHeartbeatAsync(request, cancellationToken);
+
+  /// <summary>
   /// Wakes the appropriate per-instance NOTIFY channels for any wh_outbox or wh_inbox rows
   /// whose <c>scheduled_for</c> retry timestamp has elapsed. Called periodically by
   /// <c>ScheduledRetryWorker</c> on a low-cadence (default 10 s) cycle so retry latency stays
@@ -1091,6 +1115,87 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2092: queues paced backfills, one per (owner, event type). Idempotent and multi-instance safe: a pair already
+  /// queued, running or ended keeps its row. Default: no-op (engines without the backfill table do not backfill).
+  /// </summary>
+  /// <param name="seeds">The pairs to queue.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task EnqueueSubscriptionBackfillsAsync(
+    IReadOnlyList<SubscriptionBackfillSeed> seeds,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>#2092: every paced backfill, running and ended. Default: empty.</summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The backfills' durable progress.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task<IReadOnlyList<SubscriptionBackfillCursor>> GetSubscriptionBackfillsAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SubscriptionBackfillCursor>>([]);
+
+  /// <summary>
+  /// #2092: records that window <paramref name="window"/> of a running backfill was requested and awaits its answer
+  /// until <paramref name="answerDueBy"/>. Requesting the same window again counts one more attempt; a new window starts
+  /// its attempts at one. Default: no-op.
+  /// </summary>
+  /// <param name="backfillId">The backfill.</param>
+  /// <param name="window">The window requested.</param>
+  /// <param name="now">The request time.</param>
+  /// <param name="answerDueBy">When the window stops waiting for its answer.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task MarkSubscriptionBackfillWindowRequestedAsync(
+    Guid backfillId,
+    long window,
+    DateTimeOffset now,
+    DateTimeOffset answerDueBy,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2092: applies a window's answer to its running backfill: the position moves to where the window stopped, the
+  /// events count, and an answer with nothing more ends the backfill as complete. Applies only to the window awaiting
+  /// its answer, so a late or duplicate answer changes nothing. Default: null.
+  /// </summary>
+  /// <param name="answer">The origin's answer.</param>
+  /// <param name="now">The time the answer is applied.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The backfill's progress after the answer, or null when the answer applied to nothing.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(
+    BackfillWindowAnswer answer,
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default) => Task.FromResult<SubscriptionBackfillCursor?>(null);
+
+  /// <summary>#2092: ends a running backfill with <paramref name="outcome"/>. Default: no-op.</summary>
+  /// <param name="backfillId">The backfill.</param>
+  /// <param name="outcome">How it ended.</param>
+  /// <param name="now">The time it ended.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task EndSubscriptionBackfillAsync(
+    Guid backfillId,
+    SubscriptionBackfillOutcome outcome,
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2092: the highest stamped commit sequence among this store's events of <paramref name="eventTypes"/>, which a
+  /// windowed backfill answer carries so the requester can estimate what remains. Default: null (unknown).
+  /// </summary>
+  /// <param name="eventTypes">Stored event type names.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The head, or null when the store holds none or cannot say.</returns>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs:HeadCommitSequence_IsTheHighestStampedSequenceOfTheTypesAsync</tests>
+  Task<long?> GetRedeliveryHeadCommitSequenceAsync(
+    IReadOnlyList<string> eventTypes,
+    CancellationToken cancellationToken = default) => Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Stream-integrity Phase A: computes the order-independent identity digests of this store's
   /// events per (tenant, type, stream). <paramref name="originServiceId"/> null = OWN emissions
   /// (locally-originated rows — what this service publishes as an origin); a value = events
@@ -1756,6 +1861,19 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
 
   /// <summary>
+  /// <see cref="VacuumWorkTablesAsync(CancellationToken)"/>, leaving alone a table the database records as vacuumed
+  /// (manually or by autovacuum, from any instance) within <paramref name="skipTablesVacuumedWithin"/>: it comes back
+  /// with <see cref="WorkTableVacuum.RecentlyVacuumed"/> set (#2140). Default: the vacuum without a window.
+  /// </summary>
+  /// <param name="skipTablesVacuumedWithin">How recent a vacuum makes another unnecessary; zero vacuums every table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs:ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync</tests>
+  Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) =>
+    VacuumWorkTablesAsync(cancellationToken);
+
+  /// <summary>
   /// Every B-tree index on the queue tables that churn to empty, with its size and the size the catalog estimates it
   /// should have (#1746). The maintenance cycle's <see cref="Whizbang.Core.Workers.QueueIndexReindexStep"/> rebuilds the
   /// most bloated one and drops what an interrupted rebuild left behind.
@@ -1845,6 +1963,20 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Records one exit of this instance in <c>wh_instance_exits</c> (#2126) and reads, in the same call, the instance's
+  /// eviction tombstone (when, by which peer, why, and the heartbeat and window it was judged by), so the exit's log entry
+  /// can state them. The default keeps no record: <see cref="InstanceExitRecordResult.NotKept"/>.
+  /// </summary>
+  /// <param name="exitRecord">The facts of the exit.</param>
+  /// <param name="cancellationToken">Cancellation token: the host's stop budget.</param>
+  /// <returns>Whether the row was written, and the tombstone when the instance has one.</returns>
+  /// <docs>operations/startup/instance-exits#the-exit-record</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync</tests>
+  Task<RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
+      RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) =>
+    Task.FromResult(RunControl.InstanceExitRecordResult.NotKept);
+
+  /// <summary>
   /// Durable stream-integrity convergence state. Defaults keep the caller's prior behaviour when a
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).
@@ -1892,6 +2024,62 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
   /// <summary>
+  /// #2104: what the store keeps of the integrity gap tracker (known origins, pending gaps), read once by a new process.
+  /// Null = unsupported: the tracker starts empty, as before, and learns from the next checkpoints.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The kept state, or null.</returns>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityGapTrackerState?>(null);
+
+  /// <summary>
+  /// #2104: keeps an origin's checkpoint (its name, its request address, and the time) so a restarted process knows
+  /// the origin and its liveness. A null <paramref name="requestTopic"/> keeps the address already known. No-op =
+  /// unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="originServiceName">Its logical name.</param>
+  /// <param name="requestTopic">Its announced request address, or null.</param>
+  /// <param name="checkpointAt">When the checkpoint was recorded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityRecordOriginCheckpointAsync(
+    Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// #2104: replaces the kept pending gaps of one origin with <paramref name="pending"/> (empty = none), so a gap seen
+  /// before a restart is confirmed by the first checkpoint after it. No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="pending">The origin's pending gaps after this checkpoint.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  Task IntegrityReplacePendingGapsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2103: records, per keyed ledger row, the one event its bucket is missing (or null when the comparison could not
+  /// name one), so the paced repair drain asks the owner for that event instead of the stream. Pairs by position with
+  /// <paramref name="keys"/>; a null clears an id recorded by an earlier comparison. No-op = unsupported, and the drain
+  /// asks for the streams over their windows as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the keys belong to.</param>
+  /// <param name="keys">The deficit buckets this comparison recorded.</param>
+  /// <param name="missingEventIds">Per key, the one missing event, or null.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordMissingEvents_TheClaimCarriesEachRowsNamedEvent_OrNoneAsync</tests>
+  Task IntegrityRecordMissingEventsAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
   /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
   /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.
@@ -1934,6 +2122,27 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
 
   /// <summary>
+  /// #2115: claims up to <paramref name="limit"/> ledger rows to re-check, oldest report first: rows of
+  /// <paramref name="originIds"/> (origins whose request topic is learned) last reported before
+  /// <paramref name="reportedBefore"/>, not looked at since then, and stamped with the window they were compared over. A
+  /// claim marks each row looked at (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a
+  /// re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
+  /// rows. Nothing is attempted and no repair is asked: a claimed row is compared again, never repaired. Empty = nothing
+  /// that old, or unsupported.
+  /// </summary>
+  /// <param name="originIds">The origins a re-check can be asked of.</param>
+  /// <param name="reportedBefore">Only rows last reported before this instant (the re-check threshold).</param>
+  /// <param name="now">The instant the claim marks the rows looked at.</param>
+  /// <param name="limit">The most rows to claim.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerRecheckSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
+    IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>([]);
+
+  /// <summary>
   /// Records that repair requests for <paramref name="keys"/> left, so neither the paced drain nor the burst grant
   /// asks again for <paramref name="timeout"/> or until a bundle answers (#2029). A key on the type lane (an empty
   /// stream id: a bulk or checkpoint request for the whole type) also covers the per-stream rows of its type whose
@@ -1959,6 +2168,23 @@ public interface IWorkCoordinator {
     Task.FromResult(0);
 
   /// <summary>
+  /// Counts the repair-ledger buckets whose answer is on its way at <paramref name="now"/> (a request left for them and
+  /// neither its answer landed nor its timeout passed), reading no further than <paramref name="limit"/> (#2184). The
+  /// paced repair drain stops claiming while the count is at <c>MaxOutstandingRepairAnswers</c>, because answers can land
+  /// hours after their requests and a burst of late answers loads this service's store however slowly they were asked.
+  /// Defaults to none for engines with no ledger.
+  /// </summary>
+  /// <param name="now">The drain's instant.</param>
+  /// <param name="limit">The most the caller needs counted: its cap.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The buckets awaiting an answer, at most <paramref name="limit"/>.</returns>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync</tests>
+  Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Records a committed redelivery bundle's answer when its children commit (#2029, #2033): the buckets it covered,
   /// and their type lane, stop waiting for it and are not asked for again until the next comparison; the buckets of a
   /// bundle that changed nothing (every event already stored and none adoptable), and any bucket with an event the
@@ -1978,6 +2204,28 @@ public interface IWorkCoordinator {
     Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IntegrityBundleAnswer?>(null);
+
+  /// <summary>
+  /// <see cref="IntegrityRecordBundleAnswerAsync(Guid, IReadOnlyList{Guid}, IReadOnlyList{long?}, DateTimeOffset, CancellationToken)"/>
+  /// for a bundle that says which window it answers (#2143): a bucket of a bundle that changed nothing is marked only
+  /// when <paramref name="answeredWindow"/> covers the bucket's compared window (a whole-history bucket needs a
+  /// whole-history answer) or the bundle carried the event the bucket is missing (#2103). Any other bucket is recorded
+  /// as answered and stays repairable. A null window (an origin that predates it) marks as the overload without it
+  /// does. The default ignores the window, as a store that cannot judge coverage behaves as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="eventIds">The bundle's event ids.</param>
+  /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>.</param>
+  /// <param name="answeredWindow">The window the bundle answers; null when the origin did not say.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The answer, or null when the store cannot record it.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerCoverageSqlTests.cs</tests>
+  Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, now, cancellationToken);
 
   /// <summary>Batched <see cref="IntegrityMarkHealedAsync"/>. False = unsupported.</summary>
   /// <docs>resilience/stream-integrity</docs>
@@ -2009,6 +2257,26 @@ public interface IWorkCoordinator {
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>(null);
+
+  /// <summary>
+  /// <see cref="IntegrityMarkUnhealableBatchAsync(Guid, IReadOnlyList{IntegrityRepairLedger.DivergenceKey}, DateTimeOffset, CancellationToken)"/>
+  /// for a redelivery that says which window it answered (#2143): only the rows whose compared window
+  /// <paramref name="answeredWindow"/> covers, or whose missing event is among <paramref name="answeredEventIds"/>
+  /// (#2103), are marked. The default ignores the window, as a store that cannot judge coverage behaves as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the redelivery names.</param>
+  /// <param name="keys">The buckets the redelivery covered.</param>
+  /// <param name="answeredWindow">The window the redelivery answered.</param>
+  /// <param name="answeredEventIds">The events the redelivery carried.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The keys this call marked; null = unsupported.</returns>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerCoverageSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+    IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    IntegrityMarkUnhealableBatchAsync(originServiceId, keys, now, cancellationToken);
 
   /// <summary>
   /// Reconciles the events of one redelivery bundle that this store already holds. An event stored before the
@@ -2044,6 +2312,24 @@ public interface IWorkCoordinator {
     Guid originServiceId, string? originServiceName, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
+
+  /// <summary>
+  /// Reconciles many redelivery bundles at once (#2099), each as <see cref="AdoptRedeliveredOriginAsync"/> reconciles
+  /// one, so that a backlog of recorded reconciles drains at the cost of the bundles rather than of the sealed epochs
+  /// each one touches. Every bundle's streams are locked once, the fills are one update, and each sealed digest epoch
+  /// that holds a moved event is refolded once for the whole batch. An event two bundles of the batch name adopts once,
+  /// for the first bundle that can fill it; the other counts it present and not adopted, as a later call would.
+  /// </summary>
+  /// <param name="bundles">The bundles, in the order a sequence of single calls would have reconciled them.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Per bundle, in the order given, its buckets as <see cref="AdoptRedeliveredOriginAsync"/> returns them, with
+  /// <see cref="RedeliveredBucketPresence.OriginsFilled"/> set; null = unsupported, and the caller reconciles each bundle
+  /// on its own.</returns>
+  /// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryBatchReconcileCoordinatorTests.cs</tests>
+  Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+    IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?>(null);
 
   /// <summary>
   /// Records the domains an origin announced on its checkpoint as its claim set, replacing the claims it made before:
@@ -2156,6 +2442,51 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Fail_CountsTheAttempt_KeepsTheError_AndHoldsItForTheBackoffAsync</tests>
   Task FailIntegrityDeliveryAsync(
     Guid deliveryId, string failure, TimeSpan backoff, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Forgets the repair-ledger rows of event types this service does not consume (#2058): a type nothing here consumes
+  /// is never stored here, so every bucket of it reads as a deficit no repair can heal (the redelivery is discarded at
+  /// the receive boundary). Run by the integrity audit each cycle with the consumed set, so a ledger recorded before the
+  /// audit was narrowed, or before a consumer was removed, heals itself. A null list forgets nothing. Defaults to
+  /// nothing forgotten for engines with no ledger.
+  /// </summary>
+  /// <param name="consumedEventTypes">The event types this service consumes, in the assembly-qualified wire form.</param>
+  /// <param name="absorbedNamespaces">The event namespaces this service absorbs (lowercase): their types are stored
+  /// here whether or not anything consumes them, so their rows are kept.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows forgotten.</returns>
+  /// <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetUnconsumedSqlTests.cs</tests>
+  Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+    IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
+  /// Forgets the repair-ledger rows recorded under an origin that does not own the row's event type. An origin's answer
+  /// leaves out every type it does not own (#2008), so such a row is never compared again: it can neither heal nor clear,
+  /// and with repair on it is marked unhealable and holds the unhealed gauge up for good. Rows like these were written
+  /// before comparisons ignored a non-owner's digests (#2032), when a service still reported events it had only received
+  /// as its own. Run by the integrity audit each cycle: every distinct (origin, type) pair the ledger holds is judged
+  /// once by <paramref name="isNotAuthoritative"/> (the audit passes
+  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. The judge
+  /// also receives the origin's last report (the later of its last checkpoint and the pair's last report on the ledger),
+  /// so the audit forgets the rows of a type no service owns once their origin has been silent past
+  /// <c>UnownedTypeOriginSilenceDays</c> (#2185): no owner can repair them and their origin no longer answers. Defaults
+  /// to nothing forgotten for engines with no ledger.
+  /// </summary>
+  /// <param name="isNotAuthoritative">The judge, given the origin, the type and the origin's last report: true when no
+  /// owner will ever answer the pair's rows.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows forgotten.</returns>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetNonOwnerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnownedAgeOutSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync</tests>
+  Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+    Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
@@ -2287,6 +2618,29 @@ public interface IWorkCoordinator {
     long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<StreamDigest>?>(null);
+
+  /// <summary>
+  /// #2102: the digests of the events this store holds from <paramref name="originServiceId"/> WITHOUT the origin's
+  /// commit sequence (re-attributed history, whose origin is recorded and whose sequence is not). A fold over an
+  /// origin-sequence window leaves these events out, so a windowed comparison places them with
+  /// <see cref="IntegrityDigestMath.PlaceHeld"/> instead of reading their bucket as short. Folded under the same
+  /// predicates as every digest fold (not ephemeral, not at-most-once, not exempt, older than the settle window).
+  /// With <paramref name="streamIds"/>, one row per (tenant, type, stream) of those streams; without, one row per
+  /// (tenant, type) with <see cref="StreamDigest.StreamId"/> = <see cref="Guid.Empty"/>. The default returns nothing:
+  /// a store that cannot tell holds no such events as far as a comparison knows, and compares as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin the events were received from.</param>
+  /// <param name="eventTypes">The stored event types to fold.</param>
+  /// <param name="streamIds">The streams to fold, one row per stream; null for one row per (tenant, type).</param>
+  /// <param name="settleWindow">Only events older than this count, matching the windowed folds.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The folds; empty when there are none, or the store cannot tell.</returns>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs</tests>
+  Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+    Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<StreamDigest>>([]);
 
   /// <summary>
   /// The consumer's verified watermark for an origin (#80-C): every sequence below it proved
@@ -2881,6 +3235,19 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
 
   /// <summary>
+  /// The distinct message types of the pending, unleased <c>wh_inbox</c> rows: the rows
+  /// <see cref="PurgeOrphanInboxAsync"/> may delete. The orphan-inbox janitor asks the receive boundary's keep decision
+  /// about each (#2066), so a type it keeps without a consumer (an absorbed namespace) is never purged. Default: none,
+  /// which leaves the janitor's purge list as it was.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The distinct message type names.</returns>
+  /// <docs>operations/workers/orphan-inbox-janitor</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync</tests>
+  Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>
   /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of
   /// <paramref name="messageTypeNames"/>: the maintenance sweep's way to drop work this service has decided
   /// not to perform. The maintenance worker passes <see cref="RepairTraffic.InboxMessageTypeNames"/> while
@@ -3064,6 +3431,24 @@ public interface IWorkCoordinator {
     int limit,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<StuckRow>>([]);
+
+  /// <summary>
+  /// Drops the given inbox rows that are still unprocessed and past <paramref name="maxAttempts"/>, and returns how many
+  /// (#2117). The maintenance cycle calls it for exhausted control-plane rows, which are never stored in the dead-letter
+  /// table, when no dispatcher concluded them. In debug mode a row is kept with its processed time stamped.
+  /// </summary>
+  /// <param name="messageIds">The rows to drop.</param>
+  /// <param name="maxAttempts">The attempt ceiling, re-checked so a row concluded meanwhile is left alone.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows dropped. Default: none, for engines without an inbox.</returns>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExhaustedInboxDropSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync</tests>
+  Task<int> DropExhaustedInboxRowsAsync(
+    IReadOnlyList<Guid> messageIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0);
 }
 
 /// <summary>
@@ -3763,10 +4148,13 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// Why the consumer decided not to process this message, set when it skipped it on receive (one of
   /// <see cref="InboxReceiveDiscard"/>). The message is still stored, so the skip is durable and inspectable: the store
   /// writes the row already settled (Stored and Published) with the reason in its error column, and never claims,
-  /// copies or dispatches it (#1720). Null for every message the consumer processes.
+  /// copies or dispatches it (#1720). The row keeps no body: its envelope and metadata are stored empty, since nothing
+  /// reads a settled row's body and deduplication does not need it (migration 368). Null for every message the
+  /// consumer processes.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:AMessageDiscardedOnReceive_IsStoredWithoutItsBody_AndIsStillADuplicateOnRedeliveryAsync</tests>
   public string? DiscardedOnReceive { get; init; }
 
   /// <summary>
@@ -4590,7 +4978,13 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <param name="SkippedReason">Why it did not run, naming the table and the role; null when it ran.</param>
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
-public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);
+public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason) {
+  /// <summary>
+  /// True when the table was not vacuumed because the database records a vacuum of it inside the caller's window
+  /// (#2140); <see cref="SkippedReason"/> then says how long ago. Not a failure: nothing was left undone.
+  /// </summary>
+  public bool RecentlyVacuumed { get; init; }
+}
 
 /// <summary>
 /// One B-tree index on a queue table that churns to empty, as <see cref="IWorkCoordinator.GetQueueIndexBloatAsync"/>

@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/244_HeartbeatNeverRollsThePhaseBack.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/278_OneWriterOfTheInstancePhase.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
-[Category("Shard3")]
+[Category("Shard5")]
 public class HeartbeatPhaseOrderSqlTests : EFCoreTestBase {
   private const string SERVICE = "phase-order-svc";
   private const string HOST = "phase-order-host";

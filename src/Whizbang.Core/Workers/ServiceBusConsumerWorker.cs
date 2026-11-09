@@ -304,6 +304,10 @@ public partial class ServiceBusConsumerWorker(
     try { // semaphore is released in finally block
       await using var scope = _scopeFactory.CreateAsyncScope();
       var scopedProvider = scope.ServiceProvider;
+      // #2091: framework control or minted traffic this service cannot use is discarded on receipt, before any work.
+      if (_frameworkDiscardOnReceipt(envelope, envelopeType, scopedProvider)) {
+        return;
+      }
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
@@ -369,6 +373,32 @@ public partial class ServiceBusConsumerWorker(
     LogDroppedUnsubscribedType(_logger, envelope.MessageId, unconsumedType);
     return InboxReceiveDiscard.NO_LOCAL_CONSUMER;
   }
+
+  /// <summary>
+  /// #2091: framework control or minted traffic addressed to another service, or consumed by nothing here, is
+  /// discarded on receipt with no row and no other work, counted under its reason
+  /// (<see cref="ReceiveConsumerGate.FrameworkDiscardOnReceipt"/>, shared with <see cref="TransportConsumerWorker"/>).
+  /// </summary>
+  /// <returns>True when the message was discarded.</returns>
+  private bool _frameworkDiscardOnReceipt(IMessageEnvelope envelope, string? envelopeType, IServiceProvider scopedProvider) {
+    var unconsumed = ReceiveConsumerGate.UnconsumedMessageType(
+      envelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver,
+      scopedProvider.GetService<Routing.IMessageDiscardPolicy>()) is not null;
+    var serviceName = ReceiveConsumerGate.KnownServiceName(scopedProvider.GetService<IServiceInstanceProvider>());
+    if (ReceiveConsumerGate.FrameworkDiscardOnReceipt(envelopeType, envelope.Target, serviceName, unconsumed) is not { } reason) {
+      return false;
+    }
+    var messageType = TypeNameFormatter.GetSimpleName(envelopeType!);
+    scopedProvider.GetService<TransportMetrics>()?.InboxMessagesDiscarded.Add(1,
+      new KeyValuePair<string, object?>("reason", reason),
+      new KeyValuePair<string, object?>("message_type", messageType));
+    LogFrameworkMessageDiscardedOnReceipt(_logger, envelope.MessageId, messageType, reason);
+    return true;
+  }
+
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Discarded framework message {MessageId} ({MessageType}) on receipt ({Reason}): not stored or processed")]
+  private static partial void LogFrameworkMessageDiscardedOnReceipt(ILogger logger, MessageId messageId, string messageType, string reason);
 
   /// <summary>
   /// Starts a distributed trace activity linked to the sender's span via TraceParent.

@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using Azure;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -172,19 +173,65 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
             _logger.LogDebug(ex, "Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
           }
         }
+      }
 
-        // Same-as-subscribe-time filter shape: a freshly created subscription with routing
-        // patterns must not sit filterless until first subscribe (an unfiltered shared-inbox
-        // subscription would buffer EVERY command in the window).
-        var routingPatterns = _routingPatternsOf(subscription);
-        if (routingPatterns.Count > 0) {
-          await ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
-            _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
-        }
+      // Same-as-subscribe-time filter shape: a freshly created subscription with routing
+      // patterns must not sit filterless until first subscribe (an unfiltered shared-inbox
+      // subscription would buffer EVERY command in the window). An EXISTING subscription is
+      // converged too (#2089): a command inbox provisioned before its type filter carried the
+      // match-all rule, and a host that does not auto-provision at subscribe time would keep it.
+      // Converging is idempotent: an already-correct rule set is left untouched.
+      var routingPatterns = _routingPatternsOf(subscription);
+      if (routingPatterns.Count > 0) {
+        await ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
+          _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
       }
 
       _knownSubscriptions[(topicName, subscriptionName)] = true;
     }
+  }
+
+  /// <summary>
+  /// True when every rule of a foreign subscription is a SQL filter of exact subject matches (#2089): what the namespace
+  /// inbox strategy provisions for a service that handles some commands of the namespace. The match-all default rule, a
+  /// LIKE with a wildcard (<c>%</c> or <c>_</c>), any other clause (such as <c>1=1</c>), any other filter kind, and a
+  /// subscription with no rules at all are not.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_CommandInbox_ForeignSubscriptionFilteredToExactTypes_IsNotDriftAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_CommandInbox_ForeignSubscriptionMatchingTheNamespace_IsDriftAsync</tests>
+  private async Task<bool> _isFilteredToExactTypesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken) {
+    var any = false;
+    await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+      if (rule.Filter is not SqlRuleFilter sql || !IsExactSubjectExpression(sql.SqlExpression)) {
+        return false;
+      }
+      any = true;
+    }
+    return any;
+  }
+
+  /// <summary>
+  /// True when a SQL filter expression is only <c>sys.Label LIKE '&lt;literal&gt;'</c> clauses joined by <c>OR</c>, with
+  /// no wildcard in any literal: the shape of an exact command-type filter.
+  /// </summary>
+  /// <param name="expression">The SQL filter expression.</param>
+  /// <returns>True for an exact-subject filter.</returns>
+  internal static bool IsExactSubjectExpression(string? expression) {
+    if (string.IsNullOrWhiteSpace(expression)) {
+      return false;
+    }
+    const string clausePrefix = "sys.Label LIKE '";
+    foreach (var clause in expression.Split(" OR ", StringSplitOptions.None)) {
+      var trimmed = clause.Trim();
+      if (!trimmed.StartsWith(clausePrefix, StringComparison.Ordinal) || !trimmed.EndsWith('\'')) {
+        return false;
+      }
+      var literal = trimmed[clausePrefix.Length..^1];
+      if (literal.Length == 0 || literal.IndexOfAny(['%', '_', '\'']) >= 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// <summary>True when the subscription carries the owned-command-inbox marker stamped by
@@ -221,8 +268,13 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
         if (string.Equals(subscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
           continue;
         }
+        // #2089: a second service handling some commands of this namespace subscribes filtered to exactly those types.
+        // That is the topology working; only a subscriber that matches more than exact types is drift.
+        if (await _isFilteredToExactTypesAsync(topicName, subscriptionName, cancellationToken)) {
+          continue;
+        }
         _logger.LogError(
-          "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' — one service owns a command namespace; a duplicate subscriber receives (and may double-handle) every command on it",
+          "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' that is not filtered to exact command types; it receives (and may double-handle) commands it does not handle",
           topicName,
           subscriptionName);
         _driftState?.Record(new TopologyDriftFinding(

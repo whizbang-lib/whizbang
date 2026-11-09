@@ -70,7 +70,8 @@ public class HeartbeatWorkerCoverageTests {
       applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
   }
 
   // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the

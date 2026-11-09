@@ -113,6 +113,15 @@ public class EventStoreDecoratorForwardingTests {
   }
 
   [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsGetStreamStartedAt_ToInnerStoreAsync(IEventStore decorated) {
+    // #2152: the runner asks for a stream's start through the decorated store. A decorator serving the interface
+    // default (null) would date a rebuilt row at its oldest surviving event again.
+    await Assert.That(await decorated.GetStreamStartedAtAsync(Guid.NewGuid())).IsEqualTo(ProbeAwareStore.StartedAtSentinel)
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (null)");
+  }
+
+  [Test]
   [MethodDataSource(nameof(ThroughArchiveForwarders))]
   public async Task Decorator_ForwardsTheReadThroughTheArchive_ToInnerStoreAsync(IEventStore decorated) {
     var read = new List<MessageEnvelope<IEvent>>();
@@ -183,6 +192,11 @@ public class EventStoreDecoratorForwardingTests {
 
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
+
+    public static readonly DateTime StartedAtSentinel = new(2020, 3, 1, 9, 0, 0, DateTimeKind.Utc);
+
+    public Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      Task.FromResult<DateTime?>(StartedAtSentinel);
 
     public static readonly Guid ThroughArchiveSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000c0de");
 

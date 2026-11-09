@@ -20,13 +20,28 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Liveness comes from the holder's own work loop.</b> <see cref="IDutyGrant.VerifyStillHeldAsync"/>,
-/// which a holder already calls before each unit of exclusive work, renews the lease. There is no
-/// renewal timer: a holder that is stuck stops verifying and lapses, which is the point. Renewals
-/// are throttled to one per <see cref="RoleAssignmentOptions.RenewInterval"/>, measured on the
-/// monotonic clock from the moment the last successful renewal was sent. The database computed that
-/// lease from a later instant, so answering from memory inside the interval is safe, and it never
-/// lets a write through anyway: writes are fenced in SQL by <c>wh_assert_role_epoch</c>.
+/// <b>A holder is judged by the one liveness rule (#2140).</b> Past its lease, a holder keeps its role
+/// while the rule every reader of instance liveness asks (<c>wh_instance_is_live</c>: a recent heartbeat,
+/// or a held alive-lock on the instance's notification connection) calls it live and it made progress:
+/// it renewed inside the progress window it declared for its epoch
+/// (<see cref="RoleAssignmentOptions.ProgressWindow"/>). Progress comes from the holder's own work loop:
+/// <see cref="IDutyGrant.VerifyStillHeldAsync"/>, which a holder calls before each unit of exclusive work,
+/// renews. The elector runs no renewal timer, so a holder that is connected but stuck loses its role within
+/// its window, and a holder the rule calls dead lapses at its lease. The one holder that keeps a timer is schema
+/// initialization, whose migrator runs phases longer than the lease with nothing in them that could verify: it
+/// keeps its grant alive with a <see cref="DutyGrantKeepalive"/> on the grant's
+/// <see cref="IDutyGrant.RenewInterval"/> from the election until it returns (#2127). Renewals are throttled to one per
+/// <see cref="RoleAssignmentOptions.RenewInterval"/>, measured on the monotonic clock from the moment the
+/// last successful renewal was sent. The database computed that lease from a later instant, so answering
+/// from memory inside the interval is safe, and it never lets a write through anyway: writes are fenced in
+/// SQL by <c>wh_assert_role_epoch</c>.
+/// </para>
+/// <para>
+/// <b>A holder learns of a loss within one renew interval.</b> Each grant watches its assignment: once per
+/// <see cref="RoleAssignmentOptions.RenewInterval"/> it reads <c>wh_role_is_held</c>, which writes nothing and
+/// so never counts as progress. A loss cancels <see cref="IDutyGrant.LostToken"/>, which the holder's exclusive
+/// work is linked to. A watch that cannot confirm the role for one lease fences itself the same way, because
+/// by then another instance may be entitled to the role.
 /// </para>
 /// <para>
 /// <b>The grant holds no connection.</b> Each vote, renewal and release is one statement on an
@@ -130,6 +145,13 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     ? null
     : DutyAttempt.Lost(DutyRefusal.Halted,
       $"duty '{duty}' is not voted for: this instance's run permit is closed (paused, standing down or stopping)");
+
+  /// <summary>
+  /// Raised after each grant watch tick with the role and what it found: true confirmed, false not confirmed (lost, or
+  /// the database unreachable), null nothing asked (the tenure ended, or the schema has no watch). The test seam that
+  /// tells a tick has run.
+  /// </summary>
+  internal event Action<string, bool?>? WatchChecked;
 
   /// <summary>How often a holder renews; a holder's work loop wakes at least this often.</summary>
   public TimeSpan RenewInterval => _roleOptions.RenewInterval;
@@ -250,6 +272,10 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     }
   }
 
+  /// <summary>The roles this elector holds a tenure of right now, for the exit's account of what it held (#2126).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs:ReleaseAll_OnShutdown_ReleasesEveryOutstandingGrantAsync</tests>
+  public IReadOnlyCollection<string> HeldRoles => [.. _tenures.Keys.Order(StringComparer.Ordinal)];
+
   /// <summary>
   /// Releases every role this elector still holds, so a stand-down, a pause or a stop hands each one off at once: the
   /// role step of the run-control path (#2045). Idempotent; a release that cannot reach the database leaves the lease to
@@ -333,11 +359,15 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     }
     var sendStarted = _time.GetTimestamp();
     var vote = await _electAsync(plan, role, cancellationToken).ConfigureAwait(false);
-    return _conclude(plan, role, vote, sendStarted);
+    var (attempt, tenure) = _conclude(plan, role, vote, sendStarted);
+    if (tenure is not null) {
+      await tenure.DeclareProgressWindowAsync().ConfigureAwait(false);
+    }
+    return attempt;
   }
 
-  /// <summary>Turns one vote's outcome into an attempt; a grant becomes this elector's tenure.</summary>
-  private DutyAttempt _conclude(NotificationConnectionPlan plan, string role, Vote vote, long sendStarted) {
+  /// <summary>Turns one vote's outcome into an attempt; a grant becomes this elector's tenure, which the caller begins.</summary>
+  private (DutyAttempt Attempt, Tenure? Tenure) _conclude(NotificationConnectionPlan plan, string role, Vote vote, long sendStarted) {
     var instanceId = _instanceProvider.InstanceId;
     if (vote.Outcome is OUTCOME_GRANTED or "held") {
       if (vote.Outcome == OUTCOME_GRANTED && vote.PreviousHolder is { } previous) {
@@ -356,19 +386,20 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
       // Only a fresh grant took the role from anyone: "held" is this instance keeping what it had.
       var previousHolder = vote.Outcome == OUTCOME_GRANTED ? vote.PreviousHolder : null;
       var tenure = new Tenure(this, plan, role, new TenureGrant(vote.Epoch, instanceId, sendStarted, _time.GetUtcNow(), previousHolder));
+      tenure.StartWatch();
       _tenures[role] = tenure;
       _metrics?.Held.Add(1, RoleAssignmentMetrics.RoleTag(role));
-      return DutyAttempt.Granted(tenure.OpenHandle());
+      return (DutyAttempt.Granted(tenure.OpenHandle()), tenure);
     }
 
     if (vote.Outcome == "refused") {
       LogRefused(_logger, role, instanceId);
-      return DutyAttempt.Lost(DutyRefusal.Refused,
+      return (DutyAttempt.Lost(DutyRefusal.Refused,
         $"instance {instanceId} is evicted or unregistered, so the vote for role '{role}' refused it; "
-        + "an operator or a fresh instance id is required");
+        + "an operator or a fresh instance id is required"), null);
     }
 
-    return DutyAttempt.Lost(DutyRefusal.Contended, _contendedDetail(role, vote));
+    return (DutyAttempt.Lost(DutyRefusal.Contended, _contendedDetail(role, vote)), null);
   }
 
   /// <summary>
@@ -407,7 +438,11 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
         }
       }
       foreach (var role in roles) {
-        attempts[role] = _conclude(plan, role, votes[role], sendStarted);
+        var (attempt, tenure) = _conclude(plan, role, votes[role], sendStarted);
+        if (tenure is not null) {
+          await tenure.DeclareProgressWindowAsync().ConfigureAwait(false);
+        }
+        attempts[role] = attempt;
       }
       return attempts;
     } finally {
@@ -482,10 +517,17 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   /// releasing it under the other: the role is released when the last handle is disposed, or on
   /// shutdown.
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The SemaphoreSlim is an async lock that allocates nothing to release unless AvailableWaitHandle is read, which this type never does; the watch timer and the loss token source are disposed or canceled when the tenure ends, which is this type's end of life.")]
   private sealed class Tenure(PgRoleElector elector, NotificationConnectionPlan plan, string role, TenureGrant grant) {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Bug", "S2930:\"IDisposables\" should be disposed", Justification = "Handles read LostToken after the tenure ends, and a disposed source's Token throws; the source registers no timer, so canceling it releases everything it holds.")]
+    private readonly CancellationTokenSource _lost = new();
     private long _renewedAtTimestamp = grant.RenewedAtTimestamp;
+    // The last moment the database confirmed the role (a renewal or a watch check), on the monotonic clock: when the
+    // statement that confirmed it was sent.
+    private long _confirmedAtTimestamp = grant.RenewedAtTimestamp;
+    private ITimer? _watch;
+    private int _checking;
     private int _handles;
     private bool _over;
     private volatile bool _drainRequested;
@@ -496,6 +538,101 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public DateTimeOffset AcquiredAt => grant.AcquiredAt;
     public Guid? PreviousHolder => grant.PreviousHolder;
     public bool DrainRequested => _drainRequested;
+    public CancellationToken LostToken => _lost.Token;
+    public TimeSpan RenewInterval => elector._roleOptions.RenewInterval;
+
+    /// <summary>
+    /// Starts the watch that observes a loss within one renew interval (#2140). Called once, as the tenure is created and
+    /// before anything else can see it, so the watch exists for the tenure's whole life.
+    /// </summary>
+    public void StartWatch() {
+      var interval = elector._roleOptions.RenewInterval;
+      _watch = elector._time.CreateTimer(_onWatchTimer, this, interval, interval);
+    }
+
+    /// <summary>
+    /// Declares this epoch's progress window, so the vote judges the holder by the one liveness rule past its lease
+    /// (#2140). One short statement right after the grant, not canceled with the caller: a declaration that cannot reach
+    /// the database leaves the holder judged by its lease alone, as before, and is logged, not thrown.
+    /// </summary>
+    public async Task DeclareProgressWindowAsync() {
+      var window = elector._roleOptions.ProgressWindowFor(role);
+      if (window <= TimeSpan.Zero) {
+        return;
+      }
+#pragma warning disable CA1031 // not a verdict: without a window the holder is judged by its lease, exactly as before; logged
+      try {
+        var connection = await plan.OpenAsync(CancellationToken.None).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false)) {
+          await using var cmd = connection.CreateCommand();
+          cmd.CommandText = "SELECT wh_declare_role_progress_window(@role, @id, @epoch, @window)";
+          cmd.Parameters.AddWithValue(nameof(role), role);
+          cmd.Parameters.AddWithValue("id", InstanceId);
+          cmd.Parameters.AddWithValue("epoch", Epoch);
+          cmd.Parameters.AddWithValue(nameof(window), window);
+          _ = await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+      } catch (Exception ex) {
+        LogDeclareFailed(elector._logger, role, InstanceId, Epoch, ex);
+      }
+#pragma warning restore CA1031
+    }
+
+    private static void _onWatchTimer(object? state) => _ = ((Tenure)state!)._watchTickAsync();
+
+    /// <summary>One watch tick; a tick that finds the previous check still running skips.</summary>
+    private async Task _watchTickAsync() {
+      if (Interlocked.Exchange(ref _checking, 1) == 1) {
+        return;
+      }
+      bool? confirmed;
+      try {
+        confirmed = await _checkAsync().ConfigureAwait(false);
+      } finally {
+        Volatile.Write(ref _checking, 0);
+      }
+      elector.WatchChecked?.Invoke(role, confirmed);
+    }
+
+    /// <summary>Asks whether the role is still this tenure's. Null when nothing was asked (the tenure is over, or the schema has no watch).</summary>
+    private async Task<bool?> _checkAsync() {
+      await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+      try {
+        if (_over) {
+          return null;
+        }
+        var sendStarted = elector._time.GetTimestamp();
+        object? held;
+        try {
+          held = await _callAsync(plan, "SELECT wh_role_is_held(@role, @id, @epoch)", role, InstanceId, Epoch, CancellationToken.None)
+            .ConfigureAwait(false);
+        } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction) {
+          // A schema that predates the watch (355): the holder is judged by its lease, as before, and learns of a loss on
+          // its next verify. Nothing to fence on.
+          LogWatchUnavailable(elector._logger, role, InstanceId);
+          _watch!.Dispose();
+          return null;
+#pragma warning disable CA1031 // not a verdict until a lease has passed without a confirmation; logged either way
+        } catch (Exception ex) {
+#pragma warning restore CA1031
+          if (elector._time.GetElapsedTime(_confirmedAtTimestamp) >= elector._roleOptions.LeaseFor(role)) {
+            LogWatchFenced(elector._logger, role, InstanceId, Epoch, ex);
+            _lose();
+          } else {
+            LogWatchFailed(elector._logger, role, InstanceId, ex);
+          }
+          return false;
+        }
+        if (held is not true) {
+          _lose();
+          return false;
+        }
+        _confirmedAtTimestamp = sendStarted;
+        return true;
+      } finally {
+        _gate.Release();
+      }
+    }
 
     public Handle OpenHandle() {
       _ = Interlocked.Increment(ref _handles);
@@ -544,6 +681,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
         LogDrainRequested(elector._logger, role, InstanceId, Epoch);
       }
       _renewedAtTimestamp = sendStarted;
+      _confirmedAtTimestamp = sendStarted;
       return true;
     }
 
@@ -553,11 +691,14 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
       _end();
     }
 
-    /// <summary>Ends the tenure once: it stops being this elector's.</summary>
+    /// <summary>Ends the tenure once: it stops being this elector's, its watch stops, and its loss token is canceled.</summary>
     private void _end() {
       _over = true;
       _ = elector._tenures.TryRemove(new KeyValuePair<string, Tenure>(role, this));
       elector._metrics?.Held.Add(-1, RoleAssignmentMetrics.RoleTag(role));
+      _watch!.Dispose();
+      // Callbacks run off this thread, so work linked to the token never runs while this tenure's gate is held.
+      _ = _lost.CancelAsync();
     }
 
     /// <summary>A handle closed; the last one releases the role.</summary>
@@ -569,7 +710,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
 
     /// <summary>Releases the role at once, whatever handles remain. Idempotent.</summary>
     public async Task ReleaseAsync() {
-      await _gate.WaitAsync().ConfigureAwait(false);
+      await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
       try {
         if (_over) {
           return;
@@ -606,6 +747,8 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     public long? Epoch => tenure.Epoch;
     public Guid? PreviousHolderInstanceId => tenure.PreviousHolder;
     public bool DrainRequested => tenure.DrainRequested;
+    public CancellationToken LostToken => tenure.LostToken;
+    public TimeSpan? RenewInterval => tenure.RenewInterval;
 
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Volatile.Read(ref _disposed) == 1 ? Task.FromResult(false) : tenure.VerifyAsync(cancellationToken);
@@ -652,4 +795,20 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   [LoggerMessage(EventId = 9, Level = LogLevel.Information,
     Message = "PgRoleElector: instance {InstanceId} holding role '{Role}' at epoch {Epoch} was asked by a newer-version instance to drain; it releases after its current step")]
   static partial void LogDrainRequested(ILogger logger, string role, Guid instanceId, long epoch);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "PgRoleElector: instance {InstanceId} could not declare its progress window for role '{Role}' at epoch {Epoch}; it is judged by its lease alone")]
+  static partial void LogDeclareFailed(ILogger logger, string role, Guid instanceId, long epoch, Exception ex);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "PgRoleElector: instance {InstanceId} could not check that it still holds role '{Role}'; the next check retries")]
+  static partial void LogWatchFailed(ILogger logger, string role, Guid instanceId, Exception ex);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+    Message = "PgRoleElector: instance {InstanceId} could not confirm role '{Role}' at epoch {Epoch} for a whole lease; it stops its exclusive work, since another instance may now hold the role")]
+  static partial void LogWatchFenced(ILogger logger, string role, Guid instanceId, long epoch, Exception ex);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Information,
+    Message = "PgRoleElector: the schema has no role watch yet (wh_role_is_held); instance {InstanceId} learns of a loss of role '{Role}' on its next verify")]
+  static partial void LogWatchUnavailable(ILogger logger, string role, Guid instanceId);
 }

@@ -49,6 +49,21 @@ public sealed class ProcessWideOptionsBindingTests {
     return services.BuildServiceProvider();
   }
 
+  /// <summary>
+  /// #2110 (owner decision, 2026-11-06): the history of a type that becomes [Superseding] is reconciled by default, and an
+  /// operator can turn it off. Fails if the default flips.
+  /// </summary>
+  [Test]
+  public async Task Superseding_Unconfigured_ReconcilesHistory_AndTheKeyTurnsItOffAsync() {
+    await using var unconfigured = _workers([]);
+    await using var off = _workers(new() { ["Whizbang:Superseding:ReconcileHistory"] = "false" });
+
+    await Assert.That(unconfigured.GetRequiredService<IOptions<SupersedingOptions>>().Value.ReconcileHistory).IsTrue()
+      .Because("reconciling only stamps and queues; the reaper's gates remain the only path to deletion");
+    await Assert.That(new SupersedingOptions().ReconcileHistory).IsTrue();
+    await Assert.That(off.GetRequiredService<IOptions<SupersedingOptions>>().Value.ReconcileHistory).IsFalse();
+  }
+
   [Test]
   public async Task EventStoreMetadata_BindsFromItsSectionAsync() {
     await using var provider = _workers(new() {

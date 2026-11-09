@@ -29,10 +29,26 @@ namespace Whizbang.Core.Messaging;
 /// store refused to restore, because the stream's earlier history was truncated here (#1843).</param>
 /// <param name="RefusedForeignOrigin">Of the present events, those with empty origin columns the bundle did not fill,
 /// because the stored event's first hop names another service than the bundle's origin (#1844).</param>
+/// <param name="OriginsFilled">Of <paramref name="Adopted"/>, the events whose origin was empty and is now the bundle's;
+/// the rest already carried the origin and took only its sequence (#2099). Null when the store did not say, in which
+/// case every adopted event is taken to have had its origin filled.</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
 public readonly record struct RedeliveredBucketPresence(
   Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
-  int RefusedForeignOrigin = 0);
+  int RefusedForeignOrigin = 0, int? OriginsFilled = null);
+
+/// <summary>
+/// One redelivery bundle as a batch reconcile takes it (#2099): the origin that published it, the origin's service name
+/// from its first hop, and its events with their origin sequences, paired by position.
+/// </summary>
+/// <param name="OriginServiceId">The origin the bundle names.</param>
+/// <param name="OriginServiceName">The origin's service name; null when the bundle carries none.</param>
+/// <param name="EventIds">The bundle's event ids.</param>
+/// <param name="CommitSequences">Each event's origin commit sequence, parallel to <paramref name="EventIds"/>; null when
+/// the origin had not stamped it.</param>
+/// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
+public sealed record RedeliveredBundle(
+  Guid OriginServiceId, string? OriginServiceName, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> CommitSequences);
 
 /// <summary>
 /// What a committed redelivery bundle answered, judged when its children commit (#2033): how many of its events the
@@ -155,14 +171,16 @@ public static partial class RedeliveryReconciler {
     long?[] sequences = [.. children.Select(c => c.SourceCommitSequence > 0 ? c.SourceCommitSequence : (long?)null)];
     // #2033: the answer is recorded now, while the store still shows what the bundle found (its own children are not
     // stored yet), and it is small: the buckets stop waiting, and a bundle that changed nothing is marked at once.
+    // #2143: the window the bundle answers; a bucket whose deficit it did not cover is answered but not marked.
+    var window = composite.AnsweredWindow;
     var answer = await _recordAnswerAsync(
-        coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, AllPresentAtCommit: null), services,
+        coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, AllPresentAtCommit: null, window), services,
         logger, now, cancellationToken)
       .ConfigureAwait(false);
     var markedAtCommit = answer is null ? 0 : answer.MarkedRefusedTruncated.Count + answer.MarkedUnchanged.Count;
     if (services.GetService<IntegrityDeliveryRegistry>() is not null) {
       try {
-        var payload = _writeDeferred(origin, originServiceName, eventIds, sequences, answer?.AllPresent);
+        var payload = _writeDeferred(new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent, window));
         var recorded = await coordinator.EnqueueIntegrityDeliveryAsync(
           IntegrityDeliveryId.For(DELIVERY_TYPE, payload), DELIVERY_TYPE, Encoding.UTF8.GetString(payload), cancellationToken)
           .ConfigureAwait(false);
@@ -181,7 +199,7 @@ public static partial class RedeliveryReconciler {
       }
     }
     var reconciled = await _reconcileCoreAsync(
-      coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent), services, logger,
+      coordinator, new BundleAdoption(origin, originServiceName, eventIds, sequences, answer?.AllPresent, window), services, logger,
       now, cancellationToken).ConfigureAwait(false);
     return reconciled with { MarkedUnhealable = reconciled.MarkedUnhealable + markedAtCommit };
   }
@@ -194,10 +212,10 @@ public static partial class RedeliveryReconciler {
   private static async Task<IntegrityBundleAnswer?> _recordAnswerAsync(
       IWorkCoordinator coordinator, BundleAdoption bundle, IServiceProvider services, ILogger logger, DateTimeOffset now,
       CancellationToken cancellationToken) {
-    var (origin, _, eventIds, sequences, _) = bundle;
+    var (origin, _, eventIds, sequences, _, window) = bundle;
     IntegrityBundleAnswer? answer;
     try {
-      answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, eventIds, sequences, now, cancellationToken)
+      answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, eventIds, sequences, window, now, cancellationToken)
         .ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
@@ -244,8 +262,8 @@ public static partial class RedeliveryReconciler {
   }
 
   // The deferred form, written by hand so Core needs no serializer context for it.
-  private static byte[] _writeDeferred(
-      Guid origin, string? originServiceName, Guid[] eventIds, long?[] sequences, bool? allPresentAtCommit) {
+  private static byte[] _writeDeferred(BundleAdoption bundle) {
+    var (origin, originServiceName, eventIds, sequences, allPresentAtCommit, window) = bundle;
     using var buffer = new MemoryStream();
     using (var writer = new Utf8JsonWriter(buffer)) {
       writer.WriteStartObject();
@@ -271,16 +289,38 @@ public static partial class RedeliveryReconciler {
       } else {
         writer.WriteNull("allPresentAtCommit");
       }
+      // #2143: the window the bundle answers; absent when the origin did not say (and on a reconcile recorded before).
+      if (window is { } answered) {
+        writer.WriteStartObject("answeredWindow");
+        _writeBound(writer, "from", answered.FromCommitSequence);
+        _writeBound(writer, "to", answered.ToCommitSequence);
+        writer.WriteEndObject();
+      }
       writer.WriteEndObject();
     }
     return buffer.ToArray();
   }
 
+  private static void _writeBound(Utf8JsonWriter writer, string name, long? bound) {
+    if (bound is { } value) {
+      writer.WriteNumber(name, value);
+    } else {
+      writer.WriteNull(name);
+    }
+  }
+
+  private static long? _readBound(JsonElement window, string name) {
+    var bound = window.GetProperty(name);
+    return bound.ValueKind == JsonValueKind.Null ? null : bound.GetInt64();
+  }
+
   /// <summary>What one bundle asks the store to adopt: its origin, the origin's service name, and its events with their
   /// origin sequences, paired by position; and whether every event was already stored when the bundle committed (null
-  /// when unknown: a store that could not say, or a reconcile recorded before the commit-time answer existed).</summary>
+  /// when unknown: a store that could not say, or a reconcile recorded before the commit-time answer existed); and the
+  /// window the bundle answers (#2143), null when the origin did not say.</summary>
   private readonly record struct BundleAdoption(
-    Guid Origin, string? OriginServiceName, Guid[] EventIds, long?[] Sequences, bool? AllPresentAtCommit);
+    Guid Origin, string? OriginServiceName, Guid[] EventIds, long?[] Sequences, bool? AllPresentAtCommit,
+    RedeliveryAnswerWindow? Window);
 
   private static BundleAdoption _readDeferred(string payload) {
     using var document = JsonDocument.Parse(payload);
@@ -292,87 +332,169 @@ public static partial class RedeliveryReconciler {
     bool? allPresent = root.TryGetProperty("allPresentAtCommit", out var flag) && flag.ValueKind != JsonValueKind.Null
       ? flag.GetBoolean()
       : null;
+    RedeliveryAnswerWindow? window = root.TryGetProperty("answeredWindow", out var answered)
+      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to"))
+      : null;
     return new BundleAdoption(
       root.GetProperty("originServiceId").GetGuid(),
       name.ValueKind == JsonValueKind.Null ? null : name.GetString(),
       [.. root.GetProperty("eventIds").EnumerateArray().Select(e => e.GetGuid())],
       [.. root.GetProperty("commitSequences").EnumerateArray()
         .Select(e => e.ValueKind == JsonValueKind.Null ? (long?)null : e.GetInt64())],
-      allPresent);
+      allPresent,
+      window);
+  }
+
+  /// <summary>
+  /// The integrity delivery drain's batch handler for deferred reconciles (#2099): reads every recorded reconcile back and
+  /// reconciles them in one call (<see cref="IWorkCoordinator.ReconcileRedeliveredBundlesAsync"/>), so each sealed digest
+  /// epoch the batch touches is refolded once rather than once per bundle; then concludes each bundle as the single
+  /// reconcile does. A store without the batch call reconciles each bundle on its own. A payload that cannot be read, or
+  /// a batch call that fails, faults the whole batch, and the drain then handles each delivery on its own, so one bad
+  /// delivery fails alone.
+  /// </summary>
+  /// <param name="payloads">The recorded reconciles, in arrival order.</param>
+  /// <param name="services">A scope's services for this batch.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when every reconcile is done.</returns>
+  /// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileBatchTests.cs</tests>
+  internal static async Task HandleDeferredBatchAsync(
+      IReadOnlyList<string> payloads, IServiceProvider services, CancellationToken cancellationToken) {
+    List<BundleAdoption> bundles = [.. payloads.Select(_readDeferred)];
+    var coordinator = services.GetService<IWorkCoordinator>();
+    if (coordinator is null) {
+      return;
+    }
+    var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RedeliveryReconciler))
+      ?? NullLogger.Instance;
+    var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    var adoptions = await coordinator.ReconcileRedeliveredBundlesAsync(
+      [.. bundles.Select(b => new RedeliveredBundle(b.Origin, b.OriginServiceName, b.EventIds, b.Sequences))],
+      cancellationToken).ConfigureAwait(false);
+    for (var i = 0; i < bundles.Count; i++) {
+      _ = adoptions is null
+        ? await _reconcileCoreAsync(coordinator, bundles[i], services, logger, now, cancellationToken).ConfigureAwait(false)
+        : await _concludeGuardedAsync(bundles[i], adoptions[i], services, logger, now, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>The reconcile itself, shared by the inline path and the maintainer's drain.</summary>
   private static async Task<RedeliveryReconciliation> _reconcileCoreAsync(
       IWorkCoordinator coordinator, BundleAdoption bundle, IServiceProvider services, ILogger logger, DateTimeOffset now,
       CancellationToken cancellationToken) {
-    var (origin, originServiceName, eventIds, sequences, allPresentAtCommit) = bundle;
-    var childCount = eventIds.Length;
     try {
       var buckets = await coordinator.AdoptRedeliveredOriginAsync(
-        origin, originServiceName, eventIds, sequences, cancellationToken).ConfigureAwait(false);
+        bundle.Origin, bundle.OriginServiceName, bundle.EventIds, bundle.Sequences, cancellationToken).ConfigureAwait(false);
       if (buckets is null) {
         return RedeliveryReconciliation.None;   // a store that cannot answer: repair behaves as before
       }
-      var present = buckets.Sum(b => b.Present);
-      var adopted = buckets.Sum(b => b.Adopted);
-      var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
-      var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
-      var metrics = services.GetService<StreamIntegrityMetrics>();
-      _reportForeignOrigins(logger, metrics, refusedForeignOrigin, childCount, originServiceName, origin);
-      if (adopted > 0) {
-        metrics?.OriginsAdopted.Add(adopted);
-        LogOriginsAdopted(logger, adopted, childCount, origin);
-      }
-      // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
-      // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
-      // bundle that stored nothing and adopted nothing marks the buckets of the events it found present. #2033: what
-      // the store held is the commit's answer when there is one, because by now the bundle's own children are stored
-      // and read as present.
-      List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
-      var storedNothing = allPresentAtCommit ?? present + refusedTruncated >= childCount;
-      List<RedeliveredBucketPresence> unchanged = adopted == 0 && storedNothing
-        ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
-        : [];
-      var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
-      if (ledger is null) {
-        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
-      }
-      // #2029: the bundle answered these buckets. The durable store recorded that at commit; a ledger only the
-      // reconcile reaches (the in-memory fallback) learns it here, and its pending answers clear.
-      await ledger.MarkAnsweredAsync(
-        [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
-        now, cancellationToken).ConfigureAwait(false);
-      if (refusedBuckets.Count + unchanged.Count == 0) {
-        return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
-      }
-      var marked = await _markAsync(ledger, origin, refusedBuckets, now,
-          key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
-        .ConfigureAwait(false);
-      marked += await _markAsync(ledger, origin, unchanged, now,
-          key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), cancellationToken)
-        .ConfigureAwait(false);
-      if (marked > 0) {
-        metrics?.RepairsUnhealable.Add(marked);
-      }
-      return new RedeliveryReconciliation(childCount, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
+      return await _concludeAsync(bundle, buckets, services, logger, now, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      LogReconcileFailed(logger, childCount, origin, ex);
+      LogReconcileFailed(logger, bundle.EventIds.Length, bundle.Origin, ex);
       return RedeliveryReconciliation.None;
     }
+  }
+
+  /// <summary>Concludes one bundle of a batch; a failure is logged for that bundle and the rest still conclude.</summary>
+  private static async Task<RedeliveryReconciliation> _concludeGuardedAsync(
+      BundleAdoption bundle, IReadOnlyList<RedeliveredBucketPresence> buckets, IServiceProvider services, ILogger logger,
+      DateTimeOffset now, CancellationToken cancellationToken) {
+    try {
+      return await _concludeAsync(bundle, buckets, services, logger, now, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogReconcileFailed(logger, bundle.EventIds.Length, bundle.Origin, ex);
+      return RedeliveryReconciliation.None;
+    }
+  }
+
+  /// <summary>What a bundle's adoption means once the store has answered: reports, metrics and the ledger.</summary>
+  private static async Task<RedeliveryReconciliation> _concludeAsync(
+      BundleAdoption bundle, IReadOnlyList<RedeliveredBucketPresence> buckets, IServiceProvider services, ILogger logger,
+      DateTimeOffset now, CancellationToken cancellationToken) {
+    var (origin, originServiceName, eventIds, _, allPresentAtCommit, window) = bundle;
+    var childCount = eventIds.Length;
+    var present = buckets.Sum(b => b.Present);
+    var adopted = buckets.Sum(b => b.Adopted);
+    var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
+    var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
+    var metrics = services.GetService<StreamIntegrityMetrics>();
+    _reportForeignOrigins(logger, metrics, refusedForeignOrigin, childCount, originServiceName, origin);
+    _reportAdopted(logger, metrics, buckets, adopted, childCount, origin);
+    // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
+    // an event the store did not hold is stored by this bundle: the repair is working, nothing to conclude. Only a
+    // bundle that stored nothing and adopted nothing marks the buckets of the events it found present. #2033: what
+    // the store held is the commit's answer when there is one, because by now the bundle's own children are stored
+    // and read as present.
+    List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
+    var storedNothing = allPresentAtCommit ?? present + refusedTruncated >= childCount;
+    List<RedeliveredBucketPresence> unchanged = adopted == 0 && storedNothing
+      ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
+      : [];
+    var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
+    if (ledger is null) {
+      return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
+    }
+    // #2029: the bundle answered these buckets. The durable store recorded that at commit; a ledger only the
+    // reconcile reaches (the in-memory fallback) learns it here, and its pending answers clear.
+    await ledger.MarkAnsweredAsync(
+      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
+      now, cancellationToken).ConfigureAwait(false);
+    if (refusedBuckets.Count + unchanged.Count == 0) {
+      return new RedeliveryReconciliation(childCount, present, adopted, 0, refusedTruncated, refusedForeignOrigin);
+    }
+    var marked = await _markAsync(ledger, origin, refusedBuckets, now,
+        key => LogRepairRefusedTruncatedBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin), coverage: null,
+        cancellationToken)
+      .ConfigureAwait(false);
+    marked += await _markAsync(ledger, origin, unchanged, now,
+        key => LogRepairCannotChangeBucket(logger, key.EventType, key.TenantScope, key.StreamId, origin),
+        window is { } answered ? (answered, eventIds) : null, cancellationToken)
+      .ConfigureAwait(false);
+    if (marked > 0) {
+      metrics?.RepairsUnhealable.Add(marked);
+    }
+    return new RedeliveryReconciliation(childCount, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
+  }
+
+  /// <summary>
+  /// Reports what a bundle adopted, once: the events whose origin it filled, and apart from them the events that already
+  /// carried the origin and took only its sequence (#2099). Both used to be reported as filling the origin, so a run of
+  /// sequence fills on history re-attributed to its owner read as the same origins being filled again and again.
+  /// </summary>
+  private static void _reportAdopted(
+      ILogger logger, StreamIntegrityMetrics? metrics, IReadOnlyList<RedeliveredBucketPresence> buckets, int adopted,
+      int children, Guid origin) {
+    if (adopted == 0) {
+      return;
+    }
+    metrics?.OriginsAdopted.Add(adopted);
+    var originsFilled = buckets.Sum(b => b.OriginsFilled ?? b.Adopted);
+    if (originsFilled == adopted) {
+      LogOriginsAdopted(logger, adopted, children, origin);
+      return;
+    }
+    LogSequencesAdopted(logger, originsFilled, adopted - originsFilled, children, origin);
   }
 
   /// <summary>Marks the buckets as ones repair cannot change and reports each newly marked one once.</summary>
   private static async Task<int> _markAsync(
       IIntegrityRepairLedger ledger, Guid origin, List<RedeliveredBucketPresence> buckets, DateTimeOffset now,
-      Action<IntegrityRepairLedger.DivergenceKey> report, CancellationToken cancellationToken) {
+      Action<IntegrityRepairLedger.DivergenceKey> report, (RedeliveryAnswerWindow Window, Guid[] EventIds)? coverage,
+      CancellationToken cancellationToken) {
     if (buckets.Count == 0) {
       return 0;
     }
-    var marked = await ledger.MarkUnhealableBatchAsync(
-      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))],
-      now, cancellationToken).ConfigureAwait(false);
+    List<IntegrityRepairLedger.DivergenceKey> keys =
+      [.. buckets.Select(b => new IntegrityRepairLedger.DivergenceKey(origin, b.TenantScope, b.EventType, b.StreamId))];
+    // #2143: with the answered window known, the ledger marks only the buckets whose deficit the answer covered.
+    var marked = coverage is { } covered
+      ? await ledger.MarkUnhealableBatchAsync(keys, covered.Window, covered.EventIds, now, cancellationToken).ConfigureAwait(false)
+      : await ledger.MarkUnhealableBatchAsync(keys, now, cancellationToken).ConfigureAwait(false);
     foreach (var key in marked) {
       report(key);
     }
@@ -434,6 +556,14 @@ public static partial class RedeliveryReconciler {
     Message = "Redelivery from origin {OriginServiceId} filled the origin identity of {Adopted} of its {Children} event(s) "
             + "that were stored before origins were recorded; they now verify under that origin")]
   private static partial void LogOriginsAdopted(ILogger logger, int adopted, int children, Guid originServiceId);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Redelivery from origin {OriginServiceId} filled the origin identity of {OriginsFilled} and only the origin "
+            + "sequence of {SequencesFilled} of its {Children} event(s); those already carried the origin (history "
+            + "re-attributed to its owner, which records the origin without its sequence). They now verify under that "
+            + "origin's sealed epochs")]
+  private static partial void LogSequencesAdopted(
+    ILogger logger, int originsFilled, int sequencesFilled, int children, Guid originServiceId);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Redelivery from origin {OriginServiceName} ({OriginServiceId}) named itself as the origin of {Refused} of its "
