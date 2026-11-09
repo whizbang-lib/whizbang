@@ -42,16 +42,29 @@ public static class ServiceRegistrationCallbacks {
 
   /// <summary>
   /// Callback for registering discovered lens services (ILensQuery implementations).
-  /// Set by source-generated module initializer in consumer assembly.
+  /// Set by the source-generated module initializer in EVERY assembly that declares lenses, so the setter
+  /// ACCUMULATES (each assignment adds a registration) and the getter returns one delegate that runs them all, in
+  /// the order set. A single-valued slot let the next assembly's initializer overwrite the last, and the lenses of
+  /// every assembly but one were never registered (#2199). Assigning null clears all registrations.
   /// </summary>
-  public static Action<IServiceCollection, ServiceRegistrationOptions>? LensServices { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:LensServices_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
+  public static Action<IServiceCollection, ServiceRegistrationOptions>? LensServices {
+    get => _lensServices.Combined;
+    set => _lensServices.Set(value);
+  }
 
   /// <summary>
-  /// Callback for registering discovered perspective services (IPerspective implementations).
-  /// Set by source-generated module initializer in consumer assembly.
+  /// Callback for registering discovered perspective services (IPerspective implementations). Accumulates, as
+  /// <see cref="LensServices"/> does, so every assembly's perspective services are registered (#2199).
   /// </summary>
-  public static Action<IServiceCollection, ServiceRegistrationOptions>? PerspectiveServices { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:PerspectiveServices_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
+  public static Action<IServiceCollection, ServiceRegistrationOptions>? PerspectiveServices {
+    get => _perspectiveServices.Combined;
+    set => _perspectiveServices.Set(value);
+  }
 
+  private static readonly AccumulatedCallbacks<Action<IServiceCollection, ServiceRegistrationOptions>> _lensServices = new(_lock);
+  private static readonly AccumulatedCallbacks<Action<IServiceCollection, ServiceRegistrationOptions>> _perspectiveServices = new(_lock);
   private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _pinnedIdRegistry = new(_lock);
   private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _rawReceptors = new(_lock);
 
@@ -144,7 +157,7 @@ public static class ServiceRegistrationCallbacks {
   /// <summary>
   /// Callback for registering the generated <see cref="IPinnedIdRegistry"/>. Set by the PinnedIdRegistryGenerator's
   /// module initializer in every assembly that pins types (Whizbang.Core among them), so it accumulates, as
-  /// <see cref="Dispatcher"/> does; each callback contributes its registry to the one the host serves (#2198).
+  /// <see cref="LensServices"/> does; each callback contributes its registry to the one the host serves (#2198).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:PinnedIdRegistry_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
   public static Action<IServiceCollection>? PinnedIdRegistry {
@@ -231,7 +244,7 @@ public static class ServiceRegistrationCallbacks {
   /// Callback for registering discovered <see cref="Whizbang.Core.Messaging.IRawReceptor"/>
   /// implementations and the <see cref="Whizbang.Core.Messaging.IRawReceptorRegistry"/>.
   /// Set by the RawReceptorDiscoveryGenerator's module initializer in every assembly that declares raw receptors,
-  /// so it accumulates, as <see cref="Dispatcher"/> does: a single-valued slot let the last assembly's initializer
+  /// so it accumulates, as <see cref="LensServices"/> does: a single-valued slot let the last assembly's initializer
   /// overwrite the others', and their raw receptors were never registered (#2198).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:RawReceptors_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
