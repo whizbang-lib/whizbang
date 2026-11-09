@@ -43,28 +43,7 @@ public static class CircularReferenceDiscovery {
   /// <param name="modelType">The perspective's model type.</param>
   /// <returns>Each back-reference with its path, the type it points back to, and the path of a collection in its recursion.</returns>
   public static IReadOnlyList<CircularReference> Find(INamedTypeSymbol modelType) {
-    // Breadth first, so each type's path is its shortest from the model, and a back-reference is the member whose
-    // type sits on its own holder's path.
-    var paths = new Dictionary<INamedTypeSymbol, string>(SymbolEqualityComparer.Default) { [modelType] = string.Empty };
-    var order = new List<INamedTypeSymbol> { modelType };
-    var edges = new List<Edge>();
-    for (var i = 0; i < order.Count; i++) {
-      var holder = order[i];
-      foreach (var property in holder.GetMembers().OfType<IPropertySymbol>()) {
-        var (target, isCollection) = PolymorphicModelDiscovery.IsAnalyzableProperty(property)
-          ? MappedPathDiscovery.StoredTargetOf(property)
-          : (null, false);
-        if (target is null) {
-          continue;
-        }
-        var path = paths[holder].Length == 0 ? property.Name : $"{paths[holder]}.{property.Name}";
-        edges.Add(new Edge(holder, target, property, isCollection, path));
-        if (!paths.ContainsKey(target)) {
-          paths.Add(target, path);
-          order.Add(target);
-        }
-      }
-    }
+    var (paths, order, edges) = _storedGraph(modelType);
 
     var reach = _reachability(order, edges);
     bool together(INamedTypeSymbol a, INamedTypeSymbol b) =>
@@ -81,6 +60,46 @@ public static class CircularReferenceDiscovery {
       }
     }
     return found;
+  }
+
+  /// <summary>
+  /// The types the document stores, each with its shortest path from the model, and the stored members between them.
+  /// </summary>
+  /// <remarks>
+  /// Breadth first, so each type's path is its shortest from the model, and a back-reference is the member whose type
+  /// sits on its own holder's path.
+  /// </remarks>
+  private static (Dictionary<INamedTypeSymbol, string> Paths, List<INamedTypeSymbol> Order, List<Edge> Edges) _storedGraph(
+      INamedTypeSymbol modelType) {
+    var paths = new Dictionary<INamedTypeSymbol, string>(SymbolEqualityComparer.Default) { [modelType] = string.Empty };
+    var order = new List<INamedTypeSymbol> { modelType };
+    var edges = new List<Edge>();
+    for (var i = 0; i < order.Count; i++) {
+      var holder = order[i];
+      foreach (var property in holder.GetMembers().OfType<IPropertySymbol>()) {
+        if (_storedEdge(holder, property, paths[holder]) is not { } edge) {
+          continue;
+        }
+        edges.Add(edge);
+        if (!paths.ContainsKey(edge.To)) {
+          paths.Add(edge.To, edge.Path);
+          order.Add(edge.To);
+        }
+      }
+    }
+    return (paths, order, edges);
+  }
+
+  /// <summary>The stored member <paramref name="property"/> as an edge of the graph, or null when it stores no type.</summary>
+  private static Edge? _storedEdge(INamedTypeSymbol holder, IPropertySymbol property, string holderPath) {
+    var (target, isCollection) = PolymorphicModelDiscovery.IsAnalyzableProperty(property)
+      ? MappedPathDiscovery.StoredTargetOf(property)
+      : (null, false);
+    if (target is null) {
+      return null;
+    }
+    var path = holderPath.Length == 0 ? property.Name : $"{holderPath}.{property.Name}";
+    return new Edge(holder, target, property, isCollection, path);
   }
 
   /// <summary>Whether the target's path is the holder's own or one of its containers' (a prefix of it).</summary>
